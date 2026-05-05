@@ -695,8 +695,17 @@ pub fn extract_subject_from_cert(cert: &X509Certificate) -> anyhow::Result<Strin
     };
     let issuer_str = issuer.as_str().map_err(|e| anyhow!("{e}"))?;
 
-    if subject_str != issuer_str {
-        bail!("Bad certificate: subject CN does not match issuer CN");
+    // If we have replicas, we expect the jth replica CN to be
+    // core{j}.example.com and the issuer CN to be example.com.
+    // If we don't have replicas, we expect the subject CN to match the issuer CN.
+    if let Some((_subject_core, subject_ca)) = subject_str.split_once(".") {
+        if subject_ca != issuer_str && subject_str != issuer_str {
+            bail!("Bad certificate: subject CN (or subject CN suffix) does not match issuer CN");
+        }
+    } else {
+        if subject_str != issuer_str {
+            bail!("Bad certificate: subject CN does not match issuer CN");
+        }
     }
 
     if !san_strings.contains(&subject_str) {

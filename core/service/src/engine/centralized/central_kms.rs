@@ -30,6 +30,7 @@ use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned}
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
+use tokio_util::sync::CancellationToken;
 
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
@@ -70,7 +71,7 @@ use threshold_execution::{
     zk::ceremony::public_parameters_by_trusted_setup,
 };
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -80,7 +81,11 @@ use tonic_health::server::HealthReporter;
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum CentralizedKeyGenResult {
     Uncompressed(FhePubKeySet, KmsFheKeyHandles),
-    Compressed(CompressedXofKeySet, KmsFheKeyHandles),
+    Compressed(
+        CompressedXofKeySet,
+        tfhe::CompactPublicKey,
+        KmsFheKeyHandles,
+    ),
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
@@ -111,7 +116,7 @@ pub(crate) async fn async_generate_fhe_keys(
 
     rayon::spawn_fifo(move || {
         let out = match keyset_config.compressed_key_config {
-            CompressedKeyConfig::None => generate_fhe_keys(
+            CompressedKeyConfig::None => generate_uncompressed_fhe_keys(
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
@@ -122,7 +127,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
-            CompressedKeyConfig::All => generate_compressed_fhe_keys(
+            CompressedKeyConfig::All => generate_fhe_keys(
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
@@ -132,7 +137,9 @@ pub(crate) async fn async_generate_fhe_keys(
                 &eip712_domain,
                 extra_data.clone(),
             )
-            .map(|(keyset, handles)| CentralizedKeyGenResult::Compressed(keyset, handles)),
+            .map(|(keyset, public_key, handles)| {
+                CentralizedKeyGenResult::Compressed(keyset, public_key, handles)
+            }),
         };
         let _ = send.send(out);
     });
@@ -163,13 +170,13 @@ where
         .await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _, _, _) = storage
         .read_centralized_fhe_keys(keyset2_id, epoch_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _, _, _) = storage
         .read_centralized_fhe_keys(keyset1_id, epoch_id)
         .await?
         .client_key
@@ -220,7 +227,7 @@ pub(crate) async fn async_generate_crs(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_compressed_fhe_keys(
+pub(crate) fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     keyset_config: KeyGenSecretKeyConfig,
@@ -229,7 +236,11 @@ fn generate_compressed_fhe_keys(
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
+) -> anyhow::Result<(
+    CompressedXofKeySet,
+    tfhe::CompactPublicKey,
+    KmsFheKeyHandles,
+)> {
     match keyset_config {
         KeyGenSecretKeyConfig::GenerateAll => { /* ok */ }
         KeyGenSecretKeyConfig::UseExisting => {
@@ -259,8 +270,8 @@ fn generate_compressed_fhe_keys(
         .unwrap_or(1.0);
 
     // unwrap is ok here because parameters should always have a correct pmax
-    let max_norm_hwt =
-        tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+    let max_norm_hwt = tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt)
+        .expect("Users are expected to set pmax correctly between ]0.5,1.0]");
 
     let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
         config,
@@ -270,9 +281,8 @@ fn generate_compressed_fhe_keys(
         tag,
     )?;
 
-    let (_public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
-    let server_key_parts = server_key.into_raw_parts();
-    let decompression_key = server_key_parts.3.clone();
+    let (public_key, server_key) = compressed_keyset.decompress()?.into_raw_parts();
+    let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
@@ -280,16 +290,17 @@ fn generate_compressed_fhe_keys(
         key_id,
         preproc_id,
         &compressed_keyset,
+        &public_key,
         decompression_key,
         eip712_domain,
         extra_data,
     )?;
 
-    Ok((compressed_keyset, handles))
+    Ok((compressed_keyset, public_key, handles))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_fhe_keys(
+pub fn generate_uncompressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     compression_config: KeyGenSecretKeyConfig,
@@ -320,6 +331,7 @@ pub fn generate_fhe_keys(
             server_key.5,
             server_key.6,
             server_key.7,
+            server_key.8,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -437,12 +449,16 @@ pub struct CentralizedKms<
     pub(crate) preprocessing_meta_store: Arc<RwLock<MetaStore<CentralizedPreprocBucket>>>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    // Map of ongoing key generation tasks, indexed by the preprocessing ID
+    pub(crate) ongoing_key_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
     pub(crate) user_dec_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+    // Map of ongoing CRS generation tasks, indexed by the CRS request ID
+    pub(crate) ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
@@ -987,9 +1003,11 @@ impl<
                     HashMap::new(),
                 ))),
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
+                ongoing_key_gen: Arc::new(Mutex::new(HashMap::new())),
                 pub_dec_meta_store,
                 user_dec_meta_store,
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                ongoing_crs_gen: Arc::new(Mutex::new(HashMap::new())),
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
@@ -1104,15 +1122,15 @@ fn update_central_kms_system_metrics(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys};
+    use super::{
+        CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys,
+        generate_uncompressed_fhe_keys,
+    };
     use crate::conf::{CoreConfig, init_conf};
     #[cfg(feature = "slow_tests")]
+    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID};
     use crate::consts::{
-        DEFAULT_CENTRAL_KEY_ID, DEFAULT_CENTRAL_KEYS_PATH, OTHER_CENTRAL_DEFAULT_ID,
-    };
-    use crate::consts::{
-        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID,
-        TEST_CENTRAL_KEYS_PATH, TEST_PARAM,
+        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
     use crate::cryptography::signatures::gen_sig_keys;
@@ -1124,7 +1142,6 @@ pub(crate) mod tests {
     use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
-    use crate::util::file_handling::{read_element, write_element};
     use crate::util::key_setup::test_tools::{EncryptionConfig, compute_cipher};
     use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
@@ -1137,9 +1154,7 @@ pub(crate) mod tests {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
     use rand::SeedableRng;
-    use serial_test::serial;
     use std::collections::HashMap;
-    use std::path::Path;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
     use tfhe::{ConfigBuilder, Seed, shortint::ClassicPBSParameters};
@@ -1148,22 +1163,24 @@ pub(crate) mod tests {
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
-    use tokio::sync::OnceCell;
-
-    static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
-    async fn get_test_keys() -> &'static CentralizedTestingKeys {
-        ONCE_TEST_KEY
-            .get_or_init(|| async { ensure_kms_test_keys().await })
-            .await
+    /// Generate a fresh `CentralizedTestingKeys` bundle for a single test.
+    async fn test_keys() -> CentralizedTestingKeys {
+        build_testing_keys(
+            TEST_PARAM,
+            &TEST_CENTRAL_KEY_ID.to_string(),
+            &OTHER_CENTRAL_TEST_ID.to_string(),
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
-    static ONCE_DEFAULT_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
-    #[cfg(feature = "slow_tests")]
-    pub(crate) async fn get_default_keys() -> &'static CentralizedTestingKeys {
-        ONCE_DEFAULT_KEY
-            .get_or_init(|| async { ensure_kms_default_keys().await })
-            .await
+    pub(crate) async fn default_keys() -> CentralizedTestingKeys {
+        build_testing_keys(
+            DEFAULT_PARAM,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+            &OTHER_CENTRAL_DEFAULT_ID.to_string(),
+        )
+        .await
     }
 
     impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
@@ -1258,43 +1275,17 @@ pub(crate) mod tests {
         BadEphemeralKey,
     }
 
-    async fn ensure_kms_test_keys() -> CentralizedTestingKeys {
-        setup(
-            TEST_PARAM,
-            &TEST_CENTRAL_KEY_ID.to_string(),
-            &OTHER_CENTRAL_TEST_ID.to_string(),
-            TEST_CENTRAL_KEYS_PATH,
-        )
-        .await
-    }
-
-    #[cfg(feature = "slow_tests")]
-    pub(crate) async fn ensure_kms_default_keys() -> CentralizedTestingKeys {
-        setup(
-            DEFAULT_PARAM,
-            &DEFAULT_CENTRAL_KEY_ID.to_string(),
-            &OTHER_CENTRAL_DEFAULT_ID.to_string(),
-            DEFAULT_CENTRAL_KEYS_PATH,
-        )
-        .await
-    }
-
-    async fn setup(
+    async fn build_testing_keys(
         dkg_params: DKGParams,
         key_id: &str,
         other_key_id: &str,
-        key_path: &str,
     ) -> CentralizedTestingKeys {
-        if Path::new(key_path).exists() {
-            return read_element(key_path).await.unwrap();
-        }
-
         let preproc_id = derive_request_id("CENTRALIZED_DUMMY_PREPROCESSING_ID").unwrap();
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let domain = dummy_domain();
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(
+        let (pub_fhe_keys, key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1309,7 +1300,7 @@ pub(crate) mod tests {
         // check that key_info contains
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
-        let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
+        let (other_pub_fhe_keys, other_key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1338,7 +1329,7 @@ pub(crate) mod tests {
         ]);
         let server_keys = vec![sig_pk.clone()];
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let centralized_test_keys = CentralizedTestingKeys {
+        CentralizedTestingKeys {
             params: dkg_params,
             client_pk,
             client_sk,
@@ -1349,17 +1340,10 @@ pub(crate) mod tests {
                 sig_sk,
                 sig_pk,
             },
-        };
-        assert!(
-            write_element(key_path, &centralized_test_keys)
-                .await
-                .is_ok()
-        );
-        centralized_test_keys
+        }
     }
 
     #[tokio::test]
-    #[serial(default_keys)]
     async fn test_gen_keys() {
         let mut rng = AesRng::seed_from_u64(100);
         let domain = dummy_domain();
@@ -1382,8 +1366,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_generate_compressed_fhe_keys() {
-        use super::generate_compressed_fhe_keys;
+    fn test_generate_fhe_keys() {
+        use super::generate_fhe_keys;
         use kms_grpc::rpc_types::PubDataType;
         use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 
@@ -1394,7 +1378,7 @@ pub(crate) mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         let seed = Some(Seed(42));
 
-        let result = generate_compressed_fhe_keys(
+        let result = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             KeyGenSecretKeyConfig::GenerateAll,
@@ -1406,9 +1390,9 @@ pub(crate) mod tests {
         );
 
         assert!(result.is_ok(), "Compressed key generation should succeed");
-        let (compressed_keyset, handles) = result.unwrap();
+        let (compressed_keyset, _public_key, handles) = result.unwrap();
 
-        // Verify the handles contain the correct key type
+        // Verify the handles contain both digest types
         match &handles.public_key_info {
             crate::engine::base::KeyGenMetadata::Current(inner) => {
                 assert!(
@@ -1416,6 +1400,10 @@ pub(crate) mod tests {
                         .key_digest_map
                         .contains_key(&PubDataType::CompressedXofKeySet),
                     "Should contain CompressedXofKeySet digest"
+                );
+                assert!(
+                    inner.key_digest_map.contains_key(&PubDataType::PublicKey),
+                    "Should contain PublicKey digest"
                 );
             }
             _ => panic!("Expected Current variant of KeyGenMetadata"),
@@ -1427,12 +1415,18 @@ pub(crate) mod tests {
             decompressed.is_ok(),
             "Compressed keyset should be decompressible"
         );
+
+        let (_pk, server_key) = decompressed.unwrap().into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        assert!(
+            oprf_key.is_some(),
+            "centralized full keygen must embed a dedicated OPRF server key"
+        );
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn multiple_test_keys_access() {
-        let central_keys = get_test_keys().await;
+        let central_keys = test_keys().await;
 
         // try to get keys with the default handle
         let default_key = central_keys
@@ -1458,19 +1452,17 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn sunshine_test_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_decrypt(&test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn decrypt_with_bad_client_key() {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_decrypt(
             SimulationType::BadFheKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1479,30 +1471,22 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial(default_keys)]
     async fn sunshine_default_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_decrypt(&default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn multiple_test_keys_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
+        sunshine_decrypt(&test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial(default_keys)]
     async fn multiple_default_keys_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(
-            get_default_keys().await,
-            &OTHER_CENTRAL_DEFAULT_ID,
-            &epoch_id,
-        )
-        .await;
+        sunshine_decrypt(&default_keys().await, &OTHER_CENTRAL_DEFAULT_ID, &epoch_id).await;
     }
 
     async fn sunshine_decrypt(
@@ -1601,7 +1585,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sunshine_test_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_user_decrypt(&test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
@@ -1609,7 +1593,7 @@ pub(crate) mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadEphemeralKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1621,7 +1605,7 @@ pub(crate) mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadSigKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1633,7 +1617,7 @@ pub(crate) mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadFheKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1644,26 +1628,20 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sunshine_default_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_user_decrypt(&default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
-    #[serial]
     async fn multiple_test_keys_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
+        sunshine_user_decrypt(&test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(
-            get_default_keys().await,
-            &OTHER_CENTRAL_DEFAULT_ID,
-            &epoch_id,
-        )
-        .await;
+        sunshine_user_decrypt(&default_keys().await, &OTHER_CENTRAL_DEFAULT_ID, &epoch_id).await;
     }
 
     async fn sunshine_user_decrypt(

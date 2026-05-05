@@ -13,7 +13,6 @@ use crate::{
             generate_compressed_decompression_keys, generate_decompression_keys,
         },
         glwe_key::GlweSecretKeyShare,
-        lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
         lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
         lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
@@ -37,14 +36,11 @@ use error_utils::anyhow_error_and_log;
 use hashing::DomainSep;
 use num_integer::div_ceil;
 use tfhe::{
-    core_crypto::{
-        entities::LweBootstrapKey,
-        prelude::{SeededLweBootstrapKey, UnsignedInteger},
-    },
+    core_crypto::prelude::{ParallelByteRandomGenerator, SeededLweBootstrapKey, UnsignedInteger},
     shortint::{
         ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
-        parameters::LweCiphertextCount,
+        oprf::{CompressedOprfBootstrappingKey, CompressedOprfServerKey},
         server_key::CompressedModulusSwitchConfiguration,
     },
     xof_key_set::CompressedXofKeySet,
@@ -53,7 +49,6 @@ use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tracing::instrument;
 
 pub(crate) const DSEP_KG: DomainSep = *b"TFHE_GEN";
-pub(crate) const DSEP_PRF_KG: DomainSep = *b"PRF_KGEN";
 
 ///Sample the random but public seed
 async fn sample_seed<
@@ -466,9 +461,20 @@ where
         DKGParams::WithoutSnS(_) => (None, None),
     };
 
+    let oprf_secret_key_share = Some(
+        LweSecretKeyShare::new_from_preprocessing(
+            params_basics_handle.lwe_dimension(),
+            preprocessing,
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?,
+    );
+
     let priv_key_set = GenericPrivateKeySet {
         lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
         lwe_secret_key_share,
+        oprf_secret_key_share,
         glwe_secret_key_share,
         glwe_secret_key_share_sns,
         glwe_secret_key_share_compression,
@@ -478,7 +484,45 @@ where
     Ok(priv_key_set)
 }
 
+/// Ensures a Z128 finalized private keyset contains the dedicated OPRF LWE key share.
+///
+/// Older persisted keysets do not have this share. `UseExisting` keygen calls this
+/// before regenerating public material so the new keyset can persist the generated share.
+#[instrument(name="TFHE.EnsureOprfSecretKeyShare", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+pub async fn ensure_oprf_secret_key_share_z128<
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    private_key_set: &mut PrivateKeySet<EXTENSION_DEGREE>,
+    params: DKGParams,
+    preprocessing: &mut P,
+    session: &mut S,
+) -> anyhow::Result<()>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    if private_key_set.oprf_secret_key_share.is_none() {
+        let params_basics_handle = params.get_params_basics_handle();
+        private_key_set.oprf_secret_key_share = Some(
+            crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z128(
+                LweSecretKeyShare::new_from_preprocessing(
+                    params_basics_handle.lwe_dimension(),
+                    preprocessing,
+                    params_basics_handle.get_pmax(),
+                    session,
+                )
+                .await?,
+            ),
+        );
+    }
+
+    Ok(())
+}
+
 /// Generates all compressed public keys from an existing private key set.
+/// Note to developers: the order for which the public materials are generated is important,
+/// it must match the NIST spec (and also what is in tfhe-rs).
 ///
 /// Inputs:
 /// - `session`: the session that holds necessary information for networking
@@ -517,6 +561,8 @@ where
     // Then open LWE public key (compressed/seeded variant)
     // This needs to be the first step in this function because XOF ordering needs to be preserved
     let lwe_public_key = {
+        // Snapshot the XOF generator state before any mask bytes are consumed.
+        let compression_seed = mpc_encryption_rng.current_compression_seed();
         let lwe_pk_share = generate_lwe_public_key_shared(
             &params,
             mpc_encryption_rng,
@@ -526,7 +572,7 @@ where
         )
         .await?;
         lwe_pk_share
-            .open_to_tfhers_seeded_type(seed, session)
+            .open_to_tfhers_seeded_type(compression_seed, session)
             .await?
     };
 
@@ -558,7 +604,6 @@ where
                     mpc_encryption_rng,
                     session,
                     preprocessing,
-                    seed,
                 )
                 .await?,
             )
@@ -576,7 +621,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
     tracing::info!("(Party {my_role}) Generating KSK...Done");
@@ -588,7 +632,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 
@@ -603,7 +646,6 @@ where
                     mpc_encryption_rng,
                     session,
                     preprocessing,
-                    seed,
                 )
                 .await?,
             )
@@ -626,7 +668,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?;
 
@@ -640,7 +681,6 @@ where
                             mpc_encryption_rng,
                             session,
                             preprocessing,
-                            seed,
                         )
                         .await?,
                     )
@@ -670,7 +710,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -684,7 +723,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -713,7 +751,6 @@ where
                         mpc_encryption_rng,
                         session,
                         preprocessing,
-                        seed,
                     )
                     .await?,
                 ))
@@ -742,12 +779,29 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
         _ => None,
     };
+
+    let oprf_bsk = generate_compressed_oprf_bootstrap_key(
+        &private_key_set.glwe_secret_key_share,
+        private_key_set
+            .oprf_secret_key_share
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing OPRF secret key share"))?,
+        params,
+        mpc_encryption_rng,
+        preprocessing,
+        session,
+    )
+    .await?;
+    let oprf_key = Some(CompressedOprfServerKey::from_raw_parts(
+        CompressedOprfBootstrappingKey::Classic {
+            seeded_bsk: oprf_bsk,
+        },
+    ));
 
     Ok(RawCompressedPubKeySet {
         lwe_public_key,
@@ -760,6 +814,7 @@ where
         msnrk_sns,
         sns_compression_key,
         cpk_re_randomization_ksk,
+        oprf_key,
         seed,
     })
 }
@@ -844,96 +899,39 @@ where
         &mut mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await
 }
 
-/// Correctly decompresses a CompressedDecompressionKey standalone generated from the XOF
-/// and outputs a the raw elements of a [`DecompressionKey`] __BEFORE__ the fourrier transform.
-pub fn decompress_compressed_standalone_decompression_key_from_xof(
-    compressed_decompression_key: CompressedDecompressionKey,
-) -> (LweBootstrapKey<Vec<u64>>, LweCiphertextCount) {
-    let (key, count) = compressed_decompression_key.into_raw_parts();
-
-    let bsk = match key {
-        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::Classic {
-            bsk,
-            modulus_switch_noise_reduction_key: _,
-        } => bsk,
-        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::MultiBit {
-            seeded_bsk: _,
-            deterministic_execution: _,
-        } => panic!("MultiBit compressed decompression keys are not supported yet"),
-    };
-    let decompressed_key = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-        _,
-        SoftwareRandomGenerator,
-    >(bsk, DSEP_KG);
-    (decompressed_key, count)
-}
-
-/// Generates a compressed bootstrapping key (BSK) for the homomorphic PRF.
-///
-/// The BSK encrypts a randomly sampled LWE key (the PRF key) under the
-/// provided GLWE key. The function also returns each party's share of the
-/// freshly sampled LWE secret key.
-///
-/// **Security note:** the returned `LweSecretKeyShare` only exists in case
-/// it is needed to generate another key. Normally it should not be used in
-/// another protocol.
-#[instrument(name="TFHE.HomPRF-BSK-Gen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub async fn distributed_homprf_bsk_gen<
+async fn generate_compressed_oprf_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
+    Gen: ParallelByteRandomGenerator,
     Scalar: UnsignedInteger,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    oprf_lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     params: DKGParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     preprocessing: &mut P,
     session: &mut S,
-) -> anyhow::Result<(
-    SeededLweBootstrapKey<Vec<Scalar>>,
-    LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-)>
+) -> anyhow::Result<SeededLweBootstrapKey<Vec<Scalar>>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    // TODO(zama-ai/kms-internal#2980) after tfhe-rs upgrade, we should make this
-    // function into a pub(crate) and integrate it into a normal keygen as the
-    // normal keygen would include this bsk.
-
     let params_basics_handle = params.get_params_basics_handle();
-    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
-        Z,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >::new_from_seed(XofSeed::new_u128(seed, DSEP_PRF_KG));
 
-    // The LWE key share is the PRF key/seed
-    let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
-        params_basics_handle.lwe_dimension(),
-        preprocessing,
-        params_basics_handle.get_pmax(),
-        session,
-    )
-    .await?;
-
-    let bsk = generate_compressed_bootstrap_key(
+    generate_compressed_bootstrap_key(
         glwe_secret_key_share,
-        &lwe_secret_key_share,
+        oprf_lwe_secret_key_share,
         params_basics_handle.get_bk_params(),
-        &mut mpc_encryption_rng,
+        mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
-    .await?;
-
-    Ok((bsk, lwe_secret_key_share))
+    .await
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -1140,7 +1138,7 @@ pub mod tests {
         try_tfhe_rerand(&client_key, &public_key);
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f8() {
@@ -1153,7 +1151,7 @@ pub mod tests {
         keygen_params32_no_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f3() {
@@ -1182,7 +1180,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f8() {
@@ -1195,7 +1193,7 @@ pub mod tests {
         keygen_params8_no_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f3() {
@@ -1224,7 +1222,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f8() {
@@ -1237,7 +1235,7 @@ pub mod tests {
         keygen_params32_no_sns_lwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f3() {
@@ -1266,7 +1264,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f8() {
@@ -1279,7 +1277,7 @@ pub mod tests {
         keygen_params8_no_sns_lwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f3() {
@@ -1308,7 +1306,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_test_bk_sns_f8() {
@@ -1316,18 +1314,16 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn keygen_params_test_bk_sns_f4() {
         keygen_params_test_bk_sns::<4>(false).await
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn keygen_params_test_compressed_bk_sns_f4() {
         keygen_params_test_bk_sns::<4>(true).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_test_bk_sns_f3() {
@@ -1365,14 +1361,12 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn integration_keygen_params_test_bk_sns_f4() {
         integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), false).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn integration_keygen_params_test_compressed_bk_sns_f4() {
         integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), true).await
     }
@@ -1442,7 +1436,7 @@ pub mod tests {
         run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f8() {
@@ -1455,7 +1449,7 @@ pub mod tests {
         keygen_params32_with_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f3() {
@@ -1484,7 +1478,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f8() {
@@ -1497,7 +1491,7 @@ pub mod tests {
         keygen_params8_with_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f3() {
@@ -1526,7 +1520,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f8() {
@@ -1539,7 +1533,7 @@ pub mod tests {
         keygen_params_blockchain_without_sns::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f3() {
@@ -1571,7 +1565,6 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
@@ -1755,7 +1748,7 @@ pub mod tests {
             endpoints::keygen::distributed_decompression_keygen_z128,
             tfhe_internals::{
                 compression_decompression_key::CompressionPrivateKeyShares,
-                glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
+                glwe_key::GlweSecretKeyShare, test_feature::gen_uncompressed_key_set,
             },
         };
         use test_utils::{read_element, write_element};
@@ -1764,8 +1757,8 @@ pub mod tests {
         let keyset_config = KeySetConfig::DecompressionOnly;
         let mut rng = aes_prng::AesRng::from_random_seed();
         let tag = tfhe::Tag::default();
-        let keyset1 = gen_key_set(params, tag.clone(), &mut rng);
-        let keyset2 = gen_key_set(params, tag, &mut rng);
+        let keyset1 = gen_uncompressed_key_set(params, tag.clone(), &mut rng);
+        let keyset2 = gen_uncompressed_key_set(params, tag, &mut rng);
 
         let compression_key_1_poly_size = keyset1
             .get_raw_compression_client_key()
@@ -2119,7 +2112,7 @@ pub mod tests {
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
-        let (integer_server_key, _, _, _, ck, _, _, _) = pk.server_key.clone().into_raw_parts();
+        let (integer_server_key, _, _, _, ck, _, _, _, _) = pk.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
         set_server_key(pk.server_key);
@@ -2134,6 +2127,7 @@ pub mod tests {
             None,
             Some(sns_raw_private_key),
             sns_compression_sk,
+            None,
         )
         .unwrap();
 
@@ -2262,9 +2256,10 @@ pub mod tests {
             prefix_path,
         );
 
+        assert_has_dedicated_oprf_key(&pk.server_key);
         set_server_key(pk.server_key.clone());
         let (shortint_pk, tag) = {
-            let (shorint_pk, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
+            let (shorint_pk, _, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
             (shorint_pk.into_raw_parts(), tag)
         };
         for _ in 0..100 {
@@ -2274,6 +2269,7 @@ pub mod tests {
         if with_compact {
             let tfhe_sk = tfhe::ClientKey::from_raw_parts(
                 shortint_sk.into(),
+                None,
                 None,
                 None,
                 None,
@@ -2310,6 +2306,8 @@ pub mod tests {
         let small_ct: FheUint64 = expanded_encrypt(&pk.public_key, msg, 64).unwrap();
 
         assert_eq!(expected_tag, small_ct.tag());
+
+        assert_oprf_correctness::<EXTENSION_DEGREE>(prefix_path, params, num_parties, threshold);
     }
 
     ///Runs both shortint and fheuint computation
@@ -2331,6 +2329,7 @@ pub mod tests {
             prefix_path,
         );
 
+        assert_has_dedicated_oprf_key(&pk.server_key);
         set_server_key(pk.server_key.clone());
         let tag = pk.server_key.tag();
 
@@ -2348,6 +2347,7 @@ pub mod tests {
             None,
             None,
             None,
+            None,
             tag.clone(),
         );
 
@@ -2358,6 +2358,141 @@ pub mod tests {
         if with_rerand {
             try_tfhe_rerand(&tfhe_sk, &pk.public_key);
         }
+
+        assert_oprf_correctness::<EXTENSION_DEGREE>(prefix_path, params, num_parties, threshold);
+    }
+
+    fn assert_has_dedicated_oprf_key(server_key: &tfhe::ServerKey) {
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
+        assert!(
+            oprf_key.is_some(),
+            "threshold full keygen must embed a dedicated OPRF server key"
+        );
+    }
+
+    /// Reconstructs the OPRF LWE secret key from each party's persisted
+    /// `PrivateKeySet`, then verifies that the OPRF server key embedded in
+    /// `pk.server_key` agrees with it by running the encrypted PRF for several
+    /// seeds and comparing each output to the cleartext reference. Also runs a
+    /// negative check: a fresh OPRF server key built from a one-bit-flipped
+    /// version of the same LWE key must produce some mismatches against the
+    /// cleartext reference.
+    fn assert_oprf_correctness<const EXTENSION_DEGREE: usize>(
+        prefix_path: &Path,
+        params: DKGParams,
+        num_parties: usize,
+        threshold: usize,
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        use crate::tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet};
+        use crate::tfhe_internals::test_feature::assert_oprf_matches_plaintext;
+        use crate::tfhe_internals::utils::reconstruct_bit_vec;
+        use std::collections::HashMap;
+        use tfhe::shortint::oprf::{
+            AtomicPatternOprfPrivateKey,
+            CompressedOprfServerKey as ShortintCompressedOprfServerKey,
+            OprfPrivateKey as ShortintOprfPrivateKey,
+        };
+        use tfhe_csprng::seeders::Seed;
+        use threshold_types::role::Role;
+
+        let params_basics = params.get_params_basics_handle();
+        let lwe_dim = params_basics.lwe_dimension().0;
+        let ciphertext_params = params_basics.to_classic_pbs_parameters();
+        let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
+        let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
+
+        let mut oprf_shares_z128: HashMap<Role, Vec<_>> = HashMap::new();
+        for party in 1..=num_parties {
+            let role = Role::indexed_from_one(party);
+            let sk: PrivateKeySet<EXTENSION_DEGREE> =
+                read_element(prefix_path.join(format!("sk_p{party}.der"))).unwrap();
+            let z128_share = match sk
+                .oprf_secret_key_share
+                .expect("OPRF share missing in PrivateKeySet")
+            {
+                LweSecretKeyShareEnum::Z128(inner) => inner,
+                LweSecretKeyShareEnum::Z64(_) => {
+                    panic!("OPRF share unexpectedly in Z64; this helper assumes Z128 keygen")
+                }
+            };
+            oprf_shares_z128.insert(role, z128_share.data);
+        }
+        let prf_lwe_key_bits =
+            reconstruct_bit_vec::<Z128, EXTENSION_DEGREE>(oprf_shares_z128, lwe_dim, threshold);
+        let prf_lwe_sk =
+            tfhe::core_crypto::prelude::LweSecretKey::from_container(prf_lwe_key_bits.clone());
+
+        let (shortint_ck, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
+            params,
+            num_parties,
+            threshold,
+            prefix_path,
+        );
+
+        let (target_shortint_server_key, _, _, _, _, _, _, oprf_server_key, _) =
+            pk.server_key.clone().into_raw_parts();
+        let target_shortint_server_key = target_shortint_server_key.into_raw_parts();
+        let oprf_server_key = oprf_server_key
+            .expect("OPRF server key missing from pk.server_key")
+            .into_raw_parts();
+
+        #[cfg(not(feature = "slow_tests"))]
+        const NUM_SEEDS: u128 = 2;
+        #[cfg(feature = "slow_tests")]
+        const NUM_SEEDS: u128 = 50;
+
+        // Positive: encrypted PRF output must match the cleartext reference.
+        assert_oprf_matches_plaintext(
+            &shortint_ck,
+            &target_shortint_server_key,
+            &oprf_server_key,
+            &prf_lwe_sk,
+            NUM_SEEDS,
+        );
+
+        // Negative: a fresh OPRF server key built from a one-bit-flipped LWE
+        // key under the same shortint client key must disagree with the
+        // cleartext reference for at least one seed. Guarantees the BSK in
+        // `pk.server_key` actually encodes the saved OPRF private key — not
+        // some accidentally-matching key.
+        let mut wrong_lwe_key_bits = prf_lwe_key_bits;
+        wrong_lwe_key_bits[0] ^= 1;
+        let wrong_lwe_sk =
+            tfhe::core_crypto::prelude::LweSecretKey::from_container(wrong_lwe_key_bits);
+        let wrong_oprf_private_key = ShortintOprfPrivateKey::from_raw_parts(
+            AtomicPatternOprfPrivateKey::Standard(wrong_lwe_sk),
+        );
+        let wrong_oprf_server_key =
+            ShortintCompressedOprfServerKey::new(&wrong_oprf_private_key, &shortint_ck)
+                .unwrap()
+                .expand()
+                .to_fourier();
+        let mut mismatches = 0u64;
+        for s in 0u128..NUM_SEEDS {
+            let seed = Seed(s);
+            let img = wrong_oprf_server_key.generate_oblivious_pseudo_random(
+                seed,
+                random_bits_count,
+                &target_shortint_server_key,
+            );
+            let actual = shortint_ck.decrypt_message_and_carry(&img);
+            let expected = crate::tfhe_internals::test_feature::oprf_expected_plaintext(
+                &prf_lwe_sk.as_view(),
+                seed,
+                shortint_params,
+                random_bits_count,
+            );
+            if actual != expected {
+                mismatches += 1;
+            }
+        }
+        assert!(
+            mismatches > 0,
+            "expected mismatches when using the wrong (non-PRF) server key, but all {NUM_SEEDS} matched"
+        );
     }
 
     ///Read files created by [`run_dkg_and_save`] and reconstruct the secret keys
@@ -2601,6 +2736,29 @@ pub mod tests {
     /// Phase 2: keygen from the existing `PrivateKeySet` to regenerate public keys
     /// Saves the results (phase 1 private keys, phase 2 public keys) to file.
     #[cfg(feature = "slow_tests")]
+    fn assert_compressed_xof_keyset_decompression_matches_raw_parts(
+        compressed_pk: &tfhe::xof_key_set::CompressedXofKeySet,
+    ) {
+        let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+        let decompressed_keyset = FhePubKeySet {
+            public_key,
+            server_key,
+        };
+
+        let (_seed, compressed_public_key, compressed_server_key) =
+            compressed_pk.clone().into_raw_parts();
+        let decompressed_raw_parts = FhePubKeySet {
+            public_key: compressed_public_key.decompress(),
+            server_key: compressed_server_key.decompress(),
+        };
+
+        assert_eq!(
+            decompressed_keyset, decompressed_raw_parts,
+            "decompressing CompressedXofKeySet must match decompressing its raw parts individually"
+        );
+    }
+
+    #[cfg(feature = "slow_tests")]
     async fn run_dkg_from_existing_sk_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         tag: tfhe::Tag,
@@ -2659,6 +2817,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
+                assert_compressed_xof_keyset_decompression_matches_raw_parts(&compressed_pk);
                 let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 FhePubKeySet {
                     public_key,
@@ -2763,318 +2922,14 @@ pub mod tests {
     }
 
     // #[tokio::test]
-    // #[serial_test::serial]
     // #[cfg(feature = "slow_tests")]
     // async fn keygen_from_existing_private_keyset_bk_sns_f4() {
     //     keygen_from_existing_test_bk_sns::<4>(false).await
     // }
 
     #[tokio::test]
-    #[serial_test::serial]
     #[cfg(feature = "slow_tests")]
     async fn integration_compressed_keygen_from_existing_private_keyset_bk_sns_f4() {
         integration_keygen_from_existing_test_bk_sns::<4>(true).await
-    }
-
-    /// Plaintext reference for the shortint OPRF — mirrors
-    /// `oprf_compare_plain_from_seed` in tfhe-rs (shortint/oprf.rs).
-    /// Given the PRF's small LWE secret key, a seed, the shortint params, and
-    /// the `random_bits_count`, returns the expected OPRF output in
-    /// `[0, 2^random_bits_count)`.
-    #[cfg(feature = "slow_tests")]
-    fn oprf_expected_plaintext(
-        prf_lwe_sk: &tfhe::core_crypto::prelude::LweSecretKeyView<u64>,
-        seed: tfhe_csprng::seeders::Seed,
-        params: tfhe::shortint::ShortintParameterSet,
-        random_bits_count: u64,
-    ) -> u64 {
-        use tfhe::core_crypto::prelude::{
-            CiphertextModulus, LweCiphertextOwned, decrypt_lwe_ciphertext,
-        };
-
-        // --- gen_prf_input equivalent, using public tfhe-rs APIs ---
-        // 1. Seeded LWE with mask from SHAKE256 and body=0.
-        let lwe_size = params.lwe_dimension().to_lwe_size();
-        let ct_seed = tfhe::shortint::oprf::create_random_from_seed::<u64>(seed, lwe_size);
-        // 2. Modulus-switch each sample to log_modulus = log2(2 * polynomial_size).
-        let log_modulus = params
-            .polynomial_size()
-            .to_blind_rotation_input_modulus_log()
-            .0;
-        let shift = u64::BITS as usize - log_modulus;
-        let msed = |a: u64| -> u64 {
-            // round-to-nearest to 2^log_modulus then shift back to full modulus
-            let rounded = a.wrapping_add(1u64 << (shift - 1)) >> shift;
-            rounded << shift
-        };
-        // 3. Build the full-modulus LWE from the switched values.
-        let container: Vec<u64> = ct_seed
-            .get_mask()
-            .as_ref()
-            .iter()
-            .copied()
-            .map(msed)
-            .chain(std::iter::once(msed(*ct_seed.get_body().data)))
-            .collect();
-        let ct = LweCiphertextOwned::from_container(container, CiphertextModulus::new_native());
-        // 4. Decrypt under the PRF LWE sk and round to log_input_p bits.
-        let input_p = 2 * params.polynomial_size().0 as u64;
-        let log_input_p = input_p.ilog2() as usize;
-        let pt = decrypt_lwe_ciphertext(prf_lwe_sk, &ct).0;
-        let plain_prf_input = pt.wrapping_add(1u64 << (u64::BITS as usize - log_input_p - 1))
-            >> (u64::BITS as usize - log_input_p);
-
-        // --- negacyclic step function from oprf_compare_plain_from_seed ---
-        let p_prime = 1u64 << random_bits_count;
-        let output_p = 2 * params.carry_modulus().0 * params.message_modulus().0;
-        let poly_delta = 2 * params.polynomial_size().0 as u64 / p_prime;
-        let half_negacyclic_part = |x: u64| 2 * (x / poly_delta) + 1;
-        let negacyclic_part = |x: u64| -> u64 {
-            assert!(x < input_p);
-            if x < input_p / 2 {
-                half_negacyclic_part(x)
-            } else {
-                2 * output_p - half_negacyclic_part(x - input_p / 2)
-            }
-        };
-        let prf = |x: u64| -> u64 {
-            let a = (negacyclic_part(x) + p_prime - 1) % (2 * output_p);
-            assert!(a.is_multiple_of(2));
-            a / 2
-        };
-        prf(plain_prf_input)
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn homprf_bsk_gen_and_oprf_correctness_f4() {
-        use crate::tfhe_internals::lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof;
-        use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
-        use crate::tfhe_internals::test_feature::{
-            gen_key_set, keygen_all_party_shares_from_keyset,
-        };
-        use crate::tfhe_internals::utils::reconstruct_bit_vec;
-        use aes_prng::AesRng;
-        use rand::SeedableRng;
-        use std::collections::HashMap;
-        use tfhe::core_crypto::prelude::{
-            FourierLweBootstrapKey, GlweSecretKey,
-            par_convert_standard_lwe_bootstrap_key_to_fourier,
-        };
-        use tfhe::shortint::EncryptionKeyChoice;
-        use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-        use tfhe::shortint::server_key::ShortintBootstrappingKey;
-        use tfhe_csprng::generators::SoftwareRandomGenerator;
-        use tfhe_csprng::seeders::Seed;
-        use threshold_types::role::Role;
-
-        // NOTE: it is not possible to use small parameters as that doesn't work for oprf
-        let params = PARAMS_TEST_BK_SNS;
-        let num_parties = 4;
-        let threshold = 1u8;
-        let tag = tfhe::Tag::default();
-
-        // Generate centralized keys and secret-share the GLWE key.
-        let mut rng = AesRng::seed_from_u64(42);
-        let keyset = gen_key_set(params, tag.clone(), &mut rng);
-        let pk = keyset.public_keys.clone();
-        let ciphertext_params = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
-        let key_shares = keygen_all_party_shares_from_keyset::<_, 4>(
-            &keyset,
-            ciphertext_params,
-            &mut rng,
-            num_parties,
-            threshold as usize,
-        )
-        .unwrap();
-        let mut glwe_shares_map: HashMap<_, _> = key_shares
-            .into_iter()
-            .enumerate()
-            .map(|(i, ks)| {
-                let role = Role::indexed_from_one(i + 1);
-                (role, ks.glwe_secret_key_share.unsafe_cast_to_z128())
-            })
-            .collect();
-
-        let mut task = |mut session: SmallSession<ResiduePoly<Z128, 4>>, _: Option<String>| {
-            let glwe_sk_share = glwe_shares_map.remove(&session.my_role()).unwrap();
-            async move {
-                let my_role = session.my_role();
-                let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
-
-                let (seeded_bsk, prf_lwe_sk_share) =
-                    super::distributed_homprf_bsk_gen::<Z128, _, _, u64, 4>(
-                        &glwe_sk_share,
-                        params,
-                        &mut dkg_preproc,
-                        &mut session,
-                    )
-                    .await
-                    .unwrap();
-
-                (my_role, seeded_bsk, prf_lwe_sk_share, glwe_sk_share)
-            }
-        };
-
-        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_small::<_, _, ResiduePoly<Z128, 4>, 4>(
-            num_parties,
-            threshold,
-            None,
-            NetworkMode::Async,
-            Some(delay_vec),
-            &mut task,
-            None,
-        )
-        .await;
-
-        // Sanity: all parties produced the same seeded BSK.
-        let bsk_ref = results[0].1.clone();
-        for (_role, bsk, _lwe_share, _glwe_share) in &results[1..] {
-            assert_eq!(bsk, &bsk_ref);
-        }
-
-        // Collect prf-LWE-sk shares and GLWE-sk shares from all parties.
-        let mut prf_lwe_shares: HashMap<Role, Vec<Share<ResiduePoly<Z128, 4>>>> = HashMap::new();
-        let mut glwe_shares: HashMap<Role, Vec<Share<ResiduePoly<Z128, 4>>>> = HashMap::new();
-        for (role, _bsk, prf_lwe_share, glwe_share) in &results {
-            prf_lwe_shares.insert(*role, prf_lwe_share.data.clone());
-            glwe_shares.insert(*role, glwe_share.data.clone());
-        }
-
-        let params_basics = params.get_params_basics_handle();
-        let lwe_dim = params_basics.lwe_dimension().0;
-        let glwe_total = params_basics.glwe_sk_num_bits();
-        let polynomial_size = params_basics.polynomial_size();
-
-        // PARAMS_TEST_BK_SNS uses KS-PBS order — the OPRF output is post-PBS,
-        // encrypted under the big LWE key (extracted from GLWE). If this ever
-        // changes, the decryption path below (which only uses the GLWE-derived
-        // key) becomes invalid.
-        assert_eq!(
-            ciphertext_params.encryption_key_choice,
-            EncryptionKeyChoice::Big,
-            "this test requires KS-PBS order (encryption_key_choice=Big)"
-        );
-
-        // Reconstruct the PRF's small LWE secret key.
-        let prf_lwe_key_bits =
-            reconstruct_bit_vec::<Z128, 4>(prf_lwe_shares, lwe_dim, threshold as usize);
-        // Clone and flip one bit to create a deliberately wrong LWE key for the
-        // negative test below.
-        let mut wrong_lwe_key_bits = prf_lwe_key_bits.clone();
-        wrong_lwe_key_bits[0] ^= 1;
-        let reconstructed_prf_lwe_sk =
-            tfhe::core_crypto::prelude::LweSecretKey::from_container(prf_lwe_key_bits);
-
-        // Reconstruct the GLWE secret key.
-        let glwe_key_bits =
-            reconstruct_bit_vec::<Z128, 4>(glwe_shares, glwe_total, threshold as usize);
-        let reconstructed_glwe_sk = GlweSecretKey::from_container(glwe_key_bits, polynomial_size);
-
-        // Decompress the seeded PRF BSK using the PRF-specific XOF DSEP.
-        let decompressed_prf_bsk = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-            u64,
-            SoftwareRandomGenerator,
-        >(bsk_ref, super::DSEP_PRF_KG);
-
-        // Convert to Fourier form for the shortint server key.
-        let mut fourier_prf_bsk = FourierLweBootstrapKey::new(
-            decompressed_prf_bsk.input_lwe_dimension(),
-            decompressed_prf_bsk.glwe_size(),
-            decompressed_prf_bsk.polynomial_size(),
-            decompressed_prf_bsk.decomposition_base_log(),
-            decompressed_prf_bsk.decomposition_level_count(),
-        );
-        par_convert_standard_lwe_bootstrap_key_to_fourier(
-            &decompressed_prf_bsk,
-            &mut fourier_prf_bsk,
-        );
-
-        // Take the shortint ServerKey from the DKG output and replace the
-        // bootstrapping key with our distributed PRF BSK. The KSK is left
-        // intact — `generate_oblivious_pseudo_random` does not use it in
-        // KS-PBS order.
-        let mut shortint_server_key = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
-        match &mut shortint_server_key.atomic_pattern {
-            AtomicPatternServerKey::Standard(sap) => match &mut sap.bootstrapping_key {
-                ShortintBootstrappingKey::Classic { bsk, .. } => {
-                    *bsk = fourier_prf_bsk;
-                }
-                _ => panic!("expected Classic bootstrap key"),
-            },
-            _ => panic!("expected Standard atomic pattern server key"),
-        }
-
-        // Build a shortint ClientKey using the reconstructed GLWE sk. The
-        // small LWE sk slot is unused for OPRF decryption in KS-PBS order, so
-        // a zero-filled placeholder of the correct dimension suffices.
-        let wrong_glwe_sk = reconstructed_glwe_sk.clone();
-        let dummy_small_lwe_sk =
-            tfhe::core_crypto::prelude::LweSecretKey::from_container(vec![0u64; lwe_dim]);
-        let sck = StandardAtomicPatternClientKey::from_raw_parts(
-            reconstructed_glwe_sk,
-            dummy_small_lwe_sk,
-            PBSParameters::PBS(ciphertext_params),
-            None,
-        );
-        let shortint_ck = tfhe::shortint::ClientKey {
-            atomic_pattern: AtomicPatternClientKey::Standard(sck),
-        };
-
-        // Run the homomorphic PRF for a range of seeds and compare each
-        // decrypted output to the plaintext reference.
-        let random_bits_count: u64 = ciphertext_params.message_modulus_log().into();
-        let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
-        for s in 0u128..50u128 {
-            let seed = Seed(s);
-            let img = shortint_server_key.generate_oblivious_pseudo_random(seed, random_bits_count);
-            let actual = shortint_ck.decrypt_message_and_carry(&img);
-            let expected = oprf_expected_plaintext(
-                &reconstructed_prf_lwe_sk.as_view(),
-                seed,
-                shortint_params,
-                random_bits_count,
-            );
-            assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
-        }
-
-        // Negative test: construct a server key from the PRF LWE key with one
-        // bit flipped. This guarantees the BSK embeds a different key than the
-        // actual PRF key, eliminating any chance of accidental collision.
-        let wrong_lwe_sk =
-            tfhe::core_crypto::prelude::LweSecretKey::from_container(wrong_lwe_key_bits);
-        let wrong_sck = StandardAtomicPatternClientKey::from_raw_parts(
-            wrong_glwe_sk,
-            wrong_lwe_sk,
-            PBSParameters::PBS(ciphertext_params),
-            None,
-        );
-        let wrong_shortint_ck = tfhe::shortint::ClientKey {
-            atomic_pattern: AtomicPatternClientKey::Standard(wrong_sck),
-        };
-        let wrong_server_key = tfhe::shortint::ServerKey::new(&wrong_shortint_ck);
-        let mut mismatches = 0u64;
-        for s in 0u128..50u128 {
-            let seed = Seed(s);
-            let img = wrong_server_key.generate_oblivious_pseudo_random(seed, random_bits_count);
-            let actual = shortint_ck.decrypt_message_and_carry(&img);
-            let expected = oprf_expected_plaintext(
-                &reconstructed_prf_lwe_sk.as_view(),
-                seed,
-                shortint_params,
-                random_bits_count,
-            );
-            if actual != expected {
-                mismatches += 1;
-            }
-        }
-        assert!(
-            mismatches > 0,
-            "expected mismatches when using the wrong (non-PRF) server key, but all 50 matched"
-        );
     }
 }

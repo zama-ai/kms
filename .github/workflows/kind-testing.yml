@@ -220,13 +220,10 @@ jobs:
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup cargo nextest and grcov
+      - name: Setup cargo nextest
         if: matrix.cargo-check == false
         run: |
-          # Force reinstall nextest to ensure we have the required version (0.9.124+)
-          # The cache may contain an older version that doesn't support test-groups
-          cargo install cargo-nextest@0.9.124 --locked --force
-          cargo install grcov --locked --force
+          cargo install cargo-nextest@0.9.133 --locked --force
           # Verify the installed version
           cargo nextest --version
 

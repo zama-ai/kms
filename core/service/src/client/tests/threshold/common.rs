@@ -2,8 +2,8 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT,
+    PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::file_backup_vault;
@@ -144,6 +144,7 @@ async fn threshold_handles_w_vaults(
 /// responses).
 /// This provides a setup _without_ custodian backup. Instead the backup vaults are just realized using
 /// an uncrypted file storage.
+#[cfg(feature = "slow_tests")]
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,
@@ -238,7 +239,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
 // module (kms_lib::testing). They provide simplified interfaces for common
 // threshold operations without requiring the full test setup infrastructure.
 
-/// Helper to generate threshold key using insecure mode (for isolated tests)
+/// Helper to generate threshold key using insecure mode.
 ///
 /// This function sends insecure_key_gen requests to all clients and waits for
 /// key generation to complete. It's designed for use with ThresholdTestEnv.
@@ -252,7 +253,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "insecure")]
-pub async fn threshold_insecure_key_gen_isolated(
+pub async fn threshold_insecure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
@@ -262,6 +263,7 @@ pub async fn threshold_insecure_key_gen_isolated(
         Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
     )>,
 > {
+    use crate::client::tests::common::default_isolated_extra_data;
     use crate::dummy_domain;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::testing::helpers::domain_to_msg;
@@ -281,9 +283,9 @@ pub async fn threshold_insecure_key_gen_isolated(
             domain: Some(domain_msg.clone()),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: None,
-            epoch_id: None,
-            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            extra_data: default_isolated_extra_data(),
         };
         keygen_tasks.spawn(async move {
             cur_client
@@ -315,7 +317,7 @@ pub async fn threshold_insecure_key_gen_isolated(
     Ok(responses)
 }
 
-/// Helper to generate threshold key using secure mode with preprocessing (for isolated tests)
+/// Helper to generate threshold key using secure mode with preprocessing.
 ///
 /// This function runs the full preprocessing + key generation flow using secure mode.
 /// It's designed for use with ThresholdTestEnv when PRSS is enabled.
@@ -331,7 +333,7 @@ pub async fn threshold_insecure_key_gen_isolated(
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
 #[allow(clippy::too_many_arguments)]
-pub async fn threshold_key_gen_secure_isolated(
+pub async fn threshold_key_gen_secure(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,
@@ -346,12 +348,21 @@ pub async fn threshold_key_gen_secure_isolated(
         Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
     )>,
 > {
+    use crate::client::tests::common::default_isolated_extra_data;
     use crate::dummy_domain;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
     use tokio::task::JoinSet;
 
+    // Note: Isolated callers always use the default context/epoch; if that ever changes
+    // we'd need to resolve `context_id` / `epoch_id` to concrete ids and rebuild
+    // extra_data via `make_extra_data` so the signed bytes stay consistent.
+    assert!(
+        context_id.is_none() && epoch_id.is_none(),
+        "threshold_key_gen_secure_isolated only supports default context/epoch ids"
+    );
     let domain_msg = domain_to_msg(&dummy_domain());
+    let extra_data = default_isolated_extra_data();
 
     // Step 1: Run preprocessing
     let mut preproc_tasks = JoinSet::new();
@@ -364,6 +375,7 @@ pub async fn threshold_key_gen_secure_isolated(
             keyset_config,
             context_id: context_id.clone(),
             epoch_id: epoch_id.clone(),
+            extra_data: extra_data.clone(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -404,7 +416,7 @@ pub async fn threshold_key_gen_secure_isolated(
             keyset_added_info: keyset_added_info.clone(),
             context_id: context_id.clone(),
             epoch_id: epoch_id.clone(),
-            extra_data: vec![],
+            extra_data: extra_data.clone(),
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });

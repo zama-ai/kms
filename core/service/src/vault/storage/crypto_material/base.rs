@@ -7,6 +7,7 @@ use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::util::meta_store::{
     ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
+    update_err_req_in_meta_store,
 };
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
@@ -203,8 +204,8 @@ where
     /// Check if FHE keys exist (for central server).
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
-    /// This checks for both standard keys (PublicKey) and compressed keys (CompressedXofKeySet),
-    /// since compressed keygen only stores CompressedXofKeySet publicly.
+    /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
+    /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
     pub async fn fhe_keys_exist(
         &self,
         key_id: &RequestId,
@@ -225,11 +226,14 @@ where
         if standard {
             return Ok(true);
         }
-        // Fallback: check for compressed keys
+        // Fallback: check for the current compressed layout.
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &[PubDataType::CompressedXofKeySet.to_string()],
+            &[
+                PubDataType::CompressedXofKeySet.to_string(),
+                PubDataType::PublicKey.to_string(),
+            ],
             &priv_types,
         )
         .await
@@ -264,6 +268,7 @@ where
         private_keys_or_shares: T,
         private_keys_or_shares_type: PrivDataType,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         fhe_keys_cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
     ) -> anyhow::Result<()>
@@ -313,8 +318,8 @@ where
             };
 
             let f2 = async {
-                // Store compressed xof key set
-                let server_result = store_versioned_at_request_id(
+                // Store compressed xof key set and the compact public key derived from it.
+                let keyset_result = store_versioned_at_request_id(
                     &mut (*pub_storage),
                     key_id,
                     compressed_keyset,
@@ -322,7 +327,7 @@ where
                 )
                 .await;
 
-                if let Err(e) = &server_result {
+                if let Err(e) = &keyset_result {
                     tracing::error!(
                         "Failed to store compressed server key for request {}: {}",
                         key_id,
@@ -337,7 +342,28 @@ where
                         true,
                     );
                 }
-                server_result.is_ok()
+
+                let pk_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    compact_public_key,
+                    &PubDataType::PublicKey.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &pk_result {
+                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::PublicKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+
+                keyset_result.is_ok() && pk_result.is_ok()
             };
             tokio::join!(f1, f2)
         };
@@ -412,7 +438,20 @@ where
             if let Err(e) = &server_key_result {
                 tracing::warn!("Failed to delete server key for request {}: {}", req_id, e);
             }
-            pk_result.is_err() || server_key_result.is_err()
+            let compressed_keyset_result = delete_at_request_id(
+                &mut (*pub_storage),
+                req_id,
+                &PubDataType::CompressedXofKeySet.to_string(),
+            )
+            .await;
+            if let Err(e) = &compressed_keyset_result {
+                tracing::warn!(
+                    "Failed to delete compressed xof keyset for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            pk_result.is_err() || server_key_result.is_err() || compressed_keyset_result.is_err()
         };
         let f2 = async {
             let result = match kms_type {
@@ -467,17 +506,68 @@ where
         }
     }
 
-    /// Write the CRS to the storage backend.
-    /// On failure, the meta_store is used to purge dangling data.
-    /// On success, the meta_store is NOT updated; the caller is responsible for that.
-    /// Returns `true` if the write succeeded, `false` if any sub-operation failed.
-    pub(crate) async fn inner_write_crs<T: Clone>(
+    /// Write the CRS to the storage backend as well as the cache,
+    /// and update the [meta_store] to "Done" if the procedure is successful.
+    /// In case of an error, update the meta-store with the relevant error information and storage data is purged.
+    ///
+    /// When calling this function more than once, the same [meta_store]
+    /// must be used, otherwise the storage state may become inconsistent.
+    pub async fn write_crs_with_meta_store(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<T>>>,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
+    ) -> anyhow::Result<()> {
+        ensure_meta_store_request_pending(&meta_store, crs_id).await?;
+        let storage_ok = self
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info.clone())
+            .await
+            && update_ok_req_in_meta_store(
+                &mut meta_store.write().await,
+                crs_id,
+                crs_info,
+                op_metric_tag,
+            );
+        if !storage_ok {
+            let mut guarded_meta_store = meta_store.write().await;
+            if should_purge_after_meta_update_failure(&guarded_meta_store, crs_id) {
+                let purge_res = self.purge_crs_material(crs_id, epoch_id).await;
+                if update_err_req_in_meta_store(
+                    &mut guarded_meta_store,
+                    crs_id,
+                    format!(
+                        "Failed to write CRS to storage, purge after failure {}",
+                        if purge_res { "succeeded" } else { "failed" }
+                    ),
+                    op_metric_tag,
+                ) {
+                    anyhow::bail!(
+                        "Failed to write CRS {crs_id} to storage, but successfully purged dangling CRS material and updated meta store"
+                    );
+                } else {
+                    anyhow::bail!(
+                        "Failed to write CRS {crs_id} to storage, and failed to update meta store after purging dangling CRS material"
+                    );
+                }
+            }
+            anyhow::bail!(
+                "Failed to write CRS {crs_id} to storage, and purge after failure is not needed"
+            );
+        }
+        Ok(())
+    }
+
+    /// Write the CRS to the storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    pub(crate) async fn inner_write_crs(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: CrsGenMetadata,
     ) -> bool {
         let (r1, r2) = {
             // Enforce locking order for internal types
@@ -522,76 +612,12 @@ where
             tokio::join!(f1, f2)
         };
 
-        if !(r1 && r2) {
-            // Some store op failed, we need to purge any potentially
-            // dangling data and update the meta store accordingly.
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might
-            // be because the data did not get created
-            // In any case, we can't do much.
-            let guarded_meta_store = meta_store.write().await;
-            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
-                .await;
-            return false;
-        }
-        true
-    }
-
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [`MetaStore`] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    ///
-    /// Returns `Ok(())` on success, or `Err` if storage writes or the meta-store update failed.
-    pub async fn write_crs_with_meta_store(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        ensure_meta_store_request_pending(&meta_store, crs_id).await?;
-
-        let info = crs_info.clone();
-        let storage_ok = self
-            .inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
-            .await;
-        if !storage_ok {
-            anyhow::bail!("Storage write failed for CRS {crs_id}");
-        }
-        let mut guarded_meta_store = meta_store.write().await;
-        let meta_ok =
-            update_ok_req_in_meta_store(&mut guarded_meta_store, crs_id, info, op_metric_tag);
-        if !meta_ok {
-            self.handle_crs_meta_update_failure(crs_id, epoch_id, guarded_meta_store)
-                .await;
-            anyhow::bail!("Error while updating meta store for {crs_id}");
-        }
-        Ok(())
-    }
-
-    async fn handle_crs_meta_update_failure(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
-    ) {
-        if should_purge_after_meta_update_failure(&guarded_meta_store, crs_id) {
-            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
-                .await;
-        }
+        r1 && r2
     }
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    pub async fn purge_crs_material<T: Clone>(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
-    ) {
+    /// Returns true if the purge is successful, false otherwise.
+    pub async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
         let mut priv_storage = self.private_storage.lock().await;
@@ -630,30 +656,10 @@ where
         let (r1, r2) = tokio::join!(f1, f2);
         if r1 || r2 {
             tracing::error!("Failed to delete crs material for request {}", req_id);
+            false
         } else {
             tracing::info!("Deleted all crs material for request {}", req_id);
-        }
-        // We cannot do much if updating the meta store fails at this point,
-        // so just log an error.
-        let meta_update_result = guarded_meta_store.update(
-            req_id,
-            Err(format!(
-                "Failed to store CRS data to public storage for ID {req_id}"
-            )),
-        );
-        let r3 = if let Err(e) = &meta_update_result {
-            tracing::error!("Removing CRS from meta store failed with error: {}", e);
             true
-        } else {
-            false
-        };
-
-        // We cannot do much if updating CRS cache fails at this point,
-        // so just log an error.
-        if r3 {
-            tracing::error!("Failed to remove crs cached data for request {}", req_id);
-        } else {
-            tracing::info!("Removed all crs cached data for request {}", req_id);
         }
     }
 
@@ -905,21 +911,6 @@ where
         req_id: &RequestId,
     ) -> anyhow::Result<CompactPublicKey> {
         Self::read_cloned_crypto_material::<CompactPublicKey, _>(
-            Arc::new(RwLock::new(HashMap::new())),
-            req_id,
-            self.public_storage.clone(),
-        )
-        .await
-    }
-
-    /// Read the server key
-    /// from the public storage backend.
-    #[cfg(test)]
-    pub(crate) async fn read_cloned_server_key(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<tfhe::ServerKey> {
-        Self::read_cloned_crypto_material::<tfhe::ServerKey, _>(
             Arc::new(RwLock::new(HashMap::new())),
             req_id,
             self.public_storage.clone(),

@@ -3,7 +3,6 @@ cfg_if::cfg_if! {
         use crate::backup::custodian::Custodian;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::common::standard_keygen_config;
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -31,8 +30,11 @@ cfg_if::cfg_if! {
 use crate::backup::BackupCiphertext;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
+#[cfg(feature = "insecure")]
+use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::DEFAULT_EPOCH_ID;
+#[cfg(feature = "insecure")]
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     SIGNING_KEY_ID,
@@ -51,7 +53,6 @@ use alloy_primitives::Address;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
-use serial_test::serial;
 use std::collections::HashMap;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -149,7 +150,6 @@ impl ThresholdBackupTestEnv {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_auto_update_backups_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     auto_update_backup(custodians, threshold).await;
 }
@@ -198,7 +198,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     backup_after_crs(custodians, threshold).await;
 }
@@ -316,7 +315,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     decrypt_after_recovery(custodians, threshold).await;
 }
@@ -338,7 +336,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .unwrap();
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -399,7 +397,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         1,
         env.test_path(),
-        keyset_config.is_compressed(),
+        !keyset_config.is_compressed(),
     )
     .await;
 }
@@ -408,7 +406,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 /// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
 #[cfg(feature = "insecure")]
 #[tokio::test]
-#[serial]
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
 }
@@ -416,7 +413,7 @@ async fn test_decrypt_after_recovery_threshold_negative() {
 #[cfg(feature = "insecure")]
 fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecoveryRequest)>) {
     // Change a bit in two of the custodians contribution to the recover requests to make them invalid
-    for (_cur_op_idx, (_, cur_payload)) in cus_out.iter_mut() {
+    for (_, cur_payload) in cus_out.values_mut() {
         // First custodian 1
         cur_payload
             .custodian_recovery_outputs
@@ -487,7 +484,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 /// Test that PRSS data (PrssSetupCombined) is present in the custodian backup vault
 /// after server startup with `ensure_default_prss: true`.
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_prss_in_custodian_backup_threshold() {
     let mut env =
         ThresholdBackupTestEnv::new("test_prss_in_custodian_backup_threshold", 3, 1).await;
@@ -518,14 +514,13 @@ async fn test_prss_in_custodian_backup_threshold() {
 /// immediately after key generation (not just after recovery).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_keygen_backup_presence_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence_threshold", 3, 1).await;
     let req_key_id: RequestId =
         derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -567,7 +562,6 @@ async fn test_keygen_backup_presence_threshold() {
 /// results in re-encrypted backup entries (different ciphertexts).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_custodian_reencryption_with_existing_data_threshold() {
     // env already creates the first custodian context (env.req_new_cus)
     let mut env = ThresholdBackupTestEnv::new("test_custodian_reencryption_threshold", 3, 1).await;
@@ -577,7 +571,7 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
         derive_request_id("test_custodian_reencryption_threshold_key").unwrap();
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -646,7 +640,6 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
 /// being backed up in the custodian backup vault (threshold mode).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_mpc_context_backup_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_mpc_context_backup_threshold", 3, 1).await;
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
@@ -699,7 +692,7 @@ async fn test_mpc_context_backup_threshold() {
             .new_mpc_context_request(new_context)
             .unwrap();
         let mut req_tasks = JoinSet::new();
-        for (_, client) in env.kms_clients().iter() {
+        for client in env.kms_clients().values() {
             let req_clone = req.clone();
             let mut client = client.clone();
             req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
@@ -737,7 +730,6 @@ async fn test_mpc_context_backup_threshold() {
 /// after `store_reshared_keys` completes.
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_backup_after_reshare_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_backup_after_reshare_threshold", 3, 1).await;
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
@@ -749,7 +741,7 @@ async fn test_backup_after_reshare_threshold() {
         .into();
 
     // Generate a key (so we have material to reshare)
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let (keyset, _) = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -765,7 +757,7 @@ async fn test_backup_after_reshare_threshold() {
     .await;
 
     // Compute key digests needed for the reshare request
-    let (_, public_key, server_key) = keyset.get_standard();
+    let (_, public_key, server_key) = keyset.get_uncompressed();
     let server_key_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
     let public_key_digest =
@@ -839,7 +831,7 @@ async fn test_backup_after_reshare_threshold() {
 
     // Execute the reshare on all parties
     let mut tasks = JoinSet::new();
-    for (_, client) in env.kms_clients().iter() {
+    for client in env.kms_clients().values() {
         let req = epoch_request.clone();
         let mut client = client.clone();
         tasks.spawn(async move { client.new_mpc_epoch(tonic::Request::new(req)).await });
@@ -850,7 +842,7 @@ async fn test_backup_after_reshare_threshold() {
 
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
-    for (_, client) in env.kms_clients().iter() {
+    for client in env.kms_clients().values() {
         let mut client = client.clone();
         let req_id = new_epoch_req_id;
         let mut ctr = 0_usize;
@@ -1009,7 +1001,7 @@ async fn run_custodian_backup_recovery(
 ) -> Vec<Empty> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
-    for (_addr, (client_id, req)) in reqs.iter() {
+    for (client_id, req) in reqs.values() {
         let mut cur_client = kms_clients.get(client_id).unwrap().clone();
         let req_clone = req.clone();
         tasks_gen.spawn(async move {

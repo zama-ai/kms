@@ -258,6 +258,13 @@ jobs:
     name: common-nitro-enclave/sign-image
     runs-on: 'ubuntu-latest'
     steps:
+      # docker-login below is a local composite action under .github/actions/,
+      # so the repo must be on disk before it is referenced.
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
         uses: ./.github/actions/docker-login

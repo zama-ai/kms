@@ -1,6 +1,4 @@
 use crate::client::client_wasm::{Client, ServerIdentities};
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::tests::threshold::common::threshold_handles;
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
@@ -19,7 +17,6 @@ use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 #[cfg(feature = "wasm_tests")]
 use crate::util::file_handling::write_element;
-#[cfg(feature = "wasm_tests")]
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -31,7 +28,6 @@ use kms_grpc::RequestId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-use serial_test::serial;
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
@@ -46,7 +42,6 @@ use tokio::task::JoinSet;
 #[case(false, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_user_decryption_threshold_nightly(
     #[case] secure: bool,
     #[case] pt: TestingPlaintext,
@@ -82,7 +77,6 @@ async fn test_user_decryption_threshold_nightly(
 #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_user_decryption_threshold(
     #[case] secure: bool,
     #[case] pt: TestingPlaintext,
@@ -113,7 +107,6 @@ async fn test_user_decryption_threshold(
 #[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(1)])]
 #[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(4)])]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_user_decryption_threshold_malicious(
     #[case] pt: TestingPlaintext,
     #[case] key_id: &RequestId,
@@ -139,7 +132,6 @@ async fn test_user_decryption_threshold_malicious(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 #[should_panic]
 async fn test_user_decryption_threshold_malicious_failure() {
     // should panic because the malicious set is too big
@@ -168,7 +160,6 @@ async fn test_user_decryption_threshold_malicious_failure() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 #[should_panic]
 async fn test_user_decryption_threshold_all_malicious_failure() {
     // should panic because the malicious set is too big
@@ -200,7 +191,6 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
 #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_user_decryption_threshold_precompute_sns(
     #[case] secure: bool,
     #[case] amount_parties: usize,
@@ -231,7 +221,6 @@ async fn test_user_decryption_threshold_precompute_sns(
 #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
 #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_user_decryption_threshold_and_write_transcript(
     #[case] secure: bool,
     #[case] amount_parties: usize,
@@ -261,7 +250,6 @@ async fn test_user_decryption_threshold_and_write_transcript(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_user_decryption_threshold_and_write_transcript(
     #[case] msg: TestingPlaintext,
     #[case] amount_parties: usize,
@@ -292,7 +280,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
 #[case(TestingPlaintext::Bool(true), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_user_decryption_threshold(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -323,7 +310,6 @@ async fn default_user_decryption_threshold(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_user_decryption_threshold_precompute_sns(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -354,7 +340,6 @@ async fn default_user_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
 async fn default_user_decryption_threshold_with_crash(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -401,12 +386,44 @@ pub(crate) async fn user_decryption_threshold(
     malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
 ) {
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) =
-        threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
+
+    // Spec: pre-gen FHE keys for `key_id` plus signing + PRSS. Material
+    // type follows the DKG params.
+    let spec = {
+        let mut s = if dkg_params == TEST_PARAM {
+            TestMaterialSpec::threshold_basic(amount_parties)
+        } else {
+            TestMaterialSpec::threshold_default(amount_parties)
+        };
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(format!("user_decryption_threshold_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
+
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-        None,
+        Some(&material_path),
         msg,
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
@@ -574,7 +591,7 @@ pub(crate) async fn user_decryption_threshold(
         }
     }
 
-    let server_private_keys = get_server_private_keys(amount_parties).await;
+    let server_private_keys = get_server_private_keys(amount_parties, &material_path).await;
 
     process_batch_threshold_user_decryption(
         &mut internal_client,
@@ -711,11 +728,16 @@ async fn process_batch_threshold_user_decryption(
     }
 }
 
-async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateSigKey> {
+async fn get_server_private_keys(
+    amount_parties: usize,
+    material_path: &std::path::Path,
+) -> HashMap<u32, PrivateSigKey> {
     let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut server_private_keys = HashMap::new();
     for (i, prefix) in storage_prefixes.iter().enumerate() {
-        let priv_storage = FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap();
+        // Read from the per-test isolated material path populated by the builder.
+        let priv_storage =
+            FileStorage::new(Some(material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
         let sk = get_core_signing_key(&priv_storage)
             .await
             .inspect_err(|e| {

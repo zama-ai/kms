@@ -4,7 +4,7 @@
 //! This mimics the old bincode v1 API and thus can be used as a drop-in replacement for the existing codebase.
 
 // Setting the limit to 2GB as no network message should ever be bigger than this
-// (i.e. matches the MAX_EN_DECODE_MESSAGE_SIZE constant in core/threshold)
+// (i.e. matches the MAX_EN_DECODE_MESSAGE_SIZE constant in core/threshold-networking)
 pub const BINCODE_SMALL_DESER_SIZE_LIMIT: usize = 1024 * 1024 * 1024 * 2;
 
 /// Wrapper around bincode::serde::encode_to_vec that uses the legacy config

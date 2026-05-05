@@ -11,14 +11,11 @@ use kms_grpc::{
     identifiers::EpochId,
     rpc_types::{KMSType, PrivDataType, PubDataType},
 };
-use tfhe::{
-    integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs,
-};
+use tfhe::{integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet};
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
-    engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
+    engine::base::{KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
         Vault,
@@ -59,25 +56,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
-    }
-
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
-            .await
     }
 
     pub async fn write_decompression_key_with_meta_store(
@@ -222,6 +200,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         key_info: KmsFheKeyHandles,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
         self.inner
@@ -231,6 +210,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 key_info,
                 PrivDataType::FhePrivateKey,
                 compressed_keyset,
+                compact_public_key,
                 meta_store,
                 Arc::clone(&self.fhe_keys),
             )

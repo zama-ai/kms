@@ -1,5 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
+use crate::testing::setup::CentralizedTestEnv;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
@@ -7,9 +8,10 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::base::{DSEP_PUBDATA_CRS, derive_request_id},
-    util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
+    util::rate_limiter::RateLimiterConfig,
     vault::storage::StorageReader,
 };
+use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{
@@ -17,7 +19,6 @@ use kms_grpc::{
     kms::v1::{Empty, FheParameter},
     rpc_types::PubDataType,
 };
-use serial_test::serial;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
@@ -25,46 +26,62 @@ use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_crs_gen_manual() {
+async fn test_crs_gen_manual() -> Result<()> {
     let crs_req_id = derive_request_id("test_crs_gen_manual").unwrap();
-    // Delete potentially old data
-    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // TEST_PARAM uses V1 CRS
-    crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), None).await;
+    crs_gen_centralized_manual(
+        &TEST_PARAM,
+        &crs_req_id,
+        "test_crs_gen_manual",
+        Some(FheParameter::Test),
+    )
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_crs_gen_centralized() {
+async fn test_crs_gen_centralized() -> Result<()> {
     let crs_req_id = derive_request_id("test_crs_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // TEST_PARAM uses V1 CRS
-    crs_gen_centralized(&crs_req_id, FheParameter::Test, false, None).await;
+    crs_gen_centralized(
+        &crs_req_id,
+        "test_crs_gen_centralized",
+        FheParameter::Test,
+        false,
+    )
+    .await
 }
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_crs_gen_centralized() {
+async fn test_insecure_crs_gen_centralized() -> Result<()> {
     let crs_req_id = derive_request_id("test_insecure_crs_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // TEST_PARAM uses V1 CRS
-    crs_gen_centralized(&crs_req_id, FheParameter::Test, true, None).await;
+    crs_gen_centralized(
+        &crs_req_id,
+        "test_insecure_crs_gen_centralized",
+        FheParameter::Test,
+        true,
+    )
+    .await
 }
 
 /// test centralized crs generation and do all the reading, processing and verification manually
 async fn crs_gen_centralized_manual(
     dkg_params: &DKGParams,
     request_id: &RequestId,
+    test_name: &str,
     params: Option<FheParameter>,
-    test_path: Option<&Path>,
-) {
+) -> Result<()> {
+    // TODO(dp): remove this?
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (kms_server, mut kms_client, internal_client) =
-        crate::client::test_tools::centralized_handles(dkg_params, None).await;
+    let env = CentralizedTestEnv::builder()
+        .with_test_name(test_name)
+        .with_backup_vault()
+        .build()
+        .await?;
+    let internal_client = env.create_internal_client(dkg_params).await?;
+    let (kms_server, mut kms_client, material_path, _guard) = env.into_parts();
+    let test_path = Some(material_path.as_path());
 
     let max_num_bits = if params.unwrap() == FheParameter::Test {
         Some(1)
@@ -125,8 +142,7 @@ async fn crs_gen_centralized_manual(
                 crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
                 maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
                 crsDigest: actual_digest.to_vec().into(),
-                // TODO: reenable for RFC005
-                // extraData: vec![].into(),
+                extraData: ceremony_req.extra_data.clone().into(),
             },
             &domain,
             &resp.external_signature,
@@ -134,15 +150,16 @@ async fn crs_gen_centralized_manual(
         .unwrap();
 
     kms_server.assert_shutdown().await;
+    Ok(())
 }
 
 /// test centralized crs generation via client interface
 pub async fn crs_gen_centralized(
     crs_req_id: &RequestId,
+    test_name: &str,
     params: FheParameter,
     insecure: bool,
-    test_path: Option<&Path>,
-) {
+) -> Result<()> {
     let dkg_param: WrappedDKGParams = params.into();
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
@@ -154,18 +171,25 @@ pub async fn crs_gen_centralized(
         new_epoch: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (kms_server, mut kms_client, internal_client) =
-        crate::client::test_tools::centralized_handles(&dkg_param, Some(rate_limiter_conf)).await;
+    let env = CentralizedTestEnv::builder()
+        .with_test_name(test_name)
+        .with_backup_vault()
+        .with_rate_limiter(rate_limiter_conf)
+        .build()
+        .await?;
+    let internal_client = env.create_internal_client(&dkg_param).await?;
+    let (kms_server, mut kms_client, material_path, _guard) = env.into_parts();
     run_crs_centralized(
         &mut kms_client,
         &internal_client,
         crs_req_id,
         params,
         insecure,
-        test_path,
+        Some(material_path.as_path()),
     )
     .await;
     kms_server.assert_shutdown().await;
+    Ok(())
 }
 
 pub(crate) async fn run_crs_centralized(
@@ -219,7 +243,12 @@ pub(crate) async fn run_crs_centralized(
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let pp = internal_client
-        .process_get_crs_resp(&inner_resp, &domain, vec![], &pub_storage)
+        .process_get_crs_resp(
+            &inner_resp,
+            &domain,
+            gen_req.extra_data.clone(),
+            &pub_storage,
+        )
         .await
         .unwrap()
         .unwrap();

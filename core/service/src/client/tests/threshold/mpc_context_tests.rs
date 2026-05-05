@@ -7,17 +7,15 @@ use threshold_execution::{
 use tokio::task::JoinSet;
 
 use crate::{
-    client::tests::threshold::{
-        common::threshold_handles,
-        public_decryption_tests::{
-            run_decryption_threshold, run_decryption_threshold_optionally_fail,
-        },
+    client::tests::threshold::public_decryption_tests::{
+        run_decryption_threshold, run_decryption_threshold_optionally_fail,
     },
     consts::{
         DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
     cryptography::signatures::PublicSigKey,
+    testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
         rate_limiter::RateLimiterConfig,
@@ -28,7 +26,6 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial]
 async fn test_context_switch_4p() {
     do_context_switch(TEST_PARAM, 4, None).await;
 }
@@ -54,14 +51,31 @@ async fn do_context_switch(
         keygen: 1,
         new_epoch: 1,
     };
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        dkg_params,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        decryption_mode,
-    )
-    .await;
+
+    // Decrypts a real ciphertext, so needs the full threshold-basic set
+    // (client/signing/server-signing/FHE/PRSS).
+    let spec = TestMaterialSpec::threshold_basic(amount_parties);
+
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(format!("context_switch_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_rate_limiter(rate_limiter_conf)
+        .with_prss();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
 
     // There is already a previous context by default.
     //
@@ -73,12 +87,16 @@ async fn do_context_switch(
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let all_private_storage = priv_storage_prefixes
         .iter()
-        .map(|prefix| FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap())
+        .map(|prefix| {
+            FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap()
+        })
         .collect::<Vec<_>>();
 
     let all_public_storage = pub_storage_prefixes
         .iter()
-        .map(|prefix| FileStorage::new(None, StorageType::PUB, prefix.as_deref()).unwrap())
+        .map(|prefix| {
+            FileStorage::new(Some(&material_path), StorageType::PUB, prefix.as_deref()).unwrap()
+        })
         .collect::<Vec<_>>();
 
     let previous_epoch = read_context_at_id(&all_private_storage[0], &previous_epoch_id)
@@ -116,7 +134,7 @@ async fn do_context_switch(
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
-        for (_, client) in kms_clients.iter() {
+        for client in kms_clients.values() {
             let req_clone = req.clone();
             let mut client = client.clone();
             req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
@@ -147,8 +165,8 @@ async fn do_context_switch(
         enc_config,
         None,
         1,
-        None,
-        false, // compressed_keys
+        Some(&material_path),
+        false, // test material uses compressed keys
     )
     .await;
 
@@ -159,7 +177,7 @@ async fn do_context_switch(
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
-        for (_, client) in kms_clients.iter() {
+        for client in kms_clients.values() {
             let req_clone = req.clone();
             let mut client = client.clone();
             req_tasks.spawn(async move { client.destroy_mpc_context(req_clone).await });
@@ -186,9 +204,9 @@ async fn do_context_switch(
         enc_config,
         None,
         1,
-        None,
+        Some(&material_path),
         true,
-        false, // compressed_keys
+        false, // test material uses compressed keys
     )
     .await;
 
@@ -205,8 +223,8 @@ async fn do_context_switch(
         enc_config,
         None,
         1,
-        None,
-        false, // compressed_keys
+        Some(&material_path),
+        false, // test material uses compressed keys
     )
     .await;
 

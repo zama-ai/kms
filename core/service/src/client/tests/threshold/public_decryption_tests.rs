@@ -3,8 +3,6 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::tests::threshold::common::threshold_handles;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
@@ -15,6 +13,7 @@ use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -24,7 +23,6 @@ use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use serial_test::serial;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
@@ -35,7 +33,6 @@ use tonic::transport::Channel;
 #[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-#[serial]
 async fn test_decryption_threshold_no_decompression(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -66,7 +63,6 @@ async fn test_decryption_threshold_no_decompression(
 #[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-#[serial]
 async fn test_decryption_threshold(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -95,7 +91,6 @@ async fn test_decryption_threshold(
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[serial]
 async fn test_decryption_threshold_precompute_sns(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -126,7 +121,6 @@ async fn test_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -153,7 +147,6 @@ async fn default_decryption_threshold(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_threshold_precompute_sns(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -181,7 +174,6 @@ async fn default_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
 async fn default_decryption_threshold_with_crash(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -217,7 +209,6 @@ pub async fn decryption_threshold(
     decryption_mode: Option<DecryptionMode>,
 ) {
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * parallelism,
         pub_decrypt: 100,
@@ -227,14 +218,40 @@ pub async fn decryption_threshold(
         keygen: 1,
         new_epoch: 1,
     };
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        dkg_params,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        decryption_mode,
-    )
-    .await;
+
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus
+    // signing keys + PRSS. Material type follows the DKG params.
+    let spec = {
+        let mut s = if dkg_params == TEST_PARAM {
+            TestMaterialSpec::threshold_basic(amount_parties)
+        } else {
+            TestMaterialSpec::threshold_default(amount_parties)
+        };
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(format!("decryption_threshold_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_rate_limiter(rate_limiter_conf)
+        .with_prss();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
+
     run_decryption_threshold(
         amount_parties,
         &mut kms_servers,
@@ -247,7 +264,7 @@ pub async fn decryption_threshold(
         enc_config,
         party_ids_to_crash,
         parallelism,
-        None,
+        Some(&material_path),
         false, // compressed_keys
     )
     .await;
@@ -266,7 +283,8 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
-    compressed_keys: bool,
+    // TODO(dp): this should have stayed "compressed" and not been renamed. Mea culpa.
+    uncompressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(
         amount_parties,
@@ -282,7 +300,7 @@ pub async fn run_decryption_threshold(
         parallelism,
         data_root_path,
         false,
-        compressed_keys,
+        uncompressed_keys,
     )
     .await
 }
@@ -304,7 +322,7 @@ pub async fn run_decryption_threshold_optionally_fail(
     parallelism: usize,
     data_root_path: Option<&Path>,
     expect_request_failure: bool,
-    compressed_keys: bool,
+    uncompressed_keys: bool,
 ) {
     let encryption_key_id = encryption_key_id.unwrap_or(key_id);
     assert_eq!(kms_clients.len(), kms_servers.len());
@@ -318,7 +336,7 @@ pub async fn run_decryption_threshold_optionally_fail(
             encryption_key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
-            compressed_keys,
+            uncompressed_keys,
         )
         .await;
         let ctt = TypedCiphertext {

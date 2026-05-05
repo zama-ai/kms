@@ -8,8 +8,9 @@ license.workspace = true
 description = "Provides networking for all threshold network components. GRPC, sessions, TLS."
 
 [dependencies]
-algebra.workspace = true
 anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+rcgen.workspace = true
 async-trait.workspace = true
 attestation-doc-validation.workspace = true
 backoff = { workspace = true, features = ["tokio"] }
@@ -25,9 +26,9 @@ prost.workspace = true
 serde.workspace = true
 sha2.workspace = true
 tfhe-versionable.workspace = true
-thread-handles.workspace = true
 threshold-types.workspace = true
 tokio = { workspace = true, features = [
+    "fs",
     "sync",
     "rt",
     "macros",
@@ -42,21 +43,12 @@ tracing.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
+rustls-webpki.workspace = true
 test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
-tfhe = { workspace = true, features = [
-    "boolean",
-    "shortint",
-    "integer",
-    "zk-pok",
-] }
-
 
 [build-dependencies]
 tonic-prost-build.workspace = true
 
 [features]
-experimental = ["choreographer", "testing"]
 testing = ["threshold-execution/testing"]
-malicious_strategies = ["testing"]
-choreographer = ["malicious_strategies"]

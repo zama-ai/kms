@@ -4,8 +4,11 @@ cfg_if::cfg_if! {
 
         use crate::dummy_domain;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
-        use crate::engine::base::{compute_info_crs, CrsGenMetadata};
-        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
+        use crate::engine::base::{
+            compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
+            CrsGenMetadata,
+        };
+        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
@@ -20,7 +23,7 @@ cfg_if::cfg_if! {
         use threshold_execution::tfhe_internals::parameters::DKGParams;
         use threshold_execution::tfhe_internals::test_feature::gen_key_set;
         use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
-        use threshold_execution::zk::ceremony::public_parameters_by_trusted_setup;
+        use threshold_execution::zk::ceremony::{max_num_bits_from_crs, public_parameters_by_trusted_setup};
         use threshold_types::session_id::SessionId;
     }
 }
@@ -467,26 +470,24 @@ where
 {
     // Check if PUBLIC data already exists. If so, skip regeneration entirely.
     //
-    // Server key generation uses the thread-local ShortintEngine CSPRNG
-    // (not the deterministic seed) in tfhe-rs, making it non-deterministic
-    // across calls. If PUB keys exist but PRIV was purged (e.g., for backup
-    // recovery tests), regenerating would create keys with different digests
-    // that don't match the existing PUB data (since store_data doesn't overwrite).
-    // The missing PRIV data will be restored from backup.
-    let pub_types = vec![
+    // Key generation uses seed-based XOF expansion, making it non-deterministic
+    // across calls unless the same seed is used. If PUB keys exist but PRIV was
+    // purged (e.g., for backup recovery tests), regenerating would create keys
+    // with different digests that don't match the existing PUB data (since
+    // store_data doesn't overwrite). The missing PRIV data will be restored
+    // from backup.
+    let compressed_xof_keyset_type = PubDataType::CompressedXofKeySet.to_string();
+    let pub_types_to_purge = [
+        compressed_xof_keyset_type.clone(),
         PubDataType::PublicKey.to_string(),
         PubDataType::ServerKey.to_string(),
     ];
-    let pub_complete = {
-        let mut all = true;
-        for t in &pub_types {
-            all &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
-            all &= data_exists(pub_storage, other_key_id, t)
-                .await
-                .unwrap_or(false);
-        }
-        all
-    };
+    let pub_complete = data_exists(pub_storage, key_id, &compressed_xof_keyset_type)
+        .await
+        .unwrap_or(false)
+        && data_exists(pub_storage, other_key_id, &compressed_xof_keyset_type)
+            .await
+            .unwrap_or(false);
     if pub_complete {
         log_data_exists(
             priv_storage.info(),
@@ -498,9 +499,9 @@ where
     }
 
     // PUB data is incomplete — purge any leftover fragments and regenerate everything.
-    for t in &pub_types {
-        let _ = delete_at_request_id(pub_storage, key_id, t).await;
-        let _ = delete_at_request_id(pub_storage, other_key_id, t).await;
+    for existing_pub_type in &pub_types_to_purge {
+        let _ = delete_at_request_id(pub_storage, key_id, existing_pub_type).await;
+        let _ = delete_at_request_id(pub_storage, other_key_id, existing_pub_type).await;
     }
     let _ = delete_at_request_and_epoch_id(
         priv_storage,
@@ -524,44 +525,62 @@ where
         false => None,
     };
 
-    // Generate two sets of FHE keys with proper error handling
-    let domain = dummy_domain();
-    let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
-        &sk,
-        dkg_params,
-        StandardKeySetConfig::default().secret_key_config,
-        key_id,
-        &INSECURE_PREPROCESSING_ID,
-        seed,
-        &domain,
-        vec![],
-    ) {
+    // Generate the two FHE key sets in parallel on the rayon pool.
+    let key_id_1 = *key_id;
+    let key_id_2 = *other_key_id;
+    let sk_1 = sk.clone();
+    let sk_2 = sk;
+    let (fhekey1, fhekey2) = tokio::task::spawn_blocking(move || {
+        rayon::join(
+            || {
+                generate_fhe_keys(
+                    &sk_1,
+                    dkg_params,
+                    StandardKeySetConfig::default().secret_key_config,
+                    &key_id_1,
+                    &INSECURE_PREPROCESSING_ID,
+                    seed,
+                    &dummy_domain(),
+                    vec![],
+                )
+            },
+            || {
+                generate_fhe_keys(
+                    &sk_2,
+                    dkg_params,
+                    StandardKeySetConfig::default().secret_key_config,
+                    &key_id_2,
+                    &INSECURE_PREPROCESSING_ID,
+                    seed,
+                    &dummy_domain(),
+                    vec![],
+                )
+            },
+        )
+    })
+    .await
+    .expect("FHE keygen task panicked");
+
+    let (compressed_keyset_1, public_key_1, key_info_1) = match fhekey1 {
         Ok(result) => result,
         Err(e) => {
             tracing::error!("Failed to generate first set of FHE keys: {}", e);
-            return false; // Cannot proceed without keys
+            return false;
         }
     };
-
-    let (fhe_pub_keys_2, key_info_2) = match generate_fhe_keys(
-        &sk,
-        dkg_params,
-        StandardKeySetConfig::default().secret_key_config,
-        other_key_id,
-        &INSECURE_PREPROCESSING_ID,
-        seed,
-        &domain,
-        vec![],
-    ) {
+    let (compressed_keyset_2, public_key_2, key_info_2) = match fhekey2 {
         Ok(result) => result,
         Err(e) => {
             tracing::error!("Failed to generate second set of FHE keys: {}", e);
-            return false; // Cannot proceed without keys
+            return false;
         }
     };
 
     let priv_fhe_map = HashMap::from([(*key_id, key_info_1), (*other_key_id, key_info_2)]);
-    let pub_fhe_map = HashMap::from([(*key_id, fhe_pub_keys_1), (*other_key_id, fhe_pub_keys_2)]);
+    let pub_fhe_map = HashMap::from([
+        (*key_id, (compressed_keyset_1, public_key_1)),
+        (*other_key_id, (compressed_keyset_2, public_key_2)),
+    ]);
 
     // Store private key data
     for (req_id, key_info) in &priv_fhe_map {
@@ -608,14 +627,30 @@ where
         }
     }
 
-    // Store public key data with proper error handling
-    for (req_id, cur_keys) in pub_fhe_map {
-        // Store public key
-        tracing::info!("Storing public key");
+    // Store compressed keyset and the public key derived from it as public key data
+    for (req_id, (compressed_keyset, public_key)) in pub_fhe_map {
+        tracing::info!("Storing compressed keyset");
         if let Err(e) = store_versioned_at_request_id(
             pub_storage,
             &req_id,
-            &cur_keys.public_key,
+            &compressed_keyset,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        {
+            tracing::error!(
+                "Failed to store compressed keyset for request ID {}: {}",
+                req_id,
+                e
+            );
+            continue; // Skip this key but try others
+        }
+        log_storage_success(req_id, pub_storage.info(), "compressed keyset", true, false);
+
+        if let Err(e) = store_versioned_at_request_id(
+            pub_storage,
+            &req_id,
+            &public_key,
             &PubDataType::PublicKey.to_string(),
         )
         .await
@@ -625,33 +660,9 @@ where
                 req_id,
                 e
             );
-            continue; // Skip this key but try others
+            continue;
         }
-        log_storage_success(req_id, pub_storage.info(), "key", true, false);
-
-        // Store server key
-        if let Err(e) = store_versioned_at_request_id(
-            pub_storage,
-            &req_id,
-            &cur_keys.server_key,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store server key for request ID {}: {}",
-                req_id,
-                e
-            );
-            continue; // Skip this key but try others
-        }
-        log_storage_success(
-            req_id,
-            pub_storage.info(),
-            "server signing key",
-            true,
-            false,
-        );
+        log_storage_success(req_id, pub_storage.info(), "public key", true, false);
     }
     true
 }
@@ -945,7 +956,7 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
         &rcgen::PKCS_ECDSA_P256K1_SHA256,
     )?;
     let (ca_cert_ki, ca_cert, _ca_params) =
-        threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
+        threshold_networking::tls_certs::create_ca_cert_from_ca_keypair(
             subject.as_str(),
             tls_wildcard,
             &ca_keypair,
@@ -1026,15 +1037,18 @@ where
 
     // Check if PUBLIC data already exists for all parties. If so, skip entirely.
     // See comment in ensure_central_keys_exist for why we only check PUB.
-    let pub_types = vec![
+    let pub_type = PubDataType::CompressedXofKeySet.to_string();
+    let legacy_pub_types = [
+        PubDataType::CompressedXofKeySet.to_string(),
         PubDataType::PublicKey.to_string(),
         PubDataType::ServerKey.to_string(),
     ];
+
     let mut all_data_exists = true;
     for pub_storage in pub_storages.iter() {
-        for t in &pub_types {
-            all_data_exists &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
-        }
+        all_data_exists &= data_exists(pub_storage, key_id, &pub_type)
+            .await
+            .unwrap_or(false);
     }
     if all_data_exists {
         tracing::info!("Threshold FHE keys exists, skipping generation");
@@ -1044,8 +1058,8 @@ where
     for (pub_storage, priv_storage) in pub_storages.iter_mut().zip_eq(priv_storages.iter_mut()) {
         use crate::vault::storage::delete_at_request_and_epoch_id;
 
-        for t in &pub_types {
-            let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        for existing_pub_type in &legacy_pub_types {
+            let _ = delete_at_request_id(pub_storage, key_id, existing_pub_type).await;
         }
         let _ = delete_at_request_and_epoch_id(
             priv_storage,
@@ -1070,8 +1084,14 @@ where
         }
     }
 
-    // Generate key set and shares
-    let keyset = gen_key_set(dkg_params, key_id.into(), &mut rng);
+    // Generate compressed key set and shares
+    let (keyset, compressed_keyset) = match gen_key_set(dkg_params, key_id.into(), &mut rng) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Failed to generate compressed key set: {}", e);
+            return false;
+        }
+    };
 
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares_from_keyset(
@@ -1090,103 +1110,137 @@ where
         }
     };
 
-    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-        keyset.public_keys.server_key.clone().into_raw_parts();
-
-    // Store keys for each party
-    let domain = dummy_domain();
-    for i in 1..=amount_parties {
-        // Get signing key for this party
-
-        let sk = &signing_keys[i - 1];
-        // Compute info with proper error handling
-        let info = match crate::engine::base::compute_info_standard_keygen(
-            sk,
-            &DSEP_PUBDATA_KEY,
-            &INSECURE_PREPROCESSING_ID,
-            key_id,
-            &keyset.public_keys,
-            &domain,
-            vec![],
-        ) {
-            Ok(result) => result,
+    // Hash the compressed keyset once; reuse per party.
+    let compressed_digest =
+        match safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset) {
+            Ok(digest) => digest,
             Err(e) => {
-                tracing::error!("Failed to compute key info for party {}: {}", i, e);
-                continue; // Skip this party but try others
+                tracing::error!("Failed to hash compressed keyset: {}", e);
+                return false;
             }
         };
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: Arc::new(key_shares[i - 1].to_owned()),
-            public_material: PublicKeyMaterial::Uncompressed {
-                integer_server_key: Arc::new(integer_server_key.clone()),
-                sns_key: sns_key.clone().map(Arc::new),
-                decompression_key: decompression_key.clone().map(Arc::new),
-            },
-            meta_data: info,
+
+    // Derive the CompactPublicKey from the compressed keyset once; store and sign it
+    // along with the compressed keyset for each party.
+    let compact_public_key = match compressed_keyset.decompress() {
+        Ok(ks) => ks.into_raw_parts().0,
+        Err(e) => {
+            tracing::error!("Failed to decompress compressed keyset: {}", e);
+            return false;
+        }
+    };
+
+    // Hash the compact public key once; reuse per party.
+    let public_key_digest =
+        match safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compact_public_key) {
+            Ok(digest) => digest,
+            Err(e) => {
+                tracing::error!("Failed to hash compact public key: {}", e);
+                return false;
+            }
         };
 
-        // Store public key
-        tracing::info!("Storing public key");
-        if let Err(store_err) = store_versioned_at_request_id(
-            &mut pub_storages[i - 1],
-            key_id,
-            &keyset.public_keys.public_key,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store public key for party {}: {}",
-                { i },
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        log_storage_success(key_id, pub_storages[i - 1].info(), "key data", true, true);
+    // Wrap the compressed keyset, public key, and per-party shares once; futures hold cheap Arc clones.
+    let compressed_keyset = Arc::new(compressed_keyset);
+    let compact_public_key = Arc::new(compact_public_key);
+    let key_shares: Vec<_> = key_shares.into_iter().map(Arc::new).collect();
 
-        // Store public server key
-        if let Err(store_err) = store_versioned_at_request_id(
-            &mut pub_storages[i - 1],
-            key_id,
-            &keyset.public_keys.server_key,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store public server key for party {}: {}",
-                { i },
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        log_storage_success(
-            key_id,
-            pub_storages[i - 1].info(),
-            "server key data",
-            true,
-            true,
-        );
+    let domain = dummy_domain();
+    let store_futs = pub_storages
+        .iter_mut()
+        .zip(priv_storages.iter_mut())
+        .zip(signing_keys.iter())
+        .zip(key_shares)
+        .enumerate()
+        .map(|(idx, (((pub_s, priv_s), sk), share))| {
+            let party = idx + 1;
+            let compressed_digest = compressed_digest.clone();
+            let public_key_digest = public_key_digest.clone();
+            let compressed_keyset = compressed_keyset.clone();
+            let compact_public_key = compact_public_key.clone();
+            let domain = &domain;
 
-        // Store private key data
-        if let Err(store_err) = store_versioned_at_request_and_epoch_id(
-            &mut priv_storages[i - 1],
-            key_id,
-            epoch_id,
-            &threshold_fhe_keys,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store private key data for party {}: {}",
-                { i },
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        log_storage_success(key_id, priv_storages[i - 1].info(), "key data", false, true);
-    }
+            async move {
+                let info = match compute_info_compressed_keygen_from_digests(
+                    sk,
+                    &INSECURE_PREPROCESSING_ID,
+                    key_id,
+                    compressed_digest,
+                    public_key_digest,
+                    domain,
+                    vec![],
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::error!("Failed to compute key info for party {}: {}", party, e);
+                        return;
+                    }
+                };
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    share,
+                    PublicKeyMaterial::Compressed {
+                        keyset: compressed_keyset.clone(),
+                    },
+                    info,
+                );
+
+                tracing::info!("Storing compressed keyset for party {}", party);
+                if let Err(store_err) = store_versioned_at_request_id(
+                    pub_s,
+                    key_id,
+                    &*compressed_keyset,
+                    &PubDataType::CompressedXofKeySet.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to store compressed keyset for party {}: {}",
+                        party,
+                        store_err
+                    );
+                    return;
+                }
+                log_storage_success(key_id, pub_s.info(), "compressed keyset", true, true);
+
+                // Store the compact public key alongside the compressed keyset
+                if let Err(store_err) = store_versioned_at_request_id(
+                    pub_s,
+                    key_id,
+                    &*compact_public_key,
+                    &PubDataType::PublicKey.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to store public key for party {}: {}",
+                        party,
+                        store_err
+                    );
+                    return;
+                }
+                log_storage_success(key_id, pub_s.info(), "public key", true, true);
+
+                if let Err(store_err) = store_versioned_at_request_and_epoch_id(
+                    priv_s,
+                    key_id,
+                    epoch_id,
+                    &threshold_fhe_keys,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to store private key data for party {}: {}",
+                        party,
+                        store_err
+                    );
+                    return;
+                }
+                log_storage_success(key_id, priv_s.info(), "key data", false, true);
+            }
+        });
+
+    future::join_all(store_futs).await;
     true
 }
 
@@ -1308,51 +1362,58 @@ where
             panic!("Failed to convert internal_pp to tfhe_zk_pok_pp: {e}");
         });
 
-    // Store the CRS for each party
-    // PANICS: if the private and public storage and signing keys are not of equal length
+    // Hash pp once; reused per party.
+    let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)
+        .expect("serializing and hashing a CompactPkCrs works");
+    let crs_max_num_bits = max_num_bits_from_crs(&pp);
+
+    // Store the CRS for each party. Per-party signing + writes run concurrently.
     let domain = dummy_domain();
-    for (cur_pub, (cur_priv, cur_sk)) in pub_storages
+    let pp_ref = &pp;
+    let store_futs = pub_storages
         .iter_mut()
         .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
-    {
-        // Compute signed metadata for CRS verification
-        // PANICS: If signature generation fails - would compromise security model
+        .map(|(cur_pub, (cur_priv, cur_sk))| {
+            let crs_digest = crs_digest.clone();
+            let domain = &domain;
+            async move {
+                // PANICS: If signature generation fails - would compromise security model
+                let crs_info = compute_info_crs_from_digest(
+                    cur_sk,
+                    crs_id,
+                    crs_digest,
+                    crs_max_num_bits,
+                    domain,
+                    vec![],
+                )
+                .unwrap_or_else(|e| panic!("Failed to compute CRS info for party: {e}"));
 
-        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain, vec![])
-            .unwrap_or_else(|e| {
-                panic!("Failed to compute CRS info for party: {e}");
-            });
+                // PANICS: If storage fails - system would be in inconsistent state
+                store_versioned_at_request_and_epoch_id::<PrivS, CrsGenMetadata>(
+                    cur_priv,
+                    crs_id,
+                    epoch_id,
+                    &crs_info,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("Failed to store private CRS info for party: {e}"));
+                log_storage_success(crs_id, cur_priv.info(), "CRS data", false, true);
 
-        // Store private CRS info with signature - essential for verification chain
-        // PANICS: If storage fails - system would be in inconsistent state
-        store_versioned_at_request_and_epoch_id::<PrivS, CrsGenMetadata>(
-            cur_priv,
-            crs_id,
-            epoch_id,
-            &crs_info,
-            &PrivDataType::CrsInfo.to_string(),
-        )
-        .await
-        .unwrap_or_else(|e| {
-            panic!("Failed to store private CRS info for party: {e}");
+                // PANICS: If storage fails - system would be unable to perform cryptographic operations
+                store_versioned_at_request_id::<PubS, tfhe::zk::CompactPkeCrs>(
+                    cur_pub,
+                    crs_id,
+                    pp_ref,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("Failed to store public CRS for party: {e}"));
+                log_storage_success(crs_id, cur_pub.info(), "CRS data", true, true);
+            }
         });
 
-        log_storage_success(crs_id, cur_priv.info(), "CRS data", false, true);
-
-        // Store public CRS parameters - must be available for all cryptographic operations
-        // PANICS: If storage fails - system would be unable to perform cryptographic operations
-        store_versioned_at_request_id::<PubS, tfhe::zk::CompactPkeCrs>(
-            cur_pub,
-            crs_id,
-            &pp,
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap_or_else(|e| {
-            panic!("Failed to store public CRS for party: {e}");
-        });
-        log_storage_success(crs_id, cur_pub.info(), "CRS data", true, true);
-    }
+    future::join_all(store_futs).await;
     true
 }
 

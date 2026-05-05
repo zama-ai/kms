@@ -418,7 +418,7 @@ pub mod tests {
         small_execution::prf::PRSSConversions,
         tfhe_internals::{
             parameters::DKGParams,
-            test_feature::{KeySet, gen_key_set},
+            test_feature::{KeySet, gen_uncompressed_key_set},
         },
     };
     use aes_prng::AesRng;
@@ -567,7 +567,7 @@ pub mod tests {
     pub fn generate_keys_deterministically(params: DKGParams, tag: tfhe::Tag) -> KeySet {
         const DEFAULT_SEED: u64 = 1;
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
-        gen_key_set(params, tag, &mut seeded_rng)
+        gen_uncompressed_key_set(params, tag, &mut seeded_rng)
     }
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0

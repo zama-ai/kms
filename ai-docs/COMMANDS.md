@@ -2,7 +2,7 @@
 
 Commands that come up during ordinary work in this repo. All commands are expected to be run from the repository root unless noted otherwise.
 
-Toolchain is pinned to Rust `1.94.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
+Toolchain is pinned to Rust `1.95.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
 
 ## Build and lint
 
@@ -109,9 +109,9 @@ Background and authoring workflow: [docs/developer/backward_compatibility.md](..
 ## Test material generation
 
 ```
-make generate-test-material-all       # full set, uses slow_tests feature
-make generate-test-material-default   # default key sizes, uses slow_tests feature
-make generate-test-material-testing   # fast testing-feature set
+make generate-test-material-all       # insecure + secure profiles, all party counts
+make generate-test-material-default   # secure profile, parties 4,10,13
+make generate-test-material-testing   # insecure profile, parties 4,10
 make validate-test-material           # validate material on disk
 make clean-test-material              # remove ./test-material
 ```

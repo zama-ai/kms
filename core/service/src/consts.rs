@@ -79,7 +79,6 @@ pub const DEFAULT_PROTOCOL: &str = "http";
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         pub const TMP_PATH_PREFIX: &str = "temp";
-        pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
         pub static TEST_CENTRAL_KEY_ID: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("TEST_CENTRAL_KEY_ID").unwrap());
@@ -161,7 +160,6 @@ cfg_if::cfg_if! {
 cfg_if::cfg_if! {
     if #[cfg(test)] {
         // These ones should be removed or more to relevant positions in client or central kms
-        pub const TEST_CENTRAL_KEYS_PATH: &str = "temp/test-central-keys.bin";
         pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
         pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
         pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/default-central-wasm-transcript.bin";
@@ -197,6 +195,13 @@ pub static DEFAULT_EPOCH_ID: LazyLock<EpochId> = LazyLock::new(|| {
         0, 1,
     ])
 });
+
+/// Constructs the extra data field based on the default context and epoch IDs.
+#[cfg(feature = "non-wasm")]
+pub fn default_extra_data() -> Vec<u8> {
+    crate::engine::utils::make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
+        .expect("make_extra_data with defaults cannot fail")
+}
 
 #[cfg(feature = "insecure")]
 pub static MOCK_NITRO_SIGNING_KEY_BYTES: LazyLock<Vec<u8>> =
