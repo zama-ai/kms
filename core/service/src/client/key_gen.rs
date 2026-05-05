@@ -556,6 +556,7 @@ pub(crate) mod tests {
                 panic!("Unsupported AtomicPatternOprfPrivateKey::KeySwitch32")
             }
         };
+        let oprf_server_key = oprf_server_key.into_raw_parts();
 
         assert_oprf_matches_plaintext(
             &shortint_ck,

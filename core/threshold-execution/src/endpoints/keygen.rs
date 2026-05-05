@@ -2440,7 +2440,9 @@ pub mod tests {
         let (target_shortint_server_key, _, _, _, _, _, _, oprf_server_key, _) =
             pk.server_key.clone().into_raw_parts();
         let target_shortint_server_key = target_shortint_server_key.into_raw_parts();
-        let oprf_server_key = oprf_server_key.expect("OPRF server key missing from pk.server_key");
+        let oprf_server_key = oprf_server_key
+            .expect("OPRF server key missing from pk.server_key")
+            .into_raw_parts();
 
         #[cfg(not(feature = "slow_tests"))]
         const NUM_SEEDS: u128 = 2;
