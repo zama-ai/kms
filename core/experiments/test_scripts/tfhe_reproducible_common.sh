@@ -146,6 +146,3 @@ for DDEC_MODE in $DDEC_MODES
         VALUE=$(( VALUE * 2 ))
     done
 done
-
-printf "Press enter to shutdown experiment\n"
-read _

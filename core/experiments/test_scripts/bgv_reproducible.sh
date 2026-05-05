@@ -79,6 +79,3 @@ do
     CURR_SID=$(( CURR_SID + 1 ))
     SEED=$(( SEED + 1 ))
 done
-
-printf "Press enter to shutdown experiment\n"
-read _

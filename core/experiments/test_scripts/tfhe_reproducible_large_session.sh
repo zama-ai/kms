@@ -6,6 +6,7 @@ DDEC_MODES="noise-flood-large bit-dec-large"
 MAIN_PATH="./temp/tfhe_large_reproducible"
 PARAMS="params-test-bk-sns"
 SEED=42
+NUM_CTXTS=10
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/tfhe_reproducible_common.sh"
