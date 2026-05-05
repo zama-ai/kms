@@ -30,9 +30,6 @@ function cleanup_docker {
 # Scripts are in test_scripts folder
 PATH_TO_HERE="$(cd "$(dirname "$0")" && pwd)"
 PATH_TO_ROOT="$PATH_TO_HERE/.."
-PATH_TO_SCRIPTS="$PATH_TO_ROOT/test_scripts"
-
-echo "Running reproducible tests. Will look for scripts in $PATH_TO_SCRIPTS"
 
 # Set current workdirectory as root of experiments
 cd "$PATH_TO_ROOT"
@@ -48,7 +45,7 @@ cargo make tfhe-docker-image-degree-3
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-4p
 # Run the test script
-./$PATH_TO_SCRIPTS/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml GEN
+./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml GEN
 # Teardown docker
 cleanup_docker
 
@@ -56,7 +53,7 @@ cleanup_docker
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-5p
 # Run the test script
-./$PATH_TO_SCRIPTS/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml GEN
+./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml GEN
 # Teardown docker
 cleanup_docker
 
@@ -64,7 +61,7 @@ cleanup_docker
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-4p-malicious-bcast
 # Run the test script
-./$PATH_TO_SCRIPTS/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml GEN
+./test_scripts/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml GEN
 # Teardown docker
 cleanup_docker
 
@@ -75,7 +72,7 @@ cargo make bgv-docker-image
 # Create the test setup and starts the docker containers
 cargo make bgv-bench-run
 # Run the test script
-./$PATH_TO_SCRIPTS/bgv_reproducible.sh temp/bgv-bench-run.toml GEN
+./test_scripts/bgv_reproducible.sh temp/bgv-bench-run.toml GEN
 # Teardown docker
 cleanup_docker
 
