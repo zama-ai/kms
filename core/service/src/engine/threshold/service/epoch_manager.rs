@@ -750,11 +750,13 @@ impl<
         }
 
         let res = join_all(storage_tasks).await;
+        let error_agg = res.iter().filter(|r| r.is_err()).collect::<Vec<_>>();
         let mut err_msgs = Vec::new();
-        let agg_res = if res.iter().any(|r| r.is_err()) {
+        let agg_res = if !error_agg.is_empty() {
+            // res.iter().any(|r| r.is_err()) {
             let storage_err_msg = format!(
-                "Failed to store all reshared keys for new epoch {}.",
-                new_epoch_id
+                "Failed to store all reshared keys for new epoch {}: {:?}",
+                new_epoch_id, error_agg
             );
             err_msgs.push(storage_err_msg.clone());
             Err(storage_err_msg)

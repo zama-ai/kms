@@ -97,20 +97,19 @@ pub enum PublicKeySet {
 ///
 /// This struct provides thread-safe access to public, private, and optional backup storage,
 /// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
+///
+/// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 > {
     /// Storage for publicly readable data (may be susceptible to malicious modifications)
-    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) public_storage: Arc<Mutex<PubS>>,
 
     /// Storage for private data (only accessible by owner, modifications are detectable)
-    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) private_storage: Arc<Mutex<PrivS>>,
 
     /// Optional backup vault for recovery purposes
-    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
 }
 

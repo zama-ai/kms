@@ -119,6 +119,33 @@ pub async fn key_gen_impl<
             dkg_params
         };
 
+        // Ensure that no key already exists for a given request.
+        let already_exists = service
+            .crypto_storage
+            .inner
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    op_tag,
+                    Some(req_id),
+                    format!("Could not check FHE key existence in storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if already_exists {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(req_id),
+                anyhow::anyhow!(
+                    "FHE key for request {} and epoch {} already exists in storage",
+                    req_id,
+                    epoch_id
+                ),
+                tonic::Code::AlreadyExists,
+            ));
+        }
+
         // check that the request ID is not used yet
         // and then insert the request ID only if it's unused
         // all validation must be done before inserting the request ID
@@ -394,22 +421,6 @@ pub(crate) async fn key_gen_background<
     op_tag: &'static str,
 ) {
     let start = tokio::time::Instant::now();
-    {
-        // Check if the key already exists
-        if crypto_storage
-            .read_centralized_fhe_keys(req_id, epoch_id)
-            .await
-            .is_ok()
-        {
-            let _ = update_err_req_in_meta_store(
-                &mut meta_store.write().await,
-                req_id,
-                format!("Failed key generation: Key with ID {req_id} already exists!"),
-                op_tag,
-            );
-            return;
-        }
-    }
     match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
             let keygen_result = match async_generate_fhe_keys(
