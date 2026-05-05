@@ -137,6 +137,26 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                None,
+                anyhow::anyhow!("new_custodian_context is required in NewCustodianContextRequest"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        let custodian_context_id = parse_optional_grpc_request_id(
+            &custodian_context.custodian_context_id,
+            RequestIdParsingErr::CustodianContext,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                None,
+                anyhow::anyhow!("Failed to parse custodian_context_id: {}", e),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         // TODO this should likely be part of the async call to be consistent with other methods
         {
             let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
@@ -162,18 +182,11 @@ where
                 ));
             }
         }
-        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
-            MetricedError::new(
-                OP_NEW_CUSTODIAN_CONTEXT,
-                None,
-                anyhow::anyhow!("new_custodian_context is required in NewCustodianContextRequest"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+
         add_req_to_meta_store(
             &mut self.custodian_meta_store.write().await,
-            &mpc_context_id.into(),
-            OP_NEW_MPC_CONTEXT,
+            &custodian_context_id,
+            OP_NEW_CUSTODIAN_CONTEXT,
         )?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",

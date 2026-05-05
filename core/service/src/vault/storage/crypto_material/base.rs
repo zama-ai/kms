@@ -112,9 +112,6 @@ pub struct CryptoMaterialStorage<
     /// Optional backup vault for recovery purposes
     /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
-    // Cache for current backup key (if it is set)
-    // Observe that the `Option` is inside the lock since it may be added during runtime through a new custodian context.
-    // pub(crate) current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
