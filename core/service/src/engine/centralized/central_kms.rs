@@ -1832,11 +1832,6 @@ pub(crate) mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().await;
-        // TODO just do auto refresh when trying to read keys!
-        // kms.crypto_storage
-        //     .refresh_centralized_fhe_keys(key_id, epoch_id)
-        //     .await
-        //     .unwrap();
 
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage

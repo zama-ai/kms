@@ -3,7 +3,7 @@ use crate::{
     cryptography::signatures::{PrivateSigKey, gen_sig_keys},
     dummy_domain,
     engine::base::{KeyGenMetadata, derive_request_id},
-    vault::storage::crypto_material::PublicKeySet,
+    vault::storage::{Storage, crypto_material::PublicKeySet},
 };
 use aes_prng::AesRng;
 use kms_grpc::{
@@ -44,6 +44,18 @@ use crate::{
         store_versioned_at_request_id,
     },
 };
+
+/// Read the public key from `pub_storage` directly, used by the read-path tests.
+async fn read_cloned_pk<S>(
+    pub_storage: Arc<Mutex<S>>,
+    req_id: &RequestId,
+) -> anyhow::Result<CompactPublicKey>
+where
+    S: Storage + Send + Sync + 'static,
+{
+    let pub_storage = pub_storage.lock().await;
+    super::CryptoMaterialReader::read_from_storage(&*pub_storage, req_id).await
+}
 
 fn dummy_info() -> KeyGenMetadata {
     let req_id = derive_request_id("dummy_info").unwrap();
@@ -276,7 +288,7 @@ async fn read_public_key() {
     }
 
     // reading the public key without cache should succeed
-    let _pk = crypto_storage.inner.read_cloned_pk(&req_id).await.unwrap();
+    let _pk = read_cloned_pk(pub_storage.clone(), &req_id).await.unwrap();
 }
 
 #[tokio::test]

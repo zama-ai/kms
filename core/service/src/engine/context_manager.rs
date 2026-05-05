@@ -157,7 +157,6 @@ where
                 tonic::Code::InvalidArgument,
             )
         })?;
-        // TODO this should likely be part of the async call to be consistent with other methods
         {
             let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
             if !data_exists(

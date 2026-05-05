@@ -42,8 +42,6 @@ use observability::metrics_names::{ERR_BACKUP, OP_DECOMPRESSION_KEYGEN, OP_NEW_C
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
-#[cfg(test)]
-use tfhe::CompactPublicKey;
 use tfhe::Versionize;
 use tfhe::named::Named;
 use tfhe::xof_key_set::CompressedXofKeySet;
@@ -418,7 +416,6 @@ where
                                 );
                             }
                         } else {
-                            // TODO should we return error here instead?
                             failed = true;
                             tracing::error!(
                                 "Epoch ID is required for deleting private type {cur_priv_type} for request {req_id}, but it is not provided. Skipping deletion of this type."
@@ -798,57 +795,6 @@ where
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
-    }
-
-    /// Read the public key from a cache, if it does not exist,
-    /// attempt to read it from the public storage backend.
-    #[cfg(test)]
-    pub(crate) async fn read_cloned_pk(
-        // TODO can these be optimized or removed?
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<CompactPublicKey> {
-        Self::read_cloned_crypto_material::<CompactPublicKey, _>(
-            Arc::new(RwLock::new(HashMap::new())),
-            req_id,
-            self.public_storage.clone(),
-        )
-        .await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn read_cloned_crypto_material<T, S>(
-        cache: Arc<RwLock<HashMap<RequestId, T>>>,
-        req_id: &RequestId,
-        storage: Arc<Mutex<S>>,
-    ) -> anyhow::Result<T>
-    where
-        T: super::CryptoMaterialReader + Clone,
-        S: Storage + Send + Sync + 'static,
-    {
-        let pub_storage = storage.lock().await;
-        let out = {
-            let cache_guard = cache.read().await;
-            cache_guard.get(req_id).cloned()
-        };
-
-        match out {
-            Some(pk) => Ok(pk),
-            None => {
-                let pk = T::read_from_storage(&(*pub_storage), req_id)
-                    .await
-                    .inspect_err(|e| {
-                        tracing::error!(
-                            "Failed to read public material with the handle {} ({e})",
-                            req_id
-                        );
-                    })?;
-
-                let mut write_cache_guard = cache.write().await;
-                write_cache_guard.insert(*req_id, pk.clone());
-                Ok(pk)
-            }
-        }
     }
 
     // TODO(#2849) should be changed to KeyId

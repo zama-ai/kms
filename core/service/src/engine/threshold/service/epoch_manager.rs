@@ -780,7 +780,6 @@ impl<
                 new_epoch_id
             ));
         }
-        // TODO is it correct to return ok even if there was a storage error, this looks like it was the old flow
         if err_msgs.is_empty() {
             Ok(())
         } else {

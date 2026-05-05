@@ -235,6 +235,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             Some(ref x) => Some(x.lock().await),
             None => None,
         };
+        // TODO use helper methods
 
         // --- Phase A: validate everything before mutating anything. ---
 
