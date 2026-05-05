@@ -197,7 +197,7 @@ where
     let mut output_bit_vec = Vec::new();
     for idx in 0..expected_num_bits {
         let mut vec_bit = Vec::new();
-        for (_, values) in input.iter() {
+        for values in input.values() {
             vec_bit.push(values[idx]);
         }
 
@@ -234,7 +234,7 @@ where
         let slice_end_idx = slice_start_idx + polynomial_size;
         for curr_glwe_ctxt_index in slice_start_idx..slice_end_idx {
             let mut vec_body = Vec::new();
-            for (_role, values) in input.iter() {
+            for values in input.values() {
                 vec_body.push(values[curr_glwe_ctxt_index]);
             }
             body.push(

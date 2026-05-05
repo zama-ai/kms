@@ -134,7 +134,7 @@ async fn do_context_switch(
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
-        for (_, client) in kms_clients.iter() {
+        for client in kms_clients.values() {
             let req_clone = req.clone();
             let mut client = client.clone();
             req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
@@ -177,7 +177,7 @@ async fn do_context_switch(
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
-        for (_, client) in kms_clients.iter() {
+        for client in kms_clients.values() {
             let req_clone = req.clone();
             let mut client = client.clone();
             req_tasks.spawn(async move { client.destroy_mpc_context(req_clone).await });

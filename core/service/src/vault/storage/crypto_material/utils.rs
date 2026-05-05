@@ -346,7 +346,7 @@ async fn get_unique<
         .map_err(|e| {
             anyhow_error_and_warn_log(format!(
                 "Failed to read {} from \"{}\": {e}",
-                &data_type.to_string(),
+                data_type,
                 storage.info()
             ))
         })?;
