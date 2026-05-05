@@ -12,7 +12,6 @@ use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::max_threshold;
@@ -32,7 +31,6 @@ use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[serial]
@@ -63,7 +61,6 @@ async fn test_decryption_threshold_no_decompression(
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[serial]

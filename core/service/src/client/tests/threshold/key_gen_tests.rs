@@ -1423,7 +1423,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 /// - `insecure` feature flag
 /// - `slow_tests` feature flag (to run this slow default-parameter test)
 /// - Pre-generated secure material:
-///   `generate-test-material --profile secure --parties 4,10,13`
+///   `generate-test-material --profile secure --parties 4,13`
 #[tokio::test]
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg() -> anyhow::Result<()> {

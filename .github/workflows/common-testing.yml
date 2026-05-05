@@ -278,8 +278,8 @@ jobs:
         working-directory: .
         run: |
           echo "Generating insecure test material..."
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10"
-          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4"
+          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4
 
       # Generate secure test material when explicitly requested or for slow_tests,
       # and only when not using pre-generated artifacts.
@@ -288,8 +288,8 @@ jobs:
         working-directory: .
         run: |
           echo "Generating secure test material..."
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13"
-          cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13
+          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,13"
+          cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,13
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary

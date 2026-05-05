@@ -2673,7 +2673,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// Full generation test - threshold sequential preprocessing and keygen with Default params.
 ///
 /// Requires pre-generated material in the test-material/default directory
-/// (produced by `generate-test-material --profile secure --parties 4,10,13`):
+/// (produced by `generate-test-material --profile secure --parties 4,13`):
 /// - **PRSS**: loaded at server startup (`ensure_default_prss=true`); fast to generate but must exist before the test runs.
 /// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
 ///

@@ -208,10 +208,8 @@ impl TestMaterialManager {
 
         if !material_path.exists() {
             let generation_hint = match spec.material_type {
-                MaterialType::Testing => "generate-test-material --profile insecure --parties 4,10",
-                MaterialType::Default => {
-                    "generate-test-material --profile secure --parties 4,10,13"
-                }
+                MaterialType::Testing => "generate-test-material --profile insecure --parties 4",
+                MaterialType::Default => "generate-test-material --profile secure --parties 4,13",
             };
             return Err(anyhow!(
                 "Material not found for {:?} at: {}\n\

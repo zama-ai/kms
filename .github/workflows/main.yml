@@ -245,7 +245,7 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass narrower
-      # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
+      # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_13P — concrete needs:
       #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
       #   centralized : central testing only (no threshold material)
       - name: Set matrix
@@ -555,13 +555,11 @@ jobs:
       #     : 4P testing + 4P default (aka 4P insecure/4P secure)
       #       (all surviving cases pin DEFAULT_THRESHOLD_KEY_ID_4P)
       #   entry 3 (`slow_tests ... threshold --skip default_user_decryption_threshold --skip nightly`)
-      #     : 4P + 10P testing + 4P default + 13P testing
-      #       (10P from 2 public_decryption cases;
-      #        13P via TEST_THRESHOLD_KEY_ID alias in misc_tests)
+      #     : 4P testing + 4P default
       #   entry 4 (`slow_tests ... -- --skip threshold --skip nightly`)
       #     : 4P testing + 4P default (centralized only)
       #   schedule
-      #     : all (nightly runs 10P user_decryption + 13P default)
+      #     : all (nightly 13P default)
       - name: Set matrix
         id: set-matrix
         run: |
