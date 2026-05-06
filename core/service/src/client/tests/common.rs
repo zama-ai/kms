@@ -99,6 +99,7 @@ pub(crate) fn uncompressed_keygen_config() -> (Option<KeySetConfig>, Option<KeyS
 pub(crate) fn keygen_config_from_existing(
     existing_keyset_id: &RequestId,
     use_existing_key_tag: bool,
+    copy_compressed_key_to_original: bool,
 ) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
@@ -112,6 +113,7 @@ pub(crate) fn keygen_config_from_existing(
         Some(KeySetAddedInfo {
             existing_keyset_id: Some((*existing_keyset_id).into()),
             use_existing_key_tag,
+            copy_compressed_key_to_original,
             ..KeySetAddedInfo::default()
         }),
     )

@@ -22,9 +22,18 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: ubuntu-latest
+
+    # Long-form runs-on label. The short form (e.g. `16cpu-linux-x64`) only
+    # works as an *input* to common-testing.yml, but we cannot use it in this
+    # job since we're doing non-standard testing.
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
 
     steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
