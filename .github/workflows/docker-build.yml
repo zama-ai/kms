@@ -10,29 +10,42 @@ on:
   # `gh workflow run docker-build.yml --ref <sha>`.
   # Each image can be toggled; unticking a parent also skips its dependents.
   workflow_dispatch:
-    # Anchored so workflow_call below reuses the same input set; without
-    # workflow_call inputs, the per-image `if` gates evaluate `inputs.build-*`
-    # to null when invoked from another workflow and skip every image.
-    inputs: &build_inputs
+    inputs:
       build-golden-image:
         description: 'Build rust-golden-image (parent of core-client, core-service, enclave)'
-        type: string
-        default: "true"
+        type: boolean
+        default: true
       build-core-client:
         description: 'Build core-client (needs golden-image)'
-        type: string
-        default: "true"
+        type: boolean
+        default: true
       build-core-service:
         description: 'Build core-service (needs golden-image; parent of enclave)'
-        type: string
-        default: "true"
+        type: boolean
+        default: true
       build-enclave:
         description: 'Build core-service-enclave (needs core-service)'
-        type: string
-        default: "true"
+        type: boolean
+        default: true
   #=======================================================
   workflow_call:
-    inputs: *build_inputs
+    inputs:
+      build-golden-image:
+        description: 'Build rust-golden-image (parent of core-client, core-service, enclave)'
+        type: boolean
+        default: true
+      build-core-client:
+        description: 'Build core-client (needs golden-image)'
+        type: boolean
+        default: true
+      build-core-service:
+        description: 'Build core-service (needs golden-image; parent of enclave)'
+        type: boolean
+        default: true
+      build-enclave:
+        description: 'Build core-service-enclave (needs core-service)'
+        type: boolean
+        default: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
