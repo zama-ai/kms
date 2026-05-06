@@ -13,10 +13,9 @@ name = "kms_lib"
 path = "src/lib.rs"
 crate-type = ["lib", "cdylib"]
 
-[[bin]] # Bin to generate keys
+[[bin]] # Bin to generate signing keys and TLS material
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
-required-features = ["testing"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"

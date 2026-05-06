@@ -2,12 +2,16 @@
 
 ## KMS Key Generation
 
-KMS keys must be generated before the KMS server can be started. To generate them you can do the following for the centralized or threshold version respectively:
+`kms-gen-keys` generates the server signing keys (and, in threshold mode, the per-party self-signed CA certificates used for mTLS). FHE keys and the CRS are not produced here — they come from the KMS gRPC API in production (e.g. `kms-core-client insecure-key-gen` / `insecure-crs-gen`) and from `generate-test-material` in tests.
+
+To generate the signing material before the KMS server is started, run one of:
 
 ```bash
-cargo run --bin kms-gen-keys -F testing -F insecure -- centralized
-cargo run --bin kms-gen-keys -F testing -F insecure -- threshold
+cargo run --bin kms-gen-keys -- centralized
+cargo run --bin kms-gen-keys -- threshold
 ```
+
+For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
 
 ## Threshold KMS TLS Certificates
 

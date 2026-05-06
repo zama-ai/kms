@@ -146,11 +146,13 @@ has_value "keygen" && \
 
 	KMS_GEN_KEYS_CMD="kms-gen-keys $AWS_ARGS $VAULT_ARGS"
 
-	# ensure that all keys exist if running in centralized mode
+	# Generate the signing key for the centralized KMS. FHE keys and the CRS
+	# are produced separately via the gRPC API (e.g. `kms-core-client
+	# insecure-key-gen` / `insecure-crs-gen`) once the server is up.
 	has_value "threshold" || \
 	    {
-		log "generating keys for centralized KMS"
-		eval "$KMS_GEN_KEYS_CMD centralized --write-privkey" \
+		log "generating signing key for centralized KMS"
+		eval "$KMS_GEN_KEYS_CMD centralized" \
 		    |& logger || fail "cannot generate keys"
 	    }
 
@@ -165,7 +167,7 @@ has_value "keygen" && \
 		has_value "threshold.my_id" && \
 		    PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
 		eval "$KMS_GEN_KEYS_CMD \
-                       --cmd signing-keys threshold $PARTY_ID_ARG \
+                       threshold $PARTY_ID_ARG \
                        --num-parties $(get_value "threshold.num_parties") \
                        --tls-subject $(get_value "threshold.tls_subject")" \
 		    |& logger || fail "cannot generate keys"
