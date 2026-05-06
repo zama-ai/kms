@@ -52,6 +52,8 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
+    #[error("Trying to write content that already exists")]
+    DuplicateError,
     #[error("Writing error")]
     WritingError,
     #[error("Reading error")]
@@ -165,7 +167,7 @@ where
 
     /// Check if data exists in both public and private storage
     #[allow(dead_code)]
-    async fn data_exists(
+    pub(in crate::vault::storage::crypto_material) async fn data_exists(
         &self,
         req_id: &RequestId,
         pub_data_type: &str,
@@ -190,7 +192,7 @@ where
     ///
     /// Returns `Ok(true)` if all entries are present, `Ok(false)` if any is
     /// missing, or `Err(StorageError)` if the storage backend fails the check.
-    async fn data_exists_at_epoch(
+    pub(in crate::vault::storage::crypto_material) async fn data_exists_at_epoch(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
@@ -212,7 +214,7 @@ where
         .await
     }
 
-    /// Check if FHE keys exist (for central server).
+    /// Check if FHE keys exist.
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
     /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
@@ -365,6 +367,7 @@ where
 
     /// Helper method to purge material.
     /// Returns true if purge is successful, false otherwise.
+    /// Even if no data exists, it is still considered a successful purge.
     pub(in crate::vault::storage::crypto_material) async fn purge_material(
         &self,
         req_id: &RequestId,
@@ -490,7 +493,10 @@ where
     /// Write data to the public storage backend.
     /// Returns true if the write is successful, false otherwise.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type`.
-    async fn write_pub_data<'a, PubData: Serialize + Versionize + Named + Send + Sync>(
+    pub(in crate::vault::storage::crypto_material) async fn write_pub_data<
+        'a,
+        PubData: Serialize + Versionize + Named + Send + Sync,
+    >(
         &self,
         req_id: &RequestId,
         pub_data: &'a PubData,
@@ -520,7 +526,10 @@ where
     /// Write data to the private storage backend.
     /// Returns true if the write is successful, false otherwise.
     /// WARNING: Does NOT validate the type of `priv_data` matches the `priv_data_type`.
-    async fn write_priv_data<'a, PrivData: Serialize + Versionize + Named + Send + Sync>(
+    pub(in crate::vault::storage::crypto_material) async fn write_priv_data<
+        'a,
+        PrivData: Serialize + Versionize + Named + Send + Sync,
+    >(
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
@@ -924,7 +933,10 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
-    async fn inner_update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
+    pub(in crate::vault::storage::crypto_material) async fn inner_update_backup_vault(
+        &self,
+        overwrite: bool,
+    ) -> anyhow::Result<()> {
         match self.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.get_private_storage();
@@ -1013,6 +1025,9 @@ where
     }
 }
 
+/// Update the meta store based on the result of a storage operation, and log and update the metrics in case of an error.
+/// If the meta store is updated successfully, then the orginal storage result is returned.
+/// If the meta store update fails, then a MetaStoreError is returned, which includes the original StorageError.
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
     req_id: &RequestId,
