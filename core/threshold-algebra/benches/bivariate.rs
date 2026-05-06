@@ -1,6 +1,6 @@
 use aes_prng::AesRng;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{Array1, Array2};
 use rand::SeedableRng;
 use std::hint::black_box;
 use threshold_algebra::{
@@ -10,6 +10,8 @@ use threshold_algebra::{
 };
 
 const DEGREES: [usize; 5] = [1, 3, 4, 13, 20];
+// Use this shorter sweep for fast local iteration.
+// const DEGREES: [usize; 2] = [4, 20];
 
 fn bivariate_setup(degree: usize) -> (BivariatePoly<ResiduePolyF4Z128>, ResiduePolyF4Z128) {
     let mut rng = AesRng::seed_from_u64(degree as u64);
@@ -19,7 +21,7 @@ fn bivariate_setup(degree: usize) -> (BivariatePoly<ResiduePolyF4Z128>, ResidueP
     (poly, point)
 }
 
-fn matrix_setup(degree: usize) -> (ArrayD<ResiduePolyF4Z128>, ArrayD<ResiduePolyF4Z128>) {
+fn matrix_setup(degree: usize) -> (Array1<ResiduePolyF4Z128>, Array2<ResiduePolyF4Z128>) {
     let mut rng = AesRng::seed_from_u64(100 + degree as u64);
     let d = degree + 1;
     let vector = (0..d)
@@ -30,8 +32,8 @@ fn matrix_setup(degree: usize) -> (ArrayD<ResiduePolyF4Z128>, ArrayD<ResiduePoly
         .collect();
 
     (
-        ArrayD::from_shape_vec(IxDyn(&[d]), vector).unwrap(),
-        ArrayD::from_shape_vec(IxDyn(&[d, d]), matrix).unwrap(),
+        Array1::from_vec(vector),
+        Array2::from_shape_vec((d, d), matrix).unwrap(),
     )
 }
 
@@ -115,9 +117,6 @@ fn bench_matrix_mul(c: &mut Criterion) {
         });
         group.bench_function(BenchmarkId::new("matrix_vector", degree), |b| {
             b.iter(|| black_box(matrix.matmul(black_box(&vector)).unwrap()));
-        });
-        group.bench_function(BenchmarkId::new("vector_dot", degree), |b| {
-            b.iter(|| black_box(vector.matmul(black_box(&vector)).unwrap()));
         });
     }
 

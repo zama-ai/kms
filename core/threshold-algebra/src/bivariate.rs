@@ -5,11 +5,8 @@ use super::structure_traits::Sample;
 use super::structure_traits::Zero;
 
 use anyhow::Result;
-use error_utils::anyhow_error_and_log;
-use itertools::Itertools;
-use ndarray::Array;
-use ndarray::ArrayD;
-use ndarray::IxDyn;
+use ndarray::Array1;
+use ndarray::Array2;
 use rand::{CryptoRng, Rng};
 use std::ops::Mul;
 
@@ -18,7 +15,7 @@ use std::ops::Mul;
 /// [[a_{00}, a_{01}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}]]
 #[derive(Clone, Default, Debug)]
 pub struct BivariatePoly<Z> {
-    pub coefs: ArrayD<Z>,
+    pub coefs: Array2<Z>,
     degree: usize,
 }
 
@@ -29,11 +26,13 @@ impl<Z> BivariatePoly<Z> {
         Z: Sample + Zero + Copy,
     {
         let d = degree + 1;
-        let coefs: Vec<_> = (0..d * d)
-            .map(|i| if i == 0 { secret } else { Z::sample(rng) })
-            .collect();
+        let n = d * d;
+        let mut coefs = Vec::with_capacity(n);
+        coefs.push(secret);
+        coefs.extend((1..n).map(|_| Z::sample(rng)));
+
         Ok(BivariatePoly {
-            coefs: ArrayD::from_shape_vec(IxDyn(&[d, d]), coefs)?.into_dyn(),
+            coefs: Array2::from_shape_vec((d, d), coefs)?,
             degree,
         })
     }
@@ -61,92 +60,177 @@ pub fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) 
     powers_of_point
 }
 
-pub trait MatrixMul<Z: Ring> {
-    fn matmul(&self, rhs: &ArrayD<Z>) -> Result<ArrayD<Z>>;
+pub trait MatrixMul<Rhs = Self>: Sized {
+    type Output;
+    fn matmul(&self, rhs: &Rhs) -> Result<Self::Output>;
 }
 
-impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
-    fn matmul(&self, rhs: &ArrayD<Z>) -> Result<ArrayD<Z>> {
-        match (self.ndim(), rhs.ndim()) {
-            (1, 1) => {
-                if self.dim() != rhs.dim() {
-                    return Err(anyhow_error_and_log(format!(
-                        "Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
-                        self.dim(),
-                        rhs.dim()
-                    )));
-                }
-                if self.len() != rhs.len() {
-                    return Err(anyhow_error_and_log(format!(
-                        "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors",
-                        self.len(),
-                        rhs.len()
-                    )));
-                }
-                let res = self
-                    .iter()
-                    .zip_eq(rhs)
-                    .fold(Z::ZERO, |acc, (a, b)| acc + *a * *b);
-                Ok(Array::from_elem(IxDyn(&[1]), res).into_dyn())
-            }
-            (1, 2) => {
-                if self.dim()[0] != rhs.dim()[0] {
-                    Err(anyhow_error_and_log(format!(
-                        "Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}",
-                        self.dim(),
-                        rhs.dim()
-                    )))
-                } else {
-                    let mut res = Vec::new();
-                    for col in rhs.columns() {
-                        if col.len() != self.len() {
-                            return Err(anyhow_error_and_log(format!(
-                                "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors and rank 2 tensors",
-                                self.len(),
-                                rhs.len()
-                            )));
-                        }
-                        let s = col
-                            .iter()
-                            .zip_eq(self)
-                            .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
-                        res.push(s);
+macro_rules! dot_col {
+    ($lhs:expr, $rhs:expr, $col:expr, $first:expr $(, $idx:expr)+) => {{
+        let mut acc = $lhs[$first] * $rhs[($first, $col)];
+        $(acc += $lhs[$idx] * $rhs[($idx, $col)];)+
+        acc
+    }};
+}
+
+macro_rules! dot_row {
+    ($lhs:expr, $rhs:expr, $row:expr, $first:expr $(, $idx:expr)+) => {{
+        let mut acc = $lhs[($row, $first)] * $rhs[$first];
+        $(acc += $lhs[($row, $idx)] * $rhs[$idx];)+
+        acc
+    }};
+}
+
+macro_rules! dot_vec {
+    ($lhs:expr, $rhs:expr, $first:expr $(, $idx:expr)+) => {{
+        let mut acc = $lhs[$first] * $rhs[$first];
+        $(acc += $lhs[$idx] * $rhs[$idx];)+
+        acc
+    }};
+}
+
+impl<Z: Ring> MatrixMul<Array2<Z>> for Array1<Z> {
+    type Output = Array1<Z>;
+    fn matmul(&self, rhs: &Array2<Z>) -> Result<Self::Output> {
+        Ok(match rhs.dim() {
+            (2, 2) => Array1::from_vec(vec![
+                dot_col!(self, rhs, 0, 0, 1),
+                dot_col!(self, rhs, 1, 0, 1),
+            ]),
+            (5, 5) => Array1::from_vec(vec![
+                dot_col!(self, rhs, 0, 0, 1, 2, 3, 4),
+                dot_col!(self, rhs, 1, 0, 1, 2, 3, 4),
+                dot_col!(self, rhs, 2, 0, 1, 2, 3, 4),
+                dot_col!(self, rhs, 3, 0, 1, 2, 3, 4),
+                dot_col!(self, rhs, 4, 0, 1, 2, 3, 4),
+            ]),
+            (_, cols) => {
+                let mut res = Vec::with_capacity(cols);
+                for col_idx in 0..cols {
+                    let mut acc = Z::ZERO;
+                    for row_idx in 0..self.len() {
+                        acc += self[row_idx] * rhs[(row_idx, col_idx)];
                     }
-                    Ok(Array::from_vec(res).into_dyn())
+                    res.push(acc);
                 }
+                Array1::from_vec(res)
             }
-            (2, 1) => {
-                if self.dim()[1] != rhs.dim()[0] {
-                    Err(anyhow_error_and_log(format!(
-                        "Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
-                        self.dim(),
-                        rhs.dim()
-                    )))
-                } else {
-                    let mut res = Vec::new();
-                    for row in self.rows() {
-                        if row.len() != rhs.len() {
-                            return Err(anyhow_error_and_log(format!(
-                                "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 2 tensors and rank 1 tensors",
-                                self.len(),
-                                rhs.len()
-                            )));
-                        }
-                        let s = row
-                            .iter()
-                            .zip_eq(rhs)
-                            .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
-                        res.push(s);
-                    }
-                    Ok(Array::from_vec(res).into_dyn())
-                }
-            }
-            (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
-                "Matmul not implemented for tensors of rank {l_rank:?}, {r_rank:?}",
-            ))),
-        }
+        })
     }
 }
+
+impl<Z: Ring> MatrixMul<Array1<Z>> for Array2<Z> {
+    type Output = Array1<Z>;
+    fn matmul(&self, rhs: &Array1<Z>) -> Result<Self::Output> {
+        Ok(match self.dim() {
+            (2, 2) => Array1::from_vec(vec![
+                dot_row!(self, rhs, 0, 0, 1),
+                dot_row!(self, rhs, 1, 0, 1),
+            ]),
+            (5, 5) => Array1::from_vec(vec![
+                dot_row!(self, rhs, 0, 0, 1, 2, 3, 4),
+                dot_row!(self, rhs, 1, 0, 1, 2, 3, 4),
+                dot_row!(self, rhs, 2, 0, 1, 2, 3, 4),
+                dot_row!(self, rhs, 3, 0, 1, 2, 3, 4),
+                dot_row!(self, rhs, 4, 0, 1, 2, 3, 4),
+            ]),
+            (rows, cols) => {
+                let mut res = Vec::with_capacity(rows);
+                for row_idx in 0..rows {
+                    let mut acc = Z::ZERO;
+                    for col_idx in 0..cols {
+                        acc += self[(row_idx, col_idx)] * rhs[col_idx];
+                    }
+                    res.push(acc);
+                }
+                Array1::from_vec(res)
+            }
+        })
+    }
+}
+
+// impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
+//     fn matmul(&self, rhs: &ArrayD<Z>) -> Result<ArrayD<Z>> {
+//         match (self.ndim(), rhs.ndim()) {
+//             (1, 1) => {
+//                 if self.dim() != rhs.dim() {
+//                     return Err(anyhow_error_and_log(format!(
+//                         "Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
+//                         self.dim(),
+//                         rhs.dim()
+//                     )));
+//                 }
+//                 if self.len() != rhs.len() {
+//                     return Err(anyhow_error_and_log(format!(
+//                         "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors",
+//                         self.len(),
+//                         rhs.len()
+//                     )));
+//                 }
+//                 let res = self
+//                     .iter()
+//                     .zip_eq(rhs)
+//                     .fold(Z::ZERO, |acc, (a, b)| acc + *a * *b);
+//                 Ok(Array::from_elem(IxDyn(&[1]), res).into_dyn())
+//             }
+//             (1, 2) => {
+//                 if self.dim()[0] != rhs.dim()[0] {
+//                     Err(anyhow_error_and_log(format!(
+//                         "Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}",
+//                         self.dim(),
+//                         rhs.dim()
+//                     )))
+//                 } else {
+//                     let mut res = Vec::new();
+//                     for col in rhs.columns() {
+//                         if col.len() != self.len() {
+//                             return Err(anyhow_error_and_log(format!(
+//                                 "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors and rank 2 tensors",
+//                                 self.len(),
+//                                 rhs.len()
+//                             )));
+//                         }
+//                         let s = col
+//                             .iter()
+//                             .zip_eq(self)
+//                             .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
+//                         res.push(s);
+//                     }
+//                     Ok(Array::from_vec(res).into_dyn())
+//                 }
+//             }
+//             (2, 1) => {
+//                 if self.dim()[1] != rhs.dim()[0] {
+//                     Err(anyhow_error_and_log(format!(
+//                         "Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
+//                         self.dim(),
+//                         rhs.dim()
+//                     )))
+//                 } else {
+//                     let mut res = Vec::new();
+//                     for row in self.rows() {
+//                         if row.len() != rhs.len() {
+//                             return Err(anyhow_error_and_log(format!(
+//                                 "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 2 tensors and rank 1 tensors",
+//                                 self.len(),
+//                                 rhs.len()
+//                             )));
+//                         }
+//                         let s = row
+//                             .iter()
+//                             .zip_eq(rhs)
+//                             .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
+//                         res.push(s);
+//                     }
+//                     Ok(Array::from_vec(res).into_dyn())
+//                 }
+//             }
+//             (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
+//                 "Matmul not implemented for tensors of rank {l_rank:?}, {r_rank:?}",
+//             ))),
+//         }
+//     }
+// }
 
 pub trait BivariateEval<Z: Ring> {
     /// Given a degree T bivariate poly F(X,Y) and a point \alpha, we compute
@@ -167,28 +251,37 @@ pub trait BivariateEval<Z: Ring> {
 }
 
 impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z>
-where
-    ArrayD<Z>: MatrixMul<Z>,
+// where
+//     ArrayD<Z>: MatrixMul<Z>,
 {
     fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
-        let powers_array = Array::from(compute_powers(alpha, self.degree)).into_dyn();
+        let powers_array = Array1::from(compute_powers(alpha, self.degree));
         let res_vector = powers_array.matmul(&self.coefs)?;
         Ok(Poly::from_coefs(res_vector.into_raw_vec_and_offset().0))
     }
 
     fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
-        let powers_array = Array::from(compute_powers(alpha, self.degree)).into_dyn();
+        let powers_array = Array1::from(compute_powers(alpha, self.degree));
         let res_vector = self.coefs.matmul(&powers_array)?;
         Ok(Poly::from_coefs(res_vector.into_raw_vec_and_offset().0))
     }
 
     fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z> {
-        let powers_array_x = Array::from(compute_powers(alpha_x, self.degree)).into_dyn();
-        let powers_array_y = Array::from(compute_powers(alpha_y, self.degree)).into_dyn();
+        let powers_array_x = Array1::from(compute_powers(alpha_x, self.degree));
+        let powers_array_y = Array1::from(compute_powers(alpha_y, self.degree));
 
         let lhs = powers_array_x.matmul(&self.coefs)?;
-        let res = lhs.matmul(&powers_array_y)?;
-        Ok(res[0])
+        Ok(match lhs.len() {
+            2 => dot_vec!(lhs, powers_array_y, 0, 1),
+            5 => dot_vec!(lhs, powers_array_y, 0, 1, 2, 3, 4),
+            len => {
+                let mut acc = Z::ZERO;
+                for idx in 0..len {
+                    acc += lhs[idx] * powers_array_y[idx];
+                }
+                acc
+            }
+        })
     }
 }
 
@@ -211,30 +304,22 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
-    //Checks that we error on incompatible sizes and dimensions
+    //Checks the hot matrix/vector shapes used by bivariate evaluation.
     #[test]
-    fn test_matmul_bounds() {
-        let x11 = ArrayD::from_elem(IxDyn(&[1, 1]), ResiduePolyF4Z128::ONE);
-        let y2 = ArrayD::from_elem(IxDyn(&[2]), ResiduePolyF4Z128::ONE);
-        // test (1, 1) X (2) mul error
-        assert!(x11.matmul(&y2).is_err());
-        assert!(y2.matmul(&x11).is_err());
+    fn test_matmul_supported_shapes() {
+        let y2 = Array1::from_elem(2, ResiduePolyF4Z128::ONE);
+        let z22 = Array2::from_elem((2, 2), ResiduePolyF4Z128::ONE);
+        let two = ResiduePolyF4Z128::ONE + ResiduePolyF4Z128::ONE;
+        let expected2 = Array1::from_elem(2, two);
+        assert_eq!(y2.matmul(&z22).unwrap(), expected2);
+        assert_eq!(z22.matmul(&y2).unwrap(), expected2);
 
-        // we do not support mul between two 2d matrices
-        assert!(x11.matmul(&x11).is_err());
-
-        let z22 = ArrayD::from_elem(IxDyn(&[2, 2]), ResiduePolyF4Z128::ONE);
-        // test vec-matrix bound check returns ok
-        assert!(y2.matmul(&z22).is_ok());
-
-        // test matrix-vec bound check returns ok
-        assert!(z22.matmul(&y2).is_ok());
-
-        let y4 = ArrayD::from_elem(IxDyn(&[4]), ResiduePolyF4Z128::ONE);
-
-        // test 1x1 vector mul errors
-        assert!(y4.matmul(&y2).is_err());
-        assert!(y2.matmul(&y4).is_err());
+        let y5 = Array1::from_elem(5, ResiduePolyF4Z128::ONE);
+        let z55 = Array2::from_elem((5, 5), ResiduePolyF4Z128::ONE);
+        let five = two + two + ResiduePolyF4Z128::ONE;
+        let expected5 = Array1::from_elem(5, five);
+        assert_eq!(y5.matmul(&z55).unwrap(), expected5);
+        assert_eq!(z55.matmul(&y5).unwrap(), expected5);
     }
 
     //Test that eval at 0 return the secret for ResiduePolyF4Z128
@@ -606,9 +691,7 @@ mod tests {
         ];
 
         let bpoly = BivariatePoly {
-            coefs: ArrayD::from_shape_vec(IxDyn(&[5, 5]), coefs)
-                .unwrap()
-                .to_owned(),
+            coefs: Array2::from_shape_vec((5, 5), coefs).unwrap(),
             degree: 4,
         };
 
