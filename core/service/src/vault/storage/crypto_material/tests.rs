@@ -891,8 +891,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
 
     assert!(
         crypto_storage
-            .inner
-            .fhe_keys_exists(&req_id, &epoch_id)
+            .centralized_fhe_keys_exists(&req_id, &epoch_id)
             .await
             .expect("sanity check: existence query should not fail"),
         "complete compressed layout should be considered present"
@@ -907,8 +906,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
 
     assert!(
         !crypto_storage
-            .inner
-            .fhe_keys_exists(&req_id, &epoch_id)
+            .centralized_fhe_keys_exists(&req_id, &epoch_id)
             .await
             .expect("storage should still be queryable after deleting PublicKey"),
         "compressed keys should be treated as missing when the standalone PublicKey is absent"
@@ -1617,37 +1615,40 @@ async fn update_meta_store_storage_outcomes() {
     let req_backup = derive_request_id("ums_backup").unwrap();
     let req_writing = derive_request_id("ums_writing").unwrap();
     let meta_store: Arc<RwLock<MetaStore<u32>>> = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    add_req_to_meta_store(&mut meta_store.write().await, &req_ok, TEST_METRIC).unwrap();
-    add_req_to_meta_store(&mut meta_store.write().await, &req_backup, TEST_METRIC).unwrap();
-    add_req_to_meta_store(&mut meta_store.write().await, &req_writing, TEST_METRIC).unwrap();
-    assert!(
-        update_meta_store(Ok(()), &req_ok, 42_u32, meta_store.clone(), TEST_METRIC)
-            .await
-            .is_ok()
-    );
-    assert_eq!(
-        update_meta_store(
-            Err(StorageError::BackupError),
-            &req_backup,
-            7_u32,
-            meta_store.clone(),
-            TEST_METRIC,
-        )
-        .await,
-        Err(StorageError::BackupError),
-    );
-    assert_eq!(
-        update_meta_store(
-            Err(StorageError::WritingError),
-            &req_writing,
-            0_u32,
-            meta_store.clone(),
-            TEST_METRIC,
-        )
-        .await,
-        Err(StorageError::WritingError),
-    );
 
+    {
+        let mut write_guard = meta_store.write().await;
+        add_req_to_meta_store(&mut write_guard, &req_ok, TEST_METRIC).unwrap();
+        add_req_to_meta_store(&mut write_guard, &req_backup, TEST_METRIC).unwrap();
+        add_req_to_meta_store(&mut write_guard, &req_writing, TEST_METRIC).unwrap();
+        assert!(
+            update_meta_store(Ok(()), &req_ok, 42_u32, &mut write_guard, TEST_METRIC)
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            update_meta_store(
+                Err(StorageError::BackupError),
+                &req_backup,
+                7_u32,
+                &mut write_guard,
+                TEST_METRIC,
+            )
+            .await,
+            Err(StorageError::BackupError),
+        );
+        assert_eq!(
+            update_meta_store(
+                Err(StorageError::WritingError),
+                &req_writing,
+                0_u32,
+                &mut write_guard,
+                TEST_METRIC,
+            )
+            .await,
+            Err(StorageError::WritingError),
+        );
+    }
     assert_eq!(
         retrieve_from_meta_store::<u32>(meta_store.read().await, &req_ok, TEST_METRIC)
             .await
@@ -1684,7 +1685,8 @@ async fn update_meta_store_failure_paths() {
         TEST_METRIC,
     ));
 
-    match update_meta_store(Ok(()), &missing, 1_u32, meta_store.clone(), TEST_METRIC)
+    let mut guard = meta_store.write().await;
+    match update_meta_store(Ok(()), &missing, 1_u32, &mut guard, TEST_METRIC)
         .await
         .unwrap_err()
     {
@@ -1694,12 +1696,11 @@ async fn update_meta_store_failure_paths() {
         ),
         other => panic!("expected MetaStoreError, got {other:?}"),
     }
-
     match update_meta_store(
         Err(StorageError::WritingError),
         &missing,
         2_u32,
-        meta_store.clone(),
+        &mut guard,
         TEST_METRIC,
     )
     .await
@@ -1711,9 +1712,8 @@ async fn update_meta_store_failure_paths() {
         ),
         other => panic!("expected MetaStoreError, got {other:?}"),
     }
-
     assert!(matches!(
-        update_meta_store(Ok(()), &already_set, 1_u32, meta_store, TEST_METRIC).await,
+        update_meta_store(Ok(()), &already_set, 1_u32, &mut guard, TEST_METRIC).await,
         Err(StorageError::MetaStoreError(_)),
     ));
 }

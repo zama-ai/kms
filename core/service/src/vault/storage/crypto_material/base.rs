@@ -186,7 +186,7 @@ where
                 return Ok(false);
             }
         }
-        return Ok(true);
+        Ok(true)
     }
 
     /// Check if data exists in both public and private storage,
@@ -352,13 +352,12 @@ where
             None => vec![],
         };
         // First ensure that the data to be written does not already exist
-        if let Some(inner_epoch_id) = epoch_id {
-            if self
+        if let Some(inner_epoch_id) = epoch_id
+            && self
                 .data_exists_at_epoch(req_id, inner_epoch_id, &pub_type, &priv_type)
                 .await?
-            {
-                return Err(StorageError::DuplicateError);
-            }
+        {
+            return Err(StorageError::DuplicateError);
         }
         if self
             .data_exists(req_id, &pub_type, &priv_type)
