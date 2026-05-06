@@ -415,17 +415,17 @@ where
         let line = '─'.to_string().repeat(content_width + 2).to_string();
         format!(
             "┌{}┐\n│ {:^width$} │\n├{}┤\n{}├{}┤\n{}├{}┤\n{}├{}┤\n{}└{}┘",
-            &line,
+            line,
             header,
-            &line,
+            line,
             format_section("PRSSInit:", &prss_desc),
-            &line,
+            line,
             format_section("SmallOffline:", &small_desc),
-            &line,
+            line,
             format_section("LargeOfflineZ64:", &large_z64_desc),
-            &line,
+            line,
             format_section("LargeOfflineZ128:", &large_z128_desc),
-            &line,
+            line,
             width = content_width
         )
     }
@@ -2593,9 +2593,11 @@ where
             let public_key_set_decompressed = key_ref.pub_keyset_decompressed.clone();
             let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
             let params = key_ref.as_ref().params;
+            let oprf_key_present = old_private_key_set.oprf_secret_key_share.is_some();
 
             //Perform preprocessing
-            let num_needed_preproc = ResharePreprocRequired::new(num_parties, params);
+            let num_needed_preproc =
+                ResharePreprocRequired::new(num_parties, params, oprf_key_present);
 
             let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
@@ -2678,6 +2680,7 @@ where
                 &mut preprocessing_64,
                 &mut Some(old_private_key_set),
                 params,
+                oprf_key_present,
             )
             .await
             .unwrap();

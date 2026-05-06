@@ -29,7 +29,10 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::Tagged;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_execution::{
-    endpoints::keygen::{OnlineDistributedKeyGen, distributed_decompression_keygen_z128},
+    endpoints::keygen::{
+        OnlineDistributedKeyGen, distributed_decompression_keygen_z128,
+        ensure_oprf_secret_key_share_z128,
+    },
     keyset_config as ddec_keyset_config,
     online::preprocessing::DKGPreprocessing,
     runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
@@ -974,6 +977,7 @@ impl<
                     None,
                     dummy_sns_secret_key,
                     None,
+                    None,
                 )?
                 .into_raw_parts();
 
@@ -1148,12 +1152,19 @@ impl<
         };
 
         // First we need to do bit-lift
-        let existing_private_keys = existing_private_keys
+        let mut existing_private_keys = existing_private_keys
             .lift_to_z128_integrated(
                 &mut dkg_sessions.session_z64,
                 &mut dkg_sessions.session_z128,
             )
             .await?;
+        ensure_oprf_secret_key_share_z128(
+            &mut existing_private_keys,
+            params,
+            preprocessing,
+            &mut dkg_sessions.session_z128,
+        )
+        .await?;
 
         let compressed_keyset = KG::compressed_keygen_from_existing_private_keyset(
             &mut dkg_sessions.session_z128,
@@ -1192,12 +1203,19 @@ impl<
         };
 
         // First we need to do bit-lift
-        let existing_private_keys = existing_private_keys
+        let mut existing_private_keys = existing_private_keys
             .lift_to_z128_integrated(
                 &mut dkg_sessions.session_z64,
                 &mut dkg_sessions.session_z128,
             )
             .await?;
+        ensure_oprf_secret_key_share_z128(
+            &mut existing_private_keys,
+            params,
+            preprocessing,
+            &mut dkg_sessions.session_z128,
+        )
+        .await?;
 
         let pub_keyset = KG::keygen_from_existing_private_keyset(
             &mut dkg_sessions.session_z128,

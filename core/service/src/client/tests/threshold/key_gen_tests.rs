@@ -1,15 +1,27 @@
+// TODO(dp): the imports here are a noisy mess — two `cfg_if!` blocks plus
+// dozens of individually `#[cfg(...)]`-gated `use` lines. Consolidate into
+// a single `cfg_if!` per feature combo (or pull the shared imports up out
+// of the gates) on a dedicated cleanup pass.
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
+    use crate::client::tests::common::default_isolated_extra_data;
+    use crate::client::tests::threshold::common::threshold_handles;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-    use crate::engine::base::KeyGenMetadata;
-    use crate::vault::storage::read_versioned_at_request_and_epoch_id;
+    use crate::engine::base::{DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_uncompressed_keygen};
+    use crate::util::key_setup::test_tools::purge;
+    use crate::vault::storage::{
+        delete_at_request_and_epoch_id, delete_at_request_id,
+        read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+        store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+    };
+    use crate::vault::storage::crypto_material::get_core_signing_key;
+
     use kms_grpc::rpc_types::PrivDataType;
 }}
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
     use crate::client::key_gen::tests::check_conformance;
     use crate::client::tests::common::{OptKeySetConfigAccessor};
-    use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
@@ -17,14 +29,12 @@ cfg_if::cfg_if! {
     use crate::engine::base::derive_request_id;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
-    use serial_test::serial;
     use std::collections::HashMap;
     use std::str::FromStr;
     use tfhe::integer::compression_keys::DecompressionKey;
@@ -58,10 +68,12 @@ use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_
 use crate::engine::utils::make_extra_data;
 #[cfg(feature = "slow_tests")]
 use crate::testing::helpers::domain_to_msg;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
-use crate::testing::material::TestMaterialSpec;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::testing::material::{KeyType, TestMaterialSpec};
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::testing::setup::threshold::ThresholdTestEnv;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
@@ -145,6 +157,7 @@ impl TestKeyGenResult {
             }
         };
 
+        crate::client::key_gen::tests::check_oprf_correctness(&server_key, client_key);
         check_conformance(server_key.clone(), client_key.clone());
 
         let pt1 = 27u8;
@@ -163,28 +176,40 @@ impl TestKeyGenResult {
 /// Test insecure compressed keygen with Test parameters.
 /// This tests the insecure `initialize_compressed_key_material` code path where
 /// party 1 generates compressed keys locally and shares private key shares with other parties.
+// TODO(dp): the migrated tests in this file (and in mpc_context_tests.rs,
+// crs_gen_tests.rs, public_decryption_tests.rs, user_decryption_tests.rs)
+// share a heavy `ThresholdTestEnv::builder()...build()` + spec-construction
+// preamble. A second sweep should factor that out — e.g. a `with_test_setup!`
+// macro or a `ThresholdTestEnv::for_test(name, parties, spec_kind)` helper —
+// to shrink each test back down to the part that actually varies.
 #[cfg(feature = "insecure")]
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::Result<()> {
     let key_id: RequestId = derive_request_id(&format!(
         "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+    ))?;
+
+    // Test generates its own FHE keys; only signing material + PRSS are needed pre-generated.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_insecure_compressed_dkg")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
+
     let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
@@ -195,7 +220,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
         keyset_config,
         keyset_added_info,
         true,
-        None,
+        Some(&material_path),
         0,
     )
     .await
@@ -209,6 +234,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
+
+    Ok(())
 }
 
 /// Test compressed keygen with test parameters and 4 parties.
@@ -216,7 +243,6 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
 /// using XOF-seeded compression instead of the standard keygen.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn secure_threshold_compressed_keygen_test() {
     preproc_and_keygen(
         4,
@@ -658,6 +684,7 @@ pub(crate) async fn preproc_and_keygen(
         assert_eq!(&tag, client_key.tag());
         assert_eq!(&tag, public_key.tag());
         assert_eq!(&tag, server_key.tag());
+        crate::client::key_gen::tests::check_oprf_correctness(&server_key, &client_key);
         crate::client::key_gen::tests::check_conformance(server_key, client_key);
     }
 
@@ -969,7 +996,7 @@ pub(crate) async fn run_preproc(
             .unwrap();
 
         // Execute partial preprocessing
-        for (_, cur_client) in kms_clients.iter() {
+        for cur_client in kms_clients.values() {
             let mut cur_client = cur_client.clone();
             let req_clone = preproc_request.clone();
             tasks_gen.spawn(async move {
@@ -992,7 +1019,7 @@ pub(crate) async fn run_preproc(
             .unwrap();
 
         // Execute preprocessing
-        for (_, cur_client) in kms_clients.iter() {
+        for cur_client in kms_clients.values() {
             let mut cur_client = cur_client.clone();
             let req_clone = preproc_request.clone();
             tasks_gen.spawn(async move {
@@ -1031,7 +1058,7 @@ async fn poll_key_gen_preproc_result(
     max_iter: usize,
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
-    for (_, client) in kms_clients.iter() {
+    for client in kms_clients.values() {
         let mut client = client.clone();
         let req_id_clone = request.request_id.as_ref().unwrap().clone();
 
@@ -1068,6 +1095,7 @@ async fn poll_key_gen_preproc_result(
     resp_response_vec
 }
 
+#[expect(clippy::type_complexity)]
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn try_reconstruct_shares(
     param: DKGParams,
@@ -1078,6 +1106,7 @@ fn try_reconstruct_shares(
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
     Option<NoiseSquashingCompressionPrivateKey>,
+    Option<tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>>,
 ) {
     use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
     use threshold_execution::tfhe_internals::{
@@ -1200,11 +1229,33 @@ fn try_reconstruct_shares(
             None
         };
 
+    let oprf_lwe_shares = all_threshold_fhe_keys
+        .iter()
+        .filter_map(|(k, v)| {
+            v.private_keys
+                .oprf_secret_key_share
+                .clone()
+                .map(|share| (*k, share.convert_to_z64().data))
+        })
+        .collect::<HashMap<_, _>>();
+    let oprf_lwe_secret_key = if oprf_lwe_shares.len() == all_threshold_fhe_keys.len() {
+        Some(
+            tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
+                oprf_lwe_shares,
+                param_handle.lwe_dimension().0,
+                threshold,
+            )),
+        )
+    } else {
+        None
+    };
+
     (
         lwe_secret_key,
         glwe_sk,
         sns_glwe_sk,
         sns_compression_private_key,
+        oprf_lwe_secret_key,
     )
 }
 
@@ -1329,7 +1380,7 @@ pub(crate) async fn verify_keygen_responses(
     }
 
     let threshold = total_num_parties.div_ceil(3) - 1;
-    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) = try_reconstruct_shares(
+    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk, oprf_lwe_sk) = try_reconstruct_shares(
         internal_client.params,
         threshold,
         all_threshold_fhe_keys.clone(),
@@ -1344,6 +1395,7 @@ pub(crate) async fn verify_keygen_responses(
         None,
         Some(sns_glwe_sk),
         sns_compression_sk,
+        oprf_lwe_sk,
     )
     .unwrap();
 
@@ -1379,7 +1431,6 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1421,8 +1472,9 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 /// **IMPORTANT:** Uses MaterialType::Default (production-like key sizes).
 /// **Requires:**
 /// - `insecure` feature flag
-/// - `slow_tests` feature flag (for default material generation)
-/// - Pre-generated default material: `make generate-test-material-all`
+/// - `slow_tests` feature flag (to run this slow default-parameter test)
+/// - Pre-generated secure material:
+///   `generate-test-material --profile secure --parties 4,10,13`
 #[tokio::test]
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg() -> anyhow::Result<()> {
@@ -1435,7 +1487,6 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_material_spec(spec)
         .build()
         .await?;
@@ -1491,7 +1542,6 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1551,7 +1601,6 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1661,7 +1710,6 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1755,52 +1803,73 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test secure threshold compressed key generation from existing secret shares.
+/// Test secure threshold compressed key generation from existing secret shares
+/// that already include the dedicated OPRF private-key share.
+#[tokio::test]
+#[cfg(feature = "slow_tests")]
+async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_oprf() -> anyhow::Result<()>
+{
+    run_secure_threshold_compressed_keygen_from_existing(false).await
+}
+
+/// Test secure threshold compressed key generation from legacy existing secret shares
+/// that do not include the dedicated OPRF private-key share.
+#[tokio::test]
+#[cfg(feature = "slow_tests")]
+async fn secure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
+{
+    run_secure_threshold_compressed_keygen_from_existing(true).await
+}
+
+/// Run secure threshold compressed key generation from existing secret shares.
 ///
-/// Generates a standard keyset first, then performs compressed key generation
-/// reusing the existing secret key shares from the first keygen. This validates
-/// the end-to-end flow of compressed keygen from existing secrets through the
-/// gRPC service layer.
+/// Generates an uncompressed keyset first, then performs compressed key generation
+/// reusing the existing secret key shares from the first keygen. When `remove_oprf`
+/// is true, the first keyset is rewritten to mimic legacy material with no
+/// dedicated OPRF share before the servers are restarted.
 ///
 /// **Workflow:**
-/// 1. Standard keygen (preprocessing + online) to produce the first keyset
+/// 1. Uncompressed keygen (preprocessing + online) to produce the first keyset
 /// 2. Preprocessing for compressed keygen from existing shares
 /// 3. Compressed keygen from existing shares
 /// 4. Verify both keygens completed on all parties using ddec
-#[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()> {
+async fn run_secure_threshold_compressed_keygen_from_existing(
+    remove_oprf: bool,
+) -> anyhow::Result<()> {
     use crate::client::tests::common::keygen_config_from_existing;
+
+    const NUM_PARTIES: usize = 4;
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("compressed_from_existing_keygen")
-        .with_party_count(4)
+        .with_party_count(NUM_PARTIES)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent fixed request IDs from colliding with shared/generated material
         .build()
         .await?;
 
-    let clients = &env.clients;
-
-    // Step 1: Standard keygen (preprocessing + online)
+    // Step 1: Uncompressed keygen (preprocessing + online)
     let preproc_id_1 = derive_request_id("compressed_existing_preproc_1")?;
     let keygen_id_1 = derive_request_id("compressed_existing_keygen_1")?;
+    let (uncompressed_keyset_config, uncompressed_keyset_added_info) = uncompressed_keygen_config();
 
     threshold_key_gen_secure(
-        clients,
+        &env.clients,
         &preproc_id_1,
         &keygen_id_1,
         FheParameter::Test,
-        None,
-        None,
+        uncompressed_keyset_config,
+        uncompressed_keyset_added_info,
         None,
         None,
     )
     .await?;
 
+    let (mut clients, mut servers, material_path, _guard) = env.into_parts();
+
     // Verify standard keygen completed on all parties
-    for client in env.all_clients() {
+    for client in clients.values() {
         let mut cur_client = client.clone();
         let result = cur_client
             .get_key_gen_result(tonic::Request::new(keygen_id_1.into()))
@@ -1808,14 +1877,28 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         assert_eq!(result.into_inner().request_id, Some(keygen_id_1.into()));
     }
 
+    if remove_oprf {
+        let old_servers = std::mem::take(&mut servers);
+        for (_, server) in old_servers {
+            server.assert_shutdown().await;
+        }
+        remove_oprf_from_existing_keyset(NUM_PARTIES, &material_path, &keygen_id_1, &preproc_id_1)
+            .await?;
+
+        let (restarted_servers, restarted_clients) =
+            restart_threshold_servers_from_material(NUM_PARTIES, &material_path).await?;
+        servers = restarted_servers;
+        clients = restarted_clients;
+    }
+
     // Step 2: Compressed keygen from existing secret shares (preprocessing + online)
     let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
-    let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true);
+    let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true, true);
 
     threshold_key_gen_secure(
-        clients,
+        &clients,
         &preproc_id_2,
         &keygen_id_2,
         FheParameter::Test,
@@ -1827,7 +1910,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
     .await?;
 
     // Verify compressed keygen completed on all parties
-    for client in env.all_clients() {
+    for client in clients.values() {
         let mut cur_client = client.clone();
         let result = cur_client
             .get_key_gen_result(tonic::Request::new(keygen_id_2.into()))
@@ -1836,13 +1919,8 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
     }
 
     // Do distributed decryption to verify the generated key is ok
-    // TODO this could be refactored
-    let material_dir = env.material_dir;
-    let mut servers = env.servers;
-    let mut clients = env.clients;
-
-    let material_path = material_dir.path();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    let material_path = material_path.as_path();
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..NUM_PARTIES];
 
     // Create internal client for decryption
     let mut pub_storage_map = std::collections::HashMap::new();
@@ -1866,6 +1944,11 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
             let (pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
+            assert!(
+                oprf_key.is_some(),
+                "Party {party_id}: compressed UseExisting keygen must embed a dedicated OPRF key"
+            );
             assert_eq!(
                 pk.tag(),
                 &expected_tag,
@@ -1916,6 +1999,27 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await?;
+            let threshold_keys_old: crate::engine::threshold::service::ThresholdFheKeys =
+                read_versioned_at_request_and_epoch_id(
+                    &priv_storage,
+                    &keygen_id_1,
+                    &DEFAULT_EPOCH_ID,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
+            let old_oprf_share = &threshold_keys_old
+                .private_keys
+                .as_ref()
+                .oprf_secret_key_share;
+            let new_oprf_share = &threshold_keys.private_keys.as_ref().oprf_secret_key_share;
+            assert!(
+                old_oprf_share.is_some(),
+                "Party {party_id}: migrated key must have OPRF private share"
+            );
+            assert_eq!(
+                old_oprf_share, new_oprf_share,
+                "Party {party_id}: UseExisting keygen must reuse the persisted OPRF private share"
+            );
             match &threshold_keys.meta_data {
                 KeyGenMetadata::Current(inner) => {
                     let signed_pk_digest = inner
@@ -1947,7 +2051,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
 
     // Run ddec with the new keyset
     run_decryption_threshold(
-        4,
+        NUM_PARTIES,
         &mut servers,
         &mut clients,
         &mut internal_client,
@@ -1966,15 +2070,17 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
     )
     .await;
 
-    // Run ddec by encrypting using the old public key but
-    // still the new shares from the new keyset
+    // Run ddec under keygen_id_1 to verify the migration: after
+    // copy_compressed_key_to_original, keygen_id_1 holds the new compressed
+    // keyset and the migrated private shares, so encryption + decryption can
+    // both use the post-migration compressed material.
     run_decryption_threshold(
-        4,
+        NUM_PARTIES,
         &mut servers,
         &mut clients,
         &mut internal_client,
-        Some(&keygen_id_1),
-        &keygen_id_2,
+        None,
+        &keygen_id_1,
         None,
         vec![TestingPlaintext::U32(55)],
         EncryptionConfig {
@@ -1984,12 +2090,172 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         None,
         1,
         Some(material_path),
-        false, // encryption uses keygen_id_1, which is also stored as a compressed keyset
+        false, // encryption uses keygen_id_1's migrated compressed keyset
     )
     .await;
 
     for (_, server) in servers {
         server.assert_shutdown().await;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "slow_tests")]
+async fn restart_threshold_servers_from_material(
+    num_parties: usize,
+    material_path: &Path,
+) -> anyhow::Result<(
+    HashMap<u32, crate::testing::types::ServerHandle>,
+    HashMap<u32, CoreServiceEndpointClient<Channel>>,
+)> {
+    let mut pub_storages = Vec::new();
+    let mut priv_storages = Vec::new();
+    for (pub_prefix, priv_prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties]
+        .iter()
+        .zip(PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties].iter())
+    {
+        pub_storages.push(FileStorage::new(
+            Some(material_path),
+            StorageType::PUB,
+            pub_prefix.as_deref(),
+        )?);
+        priv_storages.push(FileStorage::new(
+            Some(material_path),
+            StorageType::PRIV,
+            priv_prefix.as_deref(),
+        )?);
+    }
+
+    let vaults: Vec<Option<crate::vault::Vault>> = (0..num_parties).map(|_| None).collect();
+    Ok(crate::client::test_tools::setup_threshold(
+        1,
+        pub_storages,
+        priv_storages,
+        vaults,
+        true,
+        None,
+        None,
+    )
+    .await)
+}
+
+#[cfg(feature = "slow_tests")]
+async fn remove_oprf_from_existing_keyset(
+    num_parties: usize,
+    material_path: &Path,
+    key_id: &RequestId,
+    preproc_id: &RequestId,
+) -> anyhow::Result<()> {
+    for (party_idx, (pub_prefix, priv_prefix)) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL
+        [0..num_parties]
+        .iter()
+        .zip(PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties].iter())
+        .enumerate()
+    {
+        let party_id = party_idx + 1;
+        let mut pub_storage =
+            FileStorage::new(Some(material_path), StorageType::PUB, pub_prefix.as_deref())?;
+        let mut priv_storage = FileStorage::new(
+            Some(material_path),
+            StorageType::PRIV,
+            priv_prefix.as_deref(),
+        )?;
+
+        let signing_key = get_core_signing_key(&priv_storage).await?;
+        let public_key: tfhe::CompactPublicKey =
+            read_versioned_at_request_id(&pub_storage, key_id, &PubDataType::PublicKey.to_string())
+                .await?;
+        let server_key: tfhe::ServerKey =
+            read_versioned_at_request_id(&pub_storage, key_id, &PubDataType::ServerKey.to_string())
+                .await?;
+        let (
+            integer_server_key,
+            cpk_key_switching_key_material,
+            compression_key,
+            decompression_key,
+            noise_squashing_key,
+            noise_squashing_compression_key,
+            cpk_re_randomization_key,
+            oprf_key,
+            tag,
+        ) = server_key.into_raw_parts();
+        assert!(
+            oprf_key.is_some(),
+            "Party {party_id}: first keygen should store an OPRF server key before legacy rewrite"
+        );
+        let server_key_without_oprf = tfhe::ServerKey::from_raw_parts(
+            integer_server_key,
+            cpk_key_switching_key_material,
+            compression_key,
+            decompression_key,
+            noise_squashing_key,
+            noise_squashing_compression_key,
+            cpk_re_randomization_key,
+            None,
+            tag,
+        );
+
+        let threshold_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+            &priv_storage,
+            key_id,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+        let mut private_keys = threshold_keys.private_keys.as_ref().clone();
+        assert!(
+            private_keys.oprf_secret_key_share.take().is_some(),
+            "Party {party_id}: first keygen should store an OPRF private share before legacy rewrite"
+        );
+
+        let fhe_key_set = threshold_execution::tfhe_internals::public_keysets::FhePubKeySet {
+            public_key,
+            server_key: server_key_without_oprf.clone(),
+        };
+        let metadata = compute_info_uncompressed_keygen(
+            &signing_key,
+            &DSEP_PUBDATA_KEY,
+            preproc_id,
+            key_id,
+            &fhe_key_set,
+            &dummy_domain(),
+            default_isolated_extra_data(),
+        )?;
+        let updated_threshold_keys = ThresholdFheKeys::new(
+            Arc::new(private_keys),
+            threshold_keys.public_material.clone(),
+            metadata,
+        );
+
+        delete_at_request_id(
+            &mut pub_storage,
+            key_id,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await?;
+        store_versioned_at_request_id(
+            &mut pub_storage,
+            key_id,
+            &server_key_without_oprf,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await?;
+        delete_at_request_and_epoch_id(
+            &mut priv_storage,
+            key_id,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            key_id,
+            &DEFAULT_EPOCH_ID,
+            &updated_threshold_keys,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
     }
 
     Ok(())
@@ -2016,7 +2282,6 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 

@@ -16,7 +16,6 @@ use kms_lib::consts::{
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
-use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
 use std::path::{Path, PathBuf};
@@ -283,11 +282,7 @@ async fn setup_isolated_centralized_cli_test_impl(
 async fn setup_isolated_threshold_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl_with_spec(
         test_name,
         party_count,
@@ -313,7 +308,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///
 /// # Note
 /// Requires `threshold_tests` feature. Tests using this must be marked with:
-/// - `#[serial]` - Sequential execution required (PRSS network coordination)
 /// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
 ///
 /// This helper enables `ensure_default_prss=true` during server startup. For Test params,
@@ -325,7 +319,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// # Example
 /// ```no_run
 /// #[tokio::test]
-/// #[serial]
 /// #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
@@ -338,11 +331,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -358,11 +347,7 @@ async fn setup_isolated_threshold_cli_test_with_prss(
 async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -378,11 +363,7 @@ async fn setup_isolated_threshold_cli_test_with_backup(
 async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -418,11 +399,7 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -445,11 +422,7 @@ async fn setup_isolated_threshold_cli_test_default(
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -473,7 +446,7 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
 /// Per-party `compose_*.toml` server configs are built from typed `CoreConfig` structs
 /// to ensure compile-time schema compatibility.
 fn generate_threshold_cli_config(
-    material_dir: &kms_lib::testing::material::TestMaterialHandle,
+    material_dir: &tempfile::TempDir,
     servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
     fhe_params: FheParameter,
@@ -552,11 +525,7 @@ async fn setup_isolated_threshold_cli_test_impl(
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl_with_spec(
         test_name,
         party_count,
@@ -578,11 +547,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
     material_spec: Option<kms_lib::testing::material::TestMaterialSpec>,
-) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     // Use builder pattern with full feature support
     let mut builder = ThresholdTestEnv::builder()
         .with_test_name(test_name)
@@ -639,7 +604,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 /// that surviving servers change their MPC party roles between contexts.
 ///
 /// Returns:
-/// - TestMaterialHandle with test material
+/// - TempDir with test material
 /// - HashMap of server handles
 /// - Config path for context 1 (servers 1,2,3,4)
 /// - Config path for context 2 (servers 5,6,4,3)
@@ -648,7 +613,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 async fn setup_party_resharing_servers(
     test_name: &str,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
     PathBuf,
@@ -665,7 +630,7 @@ async fn setup_party_resharing_servers(
     // Servers 1-4 form context 1, servers 5,6,3,4 form context 2 (party resharing)
     // Use threshold_signing_only since this test generates FHE keys dynamically
     let spec = TestMaterialSpec::threshold_signing_only(4);
-    let material_dir = manager.setup_test_material_auto(&spec, test_name).await?;
+    let material_dir = manager.setup_test_material_temp(&spec, test_name).await?;
 
     // Create storage for each of the 6 servers
     let pub_prefixes = [
@@ -1789,6 +1754,12 @@ async fn generate_custodian_keys_to_file(
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
 
+    // TODO(dp): use `escargot` (or similar) to build the binary on demand.
+    // `kms-custodian` lives in the `kms` package while this test is in
+    // `kms-core-client`, so cargo's `[[bin]]` autobuild doesn't reach it
+    // and CI has to do an explicit `cargo build -p kms --bin kms-custodian`
+    // step. `escargot::CargoBuild::new().bin("kms-custodian").package("kms").run()?`
+    // would handle build + path lookup cleanly.
     // Find the kms-custodian binary
     let custodian_bin = std::env::current_exe()
         .unwrap()
@@ -1895,6 +1866,9 @@ async fn custodian_reencrypt(
 ) -> Vec<PathBuf> {
     let mut response_paths = Vec::new();
 
+    // TODO(dp): same autobuild concern as `generate_custodian_keys_to_file` —
+    // see that fn's TODO. Both call sites should switch to `escargot` (or
+    // similar) once we factor this out.
     // Find the kms-custodian binary
     let custodian_bin = std::env::current_exe()
         .unwrap()
@@ -2269,7 +2243,6 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
@@ -2289,7 +2262,6 @@ async fn test_threshold_insecure() -> Result<()> {
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2311,7 +2283,6 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 /// Test threshold concurrent preprocessing and keygen operations
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2441,7 +2412,6 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_insecure_default_keygen() -> Result<()> {
     init_logging();
 
@@ -2462,7 +2432,6 @@ async fn test_threshold_insecure_default_keygen() -> Result<()> {
 /// that both produce distinct key IDs.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2487,7 +2456,6 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 3. A public-decrypt request succeeds in the new context
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
 
@@ -2673,7 +2641,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// Full generation test - threshold sequential preprocessing and keygen with Default params.
 ///
 /// Requires pre-generated material in the test-material/default directory
-/// (produced by `generate-test-material --features slow_tests -- default`):
+/// (produced by `generate-test-material --profile secure --parties 4,10,13`):
 /// - **PRSS**: loaded at server startup (`ensure_default_prss=true`); fast to generate but must exist before the test runs.
 /// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
 ///
@@ -2688,7 +2656,6 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2775,7 +2742,6 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
@@ -2839,7 +2805,6 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
@@ -3000,7 +2965,6 @@ mod docker_harness {
     /// **Requires:** Docker Compose + locally buildable KMS images (`DOCKER_BUILD_TEST_CORE_CLIENT=1`).
     #[test_context(DockerComposeThresholdTestNoInitSixParty)]
     #[tokio::test]
-    #[serial(docker)]
     #[cfg_attr(not(feature = "threshold_tests"), ignore)]
     async fn test_threshold_mpc_context_switch_6_docker(
         ctx: &DockerComposeThresholdTestNoInitSixParty,
@@ -3068,7 +3032,6 @@ mod docker_harness {
 /// 7. Execute resharing command
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();
 

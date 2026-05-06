@@ -529,7 +529,7 @@ impl crate::kms::v1::UserDecryptionRequest {
 
         let client_address =
             alloy_primitives::Address::parse_checksummed(&self.client_address, None).map_err(
-                |e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {} - {e}", &self.client_address),
+                |e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {} - {e}", self.client_address),
             )?;
         let verifying_contract = domain
             .verifying_contract

@@ -65,7 +65,7 @@ pub(crate) async fn do_crsgen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let req_cloned = crs_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -342,7 +342,7 @@ pub(crate) async fn do_abort_crs_gen(
 ) -> anyhow::Result<Vec<String>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    for (_core_conf, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
 
         resp_tasks.spawn(async move {

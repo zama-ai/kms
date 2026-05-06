@@ -1125,12 +1125,9 @@ pub(crate) mod tests {
     };
     use crate::conf::{CoreConfig, init_conf};
     #[cfg(feature = "slow_tests")]
+    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID};
     use crate::consts::{
-        DEFAULT_CENTRAL_KEY_ID, DEFAULT_CENTRAL_KEYS_PATH, OTHER_CENTRAL_DEFAULT_ID,
-    };
-    use crate::consts::{
-        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID,
-        TEST_CENTRAL_KEYS_PATH, TEST_PARAM,
+        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
     use crate::cryptography::signatures::gen_sig_keys;
@@ -1142,7 +1139,6 @@ pub(crate) mod tests {
     use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
-    use crate::util::file_handling::{read_element, write_element};
     use crate::util::key_setup::test_tools::{EncryptionConfig, compute_cipher};
     use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
@@ -1155,9 +1151,7 @@ pub(crate) mod tests {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
     use rand::SeedableRng;
-    use serial_test::serial;
     use std::collections::HashMap;
-    use std::path::Path;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
     use tfhe::{ConfigBuilder, Seed, shortint::ClassicPBSParameters};
@@ -1166,22 +1160,24 @@ pub(crate) mod tests {
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
-    use tokio::sync::OnceCell;
-
-    static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
-    async fn get_test_keys() -> &'static CentralizedTestingKeys {
-        ONCE_TEST_KEY
-            .get_or_init(|| async { ensure_kms_test_keys().await })
-            .await
+    /// Generate a fresh `CentralizedTestingKeys` bundle for a single test.
+    async fn test_keys() -> CentralizedTestingKeys {
+        build_testing_keys(
+            TEST_PARAM,
+            &TEST_CENTRAL_KEY_ID.to_string(),
+            &OTHER_CENTRAL_TEST_ID.to_string(),
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
-    static ONCE_DEFAULT_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
-    #[cfg(feature = "slow_tests")]
-    pub(crate) async fn get_default_keys() -> &'static CentralizedTestingKeys {
-        ONCE_DEFAULT_KEY
-            .get_or_init(|| async { ensure_kms_default_keys().await })
-            .await
+    pub(crate) async fn default_keys() -> CentralizedTestingKeys {
+        build_testing_keys(
+            DEFAULT_PARAM,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+            &OTHER_CENTRAL_DEFAULT_ID.to_string(),
+        )
+        .await
     }
 
     impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
@@ -1276,37 +1272,11 @@ pub(crate) mod tests {
         BadEphemeralKey,
     }
 
-    async fn ensure_kms_test_keys() -> CentralizedTestingKeys {
-        setup(
-            TEST_PARAM,
-            &TEST_CENTRAL_KEY_ID.to_string(),
-            &OTHER_CENTRAL_TEST_ID.to_string(),
-            TEST_CENTRAL_KEYS_PATH,
-        )
-        .await
-    }
-
-    #[cfg(feature = "slow_tests")]
-    pub(crate) async fn ensure_kms_default_keys() -> CentralizedTestingKeys {
-        setup(
-            DEFAULT_PARAM,
-            &DEFAULT_CENTRAL_KEY_ID.to_string(),
-            &OTHER_CENTRAL_DEFAULT_ID.to_string(),
-            DEFAULT_CENTRAL_KEYS_PATH,
-        )
-        .await
-    }
-
-    async fn setup(
+    async fn build_testing_keys(
         dkg_params: DKGParams,
         key_id: &str,
         other_key_id: &str,
-        key_path: &str,
     ) -> CentralizedTestingKeys {
-        if Path::new(key_path).exists() {
-            return read_element(key_path).await.unwrap();
-        }
-
         let preproc_id = derive_request_id("CENTRALIZED_DUMMY_PREPROCESSING_ID").unwrap();
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
@@ -1356,7 +1326,7 @@ pub(crate) mod tests {
         ]);
         let server_keys = vec![sig_pk.clone()];
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let centralized_test_keys = CentralizedTestingKeys {
+        CentralizedTestingKeys {
             params: dkg_params,
             client_pk,
             client_sk,
@@ -1367,17 +1337,10 @@ pub(crate) mod tests {
                 sig_sk,
                 sig_pk,
             },
-        };
-        assert!(
-            write_element(key_path, &centralized_test_keys)
-                .await
-                .is_ok()
-        );
-        centralized_test_keys
+        }
     }
 
     #[tokio::test]
-    #[serial(default_keys)]
     async fn test_gen_keys() {
         let mut rng = AesRng::seed_from_u64(100);
         let domain = dummy_domain();
@@ -1449,12 +1412,18 @@ pub(crate) mod tests {
             decompressed.is_ok(),
             "Compressed keyset should be decompressible"
         );
+
+        let (_pk, server_key) = decompressed.unwrap().into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        assert!(
+            oprf_key.is_some(),
+            "centralized full keygen must embed a dedicated OPRF server key"
+        );
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn multiple_test_keys_access() {
-        let central_keys = get_test_keys().await;
+        let central_keys = test_keys().await;
 
         // try to get keys with the default handle
         let default_key = central_keys
@@ -1480,19 +1449,17 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn sunshine_test_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_decrypt(&test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn decrypt_with_bad_client_key() {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_decrypt(
             SimulationType::BadFheKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1501,30 +1468,22 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial(default_keys)]
     async fn sunshine_default_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_decrypt(&default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
-    #[serial(test_keys)]
     async fn multiple_test_keys_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
+        sunshine_decrypt(&test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial(default_keys)]
     async fn multiple_default_keys_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_decrypt(
-            get_default_keys().await,
-            &OTHER_CENTRAL_DEFAULT_ID,
-            &epoch_id,
-        )
-        .await;
+        sunshine_decrypt(&default_keys().await, &OTHER_CENTRAL_DEFAULT_ID, &epoch_id).await;
     }
 
     async fn sunshine_decrypt(
@@ -1619,7 +1578,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sunshine_test_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_user_decrypt(&test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
@@ -1627,7 +1586,7 @@ pub(crate) mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadEphemeralKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1639,7 +1598,7 @@ pub(crate) mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadSigKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1651,7 +1610,7 @@ pub(crate) mod tests {
         let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadFheKey,
-            get_test_keys().await,
+            &test_keys().await,
             &TEST_CENTRAL_KEY_ID,
             &epoch_id,
         )
@@ -1662,26 +1621,20 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sunshine_default_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
+        sunshine_user_decrypt(&default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
-    #[serial]
     async fn multiple_test_keys_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
+        sunshine_user_decrypt(&test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_user_decrypt() {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        sunshine_user_decrypt(
-            get_default_keys().await,
-            &OTHER_CENTRAL_DEFAULT_ID,
-            &epoch_id,
-        )
-        .await;
+        sunshine_user_decrypt(&default_keys().await, &OTHER_CENTRAL_DEFAULT_ID, &epoch_id).await;
     }
 
     async fn sunshine_user_decrypt(
