@@ -5,7 +5,7 @@
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::util::meta_store::{ensure_meta_store_request_pending, update_err_req_in_meta_store};
-use crate::vault::storage::crypto_material::check_data_exists;
+use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
     anyhow_error_and_warn_log,
@@ -24,8 +24,7 @@ use crate::{
         storage::{
             Storage, StorageExt,
             crypto_material::{
-                check_data_exists_at_epoch, log_storage_success_optional_variant,
-                traits::PrivateCryptoMaterialReader,
+                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             read_all_data_versioned, read_context_at_id, store_versioned_at_request_id,
@@ -166,25 +165,27 @@ where
     // =========================
 
     /// Check if data exists in both public and private storage
-    #[allow(dead_code)]
     pub(in crate::vault::storage::crypto_material) async fn data_exists(
         &self,
         req_id: &RequestId,
-        pub_data_type: &str,
-        priv_data_type: &str,
+        pub_data_type: &[PubDataType],
+        priv_data_type: &[PrivDataType],
     ) -> anyhow::Result<bool> {
         // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
         let priv_storage = self.private_storage.lock().await;
 
-        check_data_exists(
-            &*pub_storage,
-            &*priv_storage,
-            req_id,
-            pub_data_type,
-            priv_data_type,
-        )
-        .await
+        for cur_pub_data in pub_data_type {
+            if !data_exists(&*pub_storage, req_id, &cur_pub_data.to_string()).await? {
+                return Ok(false);
+            }
+        }
+        for cur_priv_data in priv_data_type {
+            if !data_exists(&*priv_storage, req_id, &cur_priv_data.to_string()).await? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
     }
 
     /// Check if data exists in both public and private storage,
@@ -196,22 +197,29 @@ where
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
-        pub_data_type: &[String],
-        priv_data_type: &[String],
+        pub_data_type: &[PubDataType],
+        priv_data_type: &[PrivDataType],
     ) -> Result<bool, StorageError> {
         // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
         let priv_storage = self.private_storage.lock().await;
-
-        check_data_exists_at_epoch(
-            &*pub_storage,
-            &*priv_storage,
-            req_id,
-            epoch_id,
-            pub_data_type,
-            priv_data_type,
-        )
-        .await
+        for cur_pub_data in pub_data_type {
+            if !data_exists(&*pub_storage, req_id, &cur_pub_data.to_string())
+                .await
+                .map_err(|_| StorageError::ReadingError)?
+            {
+                return Ok(false);
+            }
+        }
+        for cur_priv_data in priv_data_type {
+            if !data_exists_at_epoch(&*priv_storage, req_id, epoch_id, &cur_priv_data.to_string())
+                .await
+                .map_err(|_| StorageError::ReadingError)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Check if FHE keys exist.
@@ -227,16 +235,13 @@ where
         key_id: &RequestId,
         epoch_id: &EpochId,
     ) -> Result<bool, StorageError> {
-        let priv_types = vec![PrivDataType::FhePrivateKey.to_string()];
+        let priv_types = vec![PrivDataType::FhePrivateKey];
         // Try the uncompressed (standard) layout first.
         if self
             .data_exists_at_epoch(
                 key_id,
                 epoch_id,
-                &[
-                    PubDataType::PublicKey.to_string(),
-                    PubDataType::ServerKey.to_string(),
-                ],
+                &[PubDataType::PublicKey, PubDataType::ServerKey],
                 &priv_types,
             )
             .await?
@@ -247,10 +252,7 @@ where
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &[
-                PubDataType::CompressedXofKeySet.to_string(),
-                PubDataType::PublicKey.to_string(),
-            ],
+            &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
             &priv_types,
         )
         .await
@@ -269,8 +271,8 @@ where
         self.data_exists_at_epoch(
             crs_id,
             epoch_id,
-            &[PubDataType::CRS.to_string()],
-            &[PrivDataType::CrsInfo.to_string()],
+            &[PubDataType::CRS],
+            &[PrivDataType::CrsInfo],
         )
         .await
     }
@@ -324,8 +326,31 @@ where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
-        let pub_type = pub_data.map(|(_, t)| t);
-        let priv_type = priv_data.map(|(_, t)| t);
+        let pub_type = match pub_data {
+            Some((_, t)) => vec![t],
+            None => vec![],
+        };
+        let priv_type = match priv_data {
+            Some((_, t)) => vec![t],
+            None => vec![],
+        };
+        // First ensure that the data to be written does not already exist
+        if let Some(inner_epoch_id) = epoch_id {
+            if self
+                .data_exists_at_epoch(req_id, inner_epoch_id, &pub_type, &priv_type)
+                .await?
+            {
+                return Err(StorageError::DuplicateError);
+            }
+        }
+        if self
+            .data_exists(req_id, &pub_type, &priv_type)
+            .await
+            .map_err(|e| StorageError::Other(e.to_string()))?
+        {
+            return Err(StorageError::DuplicateError);
+        }
+        // Now proceed with writing
         if self
             .write_data_pair(req_id, epoch_id, pub_data, priv_data)
             .await

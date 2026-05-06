@@ -1080,11 +1080,9 @@ async fn data_exists_paths() {
     let req_id = derive_request_id("data_exists_paths").unwrap();
     let priv_only = derive_request_id("data_exists_priv_only").unwrap();
     let epoch_id: EpochId = derive_request_id("data_exists_paths_epoch").unwrap().into();
-    let pub_t = PubDataType::PublicKey.to_string();
-    let priv_t_non_epoched = PrivDataType::SigningKey.to_string();
-    let priv_t_epoched = PrivDataType::FhePrivateKey.to_string();
-    let pub_types_vec = vec![pub_t.clone()];
-    let priv_types_vec = vec![priv_t_epoched.clone()];
+    let pub_t = PubDataType::PublicKey;
+    let priv_t_non_epoched = PrivDataType::SigningKey;
+    let priv_t_epoched = PrivDataType::FhePrivateKey;
     let data = TestType { i: 1 };
 
     let mut pub_s = storage.public_storage.lock().await;
@@ -1102,15 +1100,15 @@ async fn data_exists_paths() {
             &*priv_s,
             &req_id,
             &epoch_id,
-            &pub_types_vec,
-            &priv_types_vec,
+            &pub_t,
+            &priv_t_epoched,
         )
         .await
         .unwrap()
     );
 
     // Only public stored: still `false` (private missing).
-    store_versioned_at_request_id(&mut *pub_s, &req_id, &data, &pub_t)
+    store_versioned_at_request_id(&mut *pub_s, &req_id, &data, &pub_t.to_string())
         .await
         .unwrap();
     assert!(
@@ -1124,17 +1122,22 @@ async fn data_exists_paths() {
             &*priv_s,
             &req_id,
             &epoch_id,
-            &pub_types_vec,
-            &priv_types_vec,
+            &pub_t,
+            &priv_t_epoched,
         )
         .await
         .unwrap()
     );
 
     // Private stored only at a different req_id: short-circuit on missing public yields `false`.
-    store_versioned_at_request_id(&mut *priv_s, &priv_only, &data, &priv_t_non_epoched)
-        .await
-        .unwrap();
+    store_versioned_at_request_id(
+        &mut *priv_s,
+        &priv_only,
+        &data,
+        &priv_t_non_epoched.to_string(),
+    )
+    .await
+    .unwrap();
     assert!(
         !check_data_exists(&*pub_s, &*priv_s, &priv_only, &pub_t, &priv_t_non_epoched)
             .await
@@ -1147,14 +1150,19 @@ async fn data_exists_paths() {
         &req_id,
         &epoch_id,
         &data,
-        &priv_t_epoched,
+        &priv_t_epoched.to_string(),
     )
     .await
     .unwrap();
     // ...and add the non-epoched private entry under the same req_id so check_data_exists succeeds too.
-    store_versioned_at_request_id(&mut *priv_s, &req_id, &data, &priv_t_non_epoched)
-        .await
-        .unwrap();
+    store_versioned_at_request_id(
+        &mut *priv_s,
+        &req_id,
+        &data,
+        &priv_t_non_epoched.to_string(),
+    )
+    .await
+    .unwrap();
     assert!(
         check_data_exists(&*pub_s, &*priv_s, &req_id, &pub_t, &priv_t_non_epoched)
             .await
@@ -1166,18 +1174,11 @@ async fn data_exists_paths() {
             &*priv_s,
             &req_id,
             &epoch_id,
-            &pub_types_vec,
-            &priv_types_vec,
+            &pub_t,
+            &priv_t_epoched,
         )
         .await
         .unwrap()
-    );
-
-    // Empty type lists are vacuously true.
-    assert!(
-        check_data_exists_at_epoch(&*pub_s, &*priv_s, &req_id, &epoch_id, &[], &[])
-            .await
-            .unwrap()
     );
 }
 
@@ -1558,10 +1559,11 @@ async fn write_backup_keys() {
         RamStorage::new(),
         Some(make_unencrypted_backup_vault()),
     );
+    let recovery = dummy_recovery_material();
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     // Fails when meta store entry is missing, even though vault is present.
     let err = storage
-        .write_backup_keys(dummy_recovery_material(), meta_store)
+        .write_backup_keys(recovery.clone(), Arc::clone(&meta_store))
         .await
         .unwrap_err();
     assert!(
@@ -1569,13 +1571,11 @@ async fn write_backup_keys() {
         "expected MetaStoreError when meta store entry is missing, got: {err:?}"
     );
 
-    let recovery = dummy_recovery_material();
     let req_id = recovery.custodian_context().context_id;
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
     // Validate that writing works, when entry is present in meta store
     storage
-        .write_backup_keys(recovery, meta_store.clone())
+        .write_backup_keys(recovery, Arc::clone(&meta_store))
         .await
         .unwrap();
     let pub_s = storage.public_storage.lock().await;
@@ -1585,10 +1585,11 @@ async fn write_backup_keys() {
             .await
             .unwrap()
     );
+    // Request is no longer pending
     assert!(
         ensure_meta_store_request_pending(&meta_store, &req_id)
             .await
-            .is_ok()
+            .is_err()
     );
 }
 
@@ -1734,8 +1735,6 @@ async fn inner_update_backup_vault_paths() {
     assert!(storage.inner_update_backup_vault(false).await.is_ok());
 
     // Vault present + a SigningKey in private storage -> the entry is mirrored to the vault.
-    let data = TestType { i: 42 };
-
     let mut rng = AesRng::seed_from_u64(7);
     let (_pk, sk) = gen_sig_keys(&mut rng);
     let req_id = derive_request_id("inner_backup_signing").unwrap();
@@ -1753,11 +1752,11 @@ async fn inner_update_backup_vault_paths() {
     storage.inner_update_backup_vault(false).await.unwrap();
     let vault = storage.get_backup_vault().unwrap();
     let vault_g = vault.lock().await;
-    let restored: TestType = vault_g
+    let restored: PrivateSigKey = vault_g
         .read_data(&req_id, &PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
-    assert_eq!(restored, data);
+    assert_eq!(restored, sk);
 }
 
 #[tokio::test]

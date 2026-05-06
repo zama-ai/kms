@@ -125,17 +125,17 @@ pub(in crate::vault::storage::crypto_material) async fn check_data_exists<
     pub_storage: &PubS,
     priv_storage: &PrivS,
     req_id: &RequestId,
-    pub_data_type: &str,
-    priv_data_type: &str,
+    pub_data_type: &PubDataType,
+    priv_data_type: &PrivDataType,
 ) -> anyhow::Result<bool> {
     // No need to use epoch for public data existence check
-    let pub_exists = data_exists(pub_storage, req_id, pub_data_type).await?;
+    let pub_exists = data_exists(pub_storage, req_id, &pub_data_type.to_string()).await?;
 
     if !pub_exists {
         return Ok(false);
     }
 
-    data_exists(priv_storage, req_id, priv_data_type).await
+    data_exists(priv_storage, req_id, &priv_data_type.to_string()).await
 }
 
 /// Checks if both public and private data exist in their respective storages.
@@ -148,47 +148,45 @@ pub(in crate::vault::storage::crypto_material) async fn check_data_exists<
 /// * `priv_storage` - Storage backend for private data
 /// * `req_id` - The request ID used to compute storage URLs
 /// * `epoch_id` - The epoch ID used to compute storage URLs for the private data
-/// * `pub_data_type` - Types of the public data to check
-/// * `priv_data_type` - Types of the private data to check
+/// * `pub_data_type` - Type of the public data to check
+/// * `priv_data_type` - Type of the private data to check
 ///
 /// # Returns
-/// `Ok(true)` if every public and private entry is present, `Ok(false)` if any
-/// is missing (still a clean storage state), or `Err(StorageError::ReadingError)`
-/// if a storage backend itself fails the check.
+/// `Ok(true)` if all the public and private data exist, `Ok(false)` if any is missing,
+/// or an error if any check fails or an error occurs.
+/// `Err(StorageError::ReadingError)` is returned if there is an error accessing the storage, with an error log indicating the failure.
 ///
 /// # Note
-/// This function short-circuits and returns `Ok(false)` as soon as a public
-/// entry is missing, without checking for private data.
+/// This function short-circuits and returns `Ok(false)` if public data is not found,
+/// without checking for private data.
 pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     pub_storage: &PubS,
     priv_storage: &PrivS,
     req_id: &RequestId,
     epoch_id: &EpochId,
-    pub_data_type: &[String],
-    priv_data_type: &[String],
+    pub_data_type: &PubDataType,
+    priv_data_type: &PrivDataType,
 ) -> Result<bool, StorageError> {
-    for pub_type in pub_data_type {
-        // No need to use epoch for public data existence check
-        let exists = data_exists(pub_storage, req_id, pub_type)
-            .await
-            .map_err(|_| StorageError::ReadingError)?;
-        if !exists {
-            tracing::debug!(
-                "Public data {pub_type} not found for request {req_id} and epoch {epoch_id}"
-            );
-            return Ok(false);
-        }
+    // No need to use epoch for public data existence check
+    if !data_exists(pub_storage, req_id, &pub_data_type.to_string())
+        .await
+        .map_err(|_| StorageError::ReadingError)?
+    {
+        let msg = format!(
+            "Some public data (at least one of {pub_data_type:?}) not found for request {req_id} and epoch {epoch_id}"
+        );
+        tracing::warn!("{msg}");
+        return Ok(false);
     }
-    for priv_type in priv_data_type {
-        let exists = data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_type)
-            .await
-            .map_err(|_| StorageError::ReadingError)?;
-        if !exists {
-            tracing::debug!(
-                "Private data {priv_type} not found for request {req_id} and epoch {epoch_id}"
-            );
-            return Ok(false);
-        }
+    if !data_exists_at_epoch(priv_storage, req_id, epoch_id, &priv_data_type.to_string())
+        .await
+        .map_err(|_| StorageError::ReadingError)?
+    {
+        let msg = format!(
+            "Some private data (at least one of {priv_data_type:?}) not found for request {req_id} and epoch {epoch_id}"
+        );
+        tracing::warn!("{msg}");
+        return Ok(false);
     }
     Ok(true)
 }

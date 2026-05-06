@@ -235,7 +235,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             Some(ref x) => Some(x.lock().await),
             None => None,
         };
-        // TODO use helper methods
 
         // --- Phase A: validate everything before mutating anything. ---
 
@@ -364,10 +363,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
         // Preserve the old PublicKey and ServerKey, and overwrite only the
         // compressed keyset at the original key ID.
-        //TODO
-        // purge data
-        // write pub priv data
-        // update backup with overwrite
         delete_at_request_id(
             &mut *pub_storage,
             old_key_id,

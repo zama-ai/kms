@@ -11,6 +11,7 @@ cfg_if::cfg_if! {
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits,  data_exists, get_core_signing_key,
         };
+        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
@@ -347,15 +348,13 @@ where
     PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-    use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-
     match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         crs_id,
         epoch_id,
-        &[PubDataType::CRS.to_string()],
-        &[PrivDataType::CrsInfo.to_string()],
+        &PubDataType::CRS,
+        &PrivDataType::CrsInfo,
     )
     .await
     {
@@ -1237,15 +1236,13 @@ where
     // PANICS: If storage access fails or if no storage is available
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-
         match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             crs_id,
             epoch_id,
-            &[PubDataType::CRS.to_string()],
-            &[PrivDataType::CrsInfo.to_string()],
+            &PubDataType::CRS,
+            &PrivDataType::CrsInfo,
         )
         .await
         {
