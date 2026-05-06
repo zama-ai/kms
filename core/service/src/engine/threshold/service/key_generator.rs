@@ -555,8 +555,7 @@ impl<
         // Ensure that no key already exists for a given request.
         let already_exists = self
             .crypto_storage
-            .inner
-            .fhe_keys_exists(&req_id, &epoch_id)
+            .threshold_fhe_keys_exists(&req_id, &epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(

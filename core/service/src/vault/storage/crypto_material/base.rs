@@ -47,7 +47,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
@@ -97,7 +97,8 @@ pub enum PublicKeySet {
 /// This struct provides thread-safe access to public, private, and optional backup storage,
 /// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
 ///
-/// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
+/// Warning: In relation to concurrency where multiple locks are needed always lock as follows:
+/// meta_store -> public_storage -> private_storage second -> backup_vault -> pk_cache.
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -223,19 +224,26 @@ where
     }
 
     /// Check if FHE keys exist.
+    /// Observe that this operation reads the file system and is thus relatively slow.
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
     /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
     /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
+    /// The `threshold` parameter is used to indicate if the check is for threshold or centralized keys.
     ///
     /// Returns `Ok(true)` if either layout is fully present, `Ok(false)` if
     /// neither is, or `Err(StorageError)` on a storage backend failure.
-    pub async fn fhe_keys_exists(
+    pub(in crate::vault::storage::crypto_material) async fn fhe_keys_exists(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
+        threshold: bool,
     ) -> Result<bool, StorageError> {
-        let priv_types = vec![PrivDataType::FhePrivateKey];
+        let priv_types = if threshold {
+            vec![PrivDataType::FheKeyInfo]
+        } else {
+            vec![PrivDataType::FhePrivateKey]
+        };
         // Try the uncompressed (standard) layout first.
         if self
             .data_exists_at_epoch(
@@ -302,10 +310,19 @@ where
         ensure_meta_store_request_pending(&meta_store, req_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        // Lock metastore to prevent interleaving calls
+        let mut guarded_meta_store = meta_store.write().await;
         let res = self
             .handle_all_storage(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
-        update_meta_store(res, req_id, meta_data, meta_store, op_metric_tag).await
+        update_meta_store(
+            res,
+            req_id,
+            meta_data,
+            &mut guarded_meta_store,
+            op_metric_tag,
+        )
+        .await
     }
 
     /// General method for handling the storage of material, including backup.
@@ -480,7 +497,7 @@ where
         !(pub_failed || priv_failed)
     }
 
-    /// Write both public and private data to storage in an atomic manner.
+    /// Write both public and private data to storage.
     /// Returns true if both writes are successful, false otherwise.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type` nor `priv_data` matches `priv_data_type`.
     pub(in crate::vault::storage::crypto_material) async fn write_data_pair<
@@ -729,6 +746,8 @@ where
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        // Lock metastore to prevent interleaving calls
+        let mut guarded_meta_store = meta_store.write().await;
         let res = self
             .handle_all_storage::<DecompressionKey, DecompressionKey>(
                 key_id,
@@ -740,7 +759,14 @@ where
             )
             .await;
         // Finally update meta store
-        update_meta_store(res, key_id, meta_data, meta_store, OP_DECOMPRESSION_KEYGEN).await
+        update_meta_store(
+            res,
+            key_id,
+            meta_data,
+            &mut guarded_meta_store,
+            OP_DECOMPRESSION_KEYGEN,
+        )
+        .await
     }
 
     /// Write the backup keys to the storage and update the meta store.
@@ -778,6 +804,8 @@ where
                 return Err(StorageError::BackupError);
             }
         };
+        // Lock metastore to prevent interleaving calls
+        let mut guarded_meta_store = meta_store.write().await;
         let mut res = self
             .handle_all_storage::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
                 &req_id,
@@ -825,7 +853,7 @@ where
             res,
             &req_id,
             recovery_material,
-            meta_store,
+            &mut guarded_meta_store,
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
@@ -1057,7 +1085,7 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
     storage_res: Result<(), StorageError>,
     req_id: &RequestId,
     meta_data: MetaT,
-    meta_store: Arc<RwLock<MetaStore<MetaT>>>,
+    guarded_meta_store: &mut RwLockWriteGuard<'_, MetaStore<MetaT>>,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
     let mut meta_store_ok = true;
@@ -1065,19 +1093,11 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
         && e != &StorageError::BackupError
     {
         // We don't want to fail on backup errors
-        meta_store_ok &= update_err_req_in_meta_store(
-            &mut meta_store.write().await,
-            req_id,
-            e.to_string(),
-            op_metric_tag,
-        );
+        meta_store_ok &=
+            update_err_req_in_meta_store(guarded_meta_store, req_id, e.to_string(), op_metric_tag);
     } else {
-        meta_store_ok &= update_ok_req_in_meta_store(
-            &mut meta_store.write().await,
-            req_id,
-            meta_data,
-            op_metric_tag,
-        );
+        meta_store_ok &=
+            update_ok_req_in_meta_store(guarded_meta_store, req_id, meta_data, op_metric_tag);
     }
     if !meta_store_ok {
         // NOTE this would indicate a bug since we have just verified that the meta can be updated in the start of this method

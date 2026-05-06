@@ -117,7 +117,7 @@ pub async fn data_exists_at_epoch<S: StorageReaderExt>(
 /// # Note
 /// This function short-circuits and returns `Ok(false)` if public data is not found,
 /// without checking for private data.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(in crate::vault::storage::crypto_material) async fn check_data_exists<
     PubS: Storage,
     PrivS: Storage,

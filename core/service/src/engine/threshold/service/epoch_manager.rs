@@ -652,7 +652,7 @@ impl<
 
                     storage_tasks.push(
                         crypto_storage
-                            .resharing_fhe_write(
+                            .resharing_fhe_write_no_backup(
                                 &key_info.key_id,
                                 &new_epoch_id,
                                 threshold_fhe_keys,
@@ -709,7 +709,7 @@ impl<
                             let compressed_keyset = compressed_keyset;
                             let compact_public_key = compact_public_key;
                             crypto_storage
-                                .resharing_fhe_write(
+                                .resharing_fhe_write_no_backup(
                                     &key_info.key_id,
                                     &new_epoch_id,
                                     threshold_fhe_keys,
@@ -744,7 +744,12 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .resharing_crs_write(&crs_info.crs_id, &new_epoch_id, crs, crs_meta_data)
+                    .resharing_crs_write_no_backup(
+                        &crs_info.crs_id,
+                        &new_epoch_id,
+                        crs,
+                        crs_meta_data,
+                    )
                     .boxed(),
             );
         }
@@ -776,7 +781,7 @@ impl<
             OP_NEW_EPOCH,
         ) {
             err_msgs.push(format!(
-                "Failed to update the meta store with error for new epoch {} after storage failure.",
+                "Failed to update the meta store with error for new epoch {}.",
                 new_epoch_id
             ));
         }

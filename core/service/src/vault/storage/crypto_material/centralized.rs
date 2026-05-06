@@ -59,6 +59,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
+    /// Check if the centralized FHE keys exist for a given key and epoch ID.
+    /// The check is agnostic to whether the keys are compressed or not.
+    pub(crate) async fn centralized_fhe_keys_exists(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> Result<bool, StorageError> {
+        self.inner.fhe_keys_exists(key_id, epoch_id, false).await
+    }
+
     pub(crate) async fn write_central_keys(
         &self,
         key_id: &RequestId,
@@ -72,6 +82,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        // Lock metastore to prevent interleaving calls
+        let mut guarded_meta_store = meta_store.write().await;
         let meta_res = central_fhe_keys.public_key_info.clone();
         let res = self
             .inner
@@ -87,7 +99,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             )
             .await;
         // Finally update meta store
-        update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
+        update_meta_store(
+            res,
+            key_id,
+            meta_res,
+            &mut guarded_meta_store,
+            op_metric_tag,
+        )
+        .await
     }
 
     pub(crate) async fn purge_centralized_key_material(

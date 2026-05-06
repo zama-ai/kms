@@ -105,7 +105,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Write the CRS to the storage backend (for use in connection with resharing).
     /// Unlike the normal CRS writing this one does not update the meta store, nor the backup.
-    pub(crate) async fn resharing_crs_write(
+    pub(crate) async fn resharing_crs_write_no_backup(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
@@ -126,7 +126,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Write the keys to the storage backend (for use in connection with resharing).
     /// Unlike the normal fhe writing this one does not update the meta store, nor the backup.
-    pub(crate) async fn resharing_fhe_write(
+    pub(crate) async fn resharing_fhe_write_no_backup(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
@@ -147,6 +147,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .await
     }
 
+    /// Check if the threshold FHE keys exist for a given key and epoch ID.
+    /// The check is agnostic to whether the keys are compressed or not.
+    pub(crate) async fn threshold_fhe_keys_exists(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> Result<bool, StorageError> {
+        self.inner.fhe_keys_exists(key_id, epoch_id, true).await
+    }
+
     pub(crate) async fn write_threshold_keys(
         &self,
         key_id: &RequestId,
@@ -160,6 +170,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        // Lock metastore to prevent interleaving calls
+        let mut guarded_meta_store = meta_store.write().await;
         let meta_res = threshold_fhe_keys.meta_data.clone();
         let res = self
             .inner
@@ -175,7 +187,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             )
             .await;
         // Finally update meta store
-        update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
+        update_meta_store(
+            res,
+            key_id,
+            meta_res,
+            &mut guarded_meta_store,
+            op_metric_tag,
+        )
+        .await
     }
 
     pub(crate) async fn purge_threshold_key_material(
