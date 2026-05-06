@@ -180,10 +180,6 @@ impl TestMaterialManager {
     #[cfg(any(test, feature = "testing"))]
     async fn copy_material(&self, temp_dir: &TempDir, spec: &TestMaterialSpec) -> Result<()> {
         // Determine source subdirectory based on material type
-        let material_subdir = match spec.material_type {
-            MaterialType::Testing => "testing",
-            MaterialType::Default => "default",
-        };
         let source_base = self
             .source_path
             .as_ref()
