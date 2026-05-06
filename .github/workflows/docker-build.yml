@@ -10,9 +10,6 @@ on:
   # `gh workflow run docker-build.yml --ref <sha>`.
   # Each image can be toggled; unticking a parent also skips its dependents.
   workflow_dispatch:
-    # Anchored so workflow_call below reuses the same input set; without
-    # workflow_call inputs, the per-image `if` gates evaluate `inputs.build-*`
-    # to null when invoked from another workflow and skip every image.
     inputs:
       build-golden-image:
         description: 'Build rust-golden-image (parent of core-client, core-service, enclave)'
