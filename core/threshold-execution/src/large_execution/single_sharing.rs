@@ -1,7 +1,8 @@
 use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
-    bivariate::{MatrixMul, compute_powers},
+    bivariate::compute_powers,
+    matrix::MatrixMul,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use async_trait::async_trait;

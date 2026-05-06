@@ -5,17 +5,15 @@ use super::structure_traits::Sample;
 use super::structure_traits::Zero;
 
 use anyhow::Result;
-use ndarray::Array1;
-use ndarray::Array2;
 use rand::{CryptoRng, Rng};
 use std::ops::Mul;
 
-/// Bivariate polynomial is a matrix of coefficients of ResiduePolynomials
+/// Bivariate polynomial is a row-major matrix of coefficients of ResiduePolynomials
 /// The row view of the polynomials is the following:
 /// [[a_{00}, a_{01}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}]]
 #[derive(Clone, Default, Debug)]
 pub struct BivariatePoly<Z> {
-    pub coefs: Array2<Z>,
+    pub coefs: Vec<Z>,
     degree: usize,
 }
 
@@ -31,10 +29,7 @@ impl<Z> BivariatePoly<Z> {
         coefs.push(secret);
         coefs.extend((1..n).map(|_| Z::sample(rng)));
 
-        Ok(BivariatePoly {
-            coefs: Array2::from_shape_vec((d, d), coefs)?,
-            degree,
-        })
+        Ok(BivariatePoly { coefs, degree })
     }
 }
 
@@ -60,188 +55,36 @@ pub fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) 
     powers_of_point
 }
 
-pub trait MatrixMul<Rhs = Self>: Sized {
-    type Output;
-    fn matmul(&self, rhs: &Rhs) -> Result<Self::Output>;
-}
-
-macro_rules! dot_col {
-    ($lhs:expr, $rhs:expr, $col:expr, $first:expr $(, $idx:expr)+) => {{
-        let mut acc = $lhs[$first] * $rhs[($first, $col)];
-        $(acc += $lhs[$idx] * $rhs[($idx, $col)];)+
+macro_rules! eval_row_y {
+    ($coefs:expr, $start:expr, $alpha:expr, $last:expr $(, $idx:expr)+) => {{
+        let mut acc = $coefs[$start + $last];
+        $(acc = acc * $alpha + $coefs[$start + $idx];)+
         acc
     }};
 }
 
-macro_rules! dot_row {
-    ($lhs:expr, $rhs:expr, $row:expr, $first:expr $(, $idx:expr)+) => {{
-        let mut acc = $lhs[($row, $first)] * $rhs[$first];
-        $(acc += $lhs[($row, $idx)] * $rhs[$idx];)+
-        acc
+macro_rules! eval_col_x {
+    ($coefs:expr, $col:expr, $d:expr, $alpha:expr, $last:expr $(, $idx:expr)+) => {{
+        let mut acc = $alpha * $coefs[$last * $d + $col];
+        $(acc = $alpha * ($coefs[$idx * $d + $col] + acc);)+
+        $coefs[$col] + acc
     }};
 }
 
-macro_rules! dot_vec {
-    ($lhs:expr, $rhs:expr, $first:expr $(, $idx:expr)+) => {{
-        let mut acc = $lhs[$first] * $rhs[$first];
-        $(acc += $lhs[$idx] * $rhs[$idx];)+
-        acc
-    }};
-}
-
-impl<Z: Ring> MatrixMul<Array2<Z>> for Array1<Z> {
-    type Output = Array1<Z>;
-    fn matmul(&self, rhs: &Array2<Z>) -> Result<Self::Output> {
-        Ok(match rhs.dim() {
-            (2, 2) => Array1::from_vec(vec![
-                dot_col!(self, rhs, 0, 0, 1),
-                dot_col!(self, rhs, 1, 0, 1),
-            ]),
-            (5, 5) => Array1::from_vec(vec![
-                dot_col!(self, rhs, 0, 0, 1, 2, 3, 4),
-                dot_col!(self, rhs, 1, 0, 1, 2, 3, 4),
-                dot_col!(self, rhs, 2, 0, 1, 2, 3, 4),
-                dot_col!(self, rhs, 3, 0, 1, 2, 3, 4),
-                dot_col!(self, rhs, 4, 0, 1, 2, 3, 4),
-            ]),
-            (_, cols) => {
-                let mut res = Vec::with_capacity(cols);
-                for col_idx in 0..cols {
-                    let mut acc = Z::ZERO;
-                    for row_idx in 0..self.len() {
-                        acc += self[row_idx] * rhs[(row_idx, col_idx)];
-                    }
-                    res.push(acc);
-                }
-                Array1::from_vec(res)
-            }
-        })
+impl<Z> BivariatePoly<Z> {
+    fn dimension(&self) -> usize {
+        self.degree + 1
     }
 }
-
-impl<Z: Ring> MatrixMul<Array1<Z>> for Array2<Z> {
-    type Output = Array1<Z>;
-    fn matmul(&self, rhs: &Array1<Z>) -> Result<Self::Output> {
-        Ok(match self.dim() {
-            (2, 2) => Array1::from_vec(vec![
-                dot_row!(self, rhs, 0, 0, 1),
-                dot_row!(self, rhs, 1, 0, 1),
-            ]),
-            (5, 5) => Array1::from_vec(vec![
-                dot_row!(self, rhs, 0, 0, 1, 2, 3, 4),
-                dot_row!(self, rhs, 1, 0, 1, 2, 3, 4),
-                dot_row!(self, rhs, 2, 0, 1, 2, 3, 4),
-                dot_row!(self, rhs, 3, 0, 1, 2, 3, 4),
-                dot_row!(self, rhs, 4, 0, 1, 2, 3, 4),
-            ]),
-            (rows, cols) => {
-                let mut res = Vec::with_capacity(rows);
-                for row_idx in 0..rows {
-                    let mut acc = Z::ZERO;
-                    for col_idx in 0..cols {
-                        acc += self[(row_idx, col_idx)] * rhs[col_idx];
-                    }
-                    res.push(acc);
-                }
-                Array1::from_vec(res)
-            }
-        })
-    }
-}
-
-// impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
-//     fn matmul(&self, rhs: &ArrayD<Z>) -> Result<ArrayD<Z>> {
-//         match (self.ndim(), rhs.ndim()) {
-//             (1, 1) => {
-//                 if self.dim() != rhs.dim() {
-//                     return Err(anyhow_error_and_log(format!(
-//                         "Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
-//                         self.dim(),
-//                         rhs.dim()
-//                     )));
-//                 }
-//                 if self.len() != rhs.len() {
-//                     return Err(anyhow_error_and_log(format!(
-//                         "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors",
-//                         self.len(),
-//                         rhs.len()
-//                     )));
-//                 }
-//                 let res = self
-//                     .iter()
-//                     .zip_eq(rhs)
-//                     .fold(Z::ZERO, |acc, (a, b)| acc + *a * *b);
-//                 Ok(Array::from_elem(IxDyn(&[1]), res).into_dyn())
-//             }
-//             (1, 2) => {
-//                 if self.dim()[0] != rhs.dim()[0] {
-//                     Err(anyhow_error_and_log(format!(
-//                         "Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}",
-//                         self.dim(),
-//                         rhs.dim()
-//                     )))
-//                 } else {
-//                     let mut res = Vec::new();
-//                     for col in rhs.columns() {
-//                         if col.len() != self.len() {
-//                             return Err(anyhow_error_and_log(format!(
-//                                 "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors and rank 2 tensors",
-//                                 self.len(),
-//                                 rhs.len()
-//                             )));
-//                         }
-//                         let s = col
-//                             .iter()
-//                             .zip_eq(self)
-//                             .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
-//                         res.push(s);
-//                     }
-//                     Ok(Array::from_vec(res).into_dyn())
-//                 }
-//             }
-//             (2, 1) => {
-//                 if self.dim()[1] != rhs.dim()[0] {
-//                     Err(anyhow_error_and_log(format!(
-//                         "Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
-//                         self.dim(),
-//                         rhs.dim()
-//                     )))
-//                 } else {
-//                     let mut res = Vec::new();
-//                     for row in self.rows() {
-//                         if row.len() != rhs.len() {
-//                             return Err(anyhow_error_and_log(format!(
-//                                 "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 2 tensors and rank 1 tensors",
-//                                 self.len(),
-//                                 rhs.len()
-//                             )));
-//                         }
-//                         let s = row
-//                             .iter()
-//                             .zip_eq(rhs)
-//                             .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
-//                         res.push(s);
-//                     }
-//                     Ok(Array::from_vec(res).into_dyn())
-//                 }
-//             }
-//             (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
-//                 "Matmul not implemented for tensors of rank {l_rank:?}, {r_rank:?}",
-//             ))),
-//         }
-//     }
-// }
 
 pub trait BivariateEval<Z: Ring> {
     /// Given a degree T bivariate poly F(X,Y) and a point \alpha, we compute
     /// G(X) = F(X, \alpha) as
-    /// [\alpha^0, ..., \alpha_d].matmul([a_{00}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}] =
     /// [sum(alpha^j * a_{j0}), ..., sum(alpha^j * a_{jd})]
     fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>>;
 
     /// Given a degree T bivariate poly F(X,Y) and a point \alpha, we compute
     /// G(Y) := F(\alpha, Y) as
-    /// [a_{00}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}].matmul([\alpha^0, ..., \alpha_d])
     /// [sum(alpha^j * a_{0j}), ..., sum(alpha^j * a_{dj})]
     fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>>;
 
@@ -250,34 +93,97 @@ pub trait BivariateEval<Z: Ring> {
     fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z>;
 }
 
-impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z>
-// where
-//     ArrayD<Z>: MatrixMul<Z>,
-{
+impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
     fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
-        let powers_array = Array1::from(compute_powers(alpha, self.degree));
-        let res_vector = powers_array.matmul(&self.coefs)?;
-        Ok(Poly::from_coefs(res_vector.into_raw_vec_and_offset().0))
+        let d = self.dimension();
+        let coefs = self.coefs.as_slice();
+        let res = match d {
+            2 => vec![coefs[0] + alpha * coefs[2], coefs[1] + alpha * coefs[3]],
+            5 => vec![
+                eval_col_x!(coefs, 0, d, alpha, 4, 3, 2, 1),
+                eval_col_x!(coefs, 1, d, alpha, 4, 3, 2, 1),
+                eval_col_x!(coefs, 2, d, alpha, 4, 3, 2, 1),
+                eval_col_x!(coefs, 3, d, alpha, 4, 3, 2, 1),
+                eval_col_x!(coefs, 4, d, alpha, 4, 3, 2, 1),
+            ],
+            _ => {
+                let mut res = vec![Z::ZERO; d];
+                let mut alpha_power = Z::ONE;
+                for row_idx in 0..d {
+                    let row_start = row_idx * d;
+                    for col_idx in 0..d {
+                        res[col_idx] += alpha_power * coefs[row_start + col_idx];
+                    }
+                    alpha_power *= alpha;
+                }
+                res
+            }
+        };
+        Ok(Poly::from_coefs(res))
     }
 
     fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
-        let powers_array = Array1::from(compute_powers(alpha, self.degree));
-        let res_vector = self.coefs.matmul(&powers_array)?;
-        Ok(Poly::from_coefs(res_vector.into_raw_vec_and_offset().0))
+        let d = self.dimension();
+        let coefs = self.coefs.as_slice();
+        let res = match d {
+            2 => vec![
+                eval_row_y!(coefs, 0, alpha, 1, 0),
+                eval_row_y!(coefs, 2, alpha, 1, 0),
+            ],
+            5 => vec![
+                eval_row_y!(coefs, 0, alpha, 4, 3, 2, 1, 0),
+                eval_row_y!(coefs, 5, alpha, 4, 3, 2, 1, 0),
+                eval_row_y!(coefs, 10, alpha, 4, 3, 2, 1, 0),
+                eval_row_y!(coefs, 15, alpha, 4, 3, 2, 1, 0),
+                eval_row_y!(coefs, 20, alpha, 4, 3, 2, 1, 0),
+            ],
+            _ => {
+                let mut res = Vec::with_capacity(d);
+                for row_idx in 0..d {
+                    let row_start = row_idx * d;
+                    let mut acc = coefs[row_start + d - 1];
+                    for col_idx in (0..d - 1).rev() {
+                        acc = acc * alpha + coefs[row_start + col_idx];
+                    }
+                    res.push(acc);
+                }
+                res
+            }
+        };
+        Ok(Poly::from_coefs(res))
     }
 
     fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z> {
-        let powers_array_x = Array1::from(compute_powers(alpha_x, self.degree));
-        let powers_array_y = Array1::from(compute_powers(alpha_y, self.degree));
-
-        let lhs = powers_array_x.matmul(&self.coefs)?;
-        Ok(match lhs.len() {
-            2 => dot_vec!(lhs, powers_array_y, 0, 1),
-            5 => dot_vec!(lhs, powers_array_y, 0, 1, 2, 3, 4),
-            len => {
+        let d = self.dimension();
+        let coefs = self.coefs.as_slice();
+        Ok(match d {
+            2 => {
+                let row0 = eval_row_y!(coefs, 0, alpha_y, 1, 0);
+                let row1 = eval_row_y!(coefs, 2, alpha_y, 1, 0);
+                row0 + alpha_x * row1
+            }
+            5 => {
+                let row0 = eval_row_y!(coefs, 0, alpha_y, 4, 3, 2, 1, 0);
+                let row1 = eval_row_y!(coefs, 5, alpha_y, 4, 3, 2, 1, 0);
+                let row2 = eval_row_y!(coefs, 10, alpha_y, 4, 3, 2, 1, 0);
+                let row3 = eval_row_y!(coefs, 15, alpha_y, 4, 3, 2, 1, 0);
+                let row4 = eval_row_y!(coefs, 20, alpha_y, 4, 3, 2, 1, 0);
+                let alpha_x2 = alpha_x * alpha_x;
+                let alpha_x3 = alpha_x2 * alpha_x;
+                let alpha_x4 = alpha_x3 * alpha_x;
+                row0 + alpha_x * row1 + alpha_x2 * row2 + alpha_x3 * row3 + alpha_x4 * row4
+            }
+            _ => {
                 let mut acc = Z::ZERO;
-                for idx in 0..len {
-                    acc += lhs[idx] * powers_array_y[idx];
+                let mut alpha_x_power = Z::ONE;
+                for row_idx in 0..d {
+                    let row_start = row_idx * d;
+                    let mut row_acc = coefs[row_start + d - 1];
+                    for col_idx in (0..d - 1).rev() {
+                        row_acc = row_acc * alpha_y + coefs[row_start + col_idx];
+                    }
+                    acc += alpha_x_power * row_acc;
+                    alpha_x_power *= alpha_x;
                 }
                 acc
             }
@@ -304,22 +210,50 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
-    //Checks the hot matrix/vector shapes used by bivariate evaluation.
+    //Checks the hot coefficient shapes used by bivariate evaluation.
     #[test]
-    fn test_matmul_supported_shapes() {
-        let y2 = Array1::from_elem(2, ResiduePolyF4Z128::ONE);
-        let z22 = Array2::from_elem((2, 2), ResiduePolyF4Z128::ONE);
+    fn test_bivariate_supported_shapes() {
         let two = ResiduePolyF4Z128::ONE + ResiduePolyF4Z128::ONE;
-        let expected2 = Array1::from_elem(2, two);
-        assert_eq!(y2.matmul(&z22).unwrap(), expected2);
-        assert_eq!(z22.matmul(&y2).unwrap(), expected2);
+        let bpoly2 = BivariatePoly {
+            coefs: vec![ResiduePolyF4Z128::ONE; 4],
+            degree: 1,
+        };
+        let expected2 = Poly::from_coefs(vec![two; 2]);
+        assert_eq!(
+            bpoly2.partial_x_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            expected2
+        );
+        assert_eq!(
+            bpoly2.partial_y_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            expected2
+        );
+        assert_eq!(
+            bpoly2
+                .full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE)
+                .unwrap(),
+            two + two
+        );
 
-        let y5 = Array1::from_elem(5, ResiduePolyF4Z128::ONE);
-        let z55 = Array2::from_elem((5, 5), ResiduePolyF4Z128::ONE);
         let five = two + two + ResiduePolyF4Z128::ONE;
-        let expected5 = Array1::from_elem(5, five);
-        assert_eq!(y5.matmul(&z55).unwrap(), expected5);
-        assert_eq!(z55.matmul(&y5).unwrap(), expected5);
+        let bpoly5 = BivariatePoly {
+            coefs: vec![ResiduePolyF4Z128::ONE; 25],
+            degree: 4,
+        };
+        let expected5 = Poly::from_coefs(vec![five; 5]);
+        assert_eq!(
+            bpoly5.partial_x_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            expected5
+        );
+        assert_eq!(
+            bpoly5.partial_y_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            expected5
+        );
+        assert_eq!(
+            bpoly5
+                .full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE)
+                .unwrap(),
+            five + five + five + five + five
+        );
     }
 
     //Test that eval at 0 return the secret for ResiduePolyF4Z128
@@ -690,10 +624,7 @@ mod tests {
             }, //x4y4
         ];
 
-        let bpoly = BivariatePoly {
-            coefs: Array2::from_shape_vec((5, 5), coefs).unwrap(),
-            degree: 4,
-        };
+        let bpoly = BivariatePoly { coefs, degree: 4 };
 
         let point = ResiduePoly {
             coefs: [

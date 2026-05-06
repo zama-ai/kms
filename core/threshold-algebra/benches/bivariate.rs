@@ -1,10 +1,9 @@
 use aes_prng::AesRng;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ndarray::{Array1, Array2};
 use rand::SeedableRng;
 use std::hint::black_box;
 use threshold_algebra::{
-    bivariate::{BivariateEval, BivariatePoly, MatrixMul, compute_powers},
+    bivariate::{BivariateEval, BivariatePoly, compute_powers},
     galois_rings::degree_4::ResiduePolyF4Z128,
     structure_traits::{Ring, Sample},
 };
@@ -21,7 +20,7 @@ fn bivariate_setup(degree: usize) -> (BivariatePoly<ResiduePolyF4Z128>, ResidueP
     (poly, point)
 }
 
-fn matrix_setup(degree: usize) -> (Array1<ResiduePolyF4Z128>, Array2<ResiduePolyF4Z128>) {
+fn matrix_setup(degree: usize) -> (Vec<ResiduePolyF4Z128>, Vec<ResiduePolyF4Z128>) {
     let mut rng = AesRng::seed_from_u64(100 + degree as u64);
     let d = degree + 1;
     let vector = (0..d)
@@ -31,10 +30,7 @@ fn matrix_setup(degree: usize) -> (Array1<ResiduePolyF4Z128>, Array2<ResiduePoly
         .map(|_| ResiduePolyF4Z128::sample(&mut rng))
         .collect();
 
-    (
-        Array1::from_vec(vector),
-        Array2::from_shape_vec((d, d), matrix).unwrap(),
-    )
+    (vector, matrix)
 }
 
 fn full_evaluation_direct<Z: Ring>(
@@ -46,14 +42,88 @@ fn full_evaluation_direct<Z: Ring>(
     let powers_x = compute_powers(alpha_x, degree);
     let powers_y = compute_powers(alpha_y, degree);
     let mut acc = Z::ZERO;
+    let d = degree + 1;
 
-    for (row_idx, row) in poly.coefs.rows().into_iter().enumerate() {
+    for (row_idx, row) in poly.coefs.chunks_exact(d).enumerate() {
         for (col_idx, coef) in row.iter().enumerate() {
             acc += powers_x[row_idx] * *coef * powers_y[col_idx];
         }
     }
 
     acc
+}
+
+macro_rules! dot_vector_matrix_col {
+    ($vector:expr, $matrix:expr, $d:expr, $col:expr, $first:expr $(, $row:expr)+) => {{
+        let mut acc = $vector[$first] * $matrix[$first * $d + $col];
+        $(acc += $vector[$row] * $matrix[$row * $d + $col];)+
+        acc
+    }};
+}
+
+macro_rules! dot_matrix_vector_row {
+    ($matrix:expr, $vector:expr, $d:expr, $row:expr, $first:expr $(, $col:expr)+) => {{
+        let row_start = $row * $d;
+        let mut acc = $matrix[row_start + $first] * $vector[$first];
+        $(acc += $matrix[row_start + $col] * $vector[$col];)+
+        acc
+    }};
+}
+
+fn vector_matrix_product<Z: Ring>(vector: &[Z], matrix: &[Z]) -> Vec<Z> {
+    let d = vector.len();
+    match d {
+        2 => vec![
+            dot_vector_matrix_col!(vector, matrix, d, 0, 0, 1),
+            dot_vector_matrix_col!(vector, matrix, d, 1, 0, 1),
+        ],
+        5 => vec![
+            dot_vector_matrix_col!(vector, matrix, d, 0, 0, 1, 2, 3, 4),
+            dot_vector_matrix_col!(vector, matrix, d, 1, 0, 1, 2, 3, 4),
+            dot_vector_matrix_col!(vector, matrix, d, 2, 0, 1, 2, 3, 4),
+            dot_vector_matrix_col!(vector, matrix, d, 3, 0, 1, 2, 3, 4),
+            dot_vector_matrix_col!(vector, matrix, d, 4, 0, 1, 2, 3, 4),
+        ],
+        _ => {
+            let mut res = vec![Z::ZERO; d];
+            for (row_idx, vector_value) in vector.iter().enumerate() {
+                let row_start = row_idx * d;
+                for col_idx in 0..d {
+                    res[col_idx] += *vector_value * matrix[row_start + col_idx];
+                }
+            }
+            res
+        }
+    }
+}
+
+fn matrix_vector_product<Z: Ring>(matrix: &[Z], vector: &[Z]) -> Vec<Z> {
+    let d = vector.len();
+    match d {
+        2 => vec![
+            dot_matrix_vector_row!(matrix, vector, d, 0, 0, 1),
+            dot_matrix_vector_row!(matrix, vector, d, 1, 0, 1),
+        ],
+        5 => vec![
+            dot_matrix_vector_row!(matrix, vector, d, 0, 0, 1, 2, 3, 4),
+            dot_matrix_vector_row!(matrix, vector, d, 1, 0, 1, 2, 3, 4),
+            dot_matrix_vector_row!(matrix, vector, d, 2, 0, 1, 2, 3, 4),
+            dot_matrix_vector_row!(matrix, vector, d, 3, 0, 1, 2, 3, 4),
+            dot_matrix_vector_row!(matrix, vector, d, 4, 0, 1, 2, 3, 4),
+        ],
+        _ => {
+            let mut res = Vec::with_capacity(d);
+            for row_idx in 0..d {
+                let row_start = row_idx * d;
+                let mut acc = Z::ZERO;
+                for col_idx in 0..d {
+                    acc += matrix[row_start + col_idx] * vector[col_idx];
+                }
+                res.push(acc);
+            }
+            res
+        }
+    }
 }
 
 fn bench_bivariate_sampling(c: &mut Criterion) {
@@ -113,10 +183,20 @@ fn bench_matrix_mul(c: &mut Criterion) {
         let (vector, matrix) = matrix_setup(degree);
 
         group.bench_function(BenchmarkId::new("vector_matrix", degree), |b| {
-            b.iter(|| black_box(vector.matmul(black_box(&matrix)).unwrap()));
+            b.iter(|| {
+                black_box(vector_matrix_product(
+                    black_box(&vector),
+                    black_box(&matrix),
+                ))
+            });
         });
         group.bench_function(BenchmarkId::new("matrix_vector", degree), |b| {
-            b.iter(|| black_box(matrix.matmul(black_box(&vector)).unwrap()));
+            b.iter(|| {
+                black_box(matrix_vector_product(
+                    black_box(&matrix),
+                    black_box(&vector),
+                ))
+            });
         });
     }
 
