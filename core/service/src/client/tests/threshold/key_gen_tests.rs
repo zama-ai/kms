@@ -1919,7 +1919,6 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
     }
 
     // Do distributed decryption to verify the generated key is ok
-    // TODO this could be refactored
     let material_path = material_path.as_path();
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..NUM_PARTIES];
 
@@ -2013,25 +2012,14 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
                 .as_ref()
                 .oprf_secret_key_share;
             let new_oprf_share = &threshold_keys.private_keys.as_ref().oprf_secret_key_share;
-            if remove_oprf {
-                assert!(
-                    old_oprf_share.is_none(),
-                    "Party {party_id}: legacy fixture must not contain an OPRF private share"
-                );
-                assert!(
-                    new_oprf_share.is_some(),
-                    "Party {party_id}: UseExisting keygen must create a missing OPRF private share"
-                );
-            } else {
-                assert!(
-                    old_oprf_share.is_some(),
-                    "Party {party_id}: fresh keygen must persist the dedicated OPRF private share"
-                );
-                assert_eq!(
-                    old_oprf_share, new_oprf_share,
-                    "Party {party_id}: UseExisting keygen must reuse the persisted OPRF private share"
-                );
-            }
+            assert!(
+                old_oprf_share.is_some(),
+                "Party {party_id}: migrated key must have OPRF private share"
+            );
+            assert_eq!(
+                old_oprf_share, new_oprf_share,
+                "Party {party_id}: UseExisting keygen must reuse the persisted OPRF private share"
+            );
             match &threshold_keys.meta_data {
                 KeyGenMetadata::Current(inner) => {
                     let signed_pk_digest = inner
