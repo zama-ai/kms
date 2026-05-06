@@ -84,8 +84,10 @@ on:
 permissions: {}
 
 concurrency:
-  group: docker-build-rust-golden-latest
-  cancel-in-progress: false
+  # Scope concurrency to source branch (+ head repo for forks), so different PRs
+  # can build in parallel while newer pushes on the same branch cancel older runs.
+  group: docker-build-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   ############################################################################
@@ -216,6 +218,12 @@ jobs:
   golden-image-latest:
     name: docker-build/golden-image-latest
     runs-on: ubuntu-latest
+    # `rust-golden-image:latest` is a shared mutable tag across branches.
+    # Serialize only this retag job globally to avoid cross-PR races while
+    # keeping the rest of the workflow parallelized per branch.
+    concurrency:
+      group: docker-build-golden-image-latest-global
+      cancel-in-progress: false
     needs:
       - golden-image-tag
       - golden-image
