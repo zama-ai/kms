@@ -16,20 +16,20 @@ on:
     inputs: &build_inputs
       build-golden-image:
         description: 'Build rust-golden-image (parent of core-client, core-service, enclave)'
-        type: boolean
-        default: true
+        type: string
+        default: "true"
       build-core-client:
         description: 'Build core-client (needs golden-image)'
-        type: boolean
-        default: true
+        type: string
+        default: "true"
       build-core-service:
         description: 'Build core-service (needs golden-image; parent of enclave)'
-        type: boolean
-        default: true
+        type: string
+        default: "true"
       build-enclave:
         description: 'Build core-service-enclave (needs core-service)'
-        type: boolean
-        default: true
+        type: string
+        default: "true"
   #=======================================================
   workflow_call:
     inputs: *build_inputs
@@ -164,7 +164,7 @@ jobs:
     name: docker-build/golden-image (bpr)
     needs: [golden-image-tag]
     if: |
-      (github.event_name != 'workflow_dispatch' || inputs['build-golden-image']) &&
+      (github.event_name != 'workflow_dispatch' || inputs['build-golden-image'] == 'true') &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
@@ -214,7 +214,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.golden-image-tag.result == 'success' &&
-      (github.event_name != 'workflow_dispatch' || inputs['build-golden-image']) &&
+      (github.event_name != 'workflow_dispatch' || inputs['build-golden-image'] == 'true') &&
       (
         needs.golden-image.result == 'success' ||
         needs.golden-image-tag.outputs.cache_hit == 'true'
@@ -261,7 +261,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
-      (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
+      (github.event_name != 'workflow_dispatch' || inputs['build-core-client'] == 'true')
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
       actions: read # Required to read workflow run information
@@ -298,7 +298,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
-      (github.event_name != 'workflow_dispatch' || inputs['build-core-service'])
+      (github.event_name != 'workflow_dispatch' || inputs['build-core-service'] == 'true')
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
       actions: read # Required to read workflow run information
@@ -330,7 +330,7 @@ jobs:
   #
   enclave:
     name: docker-build/core-service-enclave (bpr)
-    if: github.event_name != 'workflow_dispatch' || inputs['build-enclave']
+    if: github.event_name != 'workflow_dispatch' || inputs['build-enclave'] == 'true'
     needs:
       - core-service
     uses: ./.github/workflows/common-nitro-enclave.yml
