@@ -458,7 +458,7 @@ where
     /// Write both public and private data to storage in an atomic manner.
     /// Returns true if both writes are successful, false otherwise.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type` nor `priv_data` matches `priv_data_type`.
-    async fn write_data_pair<
+    pub(in crate::vault::storage::crypto_material) async fn write_data_pair<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,

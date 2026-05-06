@@ -1669,13 +1669,18 @@ async fn update_meta_store_failure_paths() {
         TEST_METRIC,
     ));
 
-    let err = update_meta_store(Ok(()), &missing, 1_u32, meta_store.clone(), TEST_METRIC)
+    match update_meta_store(Ok(()), &missing, 1_u32, meta_store.clone(), TEST_METRIC)
         .await
-        .unwrap_err();
-    assert!(matches!(err, StorageError::MetaStoreError(_)));
-    assert!(err.contains("but storage succeeded"));
+        .unwrap_err()
+    {
+        StorageError::MetaStoreError(msg) => assert!(
+            msg.contains("but storage succeeded"),
+            "expected 'but storage succeeded' in: {msg}"
+        ),
+        other => panic!("expected MetaStoreError, got {other:?}"),
+    }
 
-    let err = update_meta_store(
+    match update_meta_store(
         Err(StorageError::WritingError),
         &missing,
         2_u32,
@@ -1683,9 +1688,14 @@ async fn update_meta_store_failure_paths() {
         TEST_METRIC,
     )
     .await
-    .unwrap_err();
-    assert!(matches!(err, StorageError::MetaStoreError(_)));
-    assert!(err.contains("Also failed to store data"));
+    .unwrap_err()
+    {
+        StorageError::MetaStoreError(msg) => assert!(
+            msg.contains("Also failed to store data"),
+            "expected combined error in: {msg}"
+        ),
+        other => panic!("expected MetaStoreError, got {other:?}"),
+    }
 
     assert!(matches!(
         update_meta_store(Ok(()), &already_set, 1_u32, meta_store, TEST_METRIC).await,
