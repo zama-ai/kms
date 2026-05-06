@@ -55,7 +55,8 @@ use crate::{
     vault::storage::{
         StorageReader, StorageReaderExt,
         crypto_material::{
-            CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
+            CentralizedCryptoMaterialStorage, CryptoMaterialStorage,
+            ThresholdCryptoMaterialStorage, check_data_exists, check_data_exists_at_epoch,
         },
         delete_at_request_id,
         ram::{FailingRamStorage, RamStorage},
@@ -1091,16 +1092,21 @@ async fn data_exists_paths() {
 
     // Empty stores: both predicates must report `false`.
     assert!(
-        !storage
-            .data_exists(&req_id, &pub_t, &priv_t_non_epoched)
+        !check_data_exists(&*pub_s, &*priv_s, &req_id, &pub_t, &priv_t_non_epoched)
             .await
             .unwrap()
     );
     assert!(
-        !storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &pub_types_vec, &priv_types_vec)
-            .await
-            .unwrap()
+        !check_data_exists_at_epoch(
+            &*pub_s,
+            &*priv_s,
+            &req_id,
+            &epoch_id,
+            &pub_types_vec,
+            &priv_types_vec,
+        )
+        .await
+        .unwrap()
     );
 
     // Only public stored: still `false` (private missing).
@@ -1108,16 +1114,21 @@ async fn data_exists_paths() {
         .await
         .unwrap();
     assert!(
-        !storage
-            .data_exists(&req_id, &pub_t, &priv_t_non_epoched)
+        !check_data_exists(&*pub_s, &*priv_s, &req_id, &pub_t, &priv_t_non_epoched)
             .await
             .unwrap()
     );
     assert!(
-        !storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &pub_types_vec, &priv_types_vec)
-            .await
-            .unwrap()
+        !check_data_exists_at_epoch(
+            &*pub_s,
+            &*priv_s,
+            &req_id,
+            &epoch_id,
+            &pub_types_vec,
+            &priv_types_vec,
+        )
+        .await
+        .unwrap()
     );
 
     // Private stored only at a different req_id: short-circuit on missing public yields `false`.
@@ -1125,13 +1136,12 @@ async fn data_exists_paths() {
         .await
         .unwrap();
     assert!(
-        !storage
-            .data_exists(&priv_only, &pub_t, &priv_t_non_epoched)
+        !check_data_exists(&*pub_s, &*priv_s, &priv_only, &pub_t, &priv_t_non_epoched)
             .await
             .unwrap()
     );
 
-    // Add the matching epoched private entry: data_exists_at_epoch now succeeds...
+    // Add the matching epoched private entry: check_data_exists_at_epoch now succeeds...
     store_versioned_at_request_and_epoch_id(
         &mut *priv_s,
         &req_id,
@@ -1141,27 +1151,31 @@ async fn data_exists_paths() {
     )
     .await
     .unwrap();
-    // ...and add the non-epoched private entry under the same req_id so data_exists succeeds too.
+    // ...and add the non-epoched private entry under the same req_id so check_data_exists succeeds too.
     store_versioned_at_request_id(&mut *priv_s, &req_id, &data, &priv_t_non_epoched)
         .await
         .unwrap();
     assert!(
-        storage
-            .data_exists(&req_id, &pub_t, &priv_t_non_epoched)
+        check_data_exists(&*pub_s, &*priv_s, &req_id, &pub_t, &priv_t_non_epoched)
             .await
             .unwrap()
     );
     assert!(
-        storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &pub_types_vec, &priv_types_vec)
-            .await
-            .unwrap()
+        check_data_exists_at_epoch(
+            &*pub_s,
+            &*priv_s,
+            &req_id,
+            &epoch_id,
+            &pub_types_vec,
+            &priv_types_vec,
+        )
+        .await
+        .unwrap()
     );
 
     // Empty type lists are vacuously true.
     assert!(
-        storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &[], &[])
+        check_data_exists_at_epoch(&*pub_s, &*priv_s, &req_id, &epoch_id, &[], &[])
             .await
             .unwrap()
     );
