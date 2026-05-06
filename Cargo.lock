@@ -7579,6 +7579,7 @@ dependencies = [
  "aes-prng",
  "anyhow",
  "bc2wrap",
+ "criterion",
  "error-utils",
  "g2p",
  "itertools 0.14.0",
