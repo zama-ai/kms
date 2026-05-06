@@ -47,7 +47,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
@@ -652,6 +652,11 @@ where
     where
         for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
     {
+        let special_pub_type = match &fhe_key_set {
+            PublicKeySet::Standard(_) => PubDataType::ServerKey,
+            PublicKeySet::Compressed { .. } => PubDataType::CompressedXofKeySet,
+        };
+
         // First try to store the special key (server key or compressed keyset).
         match &fhe_key_set {
             PublicKeySet::Standard(keys) => {
@@ -697,15 +702,27 @@ where
                 op_metric_tag,
             )
             .await;
-        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
-            // Update cache
-            let mut guarded_fhe_keys = cache.write().await;
-            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), priv_fhe_data);
-            if previous.is_some() {
-                tracing::warn!(
-                    "Private FHE key data already exist in cache for {}, overwriting",
-                    key_id
-                );
+        match &res {
+            Ok(_) | Err(StorageError::BackupError) => {
+                // Backup-only failures still leave the keys safely persisted, so
+                // refresh the cache as if the write had succeeded.
+                let mut guarded_fhe_keys = cache.write().await;
+                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), priv_fhe_data);
+                if previous.is_some() {
+                    tracing::warn!(
+                        "Private FHE key data already exist in cache for {}, overwriting",
+                        key_id
+                    );
+                }
+            }
+            Err(_) => {
+                // Clean up the "special" key data stored in the first step, in case the second storage step fails, to avoid having orphaned data
+                if !self
+                    .purge_material(key_id, Some(epoch_id), &[special_pub_type], &[])
+                    .await
+                {
+                    return Err(StorageError::PurgingError);
+                }
             }
         }
         res
