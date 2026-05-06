@@ -142,10 +142,10 @@ jobs:
       attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
     with:
-      build-golden-image: 'true'
-      build-core-client: 'true'
-      build-core-service: 'true'
-      build-enclave: 'true'
+      build-golden-image: true
+      build-core-client: true
+      build-core-service: true
+      build-enclave: true
     secrets: inherit
 
   ############################################################################
