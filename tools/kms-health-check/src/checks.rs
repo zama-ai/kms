@@ -505,12 +505,12 @@ pub async fn run_full_check(
 pub async fn run_bandwidth_benchmark(
     endpoint: &str,
     context_id: String,
-    duration_seconds: u64,
+    duration: u64,
     num_sessions: u32,
     payload_size: u32,
 ) -> Result<BandwidthBenchmarkResponse> {
     let request = BandwidthBenchmarkRequest {
-        duration_experiment_seconds: duration_seconds,
+        duration,
         number_sessions: num_sessions,
         payload_size_per_session: payload_size,
         context_id: Some(RequestId {
@@ -518,7 +518,7 @@ pub async fn run_bandwidth_benchmark(
         }),
     };
 
-    let timeout = std::time::Duration::from_secs(duration_seconds + 30); // Add buffer to benchmark duration
+    let timeout = std::time::Duration::from_secs(duration + 30); // Add buffer to benchmark duration
     let client = GrpcHealthClient::new(endpoint);
     client.run_bandwidth_benchmark(request, timeout).await
 }

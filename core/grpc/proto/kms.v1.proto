@@ -842,7 +842,7 @@ message BandwidthBenchmarkRequest {
   // The KMS context for which to perform the benchmark
   RequestId context_id = 1;
   // How long we keep sending bytes (s)
-  uint64 duration_experiment_seconds = 2;
+  uint64 duration = 2;
   // Number of sessions trying to send bytes in parallel
   uint32 number_sessions = 3;
   // Size of the payload each session will send at a time
