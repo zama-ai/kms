@@ -1,7 +1,6 @@
 use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
-    bivariate::compute_powers,
     matrix::MatrixMul,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
@@ -143,11 +142,14 @@ pub fn init_vdm<Z: RingWithExceptionalSequence>(
         .map(|idx| Z::get_from_exceptional_sequence(idx + 1))
         .try_collect()?;
 
-    let powers_of_exceptional_sequence: Vec<Z> = exceptional_sequence
-        .into_iter()
-        .fold(Vec::<Z>::new(), |acc, point| {
-            [acc, compute_powers(point, width - 1)].concat()
-        });
+    let mut powers_of_exceptional_sequence = Vec::with_capacity(height * width);
+    for point in exceptional_sequence {
+        let mut power = Z::ONE;
+        for _ in 0..width {
+            powers_of_exceptional_sequence.push(power);
+            power *= point;
+        }
+    }
 
     Ok(ArrayD::from_shape_vec(IxDyn(&[height, width]), powers_of_exceptional_sequence)?.into_dyn())
 }
