@@ -241,7 +241,6 @@ impl SessionMaker {
         Ok(health_check_sessions)
     }
 
-    /// Return a pure healthcheck session, with no payload.
     async fn get_healthcheck_session(
         &self,
         context_id: &ContextId,

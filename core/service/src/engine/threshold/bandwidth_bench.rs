@@ -21,7 +21,7 @@ pub(crate) async fn run_bandwidth_benchmark(
         parse_optional_grpc_request_id(&request.context_id, RequestIdParsingErr::Context)?;
     let payload_size = request.payload_size_per_session as usize;
     let num_sessions = request.number_sessions as usize;
-    let duration = Duration::from_secs(request.duration_experiment_seconds);
+    let duration = Duration::from_secs(request.duration);
 
     let mut join_set = tokio::task::JoinSet::new();
     for _ in 0..num_sessions {
@@ -38,7 +38,7 @@ pub(crate) async fn run_bandwidth_benchmark(
             session
                 .run_bandwidth_benchmark(payload_size, duration)
                 .await
-                .expect("Bandwidth benchmark failed")
+                .expect("Bandwidth benchmark failed, nothing we can do about it here")
         });
     }
 

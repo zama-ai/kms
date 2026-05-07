@@ -62,15 +62,15 @@ enum Commands {
     BandwidthBench {
         /// KMS endpoint
         #[arg(short, long)]
-        endpoint: Vec<String>,
+        endpoints: Vec<String>,
 
-        /// Context id for the bandwidth benchmark
+        /// Context id of the MPC context to test
         #[arg(short, long)]
         context_id: String,
 
         /// Duration of the benchmark in seconds
         #[arg(short, long)]
-        duration_seconds: u64,
+        duration: u64,
 
         /// Number of sessions trying to send bytes in parallel
         #[arg(short, long)]
@@ -128,9 +128,9 @@ async fn main() -> Result<()> {
             )?;
         }
         Commands::BandwidthBench {
-            endpoint,
+            endpoints,
             context_id,
-            duration_seconds,
+            duration,
             num_sessions,
             payload_size,
         } => {
@@ -140,13 +140,13 @@ async fn main() -> Result<()> {
                 );
             }
             let mut joinset = tokio::task::JoinSet::new();
-            for ep in endpoint {
+            for ep in endpoints {
                 let context_id = context_id.clone();
                 joinset.spawn(async move {
                     let result = checks::run_bandwidth_benchmark(
                         &ep,
                         context_id,
-                        duration_seconds,
+                        duration,
                         num_sessions,
                         payload_size,
                     )
@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
                 let result = result?;
                 results.push((endpoint, result));
             }
-            print_bandwidth_benchmark_text(duration_seconds, num_sessions, payload_size, results)?;
+            print_bandwidth_benchmark_text(duration, num_sessions, payload_size, results)?;
         }
     };
 

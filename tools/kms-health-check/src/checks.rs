@@ -505,12 +505,12 @@ pub async fn run_full_check(
 pub async fn run_bandwidth_benchmark(
     endpoint: &str,
     context_id: String,
-    duration_seconds: u64,
+    duration: u64,
     num_sessions: u32,
     payload_size: u32,
 ) -> Result<BandwidthBenchmarkResponse> {
     let request = BandwidthBenchmarkRequest {
-        duration_experiment_seconds: duration_seconds,
+        duration,
         number_sessions: num_sessions,
         payload_size_per_session: payload_size,
         context_id: Some(RequestId {

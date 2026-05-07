@@ -203,13 +203,13 @@ fn print_json(result: &HealthCheckResult) -> Result<()> {
 }
 
 pub fn print_bandwidth_benchmark_text(
-    duration_second: u64,
+    duration: u64,
     num_sessions: u32,
     payload_size: u32,
     results: Vec<(String, BandwidthBenchmarkResponse)>,
 ) -> Result<()> {
     let mut output = String::with_capacity(1024);
-    writeln!(output, "Duration of benchmark: {} seconds", duration_second)?;
+    writeln!(output, "Duration of benchmark: {} seconds", duration)?;
     writeln!(output, "Number of sessions in parallel: {}", num_sessions)?;
     writeln!(output, "Payload size per session: {} bytes", payload_size)?;
     for (endpoint, result) in results {
@@ -223,8 +223,8 @@ pub fn print_bandwidth_benchmark_text(
                 peer.peer_id,
                 peer.endpoint,
                 peer.bytes_sent,
-                duration_second,
-                (peer.bytes_sent as f64 / (1024.0 * 1024.0)) / (duration_second as f64)
+                duration,
+                (peer.bytes_sent as f64 / (1024.0 * 1024.0)) / (duration as f64)
             )?;
         }
 

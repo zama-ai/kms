@@ -139,7 +139,7 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                     .await;
                     total_bytes_sent += payload_size;
                 }
-                tracing::info!("Total bytes sent to party {}: {}", id, total_bytes_sent);
+                tracing::debug!("Total bytes sent to party {}: {}", id, total_bytes_sent);
                 ((role, id), total_bytes_sent)
             });
         }
