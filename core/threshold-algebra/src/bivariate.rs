@@ -38,7 +38,7 @@ pub fn compute_powers_list<F: One + Mul<Output = F> + Copy>(
     points: &[F],
     max_exponent: usize,
 ) -> Vec<Vec<F>> {
-    let mut alpha_powers = Vec::new();
+    let mut alpha_powers = Vec::with_capacity(points.len());
     for p in points {
         alpha_powers.push(compute_powers(*p, max_exponent));
     }
@@ -47,28 +47,12 @@ pub fn compute_powers_list<F: One + Mul<Output = F> + Copy>(
 
 /// Computes powers of a specific point up to degree: p^0, p^1,...,p^degree
 pub fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) -> Vec<Z> {
-    let mut powers_of_point = Vec::new();
+    let mut powers_of_point = Vec::with_capacity(degree + 1);
     powers_of_point.push(Z::ONE); // start with
     for i in 1..=degree {
         powers_of_point.push(powers_of_point[i - 1] * point);
     }
     powers_of_point
-}
-
-macro_rules! eval_row_y {
-    ($coefs:expr, $start:expr, $alpha:expr, $last:expr $(, $idx:expr)+) => {{
-        let mut acc = $coefs[$start + $last];
-        $(acc = acc * $alpha + $coefs[$start + $idx];)+
-        acc
-    }};
-}
-
-macro_rules! eval_col_x {
-    ($coefs:expr, $col:expr, $d:expr, $alpha:expr, $last:expr $(, $idx:expr)+) => {{
-        let mut acc = $alpha * $coefs[$last * $d + $col];
-        $(acc = $alpha * ($coefs[$idx * $d + $col] + acc);)+
-        $coefs[$col] + acc
-    }};
 }
 
 impl<Z> BivariatePoly<Z> {
@@ -78,15 +62,24 @@ impl<Z> BivariatePoly<Z> {
 }
 
 pub trait BivariateEval<Z: Ring> {
-    /// Given a degree T bivariate poly F(X,Y) and a point \alpha, we compute
-    /// G(X) = F(X, \alpha) as
-    /// [sum(alpha^j * a_{j0}), ..., sum(alpha^j * a_{jd})]
+    /// Given a degree T bivariate poly F(X,Y) and a point \alpha, evaluate the X variable:
+    /// G(Y) = F(\alpha, Y).
     fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>>;
 
-    /// Given a degree T bivariate poly F(X,Y) and a point \alpha, we compute
-    /// G(Y) := F(\alpha, Y) as
-    /// [sum(alpha^j * a_{0j}), ..., sum(alpha^j * a_{dj})]
+    /// Given a degree T bivariate poly F(X,Y) and a point \alpha, evaluate the Y variable:
+    /// G(X) = F(X, \alpha).
     fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>>;
+
+    /// Compute both partial evaluations at the same point.
+    ///
+    /// Returns `(F(\alpha, Y), F(X, \alpha))`, matching
+    /// [`Self::partial_x_evaluation`] and [`Self::partial_y_evaluation`].
+    fn partial_evaluations(&self, alpha: Z) -> Result<(Poly<Z>, Poly<Z>)> {
+        Ok((
+            self.partial_x_evaluation(alpha)?,
+            self.partial_y_evaluation(alpha)?,
+        ))
+    }
 
     /// Given a degree T bivariate poly F(X,Y) and two points \alpha_x, \alpha_y, we compute
     /// F(\alpha_x, \alpha_y)
@@ -96,98 +89,74 @@ pub trait BivariateEval<Z: Ring> {
 impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
     fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
         let d = self.dimension();
-        let coefs = self.coefs.as_slice();
-        let res = match d {
-            2 => vec![coefs[0] + alpha * coefs[2], coefs[1] + alpha * coefs[3]],
-            5 => vec![
-                eval_col_x!(coefs, 0, d, alpha, 4, 3, 2, 1),
-                eval_col_x!(coefs, 1, d, alpha, 4, 3, 2, 1),
-                eval_col_x!(coefs, 2, d, alpha, 4, 3, 2, 1),
-                eval_col_x!(coefs, 3, d, alpha, 4, 3, 2, 1),
-                eval_col_x!(coefs, 4, d, alpha, 4, 3, 2, 1),
-            ],
-            _ => {
-                let mut res = vec![Z::ZERO; d];
-                let mut alpha_power = Z::ONE;
-                for row_idx in 0..d {
-                    let row_start = row_idx * d;
-                    for col_idx in 0..d {
-                        res[col_idx] += alpha_power * coefs[row_start + col_idx];
-                    }
-                    alpha_power *= alpha;
-                }
-                res
+        let coefs = &self.coefs[..d * d];
+        let mut res = coefs[(d - 1) * d..d * d].to_vec();
+        for row in coefs[..(d - 1) * d].chunks_exact(d).rev() {
+            for (res_coef, coef) in res.iter_mut().zip(row) {
+                *res_coef = *res_coef * alpha + *coef;
             }
-        };
+        }
         Ok(Poly::from_coefs(res))
     }
 
     fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
         let d = self.dimension();
-        let coefs = self.coefs.as_slice();
-        let res = match d {
-            2 => vec![
-                eval_row_y!(coefs, 0, alpha, 1, 0),
-                eval_row_y!(coefs, 2, alpha, 1, 0),
-            ],
-            5 => vec![
-                eval_row_y!(coefs, 0, alpha, 4, 3, 2, 1, 0),
-                eval_row_y!(coefs, 5, alpha, 4, 3, 2, 1, 0),
-                eval_row_y!(coefs, 10, alpha, 4, 3, 2, 1, 0),
-                eval_row_y!(coefs, 15, alpha, 4, 3, 2, 1, 0),
-                eval_row_y!(coefs, 20, alpha, 4, 3, 2, 1, 0),
-            ],
-            _ => {
-                let mut res = Vec::with_capacity(d);
-                for row_idx in 0..d {
-                    let row_start = row_idx * d;
-                    let mut acc = coefs[row_start + d - 1];
-                    for col_idx in (0..d - 1).rev() {
-                        acc = acc * alpha + coefs[row_start + col_idx];
-                    }
-                    res.push(acc);
-                }
-                res
+        let coefs = &self.coefs[..d * d];
+        let mut res = Vec::with_capacity(d);
+        for row in coefs.chunks_exact(d) {
+            let mut acc = row[d - 1];
+            for coef in row[..d - 1].iter().rev() {
+                acc = acc * alpha + *coef;
             }
-        };
+            res.push(acc);
+        }
         Ok(Poly::from_coefs(res))
+    }
+
+    fn partial_evaluations(&self, alpha: Z) -> Result<(Poly<Z>, Poly<Z>)> {
+        let d = self.dimension();
+        let coefs = &self.coefs[..d * d];
+        let last_row_start = (d - 1) * d;
+        let last_row = &coefs[last_row_start..last_row_start + d];
+
+        let mut partial_x = last_row.to_vec();
+        let mut partial_y = vec![Z::ZERO; d];
+
+        let mut acc = last_row[d - 1];
+        for coef in last_row[..d - 1].iter().rev() {
+            acc = acc * alpha + *coef;
+        }
+        partial_y[d - 1] = acc;
+
+        for (row_idx, row) in coefs[..last_row_start].chunks_exact(d).enumerate().rev() {
+            let mut acc = row[d - 1];
+            for coef in row[..d - 1].iter().rev() {
+                acc = acc * alpha + *coef;
+            }
+            partial_y[row_idx] = acc;
+
+            for (res_coef, coef) in partial_x.iter_mut().zip(row) {
+                *res_coef = *res_coef * alpha + *coef;
+            }
+        }
+
+        Ok((Poly::from_coefs(partial_x), Poly::from_coefs(partial_y)))
     }
 
     fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z> {
         let d = self.dimension();
-        let coefs = self.coefs.as_slice();
-        Ok(match d {
-            2 => {
-                let row0 = eval_row_y!(coefs, 0, alpha_y, 1, 0);
-                let row1 = eval_row_y!(coefs, 2, alpha_y, 1, 0);
-                row0 + alpha_x * row1
+        let coefs = &self.coefs[..d * d];
+        let mut acc = Z::ZERO;
+        let mut alpha_x_power = Z::ONE;
+        for row in coefs.chunks_exact(d) {
+            let mut row_acc = row[d - 1];
+            for coef in row[..d - 1].iter().rev() {
+                row_acc = row_acc * alpha_y + *coef;
             }
-            5 => {
-                let row0 = eval_row_y!(coefs, 0, alpha_y, 4, 3, 2, 1, 0);
-                let row1 = eval_row_y!(coefs, 5, alpha_y, 4, 3, 2, 1, 0);
-                let row2 = eval_row_y!(coefs, 10, alpha_y, 4, 3, 2, 1, 0);
-                let row3 = eval_row_y!(coefs, 15, alpha_y, 4, 3, 2, 1, 0);
-                let row4 = eval_row_y!(coefs, 20, alpha_y, 4, 3, 2, 1, 0);
-                let alpha_x2 = alpha_x * alpha_x;
-                let alpha_x3 = alpha_x2 * alpha_x;
-                let alpha_x4 = alpha_x3 * alpha_x;
-                row0 + alpha_x * row1 + alpha_x2 * row2 + alpha_x3 * row3 + alpha_x4 * row4
-            }
-            _ => {
-                let mut acc = Z::ZERO;
-                let mut alpha_x_power = Z::ONE;
-                for row_idx in 0..d {
-                    let row_start = row_idx * d;
-                    let mut row_acc = coefs[row_start + d - 1];
-                    for col_idx in (0..d - 1).rev() {
-                        row_acc = row_acc * alpha_y + coefs[row_start + col_idx];
-                    }
-                    acc += alpha_x_power * row_acc;
-                    alpha_x_power *= alpha_x;
-                }
-                acc
-            }
-        })
+            acc += alpha_x_power * row_acc;
+            alpha_x_power *= alpha_x;
+        }
+        Ok(acc)
     }
 }
 
@@ -254,6 +223,22 @@ mod tests {
                 .unwrap(),
             five + five + five + five + five
         );
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(4)]
+    #[case(10)]
+    fn test_bivariate_partial_evaluations(#[case] degree: usize) {
+        let mut rng = AesRng::seed_from_u64(0);
+        let secret = ResiduePolyF4Z128::sample(&mut rng);
+        let point = ResiduePolyF4Z128::sample(&mut rng);
+        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
+
+        let (partial_x, partial_y) = bpoly.partial_evaluations(point).unwrap();
+
+        assert_eq!(partial_x, bpoly.partial_x_evaluation(point).unwrap());
+        assert_eq!(partial_y, bpoly.partial_y_evaluation(point).unwrap());
     }
 
     //Test that eval at 0 return the secret for ResiduePolyF4Z128
