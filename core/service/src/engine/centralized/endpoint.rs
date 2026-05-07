@@ -404,4 +404,11 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         unimplemented!("MPC epochs are not supported in centralized KMS");
     }
+
+    async fn bandwidth_benchmark(
+        &self,
+        _request: Request<kms_grpc::kms::v1::BandwidthBenchmarkRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::BandwidthBenchmarkResponse>, Status> {
+        unimplemented!("Bandwidth benchmark is not supported in centralized KMS");
+    }
 }

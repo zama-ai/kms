@@ -1,5 +1,6 @@
 use crate::checks::{HealthCheckResult, HealthStatus};
 use anyhow::Result;
+use kms_grpc::kms::v1::BandwidthBenchmarkResponse;
 use std::fmt::Write;
 
 pub fn print_result(result: HealthCheckResult, format: &crate::OutputFormat) -> Result<()> {
@@ -198,5 +199,37 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
 fn print_json(result: &HealthCheckResult) -> Result<()> {
     let json = serde_json::to_string_pretty(&result)?;
     println!("{}", json);
+    Ok(())
+}
+
+pub fn print_bandwidth_benchmark_text(
+    duration_second: u64,
+    num_sessions: u32,
+    payload_size: u32,
+    results: Vec<(String, BandwidthBenchmarkResponse)>,
+) -> Result<()> {
+    let mut output = String::with_capacity(1024);
+    writeln!(output, "Duration of benchmark: {} seconds", duration_second)?;
+    writeln!(output, "Number of sessions in parallel: {}", num_sessions)?;
+    writeln!(output, "Payload size per session: {} bytes", payload_size)?;
+    for (endpoint, result) in results {
+        writeln!(output, "\n[BANDWIDTH BENCHMARK RESULT for {}]", endpoint)?;
+        writeln!(output, "{}", "=".repeat(50))?;
+
+        for peer in &result.peers_info {
+            writeln!(
+                output,
+                "Peer {} @ {}: {} bytes sent over {} seconds: \n\t\t {} MB/sec",
+                peer.peer_id,
+                peer.endpoint,
+                peer.bytes_sent,
+                duration_second,
+                (peer.bytes_sent as f64 / (1024.0 * 1024.0)) / (duration_second as f64)
+            )?;
+        }
+
+        writeln!(output, "\n{}", "=".repeat(50))?;
+    }
+    print!("{}", output);
     Ok(())
 }

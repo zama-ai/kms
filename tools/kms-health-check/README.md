@@ -1,6 +1,7 @@
 # KMS Health Check Tool
 
 Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for both centralized and threshold KMS instances.
+It can also be used to run a bandwidth benchmark between the parties.
 
 __NOTE__: This tool uses the MPC P2P connection between the peers to perform the healthcheck.
 
@@ -10,7 +11,8 @@ __NOTE__: This tool uses the MPC P2P connection between the peers to perform the
 - **Connectivity Check**: Test gRPC endpoint connectivity and latency
 - **Key Material Check**: Display actual key IDs for FHE keys, CRS keys, and preprocessing material
 - **Peer Health**: Check connectivity to all threshold peers with detailed key information
-- **JSON Output**: Machine-readable output for CI/CD integration
+- **JSON Output**: Machine-readable output for CI/CD integration (for health only; not for bandwidth)
+- **Bandwidth Benchmark**: Test gRPC endpoint for bandwidth
 
 ## Usage
 
@@ -35,6 +37,9 @@ kms-health-check live --endpoint localhost:50100 --health-config health-check.to
 
 # Using environment variables for timeouts (note the double underscore separator)
 HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 kms-health-check live --endpoint localhost:50100
+
+# Running the bandwidth benchmark on all 4 parties at the same time
+kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_PARALLEL_SESSION> -p <PAYLOAD_SIZE_B> -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400
 ```
 
 ## Configuration

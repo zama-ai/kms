@@ -25,6 +25,7 @@ pub enum HealthCheckStatus {
 }
 
 pub type HealthCheckResult<R> = HashMap<(R, Identity), HealthCheckStatus>;
+pub type BandwidthBenchmarkResult<R> = HashMap<(R, Identity), usize>;
 
 impl<R: RoleTrait> HealthCheckSession<R> {
     pub fn new(
@@ -74,22 +75,14 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                 tag_serialized.clone(),
                 self.timeout,
             );
-            tasks.spawn(async move {
-                let start = std::time::Instant::now();
-                let request = tonic::Request::new(super::ggen::HealthCheckRequest {
-                    tag: tag_serialized,
-                });
-                let response =
-                    tokio::time::timeout(timeout, client.clone().health_check(request)).await;
-                let duration = start.elapsed();
-
-                let response = match response {
-                    Ok(Ok(_)) => HealthCheckStatus::Ok(duration),
-                    Ok(Err(e)) => HealthCheckStatus::Error((duration, e)),
-                    Err(_e) => HealthCheckStatus::TimeOut(timeout),
-                };
-                (role, id, response)
-            });
+            tasks.spawn(Self::send(
+                tag_serialized,
+                client,
+                timeout,
+                vec![],
+                role,
+                id,
+            ));
         }
 
         let mut results = HashMap::new();
@@ -101,5 +94,80 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             }
         }
         Ok(results)
+    }
+
+    pub async fn run_bandwidth_benchmark(
+        &self,
+        payload_size: usize,
+        duration: Duration,
+    ) -> anyhow::Result<BandwidthBenchmarkResult<R>> {
+        // For duration, hit all the other parties with a payload of the given size.
+        // As soon as the other party has answered, hit it with the next payload until the duration has elapsed.
+
+        let tag = HealthTag {
+            sender: self.owner.mpc_identity(),
+        };
+
+        let tag_serialized = bc2wrap::serialize(&tag).map_err(|_| {
+            anyhow_error_and_log("Failed to serialize the Health Check Tag for Bandwidth Benchmark")
+        })?;
+
+        // Spawn a task for each party to run the bandwidth benchmark in parallel.
+        let mut join_set = JoinSet::new();
+        for ((role, id), client) in self.connection_channels.iter() {
+            let (role, id, client, tag_serialized, timeout) = (
+                *role,
+                id.clone(),
+                client.clone(),
+                tag_serialized.clone(),
+                self.timeout,
+            );
+
+            join_set.spawn(async move {
+                let payload = vec![0u8; payload_size];
+                let mut total_bytes_sent = 0;
+                let start = std::time::Instant::now();
+                while start.elapsed() < duration {
+                    Self::send(
+                        tag_serialized.clone(),
+                        client.clone(),
+                        timeout,
+                        payload.clone(),
+                        role,
+                        id.clone(),
+                    )
+                    .await;
+                    total_bytes_sent += payload_size;
+                }
+                tracing::info!("Total bytes sent to party {}: {}", id, total_bytes_sent);
+                ((role, id), total_bytes_sent)
+            });
+        }
+
+        Ok(join_set.join_all().await.into_iter().collect())
+    }
+
+    async fn send(
+        tag_serialized: Vec<u8>,
+        client: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
+        timeout: Duration,
+        payload: Vec<u8>,
+        role: R,
+        id: Identity,
+    ) -> (R, Identity, HealthCheckStatus) {
+        let start = std::time::Instant::now();
+        let request = tonic::Request::new(super::ggen::HealthCheckRequest {
+            tag: tag_serialized,
+            payload,
+        });
+        let response = tokio::time::timeout(timeout, client.clone().health_check(request)).await;
+        let duration = start.elapsed();
+
+        let response = match response {
+            Ok(Ok(_)) => HealthCheckStatus::Ok(duration),
+            Ok(Err(e)) => HealthCheckStatus::Error((duration, e)),
+            Err(_e) => HealthCheckStatus::TimeOut(timeout),
+        };
+        (role, id, response)
     }
 }
