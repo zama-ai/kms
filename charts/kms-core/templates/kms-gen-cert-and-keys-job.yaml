@@ -1,4 +1,5 @@
-{{- if and .Values.kmsCore.thresholdMode.enabled .Values.kmsGenCertAndKeys.enabled -}}
+{{- if .Values.kmsGenCertAndKeys.enabled -}}
+{{- if or .Values.kmsCore.thresholdMode.enabled .Values.kmsCore.nitroEnclave.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
@@ -10,9 +11,9 @@ metadata:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
   annotations:
-    "helm.sh/hook": pre-install
+    "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-1"
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
   name: {{ $kmsGenCertAndKeysName }}
 spec:
   template:
@@ -47,6 +48,7 @@ spec:
               cat kms-gen-keys.toml
               echo "### END - kms-gen-keys.toml ###"
           env:
+            {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -56,6 +58,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             {{- end }}
             - name: NO_COLOR
               value: "true"
@@ -147,8 +150,8 @@ spec:
                      "port" 443
                 ) | indent 10 | trim }}
       {{- end }}
-      {{- /* initContainers section for non-enclave */}}
-      {{- if not .Values.kmsCore.nitroEnclave.enabled }}
+      {{- /* initContainers section for non-enclave (threshold-only: TLS cert generation) */}}
+      {{- if and (not .Values.kmsCore.nitroEnclave.enabled) .Values.kmsCore.thresholdMode.enabled }}
       initContainers:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
@@ -296,8 +299,8 @@ spec:
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
-        {{- else }}
-        {{- /* Non-Enclave: Upload certs to S3 */}}
+        {{- else if .Values.kmsCore.thresholdMode.enabled }}
+        {{- /* Non-Enclave (threshold only): Upload certs to S3 */}}
         - image: amazon/aws-cli:latest
           imagePullPolicy: IfNotPresent
           name: upload-certs-to-s3
@@ -411,4 +414,5 @@ spec:
         - name: certs
           emptyDir: {}
         {{- end }}
+{{- end -}}
 {{- end -}}

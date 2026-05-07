@@ -21,7 +21,7 @@ log() {
 
 fail() {
     log "$1"
-    exit
+    exit 1
 }
 
 get_configured_port() {
