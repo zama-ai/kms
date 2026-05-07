@@ -16,7 +16,7 @@ fn bivariate_setup(degree: usize) -> (BivariatePoly<ResiduePolyF4Z128>, ResidueP
     let mut rng = AesRng::seed_from_u64(degree as u64);
     let secret = ResiduePolyF4Z128::sample(&mut rng);
     let point = ResiduePolyF4Z128::sample(&mut rng);
-    let poly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
+    let poly = BivariatePoly::from_secret(&mut rng, secret, degree);
     (poly, point)
 }
 
@@ -87,10 +87,11 @@ fn bench_bivariate_sampling(c: &mut Criterion) {
             let mut rng = AesRng::seed_from_u64(degree as u64);
             let secret = ResiduePolyF4Z128::sample(&mut rng);
             b.iter(|| {
-                black_box(
-                    BivariatePoly::from_secret(&mut rng, black_box(secret), black_box(degree))
-                        .unwrap(),
-                )
+                black_box(BivariatePoly::from_secret(
+                    &mut rng,
+                    black_box(secret),
+                    black_box(degree),
+                ))
             });
         });
     }
@@ -103,23 +104,18 @@ fn bench_bivariate_evaluation(c: &mut Criterion) {
 
     for degree in DEGREES {
         let (poly, point) = bivariate_setup(degree);
-        let current = poly.full_evaluation(point, point).unwrap();
+        let current = poly.full_evaluation(point, point);
         let direct = full_evaluation_direct(&poly, degree, point, point);
         assert_eq!(current, direct);
 
         group.bench_function(BenchmarkId::new("partial_x", degree), |b| {
-            b.iter(|| black_box(poly.partial_x_evaluation(black_box(point)).unwrap()));
+            b.iter(|| black_box(poly.partial_x_evaluation(black_box(point))));
         });
         group.bench_function(BenchmarkId::new("partial_y", degree), |b| {
-            b.iter(|| black_box(poly.partial_y_evaluation(black_box(point)).unwrap()));
+            b.iter(|| black_box(poly.partial_y_evaluation(black_box(point))));
         });
         group.bench_function(BenchmarkId::new("full", degree), |b| {
-            b.iter(|| {
-                black_box(
-                    poly.full_evaluation(black_box(point), black_box(point))
-                        .unwrap(),
-                )
-            });
+            b.iter(|| black_box(poly.full_evaluation(black_box(point), black_box(point))));
         });
         group.bench_function(BenchmarkId::new("full_direct", degree), |b| {
             b.iter(|| black_box(full_evaluation_direct(&poly, degree, point, point)));
