@@ -518,7 +518,7 @@ pub async fn run_bandwidth_benchmark(
         }),
     };
 
-    let timeout = std::time::Duration::from_secs(duration_seconds + 30); // Add buffer to benchmark duration
+    let timeout = std::time::Duration::from_secs(duration + 30); // Add buffer to benchmark duration
     let client = GrpcHealthClient::new(endpoint);
     client.run_bandwidth_benchmark(request, timeout).await
 }

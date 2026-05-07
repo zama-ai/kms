@@ -114,6 +114,13 @@ impl<R: RoleTrait> HealthCheckSession<R> {
 
         // Spawn a task for each party to run the bandwidth benchmark in parallel.
         let mut join_set = JoinSet::new();
+
+        // Be safe and use random bytes as payload to avoid any compression that
+        // could happen before TLS layer
+        let payload = (0..payload_size)
+            .map(|_| rand::random::<u8>())
+            .collect::<Vec<u8>>();
+
         for ((role, id), client) in self.connection_channels.iter() {
             let (role, id, client, tag_serialized, timeout) = (
                 *role,
@@ -123,8 +130,8 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                 self.timeout,
             );
 
+            let payload = payload.clone();
             join_set.spawn(async move {
-                let payload = vec![0u8; payload_size];
                 let mut total_bytes_sent = 0;
                 let start = std::time::Instant::now();
                 while start.elapsed() < duration {
