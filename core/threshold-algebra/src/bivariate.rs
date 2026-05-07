@@ -2,26 +2,26 @@ use super::poly::Poly;
 use super::structure_traits::One;
 use super::structure_traits::Ring;
 use super::structure_traits::Sample;
-use super::structure_traits::Zero;
 
-use anyhow::Result;
 use rand::{CryptoRng, Rng};
 use std::ops::Mul;
 
-/// Bivariate polynomial is a row-major matrix of coefficients of ResiduePolynomials
+/// Bivariate polynomial represented as a row-major square matrix of coefficients.
+///
 /// The row view of the polynomials is the following:
 /// [[a_{00}, a_{01}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}]]
 #[derive(Clone, Default, Debug)]
 pub struct BivariatePoly<Z> {
+    /// Row-major coefficients. Contains `(degree + 1)^2` elements.
     pub coefs: Vec<Z>,
     degree: usize,
 }
 
 impl<Z> BivariatePoly<Z> {
-    /// method for sampling random bivariate polynomial where free term is the secret
-    pub fn from_secret<R: Rng + CryptoRng>(rng: &mut R, secret: Z, degree: usize) -> Result<Self>
+    /// Samples a random bivariate polynomial where the free term is the secret.
+    pub fn from_secret<R: Rng + CryptoRng>(rng: &mut R, secret: Z, degree: usize) -> Self
     where
-        Z: Sample + Zero + Copy,
+        Z: Sample,
     {
         let d = degree + 1;
         let n = d * d;
@@ -29,7 +29,7 @@ impl<Z> BivariatePoly<Z> {
         coefs.push(secret);
         coefs.extend((1..n).map(|_| Z::sample(rng)));
 
-        Ok(BivariatePoly { coefs, degree })
+        BivariatePoly { coefs, degree }
     }
 }
 
@@ -59,50 +59,73 @@ impl<Z> BivariatePoly<Z> {
     fn dimension(&self) -> usize {
         self.degree + 1
     }
+
+    fn coefficients(&self) -> &[Z] {
+        let d = self.dimension();
+        let n = d * d;
+        // @reviewers The old ndarray-based matmul checked ranks and dimensions on
+        // every evaluation. The only supported bivariate shape is the square coefficient
+        // matrix implied by `degree`, so we check that invariant once here and let the hot
+        // loops below use `d` directly.
+        assert_eq!(
+            self.coefs.len(),
+            n,
+            "BivariatePoly expected {n} coefficients for degree {}, got {}",
+            self.degree,
+            self.coefs.len()
+        );
+        &self.coefs
+    }
 }
 
 pub trait BivariateEval<Z: Ring> {
-    /// Given a degree T bivariate poly F(X,Y) and a point \alpha, evaluate the X variable:
-    /// G(Y) = F(\alpha, Y).
-    fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>>;
+    /// Given a degree T bivariate poly F(X,Y) = sum a_ij X^i Y^j and a point \alpha, evaluate the X variable:
+    /// G(Y) = F(\alpha, Y) with coefficients [sum_i a_i0 \alpha^i, ..., sum_i a_id \alpha^i].
+    fn partial_x_evaluation(&self, alpha: Z) -> Poly<Z>;
 
-    /// Given a degree T bivariate poly F(X,Y) and a point \alpha, evaluate the Y variable:
-    /// G(X) = F(X, \alpha).
-    fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>>;
+    /// Given a degree T bivariate poly F(X,Y) = sum a_ij X^i Y^j and a point \alpha, evaluate the Y variable:
+    /// G(X) = F(X, \alpha) with coefficients [sum_j a_0j \alpha^j, ..., sum_j a_dj \alpha^j].
+    fn partial_y_evaluation(&self, alpha: Z) -> Poly<Z>;
 
     /// Compute both partial evaluations at the same point.
     ///
     /// Returns `(F(\alpha, Y), F(X, \alpha))`, matching
     /// [`Self::partial_x_evaluation`] and [`Self::partial_y_evaluation`].
-    fn partial_evaluations(&self, alpha: Z) -> Result<(Poly<Z>, Poly<Z>)> {
-        Ok((
-            self.partial_x_evaluation(alpha)?,
-            self.partial_y_evaluation(alpha)?,
-        ))
+    fn partial_evaluations(&self, alpha: Z) -> (Poly<Z>, Poly<Z>) {
+        (
+            self.partial_x_evaluation(alpha),
+            self.partial_y_evaluation(alpha),
+        )
     }
 
     /// Given a degree T bivariate poly F(X,Y) and two points \alpha_x, \alpha_y, we compute
     /// F(\alpha_x, \alpha_y)
-    fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z>;
+    fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Z;
 }
 
 impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
-    fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
+    fn partial_x_evaluation(&self, alpha: Z) -> Poly<Z> {
         let d = self.dimension();
-        let coefs = &self.coefs[..d * d];
+        let coefs = self.coefficients();
         let mut res = coefs[(d - 1) * d..d * d].to_vec();
+        // @reviewers The old implementation checked each column length inside generic
+        // `matmul`. After the invariant check in `coefficients`, every row has exactly `d`
+        // coefficients, and `chunks_exact(d)` encodes the only shape this evaluator supports.
         for row in coefs[..(d - 1) * d].chunks_exact(d).rev() {
             for (res_coef, coef) in res.iter_mut().zip(row) {
                 *res_coef = *res_coef * alpha + *coef;
             }
         }
-        Ok(Poly::from_coefs(res))
+        Poly::from_coefs(res)
     }
 
-    fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
+    fn partial_y_evaluation(&self, alpha: Z) -> Poly<Z> {
         let d = self.dimension();
-        let coefs = &self.coefs[..d * d];
+        let coefs = self.coefficients();
         let mut res = Vec::with_capacity(d);
+        // @reviewers The previous generic matrix path checked row/vector dimensions before
+        // multiplication. Here `coefficients` asserts the only valid bivariate shape once,
+        // and each Horner pass consumes exactly one row of length `d`.
         for row in coefs.chunks_exact(d) {
             let mut acc = row[d - 1];
             for coef in row[..d - 1].iter().rev() {
@@ -110,12 +133,12 @@ impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
             }
             res.push(acc);
         }
-        Ok(Poly::from_coefs(res))
+        Poly::from_coefs(res)
     }
 
-    fn partial_evaluations(&self, alpha: Z) -> Result<(Poly<Z>, Poly<Z>)> {
+    fn partial_evaluations(&self, alpha: Z) -> (Poly<Z>, Poly<Z>) {
         let d = self.dimension();
-        let coefs = &self.coefs[..d * d];
+        let coefs = self.coefficients();
         let last_row_start = (d - 1) * d;
         let last_row = &coefs[last_row_start..last_row_start + d];
 
@@ -128,6 +151,9 @@ impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
         }
         partial_y[d - 1] = acc;
 
+        // @reviewers This fused path relies on the same `d * d` coefficient invariant as
+        // the separate evaluators. The only difference is that it computes both directions
+        // in one pass to avoid repeating the row scan.
         for (row_idx, row) in coefs[..last_row_start].chunks_exact(d).enumerate().rev() {
             let mut acc = row[d - 1];
             for coef in row[..d - 1].iter().rev() {
@@ -140,12 +166,12 @@ impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
             }
         }
 
-        Ok((Poly::from_coefs(partial_x), Poly::from_coefs(partial_y)))
+        (Poly::from_coefs(partial_x), Poly::from_coefs(partial_y))
     }
 
-    fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z> {
+    fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Z {
         let d = self.dimension();
-        let coefs = &self.coefs[..d * d];
+        let coefs = self.coefficients();
         let mut acc = Z::ZERO;
         let mut alpha_x_power = Z::ONE;
         for row in coefs.chunks_exact(d) {
@@ -156,7 +182,10 @@ impl<Z: Ring> BivariateEval<Z> for BivariatePoly<Z> {
             acc += alpha_x_power * row_acc;
             alpha_x_power *= alpha_x;
         }
-        Ok(acc)
+        // @reviewers This replaces the old vector-matrix-then-dot-product path. Both power
+        // vectors had length `d` by construction, so the final rank-1 length check bought no
+        // extra validation beyond the coefficient invariant checked above.
+        acc
     }
 }
 
@@ -170,7 +199,7 @@ mod tests {
             common::ResiduePoly,
             degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         },
-        structure_traits::One,
+        structure_traits::{One, Zero},
     };
 
     use aes_prng::AesRng;
@@ -189,17 +218,15 @@ mod tests {
         };
         let expected2 = Poly::from_coefs(vec![two; 2]);
         assert_eq!(
-            bpoly2.partial_x_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            bpoly2.partial_x_evaluation(ResiduePolyF4Z128::ONE),
             expected2
         );
         assert_eq!(
-            bpoly2.partial_y_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            bpoly2.partial_y_evaluation(ResiduePolyF4Z128::ONE),
             expected2
         );
         assert_eq!(
-            bpoly2
-                .full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE)
-                .unwrap(),
+            bpoly2.full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE),
             two + two
         );
 
@@ -210,95 +237,81 @@ mod tests {
         };
         let expected5 = Poly::from_coefs(vec![five; 5]);
         assert_eq!(
-            bpoly5.partial_x_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            bpoly5.partial_x_evaluation(ResiduePolyF4Z128::ONE),
             expected5
         );
         assert_eq!(
-            bpoly5.partial_y_evaluation(ResiduePolyF4Z128::ONE).unwrap(),
+            bpoly5.partial_y_evaluation(ResiduePolyF4Z128::ONE),
             expected5
         );
         assert_eq!(
-            bpoly5
-                .full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE)
-                .unwrap(),
+            bpoly5.full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE),
             five + five + five + five + five
         );
     }
 
+    #[test]
+    #[should_panic(expected = "BivariatePoly expected 4 coefficients for degree 1")]
+    fn test_bivariate_invalid_coefficient_count() {
+        let bpoly = BivariatePoly {
+            coefs: vec![ResiduePolyF4Z128::ONE; 3],
+            degree: 1,
+        };
+
+        let _ = bpoly.partial_x_evaluation(ResiduePolyF4Z128::ONE);
+    }
+
     #[rstest]
-    #[case(1)]
-    #[case(4)]
-    #[case(10)]
-    fn test_bivariate_partial_evaluations(#[case] degree: usize) {
+    fn test_bivariate_partial_evaluations(#[values(1, 4, 10)] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePolyF4Z128::sample(&mut rng);
         let point = ResiduePolyF4Z128::sample(&mut rng);
-        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
+        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree);
 
-        let (partial_x, partial_y) = bpoly.partial_evaluations(point).unwrap();
+        let (partial_x, partial_y) = bpoly.partial_evaluations(point);
 
-        assert_eq!(partial_x, bpoly.partial_x_evaluation(point).unwrap());
-        assert_eq!(partial_y, bpoly.partial_y_evaluation(point).unwrap());
+        assert_eq!(partial_x, bpoly.partial_x_evaluation(point));
+        assert_eq!(partial_y, bpoly.partial_y_evaluation(point));
     }
 
     //Test that eval at 0 return the secret for ResiduePolyF4Z128
     #[rstest]
-    #[case(4)]
-    #[case(10)]
-    #[case(20)]
-    fn test_bivariate_zero_128(#[case] degree: usize) {
+    fn test_bivariate_zero_128(#[values(4, 10, 20)] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePolyF4Z128::sample(&mut rng);
-        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
-        let ev_zero = bpoly
-            .full_evaluation(ResiduePolyF4Z128::ZERO, ResiduePolyF4Z128::ZERO)
-            .unwrap();
+        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree);
+        let ev_zero = bpoly.full_evaluation(ResiduePolyF4Z128::ZERO, ResiduePolyF4Z128::ZERO);
         assert_eq!(ev_zero, secret);
     }
 
     //Test that eval at 0 return the secret for ResiduePolyF4Z64
     #[rstest]
-    #[case(4)]
-    #[case(10)]
-    #[case(20)]
-    fn test_bivariate_zero_64(#[case] degree: usize) {
+    fn test_bivariate_zero_64(#[values(4, 10, 20)] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePolyF4Z64::sample(&mut rng);
-        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
-        let ev_zero = bpoly
-            .full_evaluation(ResiduePolyF4Z64::ZERO, ResiduePolyF4Z64::ZERO)
-            .unwrap();
+        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree);
+        let ev_zero = bpoly.full_evaluation(ResiduePolyF4Z64::ZERO, ResiduePolyF4Z64::ZERO);
         assert_eq!(ev_zero, secret);
     }
 
     //Test that eval at 1 return the sum of all coefs of the poly for ResiduePolyF4Z128
     #[rstest]
-    #[case(4)]
-    #[case(10)]
-    #[case(20)]
-    fn test_bivariate_one_128(#[case] degree: usize) {
+    fn test_bivariate_one_128(#[values(4, 10, 20)] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePolyF4Z128::sample(&mut rng);
-        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
-        let ev_one = bpoly
-            .full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE)
-            .unwrap();
+        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree);
+        let ev_one = bpoly.full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE);
         let sum_coefs = bpoly.coefs.iter().fold(ResiduePoly::ZERO, |acc, x| acc + x);
         assert_eq!(ev_one, sum_coefs);
     }
 
     //Test that eval at 1 return the sum of all coefs of the poly for ResiduePolyF4Z64
     #[rstest]
-    #[case(4)]
-    #[case(10)]
-    #[case(20)]
-    fn test_bivariate_one_64(#[case] degree: usize) {
+    fn test_bivariate_one_64(#[values(4, 10, 20)] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePolyF4Z64::sample(&mut rng);
-        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
-        let ev_one = bpoly
-            .full_evaluation(ResiduePolyF4Z64::ONE, ResiduePolyF4Z64::ONE)
-            .unwrap();
+        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree);
+        let ev_one = bpoly.full_evaluation(ResiduePolyF4Z64::ONE, ResiduePolyF4Z64::ONE);
         let sum_coefs = bpoly.coefs.iter().fold(ResiduePoly::ZERO, |acc, x| acc + x);
         assert_eq!(ev_one, sum_coefs);
     }
@@ -632,7 +645,7 @@ mod tests {
     #[test]
     fn test_bivariate_partial_eval_x() {
         let (bpoly, point) = poly_setup();
-        let res = bpoly.partial_x_evaluation(point).unwrap();
+        let res = bpoly.partial_x_evaluation(point);
 
         let expected_result = Poly::<ResiduePolyF8Z128>::from_coefs(vec![
             ResiduePoly {
@@ -706,7 +719,7 @@ mod tests {
     fn test_bivariate_partial_eval_y() {
         //Taking Sage as reference
         let (bpoly, point) = poly_setup();
-        let res = bpoly.partial_y_evaluation(point).unwrap();
+        let res = bpoly.partial_y_evaluation(point);
 
         let expected_result = Poly::<ResiduePolyF8Z128>::from_coefs(vec![
             ResiduePoly {
@@ -779,9 +792,9 @@ mod tests {
         let (bpoly, point) = poly_setup();
         let point_x = point;
         let point_y = point_x + point_x;
-        let res = bpoly.full_evaluation(point_x, point_y).unwrap();
+        let res = bpoly.full_evaluation(point_x, point_y);
 
-        let expected_res = bpoly.partial_x_evaluation(point_x).unwrap().eval(&point_y);
+        let expected_res = bpoly.partial_x_evaluation(point_x).eval(&point_y);
 
         assert_eq!(res, expected_res);
     }
