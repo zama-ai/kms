@@ -1,6 +1,6 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
-    poly::{BitWiseEval, Poly, gao_decoding},
+    poly::{BitWiseEval, Poly, gao_decoding, gao_decoding_with_field_hints, lagrange_polynomials},
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
@@ -14,6 +14,7 @@ use crate::poly::BitwisePoly;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::RwLock;
+use threshold_types::role::Role;
 
 /// Trait used to speed up error correction computation.
 ///
@@ -51,6 +52,133 @@ pub trait MemoizedExceptionals: Sized + Clone + 'static {
                 "Error reading exceptional store".to_string(),
             ))
         }
+    }
+}
+
+/// Precomputed field-level data for Lagrange interpolation and Gao decoding.
+///
+/// These depend only on the set of evaluation points (i.e. the party identities),
+/// not on the actual share values, so they can be reused across many sharings.
+pub struct FieldHints<F: Field> {
+    /// Field-level embedded evaluation points: `F::embed_role_to_exceptional_sequence(party_i)`.
+    pub embedded_points: Vec<F>,
+    /// Lagrange basis polynomials `L_i(X)` for the embedded points.
+    pub lagrange_polys: Vec<Poly<F>>,
+    /// Vanishing polynomial `∏(X - x_i)`.
+    pub vanishing_poly: Poly<F>,
+}
+
+impl<F: Field> FieldHints<F> {
+    /// Build field-level hints from a set of parties.
+    pub fn new(parties: &[Role]) -> anyhow::Result<Self> {
+        let embedded_points: Vec<F> = parties
+            .iter()
+            .map(|p| F::embed_role_to_exceptional_sequence(p))
+            .try_collect()?;
+        let lagrange_polys = if let Some(cached) = F::cached_lagrange_polys(&embedded_points) {
+            cached.to_vec()
+        } else {
+            lagrange_polynomials(&embedded_points)
+        };
+        let vanishing_poly = Self::compute_vanishing_poly(&embedded_points);
+        Ok(Self {
+            embedded_points,
+            lagrange_polys,
+            vanishing_poly,
+        })
+    }
+
+    fn compute_vanishing_poly(points: &[F]) -> Poly<F> {
+        let mut g = Poly::one();
+        for xi in points.iter() {
+            g = g * Poly::from_coefs(vec![-*xi, F::ONE]);
+        }
+        g
+    }
+}
+
+/// Precomputed data that depends only on the set of contributing parties
+/// and the degree of the sharing polynomial — not on any share values.
+///
+/// When reconstructing many [`ShamirSharings`] that share the same owner set
+/// and degree, build this once and pass it to each reconstruction call.
+pub struct ReconstructionHints<Z: ErrorCorrect> {
+    /// The sorted set of party roles that contributed shares.
+    pub parties: Vec<Role>,
+    /// The degree of the sharing polynomial (threshold or 2×threshold).
+    pub degree: usize,
+    /// Ring-level embedded evaluation points: `Z::embed_role_to_exceptional_sequence(party_i)`.
+    pub embedded_points: Vec<Z>,
+    /// `exceptional_powers[i][j]` = `embedded_points[i]^j` for `j` in `0..=degree`.
+    ///
+    /// Used in the Hensel-lift loop of `shamir_error_correct`.
+    pub exceptional_powers: Vec<Vec<Z>>,
+    /// Field-level hints for Lagrange interpolation / Gao decoding.
+    pub field_hints: FieldHints<Z::ReconstructionField>,
+}
+
+impl<Z: ErrorCorrect> ReconstructionHints<Z> {
+    /// Build hints from the owner set of a sharing and a degree.
+    ///
+    /// Typically called once before iterating over a batch of sharings.
+    /// Computes exceptional powers directly from the embedded points.
+    pub fn new(sharing: &ShamirSharings<Z>, degree: usize) -> anyhow::Result<Self> {
+        let parties: Vec<Role> = sharing.shares.iter().map(|s| s.owner()).collect();
+        Self::from_parties(&parties, degree)
+    }
+
+    /// Build hints from an explicit list of parties and a degree.
+    ///
+    /// Computes exceptional powers directly from the embedded points.
+    pub fn from_parties(parties: &[Role], degree: usize) -> anyhow::Result<Self> {
+        let embedded_points: Vec<Z> = parties
+            .iter()
+            .map(|p| Z::embed_role_to_exceptional_sequence(p))
+            .try_collect()?;
+        let exceptional_powers: Vec<Vec<Z>> = embedded_points
+            .iter()
+            .map(|point| {
+                let mut powers = Vec::with_capacity(degree + 1);
+                let mut current = Z::ONE;
+                powers.push(current);
+                for _ in 1..=degree {
+                    current *= *point;
+                    powers.push(current);
+                }
+                powers
+            })
+            .collect();
+        let field_hints = FieldHints::new(parties)?;
+        Ok(Self {
+            parties: parties.to_vec(),
+            degree,
+            embedded_points,
+            exceptional_powers,
+            field_hints,
+        })
+    }
+}
+
+impl<Z: ErrorCorrect + MemoizedExceptionals> ReconstructionHints<Z> {
+    /// Like [`Self::from_parties`] but fetches exceptional powers from the
+    /// [`MemoizedExceptionals`] cache instead of recomputing them.
+    pub fn from_parties_cached(parties: &[Role], degree: usize) -> anyhow::Result<Self> {
+        let embedded_points: Vec<Z> = parties
+            .iter()
+            .map(|p| Z::embed_role_to_exceptional_sequence(p))
+            .try_collect()?;
+        let exceptional_powers: Vec<Vec<Z>> = parties
+            .iter()
+            .map(|p| Z::exceptional_set(p.one_based(), degree))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let field_hints = FieldHints::new(parties)?;
+        Ok(Self {
+            parties: parties.to_vec(),
+            degree,
+            embedded_points,
+            exceptional_powers,
+            field_hints,
+        })
     }
 }
 
@@ -165,6 +293,125 @@ where
     Ok(res)
 }
 
+/// Like [`shamir_error_correct`] but reuses precomputed [`ReconstructionHints`].
+///
+/// The exceptional powers and field hints are taken from the hints structure instead of being
+/// recomputed, and the field hints are reused across Hensel-lift iterations as long as no
+/// party is evicted.
+fn shamir_error_correct_with_hints<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    degree: usize,
+    max_errs: usize,
+    hints: &ReconstructionHints<ResiduePoly<Z, EXTENSION_DEGREE>>,
+) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
+    ResiduePoly<Z, EXTENSION_DEGREE>:
+        ErrorCorrect<ReconstructionField = <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+    ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
+    BitwisePoly:
+        From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
+    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
+{
+    let ring_size: usize = Z::BIT_LENGTH;
+
+    let mut shares_with_validity = sharing
+        .shares
+        .iter()
+        .map(|x| (*x, true))
+        .collect::<Vec<_>>();
+
+    let initial_length = shares_with_validity.len();
+
+    // Use exceptional powers from hints (avoids RwLock + clone per party).
+    let ordered_powers = &hints.exceptional_powers;
+
+    let mut res = Poly::<ResiduePoly<Z, EXTENSION_DEGREE>>::zero();
+
+    // Track whether any party has been evicted. As long as no eviction has happened
+    // the field hints (Lagrange polys, vanishing poly) remain valid.
+    let mut validity_changed = false;
+    // Lazily computed field hints for the reduced valid set after evictions.
+    let mut fallback_field_hints: Option<
+        FieldHints<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+    > = None;
+
+    for bit_idx in 0..ring_size {
+        let binary_shares: Vec<
+            Share<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+        > = shares_with_validity
+            .iter()
+            .filter_map(|(sh, is_valid)| {
+                if *is_valid {
+                    Some(Share::<
+                        <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
+                    >::new(
+                        sh.owner(), sh.value().bit_compose(bit_idx)
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let num_new_bot = initial_length - binary_shares.len();
+
+        let fi_mod2 = if !validity_changed {
+            // All parties still valid — use the precomputed field hints.
+            error_correction_with_field_hints(
+                binary_shares,
+                degree,
+                max_errs - num_new_bot,
+                &hints.field_hints,
+            )?
+        } else {
+            // Some parties were evicted — recompute field hints for the new valid set
+            // (or reuse previously computed fallback if validity hasn't changed again).
+            if fallback_field_hints.is_none() {
+                let valid_parties: Vec<Role> = shares_with_validity
+                    .iter()
+                    .filter_map(|(sh, valid)| if *valid { Some(sh.owner()) } else { None })
+                    .collect();
+                fallback_field_hints = Some(FieldHints::new(&valid_parties)?);
+            }
+            error_correction_with_field_hints(
+                binary_shares,
+                degree,
+                max_errs - num_new_bot,
+                fallback_field_hints.as_ref().unwrap(),
+            )?
+        };
+        let bitwise = BitwisePoly::from(fi_mod2.clone());
+
+        let mut evicted_this_round = false;
+        for (j, (share, is_valid)) in shares_with_validity.iter_mut().enumerate() {
+            if *is_valid {
+                let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
+                *share -= offset;
+
+                *is_valid = share.value().multiple_pow2(bit_idx + 1);
+
+                if !*is_valid {
+                    tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
+                    evicted_this_round = true;
+                }
+            }
+        }
+
+        if evicted_this_round {
+            validity_changed = true;
+            // Invalidate fallback hints so they get recomputed for the new valid set.
+            fallback_field_hints = None;
+        }
+
+        accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
+    }
+
+    Ok(res)
+}
+
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ErrorCorrect for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
@@ -175,6 +422,9 @@ where
         From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
     BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
 {
+    type ReconstructionField =
+        <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput;
+
     //NIST: Level Zero Operation
     ///Perform error correction for the extension ring.
     ///
@@ -197,6 +447,15 @@ where
             shamir_error_correct(sharing, degree, max_errs, None)
         }
     }
+
+    fn error_correct_with_hints(
+        sharing: &ShamirSharings<Self>,
+        degree: usize,
+        max_errs: usize,
+        hints: &ReconstructionHints<Self>,
+    ) -> anyhow::Result<Poly<Self>> {
+        shamir_error_correct_with_hints(sharing, degree, max_errs, hints)
+    }
 }
 
 pub fn error_correction<F: Field>(
@@ -212,6 +471,28 @@ pub fn error_correction<F: Field>(
 
     // call Gao decoding with the shares as points/values, set Gao parameter k = v = degree+1
     gao_decoding(&xs, &ys, degree + 1, max_errs)
+}
+
+/// Like [`error_correction`] but reuses precomputed [`FieldHints`] to avoid redundant
+/// embedding, Lagrange polynomial, and vanishing polynomial computations.
+///
+/// `field_hints` must have been built from the same set of parties that own the `shares`.
+pub fn error_correction_with_field_hints<F: Field>(
+    shares: Vec<Share<F>>,
+    degree: usize,
+    max_errs: usize,
+    field_hints: &FieldHints<F>,
+) -> anyhow::Result<ShamirFieldPoly<F>> {
+    let ys: Vec<F> = shares.into_iter().map(|s| s.take_value()).collect();
+
+    gao_decoding_with_field_hints(
+        &field_hints.embedded_points,
+        &ys,
+        degree + 1,
+        max_errs,
+        &field_hints.lagrange_polys,
+        &field_hints.vanishing_poly,
+    )
 }
 
 #[cfg(test)]

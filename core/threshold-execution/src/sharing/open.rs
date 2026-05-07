@@ -20,10 +20,12 @@ use crate::{
     },
 };
 use algebra::{
+    error_correction::ReconstructionHints,
     sharing::{
         shamir::{
             ShamirSharings, fill_indexed_shares, reconstruct_w_errors_async,
-            reconstruct_w_errors_sync,
+            reconstruct_w_errors_async_with_hints, reconstruct_w_errors_sync,
+            reconstruct_w_errors_sync_with_hints,
         },
         share::Share,
     },
@@ -266,6 +268,10 @@ impl RobustOpen for SecureRobustOpen {
                 NetworkMode::Sync => reconstruct_w_errors_sync,
                 NetworkMode::Async => reconstruct_w_errors_async,
             };
+            let reconstruct_fn_with_hints = match session.network().get_network_mode() {
+                NetworkMode::Sync => reconstruct_w_errors_sync_with_hints,
+                NetworkMode::Async => reconstruct_w_errors_async_with_hints,
+            };
 
             let num_parties = session.num_parties();
             let threshold = session.threshold();
@@ -278,6 +284,7 @@ impl RobustOpen for SecureRobustOpen {
                 degree,
                 jobs,
                 reconstruct_fn,
+                reconstruct_fn_with_hints,
             )
             .await?
         } else {
@@ -388,6 +395,10 @@ impl RobustOpen for SecureRobustOpen {
                 NetworkMode::Sync => reconstruct_w_errors_sync,
                 NetworkMode::Async => reconstruct_w_errors_async,
             };
+            let reconstruct_fn_with_hints = match session.network().get_network_mode() {
+                NetworkMode::Sync => reconstruct_w_errors_sync_with_hints,
+                NetworkMode::Async => reconstruct_w_errors_async_with_hints,
+            };
 
             // Use my own share if ever I am in both sets
             let sharings = if let Some(my_shares) = my_shares {
@@ -413,6 +424,7 @@ impl RobustOpen for SecureRobustOpen {
                 degree,
                 jobs,
                 reconstruct_fn,
+                reconstruct_fn_with_hints,
             )
             .await;
         }
@@ -428,6 +440,14 @@ type ReconsFunc<Z> = fn(
     num_bots: usize,
     sharing: &ShamirSharings<Z>,
 ) -> anyhow::Result<Option<Z>>;
+type ReconsFuncWithHints<Z> = fn(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+) -> anyhow::Result<Option<Z>>;
 /// Helper function of robust reconstructions which collect the shares and tries to reconstruct
 ///
 /// Takes as input:
@@ -437,6 +457,7 @@ type ReconsFunc<Z> = fn(
 /// - degree as the degree of the secret sharing
 /// - max_num_errors as the max. number of errors we allow (this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
+#[expect(clippy::too_many_arguments)]
 async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     num_parties: usize,
     threshold: u8,
@@ -445,6 +466,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     degree: usize,
     mut jobs: JoinSet<Result<JobResultType<Role, Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
+    reconstruct_fn_with_hints: ReconsFuncWithHints<Z>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
     // OPTIMIZATION: Collect shares concurrently with batched reconstruction
     // Instead of processing one party at a time, collect multiple responses
@@ -458,27 +480,27 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     //Start awaiting on receive jobs to retrieve the shares
     while let Some(v) = jobs.join_next().await {
         let sharings = sharings.clone();
-        let joined_result = if let Ok(v) = v {
+        let opening_contribution = if let Ok(v) = v {
             v
         } else {
             tracing::warn!("(Share reconstruction) A receive job failed during reconstruction.");
             num_bots += 1;
             continue;
         };
-        match joined_result {
-            Ok((party_id, data)) => {
-                if let Ok(values) = data {
+        match opening_contribution {
+            Ok((contributor, partial_openings)) => {
+                if let Ok(partial_openings) = partial_openings {
                     fill_indexed_shares(
                         &mut sharings
                             .lock()
                             .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
-                        values,
-                        party_id,
+                        partial_openings,
+                        contributor,
                     );
                     collected_shares += 1;
-                } else if let Err(e) = data {
+                } else if let Err(e) = partial_openings {
                     tracing::warn!(
-                        "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
+                        "(Share reconstruction) Received malformed data from {contributor}:  {:?}",
                         e
                     );
                     num_bots += 1;
@@ -505,20 +527,55 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
 
             // Spawn a task on rayon.
             let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
+                let locked_sharings = sharings
+                    .lock()
+                    .map_err(|_| anyhow_error_and_log("Poisoned lock"))?;
+
+                // Build reconstruction hints once from the current owner set.
+                // All sharings in the batch have the same owners (filled identically).
+                let hints = if let Some(first) = locked_sharings.first() {
+                    ReconstructionHints::new(first, degree).ok()
+                } else {
+                    None
+                };
+
                 //Note: here we keep waiting on new shares until we have all of the values opened.
                 // Here we want to use par_iter for opening the huge batches
                 // present in DKG, but we want to avoid using it for
                 // other tasks.
-                Ok(sharings
-                    .lock()
-                    .map_err(|_| anyhow_error_and_log("Poisoned lock"))?
-                    .par_iter()
-                    .with_min_len(2 * BATCH_SIZE_BITS)
-                    .map(|sharing| {
-                        reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
+                let result: Option<Vec<_>> = if let Some(hints) = &hints {
+                    locked_sharings
+                        .par_iter()
+                        .with_min_len(2 * BATCH_SIZE_BITS)
+                        .map(|sharing| {
+                            reconstruct_fn_with_hints(
+                                num_parties,
+                                degree,
+                                threshold as usize,
+                                num_bots,
+                                sharing,
+                                hints,
+                            )
                             .unwrap_or_default()
-                    })
-                    .collect())
+                        })
+                        .collect()
+                } else {
+                    locked_sharings
+                        .par_iter()
+                        .with_min_len(2 * BATCH_SIZE_BITS)
+                        .map(|sharing| {
+                            reconstruct_fn(
+                                num_parties,
+                                degree,
+                                threshold as usize,
+                                num_bots,
+                                sharing,
+                            )
+                            .unwrap_or_default()
+                        })
+                        .collect()
+                };
+                Ok(result)
             })
             .await??;
 
