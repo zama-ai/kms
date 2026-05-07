@@ -168,6 +168,14 @@ kmsCore:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
       rootKeySpec: symm
+  #########################################################
+  # BACKUP VAULT CONFIGURATION
+  #########################################################
+  # For the backup we can only set one backup method:
+  # - AWS BACKUP: S3 + AWS KMS
+  # - Custodian backup: custodianBackup=true, backupVault=S3 ONLY
+  #
+  custodianBackup: false
   backupVault:
     s3:
       enabled: false
@@ -177,6 +185,7 @@ kmsCore:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
       rootKeySpec: symm
+  #########################################################
   aws:
     roleArn:
     region: eu-west-1
