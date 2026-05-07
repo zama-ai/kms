@@ -95,9 +95,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt,
-        crypto_material::{
-            PrivateCryptoMaterialReader, PublicKeySet, ThresholdCryptoMaterialStorage,
-        },
+        crypto_material::{PrivateCryptoMaterialReader, ThresholdCryptoMaterialStorage},
         delete_at_request_and_epoch_id, delete_at_request_id,
         s3::RealReadOnlyS3StorageGetter,
     },
@@ -667,7 +665,6 @@ impl<
                                 &key_info.key_id,
                                 &new_epoch_id,
                                 threshold_fhe_keys,
-                                PublicKeySet::Standard(Box::new(fhe_pubkeys)),
                             )
                             .boxed(),
                     );
@@ -717,17 +714,11 @@ impl<
 
                     storage_tasks.push(
                         async move {
-                            let compressed_keyset = compressed_keyset;
-                            let compact_public_key = compact_public_key;
                             crypto_storage
                                 .resharing_fhe_write_no_backup(
                                     &key_info.key_id,
                                     &new_epoch_id,
                                     threshold_fhe_keys,
-                                    PublicKeySet::Compressed {
-                                        compact_public_key: Box::new(compact_public_key),
-                                        compressed_keyset: Box::new(compressed_keyset),
-                                    },
                                 )
                                 .await
                         }
@@ -755,12 +746,7 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .resharing_crs_write_no_backup(
-                        &crs_info.crs_id,
-                        &new_epoch_id,
-                        crs,
-                        crs_meta_data,
-                    )
+                    .resharing_crs_write_no_backup(&crs_info.crs_id, &new_epoch_id, crs_meta_data)
                     .boxed(),
             );
         }

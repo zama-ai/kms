@@ -36,7 +36,7 @@ use kms_grpc::{
     identifiers::EpochId,
     rpc_types::{PrivDataType, PubDataType},
 };
-use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
+use tfhe::xof_key_set::CompressedXofKeySet;
 
 /// A cached generic storage entity for the threshold KMS.
 /// Cloning this object is cheap since it uses Arc internally.
@@ -109,15 +109,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
-        pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
     ) -> Result<(), StorageError> {
         self.inner
-            .handle_all_storage(
+            .handle_all_storage::<CrsGenMetadata, CrsGenMetadata>(
                 crs_id,
                 Some(epoch_id),
-                Some((&pp, PubDataType::CRS)),
-                Some((&crs_info.clone(), PrivDataType::CrsInfo)),
+                None, // No public data is made when refreshing a CRS
+                Some((&crs_info, PrivDataType::CrsInfo)),
                 false,
                 OP_NEW_EPOCH,
             )
@@ -131,20 +130,24 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
-        fhe_key_set: PublicKeySet,
     ) -> Result<(), StorageError> {
-        self.inner
-            .handle_fhe_keys(
+        let res = self
+            .inner
+            .handle_all_storage::<ThresholdFheKeys, ThresholdFheKeys>(
                 key_id,
-                epoch_id,
-                threshold_fhe_keys,
-                PrivDataType::FheKeyInfo,
-                fhe_key_set,
-                Arc::clone(&self.fhe_keys),
+                Some(epoch_id),
+                None, // No public data is made when refreshing keys
+                Some((&threshold_fhe_keys, PrivDataType::FheKeyInfo)),
                 false,
                 OP_NEW_EPOCH,
             )
-            .await
+            .await;
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+            // Add the new data to the cache
+            let mut guarded_fhe_keys = self.fhe_keys.write().await;
+            let _ = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
+        }
+        res
     }
 
     /// Check if the threshold FHE keys exist for a given key and epoch ID.
