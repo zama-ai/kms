@@ -71,7 +71,7 @@ fi
 
 ###DDEC
 echo "Decrypting ctxt"
-for NUM_PARALLEL_SESSIONS in 1 2 4 8 16 32 64
+for NUM_PARALLEL_SESSIONS in 1 2 4 8 16 32
 do
     $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED --num-parallel-sessions $NUM_PARALLEL_SESSIONS --num-ctxt-per-session $NUM_CTXTS
     $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
