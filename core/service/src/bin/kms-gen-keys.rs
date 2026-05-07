@@ -34,11 +34,6 @@ use url::Url;
     In centralized mode it produces a single signing key plus its verification material. \
     In threshold mode it produces per-party signing keys and the self-signed CA certificates \
     used for mTLS between parties. \
-    FHE keys and the CRS are generated separately, either via the KMS gRPC API in production \
-    or via the `generate-test-material` binary in tests. \n
-    For example, to generate centralized signing keys with the default parameters \
-    run: \n
-    ./kms-gen-keys centralized \n
     Multiple options are supported which can be explored with \
     kms-gen-keys --help"
 )]
@@ -67,6 +62,9 @@ struct Args {
     /// Optional AWS KMS key spec that encrypts the private storage
     #[clap(long, default_value = None, value_enum)]
     root_key_spec: Option<AwsKmsKeySpec>,
+    /// Use a software-emulated AWS Nitro security module instead of the real
+    /// NSM device. Only available with the `insecure` Cargo feature. See
+    /// `kms-server-bin.md` for more information.
     #[cfg(feature = "insecure")]
     #[clap(long, default_value_t = false)]
     mock_enclave: bool,

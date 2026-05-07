@@ -146,9 +146,7 @@ has_value "keygen" && \
 
 	KMS_GEN_KEYS_CMD="kms-gen-keys $AWS_ARGS $VAULT_ARGS"
 
-	# Generate the signing key for the centralized KMS. FHE keys and the CRS
-	# are produced separately via the gRPC API (e.g. `kms-core-client
-	# insecure-key-gen` / `insecure-crs-gen`) once the server is up.
+	# Generate the signing key for the centralized KMS.
 	has_value "threshold" || \
 	    {
 		log "generating signing key for centralized KMS"

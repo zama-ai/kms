@@ -107,9 +107,8 @@ All under [core/service/src/bin/](core/service/src/bin/):
   initialization.
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
   signing keys (and, in threshold mode, per-party self-signed CA certificates
-  for mTLS). FHE keys and the CRS are produced separately, via the gRPC API in
-  production or via `tools/generate-test-material` in tests. Supports
-  `--mock-enclave` for local dev.
+  for mTLS). Supports `--mock-enclave` for local dev, must be compiled with the
+  `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
