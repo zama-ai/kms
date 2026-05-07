@@ -330,15 +330,34 @@ pub async fn load_pk_from_pub_storage(
 }
 
 /// This function should be used for testing only and it can panic.
+///
+/// Probes the local public storage for the key id and loads whichever layout
+/// is present: the default `CompressedXofKeySet`, or the legacy `PublicKey` +
+/// `ServerKey` pair. Panics if neither is present.
 pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TestingPlaintext,
     key_id: &RequestId,
     storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
-    uncompressed_keys: bool,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let (pk, server_key) = if uncompressed_keys {
+    let probe = FileStorage::new(pub_path, StorageType::PUB, storage_prefix).unwrap();
+    let compressed_type = PubDataType::CompressedXofKeySet.to_string();
+    let public_key_type = PubDataType::PublicKey.to_string();
+
+    let (pk, server_key) = if probe.data_exists(key_id, &compressed_type).await.unwrap() {
+        let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::CompressedXofKeySet,
+            storage_prefix,
+        )
+        .await;
+        xof_keyset
+            .decompress()
+            .expect("decompress of CompressedXofKeySet is infallible")
+            .into_raw_parts()
+    } else if probe.data_exists(key_id, &public_key_type).await.unwrap() {
         let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(
             pub_path,
@@ -349,15 +368,7 @@ pub async fn compute_cipher_from_stored_key(
         .await;
         (pk, server_key)
     } else {
-        // Load the default compressed keyset and decompress it for test encryption.
-        let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
-            pub_path,
-            key_id,
-            PubDataType::CompressedXofKeySet,
-            storage_prefix,
-        )
-        .await;
-        xof_keyset.decompress().unwrap().into_raw_parts()
+        panic!("no compressed or uncompressed key material for key_id {key_id}");
     };
 
     // compute_cipher can take a long time since it may do SnS

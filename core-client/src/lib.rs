@@ -1255,13 +1255,14 @@ pub async fn fetch_ctxt_from_file(
 /// compressed storage or the legacy uncompressed layout.
 ///
 /// Tries the compressed layout `[CompressedXofKeySet, PublicKey]` first; on failure,
-/// falls back to the legacy `[PublicKey, ServerKey]`.
-/// Returns the fetched party confs and a boolean indicating whether uncompressed keys were found.
+/// falls back to the legacy `[PublicKey, ServerKey]`. Returns the fetched party confs;
+/// downstream loaders (e.g. [`compute_cipher_from_stored_key`]) probe the local copy
+/// to decide which layout to read.
 async fn fetch_keys_auto_detect(
     key_id: &str,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
-) -> anyhow::Result<(Vec<CoreConf>, bool)> {
+) -> anyhow::Result<Vec<CoreConf>> {
     let compressed_key_types = vec![PubDataType::CompressedXofKeySet, PubDataType::PublicKey];
     let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
@@ -1274,25 +1275,21 @@ async fn fetch_keys_auto_detect(
     )
     .await
     {
-        Ok(confs) => Ok((confs, false)),
+        Ok(confs) => Ok(confs),
         Err(_) => {
             tracing::info!(
                 "Compressed layout [CompressedXofKeySet, PublicKey] not found, trying legacy [PublicKey, ServerKey]..."
             );
-            let confs =
-                fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false)
-                    .await?;
-            Ok((confs, true))
+            fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await
         }
     }
 }
 
 /// Encrypt a given value and return the ciphertext.
 ///
-/// `uncompressed_keys` reports the layout of the key material that the storage
-/// probe (typically [`fetch_keys_auto_detect`]) actually found on disk: `false`
-/// for the default `CompressedXofKeySet`, `true` for the legacy
-/// `PublicKey` + `ServerKey` layout.
+/// The key layout to use is auto-detected by [`compute_cipher_from_stored_key`]
+/// from whatever was previously written to `keys_folder` (typically by
+/// [`fetch_keys_auto_detect`]).
 ///
 /// parameters:
 /// - `keys_folder`: the root of the storage of the core client
@@ -1301,7 +1298,6 @@ pub async fn encrypt(
     keys_folder: &Path,
     stored_key_storage_prefix: Option<&str>,
     cipher_params: CipherParameters,
-    uncompressed_keys: bool,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
     if to_encrypt.len() != cipher_params.data_type.bits().div_ceil(8) {
@@ -1330,11 +1326,6 @@ pub async fn encrypt(
         keys_folder
     );
 
-    // TODO(dp): There's an architecture kink here: the caller of `encrypt()` must know what kind of keys are stored on
-    // disk (compressed/uncompressed) and tell `compute_cipher_from_stored_key` which to use. But this is backward: it's
-    // the storage layer that knows what is on disk and what isn't, and it should decide what is optimal to use. We
-    // should get rid of the `uncompressed_keys` boolean parameter here and instead just let the storage layer do its
-    // job. That flag leaks persistence details into high level call sites.
     let (cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
@@ -1344,7 +1335,6 @@ pub async fn encrypt(
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
         },
-        uncompressed_keys,
     )
     .await;
 
@@ -1652,7 +1642,7 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
+                    let party_confs = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
                         &cc_conf,
                         destination_prefix,
@@ -1671,7 +1661,6 @@ pub async fn execute_cmd(
                         destination_prefix,
                         storage_prefix,
                         cipher_parameters.clone(),
-                        detected_uncompressed,
                     )
                     .await?
                 }
@@ -1732,7 +1721,7 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
+                    let party_confs = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
                         &cc_conf,
                         destination_prefix,
@@ -1751,7 +1740,6 @@ pub async fn execute_cmd(
                         destination_prefix,
                         storage_prefix,
                         cipher_parameters.clone(),
-                        detected_uncompressed,
                     )
                     .await?
                 }
@@ -1980,7 +1968,7 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
+            let party_confs = fetch_keys_auto_detect(
                 &cipher_parameters.key_id.as_str(),
                 &cc_conf,
                 destination_prefix,
@@ -1999,7 +1987,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 storage_prefix,
                 cipher_parameters.clone(),
-                detected_uncompressed,
             )
             .await?;
             vec![(None, "Encryption generated".to_string())]
@@ -2664,16 +2651,12 @@ mod tests {
             fhe_params: Some(FheParameter::Test),
         };
 
-        let (party_confs, detected_uncompressed) =
+        let party_confs =
             fetch_keys_auto_detect(&key_id.to_string(), &cc_conf, destination_root.path())
                 .await
                 .unwrap();
 
         assert_eq!(party_confs.len(), 1);
-        assert!(
-            !detected_uncompressed,
-            "compressed layout should not fall back to legacy uncompressed keys"
-        );
 
         let downloaded_pk_path = destination_root
             .path()
@@ -2697,7 +2680,6 @@ mod tests {
                 compression: true,
                 precompute_sns: false,
             },
-            false,
         )
         .await;
         assert!(

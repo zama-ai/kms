@@ -881,7 +881,6 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
-                !compressed,
             )
             .await;
         }
@@ -947,7 +946,6 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
-                !compressed,
             )
             .await;
         }
@@ -2066,7 +2064,6 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         None,
         1,
         Some(material_path),
-        false, // encryption uses keygen_id_2, which is stored as a compressed keyset
     )
     .await;
 
@@ -2090,7 +2087,6 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         None,
         1,
         Some(material_path),
-        false, // encryption uses keygen_id_1's migrated compressed keyset
     )
     .await;
 
