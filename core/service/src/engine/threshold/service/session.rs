@@ -241,6 +241,7 @@ impl SessionMaker {
         Ok(health_check_sessions)
     }
 
+    /// Return a pure healthcheck session, with no payload.
     async fn get_healthcheck_session(
         &self,
         context_id: &ContextId,
@@ -860,6 +861,14 @@ impl ImmutableSessionMaker {
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         self.inner.get_healthcheck_session_all_contexts().await
+    }
+
+    // Returns a health check session for the given context.
+    pub(crate) async fn get_healthcheck_session(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<HealthCheckSession<Role>> {
+        self.inner.get_healthcheck_session(context_id).await
     }
 }
 

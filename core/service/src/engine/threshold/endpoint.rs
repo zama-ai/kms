@@ -1,3 +1,4 @@
+use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
     CrsGenerator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
@@ -407,6 +408,15 @@ impl_endpoint! {
             };
 
             Ok(Response::new(response))
+        }
+
+
+        #[tracing::instrument(skip(self, request))]
+        async fn bandwidth_benchmark(
+            &self,
+            request: Request<kms_grpc::kms::v1::BandwidthBenchmarkRequest>,
+        ) -> Result<Response<kms_grpc::kms::v1::BandwidthBenchmarkResponse>, Status> {
+            run_bandwidth_benchmark(request, self.session_maker.clone()).await
         }
     }
 }
