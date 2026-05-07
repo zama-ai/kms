@@ -37,19 +37,15 @@ pub fn init_lagrange_stores(
     num_parties: NonZero<usize>,
     min_threshold: usize,
 ) -> anyhow::Result<()> {
-    #[cfg(feature = "extension_degree_5")]
     super::gf32::LAGRANGE_STORE
         .set(build_lagrange_map(num_parties, min_threshold)?)
         .ok();
-    #[cfg(feature = "extension_degree_6")]
     super::gf64::LAGRANGE_STORE
         .set(build_lagrange_map(num_parties, min_threshold)?)
         .ok();
-    #[cfg(feature = "extension_degree_7")]
     super::gf128::LAGRANGE_STORE
         .set(build_lagrange_map(num_parties, min_threshold)?)
         .ok();
-    #[cfg(feature = "extension_degree_8")]
     super::gf256::LAGRANGE_STORE
         .set(build_lagrange_map(num_parties, min_threshold)?)
         .ok();
