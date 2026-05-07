@@ -22,7 +22,6 @@ KEY_SID=0
 mkdir -p $KEY_PATH
 mkdir -p $RESHARED_KEY_PATH
 mkdir -p $CRS_PATH
-mkdir -p $CTXT_PATH
 
 export RUN_MODE=dev
 
@@ -74,7 +73,7 @@ fi
 
 
 
-if [ $2 = "GEN" ]; then
+if [ "${2:-}" = "GEN" ]; then
     echo "Generating ctxts"
     mkdir -p $CTXT_PATH
     ### Generate all ctxts

@@ -78,7 +78,7 @@ cleanup_docker
 
 
 ### Run stats parser
-python3 "$PATH_TO_HERE/session_parser.py --output-dir $PATH_TO_HERE/threshold $PATH_TO_ROOT/temp/session_stats TestParams"
+python3 "$PATH_TO_HERE/session-stats-parser.py" --output-dir "$PATH_TO_HERE/threshold" "$PATH_TO_ROOT/temp/session_stats" TestParams
 
 
 

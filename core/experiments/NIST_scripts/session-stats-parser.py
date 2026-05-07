@@ -10,28 +10,26 @@ from typing import Dict, List, Tuple
 
 
 TFHE_RUN_4P_NAME = "tfhe-bench-run-4p"
+TFHE_RUN_4P_MALICIOUS_NAME = "tfhe-bench-run-4p-malicious-bcast"
 TFHE_RUN_5P_NAME = "tfhe-bench-run-5p"
-TFHE_RUN_NAMES = [TFHE_RUN_4P_NAME, TFHE_RUN_5P_NAME]
+TFHE_RUN_NAMES = [TFHE_RUN_4P_NAME, TFHE_RUN_4P_MALICIOUS_NAME, TFHE_RUN_5P_NAME]
 BGV_RUN_NAME = "bgv-bench-run"
 
 NUM_CTXTS = 10
 
-EXPECTED_LINES_PER_RUN = {
-    TFHE_RUN_4P_NAME: 34,
-    TFHE_RUN_5P_NAME: 34,
-    BGV_RUN_NAME: 11,
-}
-
-
-def build_tfhe_operation_labels() -> List[str]:
-    labels = [
-        "PRSS_INIT_Z64",
-        "PRSS_INIT_Z128",
+def build_tfhe_operation_labels(include_prss_init: bool) -> List[str]:
+    labels = []
+    if include_prss_init:
+        labels.extend([
+            "PRSS_INIT_Z64",
+            "PRSS_INIT_Z128",
+        ])
+    labels.extend([
         "DKG_PREPROC",
         "DKG",
         "CRS_GEN",
         "RESHARE",
-    ]
+    ])
     for mode in ["NOISE_FLOOD_SMALL", "BIT_DEC_SMALL"]:
         for tfhe_type in ["bool", "u4", "u8", "u16", "u32", "u64", "u128"]:
             labels.append(f"{mode}_{tfhe_type}_PREPROC")
@@ -39,9 +37,22 @@ def build_tfhe_operation_labels() -> List[str]:
     return labels
 
 
+TFHE_4P_OPERATION_LABELS = build_tfhe_operation_labels(include_prss_init=True)
+TFHE_5P_OPERATION_LABELS = build_tfhe_operation_labels(include_prss_init=False)
+
+
+EXPECTED_LINES_PER_RUN = {
+    TFHE_RUN_4P_NAME: len(TFHE_4P_OPERATION_LABELS),
+    TFHE_RUN_4P_MALICIOUS_NAME: len(TFHE_4P_OPERATION_LABELS),
+    TFHE_RUN_5P_NAME: len(TFHE_5P_OPERATION_LABELS),
+    BGV_RUN_NAME: 11,
+}
+
+
 OPERATION_LABELS = {
-    TFHE_RUN_4P_NAME: build_tfhe_operation_labels(),
-    TFHE_RUN_5P_NAME: build_tfhe_operation_labels(),
+    TFHE_RUN_4P_NAME: TFHE_4P_OPERATION_LABELS,
+    TFHE_RUN_4P_MALICIOUS_NAME: TFHE_4P_OPERATION_LABELS,
+    TFHE_RUN_5P_NAME: TFHE_5P_OPERATION_LABELS,
     BGV_RUN_NAME: [
         "PRSS_INIT_LEVEL_ONE",
         "PRSS_INIT_LEVEL_KSW",
@@ -273,11 +284,18 @@ def collect_complete_run_indexes(
 
 
 def expected_party_count_for_run(run_name: str) -> int:
-    if run_name.endswith("-4p"):
+    if "-4p" in run_name:
         return 4
-    if run_name.endswith("-5p"):
+    if "-5p" in run_name:
         return 5
     return 0
+
+
+def honest_party_count_for_run(run_name: str) -> int:
+    expected_party_count = expected_party_count_for_run(run_name)
+    if "malicious" in run_name and expected_party_count > 0:
+        return expected_party_count - 1
+    return expected_party_count
 
 
 def select_party_files_for_run(
@@ -290,13 +308,33 @@ def select_party_files_for_run(
     ]
 
     expected_party_count = expected_party_count_for_run(run_name)
-    if expected_party_count and len(selected_party_files) != expected_party_count:
+    target_party_count = honest_party_count_for_run(run_name)
+
+    if "malicious" in run_name and target_party_count > 0 and len(selected_party_files) > target_party_count:
+        expected_len = EXPECTED_LINES_PER_RUN[run_name]
+        # Keep parties with the most complete runs first; this drops malformed/incomplete malicious-party logs.
+        ranked_files = sorted(
+            selected_party_files,
+            key=lambda path: sum(1 for run in all_party_runs[path][run_name] if len(run) == expected_len),
+            reverse=True,
+        )
+        kept_files = ranked_files[:target_party_count]
+        dropped_files = ranked_files[target_party_count:]
+        print(
+            (
+                "WARNING: run={run} identified as malicious benchmark; excluding potential malicious/invalid party files from averaging: {dropped}"
+            ).format(run=run_name, dropped=dropped_files),
+            file=sys.stderr,
+        )
+        selected_party_files = kept_files
+
+    if target_party_count and len(selected_party_files) != target_party_count:
         print(
             (
                 "WARNING: run={run} expected {expected} participating party files based on run name but found {found}: {files}"
             ).format(
                 run=run_name,
-                expected=expected_party_count,
+                expected=target_party_count,
                 found=len(selected_party_files),
                 files=selected_party_files,
             ),

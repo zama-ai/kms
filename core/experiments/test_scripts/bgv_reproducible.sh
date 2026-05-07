@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 echo "Running test script on config file $1".
 #Setting all the variables needed
 ROOT_DIR=$(cargo locate-project --workspace -q --message-format plain|grep -o '.*/')
@@ -11,7 +13,6 @@ NUM_CTXTS=10
 CTXT_VALUE=12345
 
 mkdir -p $KEY_PATH
-mkdir -p $CTXT_PATH
 
 exec 2>&1
 set -x
@@ -58,7 +59,7 @@ else
     echo "✅ Key hash matches expected value: $KEY_HASH"
 fi
 
-if [ $2 = "GEN" ]; then
+if [ "${2:-}" = "GEN" ]; then
     echo "Generating ctxts"
     mkdir -p $CTXT_PATH
     ### Generate all ctxts

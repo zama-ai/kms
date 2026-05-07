@@ -94,8 +94,15 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
         MEM_ALLOCATOR.get().unwrap().peak_usage()
     );
 
-    if let Some(parent) = std::path::Path::new(&file_name).parent() {
-        std::fs::create_dir_all(parent).unwrap();
+    if let Some(parent) = std::path::Path::new(&file_name).parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::error!(
+            "Can't write stats. Failed to create directory {}: {}",
+            parent.display(),
+            e
+        );
+        return;
     }
     std::fs::OpenOptions::new()
         .create(true)

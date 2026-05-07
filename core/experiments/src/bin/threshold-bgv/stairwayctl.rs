@@ -181,7 +181,7 @@ struct ThresholdDecryptResultArgs {
 
     /// Optional argument to check the received plaintext against an expected value.
     /// The expected plaintext polynomial is value, value+1, value+2, ...
-    /// If more than one plaintext were decrypted, we make sure they are all equal to this epxectect plaintext polynomial.
+    /// If more than one plaintext were decrypted, we make sure they are all equal to this expected plaintext polynomial.
     #[clap(long = "expected-value")]
     expected_value: Option<u64>,
 }
@@ -336,8 +336,8 @@ async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::
 
     println!("Encrypted value {}", params.value);
 
-    let serialized = bc2wrap::serialize(&(m, ctxt))?;
-    std::fs::write(&params.output_file, serialized)?;
+    let serialized_ctxt = bc2wrap::serialize(&ctxt)?;
+    std::fs::write(&params.output_file, serialized_ctxt)?;
     println!("Ciphertexts stored in {}", params.output_file);
 
     Ok(())
@@ -353,7 +353,7 @@ async fn threshold_decrypt_from_file_command(
         bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
     let ctxt_serialized = std::fs::read(params.input_file)?;
-    let (_m, ctxt): (Vec<u32>, LevelEllCiphertext) = bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
+    let ctxt: LevelEllCiphertext = bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
 
     let session_id = params.session_id.unwrap_or_else(random);
     let session_id = runtime
@@ -443,7 +443,7 @@ async fn threshold_decrypt_result_command(
                 params.session_id_decrypt
             );
         } else {
-            println!(
+            eprintln!(
                 "❌ Plaintext for session ID {} does NOT match expected value",
                 params.session_id_decrypt
             );

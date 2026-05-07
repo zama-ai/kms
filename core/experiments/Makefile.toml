@@ -125,7 +125,7 @@ mkdir -p temp/session_stats
 RUN_DATE="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 for i in $(seq 1 ${NUM_PARTIES}); do
     touch temp/session_stats/session_stats_$i.txt
-    echo "\nNEW_RUN: ${EXPERIMENT_NAME} ${RUN_DATE}" >> temp/session_stats/session_stats_$i.txt
+    printf "\nNEW_RUN: ${EXPERIMENT_NAME} ${RUN_DATE}" >> temp/session_stats/session_stats_$i.txt
     chmod o+w temp/session_stats/session_stats_$i.txt
 done
 '''

@@ -1,14 +1,12 @@
 #![allow(clippy::unit_arg)]
-//! Speed benchmarks for ZK proof-of-knowledge operations.
+//! Size benchmarks for ZK proof-of-knowledge proofs.
 //!
-//! Measures wall-clock time for:
-//!   - CRS generation
-//!   - Proof generation  (CRS pre-computed)
-//!   - Proof verification in TwoSteps mode (proof pre-computed)
-//!   - Proof verification in Batched mode  (proof pre-computed)
+//! Measures sizes of the proofs generated for:
+//!  - Prover load
+//!  - Verifier load
 //!
 //! Run with:
-//!   cargo bench --bench non-threshold_tfhe-zk-pok_speed
+//!   cargo bench --bench non-threshold_tfhe-zk-pok_size
 
 #[path = "../utilities.rs"]
 mod utilities;
