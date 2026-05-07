@@ -1,7 +1,6 @@
 # KMS Health Check Tool
 
 Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for both centralized and threshold KMS instances.
-It can also be used to run a bandwidth benchmark between the parties.
 
 __NOTE__: This tool uses the MPC P2P connection between the peers to perform the healthcheck.
 
@@ -11,8 +10,7 @@ __NOTE__: This tool uses the MPC P2P connection between the peers to perform the
 - **Connectivity Check**: Test gRPC endpoint connectivity and latency
 - **Key Material Check**: Display actual key IDs for FHE keys, CRS keys, and preprocessing material
 - **Peer Health**: Check connectivity to all threshold peers with detailed key information
-- **JSON Output**: Machine-readable output for CI/CD integration (for health only; not for bandwidth)
-- **Bandwidth Benchmark**: Test gRPC endpoint for bandwidth
+- **JSON Output**: Machine-readable output for CI/CD integration
 
 ## Usage
 
@@ -38,8 +36,6 @@ kms-health-check live --endpoint localhost:50100 --health-config health-check.to
 # Using environment variables for timeouts (note the double underscore separator)
 HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 kms-health-check live --endpoint localhost:50100
 
-# Running the bandwidth benchmark on all 4 parties at the same time
-kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_PARALLEL_SESSION> -p <PAYLOAD_SIZE_B> -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400
 ```
 
 ## Configuration
@@ -340,3 +336,86 @@ docker run -v $(pwd):/workspace \
 
 - **Operator Key**: In threshold mode, only available if backup vault uses `SecretSharing` keychain
 - **Docker Resolution**: Automatically translates Docker service names to localhost when needed
+
+## Bandwidth Benchmark
+
+The tool can also be used to perform a bandwidth benchmark between the different parties.
+As for the healthcheck, the benchmark will use the same gRPC server as the MPC protocol,
+and will also perform the party authentication.
+
+
+The bandwidth benchmark expects the following parameters:
+- `CONTEXT_ID` MPC context we want to benchmark (i.e. corresponds to the set of parties)
+- `DURATION_SEC` the duration of the experiment (in seconds)
+- `NUM_SESSIONS` the number of sessions spawned in parallel
+- `PAYLOAD_SIZE` the size of the payload sent over and over by each sessions (in bytes)
+- `ENDPOINT` the address of the nodes that will be sending data
+
+The bandwidth benchmark consists in spawning `NUM_SESSIONS` sessions (each in their own tokio task) that will send a payload of `PAYLOAD_SIZE` bytes, wait for the ack from the other party and repeat.
+This is done over a period of `DURATION_SEC` after which the results are collected and displayed.
+
+To better emulate what happens during the execution of an MPC protocol, it's best to perform the bandwidth benchmark on all the parties at the same time, such that all the parties send and receive the same amount of data.
+
+
+__NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION_SEC` plus an additional `30` seconds.
+
+
+```bash
+# Running the bandwidth benchmark on all 4 parties at the same time
+kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...>
+```
+
+
+An example output is:
+
+```
+kms-health-check bandwidth-bench -c 0700000000000000000000000000000000000000000000000000000000000001 -d 120 -n 10 -p 100000 -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400
+
+Duration of benchmark: 120 seconds
+Number of sessions in parallel: 10
+Payload size per session: 100000 bytes
+
+[BANDWIDTH BENCHMARK RESULT for localhost:50100]
+==================================================
+Peer 4 @ abcd.dev-kms-core-4.com: 31801400000 bytes sent over 120 seconds:
+		 252.7348200480143 MB/sec
+Peer 3 @ abcd.dev-kms-core-3.com: 31718900000 bytes sent over 120 seconds:
+		 252.07916895548502 MB/sec
+Peer 2 @ abcd.dev-kms-core-2.com: 31893800000 bytes sent over 120 seconds:
+		 253.46914927164713 MB/sec
+
+==================================================
+
+[BANDWIDTH BENCHMARK RESULT for localhost:50300]
+==================================================
+Peer 1 @ abcd.dev-kms-core-1.com: 31534700000 bytes sent over 120 seconds:
+		 250.61527887980142 MB/sec
+Peer 2 @ abcd.dev-kms-core-2.com: 31524400000 bytes sent over 120 seconds:
+		 250.5334218343099 MB/sec
+Peer 4 @ abcd.dev-kms-core-4.com: 31417800000 bytes sent over 120 seconds:
+		 249.68624114990234 MB/sec
+
+==================================================
+
+[BANDWIDTH BENCHMARK RESULT for localhost:50200]
+==================================================
+Peer 1 @ abcd.dev-kms-core-1.com: 31828500000 bytes sent over 120 seconds:
+		 252.95019149780273 MB/sec
+Peer 4 @ abcd.dev-kms-core-4.com: 31668700000 bytes sent over 120 seconds:
+		 251.68021519978842 MB/sec
+Peer 3 @ abcd.dev-kms-core-3.com: 31436700000 bytes sent over 120 seconds:
+		 249.83644485473633 MB/sec
+
+==================================================
+
+[BANDWIDTH BENCHMARK RESULT for localhost:50400]
+==================================================
+Peer 2 @ abcd.dev-kms-core-2.com: 31636500000 bytes sent over 120 seconds:
+		 251.42431259155273 MB/sec
+Peer 3 @ abcd.dev-kms-core-3.com: 31438600000 bytes sent over 120 seconds:
+		 249.85154469807944 MB/sec
+Peer 1 @ abcd.dev-kms-core-1.com: 31724600000 bytes sent over 120 seconds:
+		 252.1244684855143 MB/sec
+
+==================================================
+```
