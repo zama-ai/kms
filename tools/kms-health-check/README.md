@@ -362,7 +362,7 @@ __NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION
 
 ```bash
 # Running the bandwidth benchmark on all 4 parties at the same time
-kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE_B> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...>
+kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...>
 ```
 
 
