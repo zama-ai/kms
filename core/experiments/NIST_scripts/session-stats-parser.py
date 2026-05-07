@@ -45,7 +45,7 @@ EXPECTED_LINES_PER_RUN = {
     TFHE_RUN_4P_NAME: len(TFHE_4P_OPERATION_LABELS),
     TFHE_RUN_4P_MALICIOUS_NAME: len(TFHE_4P_OPERATION_LABELS),
     TFHE_RUN_5P_NAME: len(TFHE_5P_OPERATION_LABELS),
-    BGV_RUN_NAME: 11,
+    BGV_RUN_NAME: 10,
 }
 
 
@@ -64,7 +64,6 @@ OPERATION_LABELS = {
         "DDEC_PARALLEL_8",
         "DDEC_PARALLEL_16",
         "DDEC_PARALLEL_32",
-        "DDEC_PARALLEL_64",
     ],
 }
 
@@ -288,6 +287,8 @@ def expected_party_count_for_run(run_name: str) -> int:
         return 4
     if "-5p" in run_name:
         return 5
+    if run_name == BGV_RUN_NAME:
+        return 4
     return 0
 
 
@@ -562,58 +563,50 @@ def main() -> None:
             party_files=tfhe_party_files,
         )
 
-    tfhe_complete_runs_count = sum(
-        len(tfhe_complete_runs_by_name[tfhe_run_name]) for tfhe_run_name in TFHE_RUN_NAMES
+    bgv_party_files = select_party_files_for_run(
+        all_party_runs=all_party_runs,
+        run_name=BGV_RUN_NAME,
+        party_files=party_files,
     )
     bgv_complete_runs = collect_complete_run_indexes(
         all_party_runs=all_party_runs,
         all_party_run_ids=all_party_run_ids,
         run_name=BGV_RUN_NAME,
-        party_files=party_files,
+        party_files=bgv_party_files,
     )
 
-    tfhe_rows: List[List[object]] = []
-    tfhe_complete_run_index = 1
-    for tfhe_run_name in TFHE_RUN_NAMES:
-        tfhe_party_files = tfhe_party_files_by_name[tfhe_run_name]
-        for run_idx in tfhe_complete_runs_by_name[tfhe_run_name]:
-            tfhe_rows.extend(
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    all_run_names = TFHE_RUN_NAMES + [BGV_RUN_NAME]
+    all_complete_runs = {**tfhe_complete_runs_by_name, BGV_RUN_NAME: bgv_complete_runs}
+    all_run_party_files = {**tfhe_party_files_by_name, BGV_RUN_NAME: bgv_party_files}
+
+    for run_name in all_run_names:
+        run_party_files = all_run_party_files[run_name]
+        complete_runs = all_complete_runs[run_name]
+        run_num_parties = len(run_party_files)
+
+        rows: List[List[object]] = []
+        for complete_idx, run_idx in enumerate(complete_runs, start=1):
+            rows.extend(
                 aggregate_run(
-                    run_name=tfhe_run_name,
+                    run_name=run_name,
                     source_run_index=run_idx,
-                    complete_run_index=tfhe_complete_run_index,
-                    party_files=tfhe_party_files,
+                    complete_run_index=complete_idx,
+                    party_files=run_party_files,
                     all_party_runs=all_party_runs,
                     spread_warn_threshold=args.spread_warning_threshold,
                 )
             )
-            tfhe_complete_run_index += 1
 
-    bgv_rows: List[List[object]] = []
-    for complete_idx, run_idx in enumerate(bgv_complete_runs, start=1):
-        bgv_rows.extend(
-            aggregate_run(
-                run_name=BGV_RUN_NAME,
-                source_run_index=run_idx,
-                complete_run_index=complete_idx,
-                party_files=party_files,
-                all_party_runs=all_party_runs,
-                spread_warn_threshold=args.spread_warning_threshold,
-            )
+        output_path = os.path.join(
+            args.output_dir, f"{run_name}_{run_num_parties}p_{args.output_suffix}.csv"
         )
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    tfhe_output_path = os.path.join(args.output_dir, f"TFHE_{num_parties}_{args.output_suffix}.csv")
-    bgv_output_path = os.path.join(args.output_dir, f"BGV_{num_parties}_{args.output_suffix}.csv")
-
-    write_csv(tfhe_output_path, tfhe_rows)
-    write_csv(bgv_output_path, bgv_rows)
+        write_csv(output_path, rows)
+        print(f"Complete {run_name} runs: {len(complete_runs)}")
+        print(f"Wrote CSV: {output_path}")
 
     print(f"Parsed {num_parties} party files.")
-    print(f"Complete TFHE runs: {tfhe_complete_runs_count}")
-    print(f"Complete BGV runs: {len(bgv_complete_runs)}")
-    print(f"Wrote TFHE CSV: {tfhe_output_path}")
-    print(f"Wrote BGV CSV: {bgv_output_path}")
 
 
 if __name__ == "__main__":
