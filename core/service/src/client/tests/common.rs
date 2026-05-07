@@ -7,8 +7,9 @@ use crate::engine::utils::make_extra_data;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
+use crate::vault::storage::StorageReaderExt;
 use kms_grpc::RequestId;
-use kms_grpc::identifiers::ContextId;
+use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
     CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
 };
@@ -19,10 +20,37 @@ use std::path::Path;
 use tfhe::FheTypes;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
+use tokio::time::{Duration, Instant, sleep};
 use tonic::transport::Channel;
 
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
+
+/// Poll storage until it contains the given (`request_id`, `epoch_id`, `data_type`) tuple. Give up after 30s.
+// TODO(dp): Not the most elegant solution; what's a better way? Came about because tests like e.g. `test_insecure_threshold_crs_backup`
+// would try to inspect state before backup actually had time to happen.
+pub(crate) async fn wait_for_storage<S>(
+    storage: &S,
+    request_id: &RequestId,
+    epoch_id: &EpochId,
+    data_type: &str,
+) -> anyhow::Result<()>
+where
+    S: StorageReaderExt + Sync,
+{
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if storage
+            .data_exists_at_epoch(request_id, epoch_id, data_type)
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    anyhow::bail!("timeout waiting for backup of {request_id}/{data_type}")
+}
 
 /// Constructs the extra data field based on the default context and epoch IDs.
 pub(crate) fn default_isolated_extra_data() -> Vec<u8> {
@@ -71,6 +99,7 @@ pub(crate) fn uncompressed_keygen_config() -> (Option<KeySetConfig>, Option<KeyS
 pub(crate) fn keygen_config_from_existing(
     existing_keyset_id: &RequestId,
     use_existing_key_tag: bool,
+    copy_compressed_key_to_original: bool,
 ) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
@@ -84,6 +113,7 @@ pub(crate) fn keygen_config_from_existing(
         Some(KeySetAddedInfo {
             existing_keyset_id: Some((*existing_keyset_id).into()),
             use_existing_key_tag,
+            copy_compressed_key_to_original,
             ..KeySetAddedInfo::default()
         }),
     )

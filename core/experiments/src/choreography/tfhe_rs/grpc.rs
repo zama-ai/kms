@@ -2593,9 +2593,11 @@ where
             let public_key_set_decompressed = key_ref.pub_keyset_decompressed.clone();
             let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
             let params = key_ref.as_ref().params;
+            let oprf_key_present = old_private_key_set.oprf_secret_key_share.is_some();
 
             //Perform preprocessing
-            let num_needed_preproc = ResharePreprocRequired::new(num_parties, params);
+            let num_needed_preproc =
+                ResharePreprocRequired::new(num_parties, params, oprf_key_present);
 
             let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
@@ -2678,6 +2680,7 @@ where
                 &mut preprocessing_64,
                 &mut Some(old_private_key_set),
                 params,
+                oprf_key_present,
             )
             .await
             .unwrap();

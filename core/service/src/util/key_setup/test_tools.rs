@@ -591,8 +591,8 @@ pub(crate) mod setup {
     use crate::{
         consts::{
             KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
-            TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_KEY_ID_4P,
+            TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -649,16 +649,6 @@ pub(crate) mod setup {
             path,
         )
         .await;
-        threshold_material(
-            &TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID_10P,
-            &TEST_THRESHOLD_CRS_ID_10P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &epoch_id,
-            path,
-        )
-        .await;
         #[cfg(feature = "slow_tests")]
         threshold_material(
             &TEST_PARAM,
@@ -680,9 +670,8 @@ pub(crate) mod setup {
     async fn default_material() {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
-            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_10P,
-            DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
-            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
+            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
+            DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist(None).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -702,16 +691,6 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            &epoch_id,
-            None,
-        )
-        .await;
-        threshold_material(
-            &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_10P,
-            &DEFAULT_THRESHOLD_CRS_ID_10P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &epoch_id,
             None,
         )

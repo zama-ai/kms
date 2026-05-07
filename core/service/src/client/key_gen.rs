@@ -509,4 +509,61 @@ pub(crate) mod tests {
             }
         }
     }
+
+    /// Verifies that the dedicated OPRF server key embedded in `server_key` is
+    /// consistent with the OPRF private key in `client_key` by running the
+    /// encrypted PRF for several seeds and comparing each output to the
+    /// independently computed cleartext reference.
+    pub(crate) fn check_oprf_correctness(
+        server_key: &tfhe::ServerKey,
+        client_key: &tfhe::ClientKey,
+    ) {
+        use threshold_execution::tfhe_internals::test_feature::assert_oprf_matches_plaintext;
+
+        #[cfg(not(feature = "slow_tests"))]
+        const NUM_SEEDS: u128 = 2;
+        #[cfg(feature = "slow_tests")]
+        const NUM_SEEDS: u128 = 50;
+
+        let (integer_server_key, _, _, _, _, _, _, oprf_server_key, _) =
+            server_key.clone().into_raw_parts();
+        let Some(oprf_server_key) = oprf_server_key else {
+            panic!("expected oprf_server_key")
+        };
+        let target_shortint_server_key = integer_server_key.into_raw_parts();
+
+        let (
+            integer_client_key,
+            _compact_client_key,
+            _compression_key,
+            _noise_squashing_key,
+            _noise_squashing_compression_key,
+            _rerand_parameters,
+            oprf_private_key,
+            _tag,
+        ) = client_key.clone().into_raw_parts();
+        let Some(oprf_private_key) = oprf_private_key else {
+            panic!("expected oprf_private_key")
+        };
+
+        let shortint_ck = tfhe::shortint::ClientKey {
+            atomic_pattern: integer_client_key.into_raw_parts().atomic_pattern,
+        };
+
+        let prf_lwe_sk = match oprf_private_key.into_raw_parts().into_raw_parts() {
+            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(sk) => sk,
+            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
+                panic!("Unsupported AtomicPatternOprfPrivateKey::KeySwitch32")
+            }
+        };
+        let oprf_server_key = oprf_server_key.into_raw_parts();
+
+        assert_oprf_matches_plaintext(
+            &shortint_ck,
+            &target_shortint_server_key,
+            &oprf_server_key,
+            &prf_lwe_sk,
+            NUM_SEEDS,
+        );
+    }
 }

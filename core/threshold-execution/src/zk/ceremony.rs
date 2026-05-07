@@ -993,13 +993,11 @@ mod tests {
     use tokio::task::JoinSet;
 
     #[test]
-    #[serial_test::serial]
     fn test_honest_crs_ceremony_secure() {
         test_honest_crs_ceremony(SecureCeremony::default)
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_honest_crs_ceremony_insecure() {
         test_honest_crs_ceremony(InsecureCeremony::default)
     }
@@ -1225,7 +1223,6 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    #[serial_test::serial]
     async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         use crate::malicious_execution::zk::ceremony::DroppingCeremony;
 
@@ -1241,7 +1238,6 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    #[serial_test::serial]
     async fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
@@ -1261,7 +1257,6 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    #[serial_test::serial]
     async fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,

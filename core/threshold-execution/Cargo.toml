@@ -31,6 +31,7 @@ rand.workspace = true
 rayon.workspace = true
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
+sha3 = { workspace = true, optional = true }
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 test-utils = { workspace = true, optional = true }
@@ -55,6 +56,7 @@ tokio = { workspace = true, features = [
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tracing.workspace = true
 zeroize.workspace = true
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-std.workspace = true
@@ -62,7 +64,6 @@ futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
 rstest.workspace = true
-serial_test.workspace = true
 sha3.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
@@ -80,6 +81,6 @@ non-wasm = [
     "dep:tokio",
     "dep:tonic",
 ]
-testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils"]
+testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile", "dep:sha3"]
 slow_tests = ["testing"]
 malicious_strategies = ["testing", "algebra/extension_degree_4"]

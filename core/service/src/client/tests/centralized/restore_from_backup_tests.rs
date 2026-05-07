@@ -127,7 +127,15 @@ async fn test_insecure_central_dkg_backup() -> Result<()> {
 
     let fhe_private_key_type = PrivDataType::FhePrivateKey.to_string();
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
+    let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
     for key_id in [&key_id_1, &key_id_2] {
+        crate::client::tests::common::wait_for_storage(
+            &backup_storage,
+            key_id,
+            &crate::consts::DEFAULT_EPOCH_ID,
+            &fhe_private_key_type,
+        )
+        .await?;
         assert!(
             priv_storage
                 .data_exists_at_epoch(

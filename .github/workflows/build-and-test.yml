@@ -17,14 +17,13 @@ on:
 
 permissions: {}
 
-# Per-PR group + suffix: runs that should supersede each other use "ci"; unrelated
-# label events (e.g. CLA bot) use "noise" so they do not cancel an in-progress push
-# or pr-preview run. Push / synchronize / reopen always use "ci"; so do labeled
-# events that match docker-build (pr-preview-*, docker). Those now share one group
-# and cancel each other (fixing label-pr-preview vs synchronize split).
+# Per-branch group + suffix: different PR branches run concurrently, while newer
+# runs on the same source branch supersede older ones ("ci"). Unrelated label
+# events (e.g. CLA bot) use "noise" so they do not cancel in-progress CI/pr-preview
+# runs. Include head repo for fork safety so similarly named branches do not collide.
 concurrency:
   group: >-
-    build-and-test-${{ github.event.pull_request.number || github.run_id }}-${{
+    build-and-test-${{ github.event.pull_request.head.repo.full_name }}-${{ github.head_ref || github.ref_name }}-${{
       github.event.action != 'labeled' && 'ci' ||
       github.event.action == 'labeled' && (startsWith(github.event.label.name, 'pr-preview-') || github.event.label.name == 'docker') && 'ci' ||
       'noise'

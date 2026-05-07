@@ -76,13 +76,13 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let log_level = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt()
-        .with_env_filter(format!(
-            "generate_test_material={},kms={}",
-            log_level, log_level
+    let default_level = if cli.verbose { "debug" } else { "info" };
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(format!(
+            "generate_test_material={default_level},kms={default_level}"
         ))
-        .init();
+    });
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     // Ensure output directory is absolute
     let output_dir = cli

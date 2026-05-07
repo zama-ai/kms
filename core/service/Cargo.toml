@@ -103,6 +103,7 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
     "extended-types",
 ] }
+tfhe-csprng.workspace = true
 tfhe-versionable.workspace = true
 thiserror.workspace = true
 thread-handles = { workspace = true, optional = true }
@@ -141,7 +142,6 @@ threshold-execution = { workspace = true, features = ["testing", "malicious_stra
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
 rstest.workspace = true
-serial_test.workspace = true
 sysinfo.workspace = true
 tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }

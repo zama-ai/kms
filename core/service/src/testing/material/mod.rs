@@ -14,7 +14,7 @@
 mod manager;
 mod spec;
 
-pub use manager::{TestMaterialHandle, TestMaterialManager};
+pub use manager::TestMaterialManager;
 pub use spec::{KeyType, MaterialType, TestMaterialSpec};
 
 /// On-disk subdirectory name for a given material family.
@@ -48,10 +48,9 @@ pub fn threshold_crs_id_name(material_type: MaterialType, party_count: usize) ->
 mod tests {
     use super::*;
     use crate::consts::{
-        DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P,
-        TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_13P,
-        TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_13P,
+        DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
+        DEFAULT_THRESHOLD_KEY_ID_13P, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_13P,
+        TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_13P,
     };
     use crate::engine::base::derive_request_id;
 
@@ -66,12 +65,6 @@ mod tests {
             ),
             (
                 MaterialType::Testing,
-                10,
-                *TEST_THRESHOLD_KEY_ID_10P,
-                *TEST_THRESHOLD_CRS_ID_10P,
-            ),
-            (
-                MaterialType::Testing,
                 13,
                 *TEST_THRESHOLD_KEY_ID_13P,
                 *TEST_THRESHOLD_CRS_ID_13P,
@@ -81,12 +74,6 @@ mod tests {
                 4,
                 *DEFAULT_THRESHOLD_KEY_ID_4P,
                 *DEFAULT_THRESHOLD_CRS_ID_4P,
-            ),
-            (
-                MaterialType::Default,
-                10,
-                *DEFAULT_THRESHOLD_KEY_ID_10P,
-                *DEFAULT_THRESHOLD_CRS_ID_10P,
             ),
             (
                 MaterialType::Default,
