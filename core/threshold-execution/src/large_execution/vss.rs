@@ -106,6 +106,18 @@ where
     pub(crate) share_in_y: Poly<Z>,
 }
 
+impl<Z: Ring> DoublePoly<Z> {
+    pub(crate) fn from_bivariate(poly: &BivariatePoly<Z>, point: Z) -> Self {
+        // `partial_evaluations` returns `(F(alpha, Y), F(X, alpha))`, which are the
+        // recipient's Y-share and X-share respectively.
+        let (share_in_y, share_in_x) = poly.partial_evaluations(point);
+        Self {
+            share_in_x, // F(X, alpha)
+            share_in_y, // F(alpha, Y)
+        }
+    }
+}
+
 /// Struct to hold data sent during round 1 of VSS, composed of
 /// - double_poly is my share in a single VSS instance
 /// - we need n challenges sent and n challenges received (one from every party)
@@ -262,10 +274,10 @@ pub(crate) fn sample_secret_polys<Z: RingWithExceptionalSequence, S: BaseSession
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
     let degree = session.threshold() as usize;
     //Sample the bivariate polynomials Vec<F(X,Y)>
-    let bivariate_poly = secrets
+    let bivariate_poly: Vec<_> = secrets
         .iter()
         .map(|s| BivariatePoly::from_secret(session.rng(), *s, degree))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
     //Evaluate the bivariate poly in its first and second variables
     //to create a mapping role -> Vec<(F(X,alpha_role), F(alpha_role,Y))>
     let map_double_shares: MapRoleDoublePoly<Z> = session
@@ -275,12 +287,7 @@ pub(crate) fn sample_secret_polys<Z: RingWithExceptionalSequence, S: BaseSession
             let embedded_role = Z::embed_role_to_exceptional_sequence(r)?;
             let mut vec_map = Vec::with_capacity(bivariate_poly.len());
             for p in &bivariate_poly {
-                let share_in_x = p.partial_y_evaluation(embedded_role)?;
-                let share_in_y = p.partial_x_evaluation(embedded_role)?;
-                vec_map.push(DoublePoly {
-                    share_in_x,
-                    share_in_y,
-                });
+                vec_map.push(DoublePoly::from_bivariate(p, embedded_role));
             }
             Ok::<(Role, Vec<DoublePoly<Z>>), anyhow::Error>((*r, vec_map))
         })
@@ -907,7 +914,7 @@ where
                     vss.my_poly
                         .iter()
                         .map(|poly| poly.full_evaluation(point_x, point_y))
-                        .collect::<Result<Vec<_>, _>>()?,
+                        .collect(),
                 );
             }
             //If im a Pi send Fi(alpha_j)
@@ -1031,7 +1038,7 @@ fn round_4_conflict_resolution<Z: RingWithExceptionalSequence>(
                 vss.my_poly
                     .iter()
                     .map(|poly| poly.partial_y_evaluation(point_pi))
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .collect(),
             ),
             //As P_j external from the conflict, resolve conflict with P_i by sending F(alpha_j,alpha_i)
             false => ValueOrPoly::Value(
@@ -1332,7 +1339,7 @@ pub(crate) mod tests {
                 &result
                     .my_poly
                     .iter()
-                    .map(|p| p.full_evaluation(x_0, y_0).unwrap())
+                    .map(|p| p.full_evaluation(x_0, y_0))
                     .collect_vec(),
                 expected_secret,
             );
@@ -1344,12 +1351,12 @@ pub(crate) mod tests {
                     let expected_result_x = result
                         .my_poly
                         .iter()
-                        .map(|p| p.partial_y_evaluation(embedded_pn).unwrap())
+                        .map(|p| p.partial_y_evaluation(embedded_pn))
                         .collect_vec();
                     let expected_result_y = result
                         .my_poly
                         .iter()
-                        .map(|p| p.partial_x_evaluation(embedded_pn).unwrap())
+                        .map(|p| p.partial_x_evaluation(embedded_pn))
                         .collect_vec();
 
                     assert_eq!(
