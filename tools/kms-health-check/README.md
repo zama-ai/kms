@@ -1,7 +1,6 @@
 # KMS Health Check Tool
 
 Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for both centralized and threshold KMS instances.
-It can also be used to run a bandwidth benchmark between the parties.
 
 __NOTE__: This tool uses the MPC P2P connection between the peers to perform the healthcheck.
 
@@ -12,7 +11,6 @@ __NOTE__: This tool uses the MPC P2P connection between the peers to perform the
 - **Key Material Check**: Display actual key IDs for FHE keys, CRS keys, and preprocessing material
 - **Peer Health**: Check connectivity to all threshold peers with detailed key information
 - **JSON Output**: Machine-readable output for CI/CD integration (for health only; not for bandwidth)
-- **Bandwidth Benchmark**: Test gRPC endpoint for bandwidth
 
 ## Usage
 
@@ -38,8 +36,6 @@ kms-health-check live --endpoint localhost:50100 --health-config health-check.to
 # Using environment variables for timeouts (note the double underscore separator)
 HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 kms-health-check live --endpoint localhost:50100
 
-# Running the bandwidth benchmark on all 4 parties at the same time
-kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_PARALLEL_SESSION> -p <PAYLOAD_SIZE_B> -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400
 ```
 
 ## Configuration
@@ -340,3 +336,31 @@ docker run -v $(pwd):/workspace \
 
 - **Operator Key**: In threshold mode, only available if backup vault uses `SecretSharing` keychain
 - **Docker Resolution**: Automatically translates Docker service names to localhost when needed
+
+## Bandwidth Benchmark
+
+The tool can also be used to perform a bandwidth benchmark between the different parties.
+As for the healthcheck, the benchmark will use the same gRPC server as the MPC protocol,
+and will also perform the party authentication.
+
+
+The bandwidth benchmark expects the following parameters:
+- `CONTEXT_ID` MPC context we want to benchmark (i.e. corresponds to the set of parties)
+- `DURATION_SEC` the duration of the experiment (in seconds)
+- `NUM_SESSIONS` the number of sessions spawned in parallel
+- `PAYLOAD_SIZE` the size of the payload sent over and over by each sessions (in bytes)
+- `ENDPOINT` the address of the nodes that will be sending data
+
+The bandwidth benchmark consists in spawning `NUM_SESSIONS` sessions (each in their own tokio task) that will send a payload of `PAYLOAD_SIZE` bytes, wait for the ack from the other party and repeat.
+This is done over a period of `DURATION_SEC` and the results are then collected.
+
+To better emulate what happens during the execution of an MPC protocol, it's best to perform the bandwidth benchmark on all the parties at the same time, such that all the parties send and receive the same amount of data.
+
+
+__NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION_SEC` plus an additional `30` seconds.
+
+
+```bash
+# Running the bandwidth benchmark on all 4 parties at the same time
+kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE_B> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...>
+```
