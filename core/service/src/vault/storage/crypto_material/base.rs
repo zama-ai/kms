@@ -20,7 +20,6 @@ use crate::{
     util::meta_store::MetaStore,
     vault::{
         Vault,
-        keychain::KeychainProxy,
         storage::{
             Storage, StorageExt,
             crypto_material::{
@@ -285,7 +284,12 @@ where
         .await
     }
 
-    /// Note that this method must not be executed by multiple threads in parallel to avoid an inconsistent storage state.
+    /// Handle the storage of data after generation, and update the meta store accordingly.
+    /// This methods assumes that `req_id` has already been added to the meta store and will fail if not.
+    ///
+    /// WARNING: this method is not safe to call concurrently with the _same_ arguments.
+    /// However, this should never happen, since since any `req_id` should have been added
+    /// to the meta store as pending before this call, which can only be done for a fresh `req_id`.
     #[allow(clippy::too_many_arguments)]
     pub async fn handle_persistent_and_meta_storage<
         'a,
@@ -310,11 +314,10 @@ where
         ensure_meta_store_request_pending(&meta_store, req_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
-        // Lock metastore to prevent interleaving calls
-        let mut guarded_meta_store = meta_store.write().await;
         let res = self
             .handle_all_storage(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
+        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
             req_id,
@@ -720,6 +723,10 @@ where
                     .purge_material(key_id, Some(epoch_id), &[special_pub_type], &[])
                     .await
                 {
+                    tracing::error!(
+                        "Failed to purge orphan {special_pub_type} for {key_id} after FHE-key write failure; original error: {:?}",
+                        res
+                    );
                     return Err(StorageError::PurgingError);
                 }
             }
@@ -762,8 +769,6 @@ where
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
-        // Lock metastore to prevent interleaving calls
-        let mut guarded_meta_store = meta_store.write().await;
         let res = self
             .handle_all_storage::<DecompressionKey, DecompressionKey>(
                 key_id,
@@ -774,7 +779,7 @@ where
                 OP_DECOMPRESSION_KEYGEN,
             )
             .await;
-        // Finally update meta store
+        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
             key_id,
@@ -794,8 +799,14 @@ where
     /// Finally the custodian context, with the information about the custodian nodes, is also written to public storage.
     /// The private key for decrypting backups is written to the private storage.
     ///
-    /// NOTE: Unlike most other storage methods, this one will fail if there is no backup vault or if backup fails,
+    /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault or if backup fails,
     /// since the goal of this method is exactly to setup a backup.
+    ///
+    /// Precondition: when the backup vault is configured with a `SecretSharing`
+    /// keychain, the caller is expected to have set the backup encryption key
+    /// for `req_id` on the keychain before calling this method (see
+    /// `inner_new_custodian_context`); the backup pass inside
+    /// `handle_all_storage` requires it to be in place to encrypt private data.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,
@@ -820,8 +831,6 @@ where
                 return Err(StorageError::BackupError);
             }
         };
-        // Lock metastore to prevent interleaving calls
-        let mut guarded_meta_store = meta_store.write().await;
         let mut res = self
             .handle_all_storage::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
                 &req_id,
@@ -844,27 +853,7 @@ where
                     StorageError::BackupVaultPurgingError
                 });
         }
-        // Update the current backup key in the storage
-        {
-            let mut guarded_backup_vault = vault.lock().await;
-            match &mut guarded_backup_vault.keychain {
-                Some(keychain) => {
-                    if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
-                        // Store the public key in the secret sharing keychain
-                        sharing_chain.set_backup_enc_key(
-                            req_id,
-                            recovery_material.custodian_context().backup_enc_key.clone(),
-                        );
-                    }
-                }
-                None => {
-                    tracing::info!(
-                        "No keychain in backup vault, skipping setting backup encryption key for request {req_id}"
-                    );
-                }
-            }
-        }
-        // Finally update meta store
+        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
             &req_id,

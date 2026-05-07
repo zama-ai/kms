@@ -170,8 +170,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
-        // Lock metastore to prevent interleaving calls
-        let mut guarded_meta_store = meta_store.write().await;
         let meta_res = threshold_fhe_keys.meta_data.clone();
         let res = self
             .inner
@@ -186,7 +184,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 op_metric_tag,
             )
             .await;
-        // Finally update meta store
+        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
             key_id,
@@ -197,12 +195,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         .await
     }
 
+    /// Purge threshold FHE key material from disk **and** from the in-memory
+    /// cache.
     pub(crate) async fn purge_threshold_key_material(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
     ) -> bool {
-        self.inner
+        let storage_ok = self
+            .inner
             .purge_material(
                 req_id,
                 Some(epoch_id),
@@ -213,7 +214,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 ],
                 &[PrivDataType::FheKeyInfo],
             )
-            .await
+            .await;
+        // Lock-order: cache is acquired after pub/priv have been released.
+        self.fhe_keys.write().await.remove(&(*req_id, *epoch_id));
+        storage_ok
     }
 
     /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the
