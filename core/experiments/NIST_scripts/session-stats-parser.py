@@ -3,10 +3,13 @@
 import argparse
 import csv
 import glob
+import logging
 import os
 import sys
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 TFHE_RUN_4P_NAME = "tfhe-bench-run-4p"
@@ -185,21 +188,11 @@ def warn_if_large_spread(
 ) -> None:
     spread = relative_spread(values)
     if spread > threshold:
-        print(
-            (
-                "WARNING: Large spread for {metric} across parties in run={run}, run_index={run_idx}, "
-                "operation_index={op_idx}: min={min_v}, max={max_v}, mean={mean_v:.3f}, rel_spread={spread:.3f}"
-            ).format(
-                metric=metric_name,
-                run=run_name,
-                run_idx=run_index,
-                op_idx=operation_index,
-                min_v=min(values),
-                max_v=max(values),
-                mean_v=average(values),
-                spread=spread,
-            ),
-            file=sys.stderr,
+        logger.warning(
+            "Large spread for %s across parties in run=%s, run_index=%s, "
+            "operation_index=%s: min=%s, max=%s, mean=%.3f, rel_spread=%.3f",
+            metric_name, run_name, run_index, operation_index,
+            min(values), max(values), average(values), spread,
         )
 
 
@@ -210,10 +203,7 @@ def collect_complete_run_indexes(
     party_files: List[str],
 ) -> List[int]:
     if not party_files:
-        print(
-            f"WARNING: Skipping run={run_name} because no party files were selected for this run",
-            file=sys.stderr,
-        )
+        logger.warning("Skipping run=%s because no party files were selected for this run", run_name)
         return []
 
     complete_indexes: List[int] = []
@@ -227,41 +217,29 @@ def collect_complete_run_indexes(
             run_ids_for_party = all_party_run_ids[party_file][run_name]
             if run_idx >= len(runs_for_party):
                 run_is_complete_for_all = False
-                print(
-                    (
-                        "WARNING: Skipping run={run}, run_index={run_idx} because party file {path} "
-                        "does not contain this run index"
-                    ).format(run=run_name, run_idx=run_idx + 1, path=party_file),
-                    file=sys.stderr,
+                logger.warning(
+                    "Skipping run=%s, run_index=%s because party file %s "
+                    "does not contain this run index",
+                    run_name, run_idx + 1, party_file,
                 )
                 continue
 
             if run_idx >= len(run_ids_for_party):
                 run_is_complete_for_all = False
-                print(
-                    (
-                        "WARNING: Skipping run={run}, run_index={run_idx} because party file {path} "
-                        "does not contain run ID metadata for this run index"
-                    ).format(run=run_name, run_idx=run_idx + 1, path=party_file),
-                    file=sys.stderr,
+                logger.warning(
+                    "Skipping run=%s, run_index=%s because party file %s "
+                    "does not contain run ID metadata for this run index",
+                    run_name, run_idx + 1, party_file,
                 )
                 continue
 
             line_count = len(runs_for_party[run_idx])
             if line_count != expected_len:
                 run_is_complete_for_all = False
-                print(
-                    (
-                        "WARNING: Skipping run={run}, run_index={run_idx} because party file {path} has "
-                        "{found} metric lines but expected {expected}"
-                    ).format(
-                        run=run_name,
-                        run_idx=run_idx + 1,
-                        path=party_file,
-                        found=line_count,
-                        expected=expected_len,
-                    ),
-                    file=sys.stderr,
+                logger.warning(
+                    "Skipping run=%s, run_index=%s because party file %s has "
+                    "%s metric lines but expected %s",
+                    run_name, run_idx + 1, party_file, line_count, expected_len,
                 )
 
         if run_is_complete_for_all:
@@ -269,11 +247,9 @@ def collect_complete_run_indexes(
             non_empty_run_ids = [run_id for run_id in run_ids_at_index if run_id]
             if non_empty_run_ids and len(set(non_empty_run_ids)) > 1:
                 run_is_complete_for_all = False
-                print(
-                    (
-                        "WARNING: Skipping run={run}, run_index={run_idx} because run IDs differ across parties: {ids}"
-                    ).format(run=run_name, run_idx=run_idx + 1, ids=run_ids_at_index),
-                    file=sys.stderr,
+                logger.warning(
+                    "Skipping run=%s, run_index=%s because run IDs differ across parties: %s",
+                    run_name, run_idx + 1, run_ids_at_index,
                 )
 
         if run_is_complete_for_all:
@@ -321,25 +297,16 @@ def select_party_files_for_run(
         )
         kept_files = ranked_files[:target_party_count]
         dropped_files = ranked_files[target_party_count:]
-        print(
-            (
-                "WARNING: run={run} identified as malicious benchmark; excluding potential malicious/invalid party files from averaging: {dropped}"
-            ).format(run=run_name, dropped=dropped_files),
-            file=sys.stderr,
+        logger.warning(
+            "run=%s identified as malicious benchmark; excluding potential malicious/invalid party files from averaging: %s",
+            run_name, dropped_files,
         )
         selected_party_files = kept_files
 
     if target_party_count and len(selected_party_files) != target_party_count:
-        print(
-            (
-                "WARNING: run={run} expected {expected} participating party files based on run name but found {found}: {files}"
-            ).format(
-                run=run_name,
-                expected=target_party_count,
-                found=len(selected_party_files),
-                files=selected_party_files,
-            ),
-            file=sys.stderr,
+        logger.warning(
+            "run=%s expected %s participating party files based on run name but found %s: %s",
+            run_name, target_party_count, len(selected_party_files), selected_party_files,
         )
 
     return selected_party_files
@@ -365,47 +332,26 @@ def aggregate_run(
 
         names = {metric_line.name for _, metric_line in per_party_metrics}
         if len(names) > 1:
-            print(
-                (
-                    "WARNING: Name mismatch across parties in run={run}, run_index={run_idx}, "
-                    "operation_index={op_idx}: names={names}"
-                ).format(
-                    run=run_name,
-                    run_idx=source_run_index + 1,
-                    op_idx=op_idx + 1,
-                    names=sorted(names),
-                ),
-                file=sys.stderr,
+            logger.warning(
+                "Name mismatch across parties in run=%s, run_index=%s, "
+                "operation_index=%s: names=%s",
+                run_name, source_run_index + 1, op_idx + 1, sorted(names),
             )
 
         num_sessions_values = [metric_line.num_sessions for _, metric_line in per_party_metrics]
         if len(set(num_sessions_values)) > 1:
-            print(
-                (
-                    "ERROR: num_sessions mismatch across parties in run={run}, run_index={run_idx}, "
-                    "operation_index={op_idx}: values={values}"
-                ).format(
-                    run=run_name,
-                    run_idx=source_run_index + 1,
-                    op_idx=op_idx + 1,
-                    values=num_sessions_values,
-                ),
-                file=sys.stderr,
+            logger.error(
+                "num_sessions mismatch across parties in run=%s, run_index=%s, "
+                "operation_index=%s: values=%s",
+                run_name, source_run_index + 1, op_idx + 1, num_sessions_values,
             )
 
         num_rounds_values = [metric_line.num_rounds for _, metric_line in per_party_metrics]
         if len(set(num_rounds_values)) > 1:
-            print(
-                (
-                    "ERROR: num_rounds mismatch across parties in run={run}, run_index={run_idx}, "
-                    "operation_index={op_idx}: values={values}"
-                ).format(
-                    run=run_name,
-                    run_idx=source_run_index + 1,
-                    op_idx=op_idx + 1,
-                    values=num_rounds_values,
-                ),
-                file=sys.stderr,
+            logger.error(
+                "num_rounds mismatch across parties in run=%s, run_index=%s, "
+                "operation_index=%s: values=%s",
+                run_name, source_run_index + 1, op_idx + 1, num_rounds_values,
             )
 
         network_sent_values = [metric_line.network_sent for _, metric_line in per_party_metrics]
@@ -414,19 +360,11 @@ def aggregate_run(
 
         for party_file, metric_line in per_party_metrics:
             if metric_line.network_sent != metric_line.network_received:
-                print(
-                    (
-                        "WARNING: network_sent != network_received in {path}, run={run}, run_index={run_idx}, "
-                        "operation_index={op_idx}: sent={sent}, received={received}"
-                    ).format(
-                        path=party_file,
-                        run=run_name,
-                        run_idx=source_run_index + 1,
-                        op_idx=op_idx + 1,
-                        sent=metric_line.network_sent,
-                        received=metric_line.network_received,
-                    ),
-                    file=sys.stderr,
+                logger.warning(
+                    "network_sent != network_received in %s, run=%s, run_index=%s, "
+                    "operation_index=%s: sent=%s, received=%s",
+                    party_file, run_name, source_run_index + 1, op_idx + 1,
+                    metric_line.network_sent, metric_line.network_received,
                 )
 
         warn_if_large_spread(
@@ -528,15 +466,23 @@ def main() -> None:
             "Spread is (max-min)/max(abs(mean),1). Default: 0.20"
         ),
     )
+    parser.add_argument(
+        "--warn",
+        action="store_true",
+        default=False,
+        help="Enable warning messages on stderr (silenced by default).",
+    )
 
     args = parser.parse_args()
 
+    logging.basicConfig(
+        format="%(levelname)s: %(message)s",
+        level=logging.WARNING if args.warn else logging.ERROR,
+    )
+
     party_files = sorted(glob.glob(os.path.join(args.input_dir, args.pattern)))
     if not party_files:
-        print(
-            f"ERROR: No files found matching {args.pattern} in directory {args.input_dir}",
-            file=sys.stderr,
-        )
+        logger.error("No files found matching %s in directory %s", args.pattern, args.input_dir)
         sys.exit(1)
 
     num_parties = len(party_files)
