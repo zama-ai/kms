@@ -152,7 +152,7 @@ pub(in crate::vault::storage::crypto_material) async fn check_data_exists<
 /// * `priv_data_type` - Type of the private data to check
 ///
 /// # Returns
-/// `Ok(true)` if all the public and private data exist, `Ok(false)` if any is missing,
+/// `Ok(true)` if both the public and private data exist, `Ok(false)` if either is missing,
 /// or an error if any check fails or an error occurs.
 /// `Err(StorageError::ReadingError)` is returned if there is an error accessing the storage, with an error log indicating the failure.
 ///
