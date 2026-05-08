@@ -243,23 +243,23 @@ where
         } else {
             vec![PrivDataType::FhePrivateKey]
         };
-        // Try the uncompressed (standard) layout first.
+        // Try the compressed layout first.
         if self
             .data_exists_at_epoch(
                 key_id,
                 epoch_id,
-                &[PubDataType::PublicKey, PubDataType::ServerKey],
+                &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
                 &priv_types,
             )
             .await?
         {
             return Ok(true);
         }
-        // Fallback: check for the current compressed layout.
+        // Fallback: check for the current uncompressed layout.
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
+            &[PubDataType::PublicKey, PubDataType::ServerKey],
             &priv_types,
         )
         .await
