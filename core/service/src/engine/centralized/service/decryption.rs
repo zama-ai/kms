@@ -10,8 +10,7 @@ use crate::engine::validation::{
     validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
-    add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
-    update_req_in_meta_store,
+    add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
 };
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
@@ -68,9 +67,21 @@ pub async fn user_decrypt_impl<
             tonic::Code::NotFound,
         ));
     }
-    // Observe we accept any epoch ID
+
+    let keys = service
+        .crypto_storage
+        .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("Key ID {key_id} not found: {e}"),
+                tonic::Code::NotFound,
+            )
+        })?;
+
     let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
     add_req_to_meta_store(
         &mut service.user_dec_meta_store.write().await,
@@ -99,21 +110,6 @@ pub async fn user_decrypt_impl<
         async move {
             let _timer = timer;
             let _permit = permit;
-            let keys = match crypto_storage
-                .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
-                .await
-            {
-                Ok(k) => k,
-                Err(e) => {
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        &request_id,
-                        format!("Failed to get key ID {key_id} with error {e:?}"),
-                        OP_USER_DECRYPT_REQUEST,
-                    );
-                    return;
-                }
-            };
 
             tracing::info!(
                 "Starting user decryption using key_id {} for request ID {}",
@@ -247,6 +243,19 @@ pub async fn public_decrypt_impl<
         request_id.as_str()
     );
 
+    let keys = service
+        .crypto_storage
+        .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("Key ID {key_id} not found: {e}"),
+                tonic::Code::NotFound,
+            )
+        })?;
+
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
     add_req_to_meta_store(
@@ -256,7 +265,6 @@ pub async fn public_decrypt_impl<
     )?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
-    let crypto_storage = service.crypto_storage.clone();
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
@@ -271,21 +279,6 @@ pub async fn public_decrypt_impl<
     let _handle = tokio::spawn(async move {
         let _timer = timer;
         let _permit = permit;
-        let keys = match crypto_storage
-            .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
-            .await
-        {
-            Ok(k) => k,
-            Err(e) => {
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    &request_id,
-                    format!("Failed to get key ID {key_id} with error {e:?}"),
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                );
-                return;
-            }
-        };
         tracing::info!(
             "Starting decryption using key_id {} for request ID {}",
             &key_id,
