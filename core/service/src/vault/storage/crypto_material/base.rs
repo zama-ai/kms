@@ -806,7 +806,7 @@ where
     /// keychain, the caller is expected to have set the backup encryption key
     /// for `req_id` on the keychain before calling this method (see
     /// `inner_new_custodian_context`); the backup pass inside
-    /// `handle_all_storage` requires it to be in place to encrypt private data.
+    /// `write_all` requires it to be in place to encrypt private data.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,

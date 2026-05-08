@@ -1367,7 +1367,7 @@ async fn purge_material_paths() {
 }
 
 #[tokio::test]
-async fn handle_all_storage_no_overwrite_of_existing_data() {
+async fn write_all_no_overwrite_of_existing_data() {
     let storage = fresh_ram_storage();
     let req_id = derive_request_id("handle_all_dup")?;
     let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch")?.into();
@@ -1441,8 +1441,8 @@ async fn handle_all_storage_no_overwrite_of_existing_data() {
 }
 
 #[tokio::test]
-async fn handle_all_storage_purges_on_write_failure() {
-    // Public storage rejects every write; the private write succeeds, so handle_all_storage
+async fn write_all_purges_on_write_failure() {
+    // Public storage rejects every write; the private write succeeds, so write_all
     // must purge the orphan and report `WritingError`.
     let storage = CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), None);
     let req_id = derive_request_id("handle_all_purge").unwrap();
@@ -1471,7 +1471,7 @@ async fn handle_all_storage_purges_on_write_failure() {
 }
 
 #[tokio::test]
-async fn handle_all_storage_updates_backup_vault() {
+async fn write_all_updates_backup_vault() {
     let storage = CryptoMaterialStorage::from(
         RamStorage::new(),
         RamStorage::new(),
