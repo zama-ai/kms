@@ -185,7 +185,7 @@ pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
         let msg = format!(
             "Some private data (at least one of {priv_data_type:?}) not found for request {req_id} and epoch {epoch_id}"
         );
-        tracing::warn!("{msg}");
+        tracing::warn!(msg);
         return Ok(false);
     }
     Ok(true)

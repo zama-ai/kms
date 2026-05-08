@@ -697,7 +697,7 @@ async fn write_threshold_keys_failed_storage() {
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
-    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set.clone()));
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set));
     // update the meta store and the write should be ok
     {
         let meta_store = meta_store.clone();
@@ -737,7 +737,7 @@ async fn write_threshold_keys_failed_storage() {
             &new_req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            boxed_public_key_set.clone(),
+            boxed_public_key_set,
             meta_store.clone(),
             "",
         )
