@@ -1661,17 +1661,19 @@ pub(crate) mod tests {
         let wrong_client_key = tfhe::ClientKey::generate(config);
 
         // Read existing key handles from cache to preserve other fields
-        let existing_handles = inner
-            .crypto_storage
-            .read_centralized_fhe_keys(key_id, epoch_id)
-            .await
-            .unwrap();
+        let wrong_handles = {
+            let existing_handles = inner
+                .crypto_storage
+                .read_centralized_fhe_keys(key_id, epoch_id)
+                .await
+                .unwrap();
 
-        // Create new handles with the wrong client key but same metadata
-        let wrong_handles = KmsFheKeyHandles {
-            client_key: wrong_client_key,
-            decompression_key: existing_handles.decompression_key.clone(),
-            public_key_info: existing_handles.public_key_info.clone(),
+            // Create new handles with the wrong client key but same metadata
+            KmsFheKeyHandles {
+                client_key: wrong_client_key,
+                decompression_key: existing_handles.decompression_key.clone(),
+                public_key_info: existing_handles.public_key_info.clone(),
+            }
         };
 
         {
