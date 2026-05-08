@@ -124,14 +124,7 @@ pub async fn key_gen_impl<
             .crypto_storage
             .fhe_keys_exists(&req_id, &epoch_id)
             .await
-            .map_err(|e| {
-                MetricedError::new(
-                    op_tag,
-                    Some(req_id),
-                    format!("Could not check FHE key existence in storage: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
+            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal))?;
         if already_exists {
             return Err(MetricedError::new(
                 op_tag,

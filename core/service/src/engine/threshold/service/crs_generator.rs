@@ -118,12 +118,7 @@ impl<
             .crs_exists(&verified.req_id, &verified.epoch_id)
             .await
             .map_err(|e| {
-                MetricedError::new(
-                    op_tag,
-                    Some(verified.req_id),
-                    format!("Could not check CRS existence in storage: {e}"),
-                    tonic::Code::Internal,
-                )
+                MetricedError::new(op_tag, Some(verified.req_id), e, tonic::Code::Internal)
             })?;
         if already_exists {
             return Err(MetricedError::new(
