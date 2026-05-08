@@ -315,7 +315,7 @@ where
             .await
             .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
-            .handle_all_storage(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
+            .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
         let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
@@ -328,8 +328,8 @@ where
         .await
     }
 
-    /// General method for handling the storage of material, including backup.
-    pub(in crate::vault::storage::crypto_material) async fn handle_all_storage<
+    /// General method for handling the storage of both public and private material along with the backup.
+    pub(in crate::vault::storage::crypto_material) async fn write_all<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
@@ -662,7 +662,7 @@ where
         // First try to store the special key (server key or compressed keyset).
         match &fhe_key_set {
             PublicKeySet::Uncompressed(keys) => {
-                self.handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
+                self.write_all::<tfhe::ServerKey, tfhe::ServerKey>(
                     key_id,
                     Some(epoch_id),
                     Some((&keys.server_key, PubDataType::ServerKey)),
@@ -676,7 +676,7 @@ where
                 compressed_keyset, ..
             } => {
                 self
-                    .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
+                    .write_all::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
                         key_id,
                         Some(epoch_id),
                         Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
@@ -695,7 +695,7 @@ where
         };
         // Store the public key and private state.
         let res = self
-            .handle_all_storage(
+            .write_all(
                 key_id,
                 Some(epoch_id),
                 Some((pk_to_store, PubDataType::PublicKey)),
@@ -770,7 +770,7 @@ where
             .await
             .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
-            .handle_all_storage::<DecompressionKey, DecompressionKey>(
+            .write_all::<DecompressionKey, DecompressionKey>(
                 key_id,
                 None,
                 Some((&decompression_key, PubDataType::DecompressionKey)),
@@ -832,7 +832,7 @@ where
             }
         };
         let mut res = self
-            .handle_all_storage::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
+            .write_all::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
                 &req_id,
                 None,
                 Some((&recovery_material, PubDataType::RecoveryMaterial)),
@@ -926,7 +926,7 @@ where
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         // No public data so we just reuse ContextInfo to appease the compiler
-        self.handle_all_storage::<ContextInfo, ContextInfo>(
+        self.write_all::<ContextInfo, ContextInfo>(
             &((*context_id).into()),
             None,
             None,

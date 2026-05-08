@@ -1375,7 +1375,7 @@ async fn handle_all_storage_no_overwrite_of_existing_data() {
     let attempted_overwrite = TestType { i: 2 };
 
     storage
-        .handle_all_storage(
+        .write_all(
             &req_id,
             Some(&epoch_id),
             Some((&original, PubDataType::PublicKey)),
@@ -1406,7 +1406,7 @@ async fn handle_all_storage_no_overwrite_of_existing_data() {
     // Duplicate call must not purge the original entries.
     assert!(matches!(
         storage
-            .handle_all_storage(
+            .write_all(
                 &req_id,
                 Some(&epoch_id),
                 Some((&attempted_overwrite, PubDataType::PublicKey)),
@@ -1449,7 +1449,7 @@ async fn handle_all_storage_purges_on_write_failure() {
     let data = TestType { i: 11 };
 
     let res = storage
-        .handle_all_storage(
+        .write_all(
             &req_id,
             None,
             Some((&data, PubDataType::PublicKey)),
@@ -1482,7 +1482,7 @@ async fn handle_all_storage_updates_backup_vault() {
     let (_pk, sk) = gen_sig_keys(&mut rng);
 
     storage
-        .handle_all_storage::<TestType, PrivateSigKey>(
+        .write_all::<TestType, PrivateSigKey>(
             &req_id,
             None,
             None,

@@ -83,7 +83,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) -> anyhow::Result<()> {
         // No public data so we just use PRSSSetupCombined
         self.inner
-            .handle_all_storage::<PRSSSetupCombined, PRSSSetupCombined>(
+            .write_all::<PRSSSetupCombined, PRSSSetupCombined>(
                 &(*epoch_id).into(), // using epoch_id as req_id since PRSS info is stored under this directly
                 None,
                 None, // no public data for PRSS info
@@ -112,7 +112,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         crs_info: CrsGenMetadata,
     ) -> Result<(), StorageError> {
         self.inner
-            .handle_all_storage::<CrsGenMetadata, CrsGenMetadata>(
+            .write_all::<CrsGenMetadata, CrsGenMetadata>(
                 crs_id,
                 Some(epoch_id),
                 None, // No public data is made when refreshing a CRS
@@ -133,7 +133,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) -> Result<(), StorageError> {
         let res = self
             .inner
-            .handle_all_storage::<ThresholdFheKeys, ThresholdFheKeys>(
+            .write_all::<ThresholdFheKeys, ThresholdFheKeys>(
                 key_id,
                 Some(epoch_id),
                 None, // No public data is made when refreshing keys
