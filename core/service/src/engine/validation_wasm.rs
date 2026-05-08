@@ -8,7 +8,9 @@ use kms_grpc::{
 };
 use std::collections::{HashMap, HashSet};
 
-use kms_grpc::solidity_types::{UserDecryptResponseVerification, UserDecryptResponseVerificationQ126};
+use kms_grpc::solidity_types::{
+    UserDecryptResponseVerification, UserDecryptResponseVerificationQ126,
+};
 
 use crate::{
     anyhow_error_and_log,
