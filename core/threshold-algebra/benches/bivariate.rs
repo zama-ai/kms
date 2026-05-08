@@ -48,6 +48,20 @@ fn bench_bivariate_evaluation(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("partial_y", degree), |b| {
             b.iter(|| black_box(poly.partial_y_evaluation(black_box(point))));
         });
+        // Baseline: two separate partial evals, mirroring the code before PR 576.
+        group.bench_function(BenchmarkId::new("partial_x_then_y", degree), |b| {
+            b.iter(|| {
+                let p = black_box(point);
+                (
+                    black_box(poly.partial_x_evaluation(p)),
+                    black_box(poly.partial_y_evaluation(p)),
+                )
+            });
+        });
+        // Fused: the path `DoublePoly::from_bivariate` actually uses.
+        group.bench_function(BenchmarkId::new("partial_evaluations", degree), |b| {
+            b.iter(|| black_box(poly.partial_evaluations(black_box(point))));
+        });
         group.bench_function(BenchmarkId::new("full", degree), |b| {
             b.iter(|| black_box(poly.full_evaluation(black_box(point), black_box(point))));
         });

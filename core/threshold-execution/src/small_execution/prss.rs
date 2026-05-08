@@ -21,8 +21,7 @@ use crate::{
     },
 };
 use algebra::{
-    bivariate::compute_powers_list,
-    matrix::MatrixMul,
+    matrix::{MatrixMul, compute_powers_list},
     poly::Poly,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };

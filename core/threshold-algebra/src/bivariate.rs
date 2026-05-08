@@ -1,18 +1,19 @@
 use super::poly::Poly;
-use super::structure_traits::One;
 use super::structure_traits::Ring;
 use super::structure_traits::Sample;
 
 use rand::{CryptoRng, Rng};
-use std::ops::Mul;
 
 /// Bivariate polynomial represented as a row-major square matrix of coefficients.
 ///
 /// The row view of the polynomials is the following:
 /// [[a_{00}, a_{01}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}]]
+///
+/// Constructors establish and maintain the invariant `coefs.len() == (degree + 1)^2`,
+/// so every row in `coefs.chunks_exact(degree + 1)` has exactly `degree + 1` entries.
 #[derive(Clone, Debug)]
 pub struct BivariatePoly<Z> {
-    /// Row-major coefficients. Contains `(degree + 1)^2` elements.
+    /// Row-major; `(degree + 1)^2` elements.
     coefs: Vec<Z>,
     degree: usize,
 }
@@ -35,15 +36,7 @@ impl<Z> BivariatePoly<Z> {
     #[cfg(test)]
     fn from_coeffs(coefs: Vec<Z>, degree: usize) -> Self {
         let d = degree + 1;
-        let n = d * d;
-        assert_eq!(
-            coefs.len(),
-            n,
-            "BivariatePoly expected {n} coefficients for degree {}, got {}",
-            degree,
-            coefs.len()
-        );
-
+        assert_eq!(coefs.len(), d * d);
         BivariatePoly { coefs, degree }
     }
 
@@ -56,28 +49,6 @@ impl<Z> BivariatePoly<Z> {
     }
 }
 
-/// computes powers of a list of points in F up to a given maximal exponent
-pub fn compute_powers_list<F: One + Mul<Output = F> + Copy>(
-    points: &[F],
-    max_exponent: usize,
-) -> Vec<Vec<F>> {
-    let mut alpha_powers = Vec::with_capacity(points.len());
-    for p in points {
-        alpha_powers.push(compute_powers(*p, max_exponent));
-    }
-    alpha_powers
-}
-
-/// Computes powers of a specific point up to degree: p^0, p^1,...,p^degree
-pub fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) -> Vec<Z> {
-    let mut powers_of_point = Vec::with_capacity(degree + 1);
-    powers_of_point.push(Z::ONE); // start with
-    for i in 1..=degree {
-        powers_of_point.push(powers_of_point[i - 1] * point);
-    }
-    powers_of_point
-}
-
 impl<Z: Ring> BivariatePoly<Z> {
     /// Given a degree T bivariate poly F(X,Y) = sum a_ij X^i Y^j and a point \alpha, evaluate the X variable:
     /// G(Y) = F(\alpha, Y) with coefficients [sum_i a_i0 \alpha^i, ..., sum_i a_id \alpha^i].
@@ -85,9 +56,7 @@ impl<Z: Ring> BivariatePoly<Z> {
         let d = self.dim();
         let coefs = self.coeffs();
         let mut res = coefs[(d - 1) * d..d * d].to_vec();
-        // @reviewers The old implementation checked each column length inside generic
-        // `matmul`. `BivariatePoly` now has private fields and constructors that create or
-        // validate exactly `d * d` coefficients, so every row has exactly `d` coefficients.
+        // Every row has exactly `d` coefficients.
         for row in coefs[..(d - 1) * d].chunks_exact(d).rev() {
             for (res_coef, coef) in res.iter_mut().zip(row) {
                 *res_coef = *res_coef * alpha + *coef;
@@ -102,9 +71,7 @@ impl<Z: Ring> BivariatePoly<Z> {
         let d = self.dim();
         let coefs = self.coeffs();
         let mut res = Vec::with_capacity(d);
-        // @reviewers The previous generic matrix path checked row/vector dimensions before
-        // multiplication. The constructors establish the only valid bivariate shape once, and
-        // each Horner pass consumes exactly one row of length `d`.
+        // Each pass consumes exactly one row of length `d`.
         for row in coefs.chunks_exact(d) {
             let mut acc = row[d - 1];
             for coef in row[..d - 1].iter().rev() {
@@ -134,9 +101,7 @@ impl<Z: Ring> BivariatePoly<Z> {
         }
         partial_y[d - 1] = acc;
 
-        // @reviewers This fused path relies on the same constructor-established `d * d`
-        // coefficient invariant as the separate evaluators. The only difference is that it
-        // computes both directions in one pass to avoid repeating the row scan.
+        // Computes both directions in one pass to avoid repeating the row scan.
         for (row_idx, row) in coefs[..last_row_start].chunks_exact(d).enumerate().rev() {
             let mut acc = row[d - 1];
             for coef in row[..d - 1].iter().rev() {
@@ -167,9 +132,6 @@ impl<Z: Ring> BivariatePoly<Z> {
             acc += alpha_x_power * row_acc;
             alpha_x_power *= alpha_x;
         }
-        // @reviewers This replaces the old vector-matrix-then-dot-product path. Both power
-        // vectors had length `d` by construction, so the final rank-1 length check bought no
-        // extra validation beyond the constructor-established coefficient invariant.
         acc
     }
 }
@@ -227,6 +189,46 @@ mod tests {
             bpoly5.full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE),
             five + five + five + five + five
         );
+    }
+
+    #[test]
+    fn bivariate_partial_evals_match_full() {
+        // F(X, Y) = 1 + 2*Y + 3*X + 4*X*Y, stored row-major as [a_00, a_01, a_10, a_11].
+        let one = ResiduePolyF4Z128::ONE;
+        let two = one + one;
+        let three = two + one;
+        let four = two + two;
+        let five = four + one;
+        let seven = four + three;
+        let bpoly = BivariatePoly::from_coeffs(vec![one, two, three, four], 1);
+
+        // F(5, Y) = (1 + 3*5) + (2 + 4*5)*Y = 16 + 22*Y
+        let sixteen = five + five + five + one;
+        let twentytwo = sixteen + three + three;
+        assert_eq!(
+            bpoly.partial_x_evaluation(five),
+            Poly::from_coefs(vec![sixteen, twentytwo])
+        );
+
+        // F(X, 5) = (1 + 2*5) + (3 + 4*5)*X = 11 + 23*X
+        let eleven = five + five + one;
+        let twentythree = eleven + four + four + four;
+        assert_eq!(
+            bpoly.partial_y_evaluation(five),
+            Poly::from_coefs(vec![eleven, twentythree])
+        );
+
+        // Fused returns (F(alpha, Y), F(X, alpha)).
+        let (px, py) = bpoly.partial_evaluations(five);
+        assert_eq!(px, Poly::from_coefs(vec![sixteen, twentytwo]));
+        assert_eq!(py, Poly::from_coefs(vec![eleven, twentythree]));
+
+        // F(5, 7) = 1 + 2*7 + 3*5 + 4*5*7 = 170
+        let mut expected_full = ResiduePolyF4Z128::ZERO;
+        for _ in 0..170 {
+            expected_full += one;
+        }
+        assert_eq!(bpoly.full_evaluation(five, seven), expected_full);
     }
 
     #[rstest]
