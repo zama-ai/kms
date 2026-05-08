@@ -110,7 +110,7 @@ impl<Z: Ring> DoublePoly<Z> {
     pub(crate) fn from_bivariate(poly: &BivariatePoly<Z>, point: Z) -> Self {
         // `partial_evaluations` returns `(F(alpha, Y), F(X, alpha))`, which are the
         // recipient's Y-share and X-share respectively.
-        let (share_in_y, share_in_x) = poly.partial_evaluations(point);
+        let (share_in_y, share_in_x) = poly.partial_evals(point);
         Self {
             share_in_x, // F(X, alpha)
             share_in_y, // F(alpha, Y)
@@ -913,7 +913,7 @@ where
                     (*own_role, *pi_role, *pj_role),
                     vss.my_poly
                         .iter()
-                        .map(|poly| poly.full_evaluation(point_x, point_y))
+                        .map(|poly| poly.full_eval(point_x, point_y))
                         .collect(),
                 );
             }
@@ -1037,7 +1037,7 @@ fn round_4_conflict_resolution<Z: RingWithExceptionalSequence>(
             true => ValueOrPoly::Poly(
                 vss.my_poly
                     .iter()
-                    .map(|poly| poly.partial_y_evaluation(point_pi))
+                    .map(|poly| poly.partial_y_eval(point_pi))
                     .collect(),
             ),
             //As P_j external from the conflict, resolve conflict with P_i by sending F(alpha_j,alpha_i)
@@ -1338,7 +1338,7 @@ pub(crate) mod tests {
                 &result
                     .my_poly
                     .iter()
-                    .map(|p| p.full_evaluation(x_0, y_0))
+                    .map(|p| p.full_eval(x_0, y_0))
                     .collect_vec(),
                 expected_secret,
             );
@@ -1350,12 +1350,12 @@ pub(crate) mod tests {
                     let expected_result_x = result
                         .my_poly
                         .iter()
-                        .map(|p| p.partial_y_evaluation(embedded_pn))
+                        .map(|p| p.partial_y_eval(embedded_pn))
                         .collect_vec();
                     let expected_result_y = result
                         .my_poly
                         .iter()
-                        .map(|p| p.partial_x_evaluation(embedded_pn))
+                        .map(|p| p.partial_x_eval(embedded_pn))
                         .collect_vec();
 
                     assert_eq!(
