@@ -509,6 +509,7 @@ pub async fn run_bandwidth_benchmark(
     duration: u64,
     num_sessions: u32,
     payload_size: u32,
+    connections_per_peer: u32,
 ) -> Result<BandwidthBenchmarkResponse> {
     let request = BandwidthBenchmarkRequest {
         duration,
@@ -517,6 +518,7 @@ pub async fn run_bandwidth_benchmark(
         context_id: Some(RequestId {
             request_id: context_id,
         }),
+        connections_per_peer,
     };
 
     let client = GrpcHealthClient::new(endpoint);

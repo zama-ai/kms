@@ -206,6 +206,7 @@ pub fn print_bandwidth_benchmark_text(
     duration: u64,
     num_sessions: u32,
     payload_size: u32,
+    connections_per_peer: u32,
     results: Vec<(String, BandwidthBenchmarkResponse)>,
 ) -> Result<()> {
     let mut output = String::with_capacity(4096);
@@ -214,6 +215,11 @@ pub fn print_bandwidth_benchmark_text(
     writeln!(output, "Duration target:     {} seconds", duration)?;
     writeln!(output, "Parallel sessions:   {}", num_sessions)?;
     writeln!(output, "Payload per session: {} bytes", payload_size)?;
+    writeln!(
+        output,
+        "Connections / peer:  {}",
+        connections_per_peer.max(1)
+    )?;
 
     for (endpoint, result) in results {
         writeln!(output, "\n{}", "-".repeat(78))?;
