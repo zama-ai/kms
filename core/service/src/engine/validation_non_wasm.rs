@@ -5,7 +5,7 @@ use crate::engine::utils::{MetricedError, sanity_check_extra_data};
 use crate::{
     anyhow_error_and_log,
     cryptography::{
-        encryption::UnifiedPublicEncKey, is_legacy_extra_data,
+        encryption::UnifiedPublicEncKey,
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
@@ -13,7 +13,6 @@ use crate::{
     engine::base::compute_public_decryption_message,
     engine::validation::Eip712VerificationParams,
 };
-use kms_grpc::solidity_types::{PublicDecryptVerification, PublicDecryptVerificationQ126};
 use alloy_dyn_abi::Eip712Domain;
 use hashing::DomainSep;
 use itertools::Itertools;
@@ -444,31 +443,16 @@ fn validate_public_decrypt_meta_data(
             tracing::warn!("External signature is empty!");
             return Ok(false);
         }
-        let (ct_handles, decrypted_result) =
-            compute_public_decryption_message(ext_handles_bytes, &other_resp.plaintexts)?;
-        let recovered = if is_legacy_extra_data(params.response_extra_data) {
-            let message = PublicDecryptVerificationQ126 {
-                ctHandles: ct_handles,
-                decryptedResult: decrypted_result,
-            };
-            recover_address_from_ext_signature(
-                &message,
-                params.trusted_eip712_domain,
-                params.response_external_signature,
-            )
-        } else {
-            let message = PublicDecryptVerification {
-                ctHandles: ct_handles,
-                decryptedResult: decrypted_result,
-                extraData: params.response_extra_data.to_vec().into(),
-            };
-            recover_address_from_ext_signature(
-                &message,
-                params.trusted_eip712_domain,
-                params.response_external_signature,
-            )
-        };
-        match recovered {
+        let message = compute_public_decryption_message(
+            ext_handles_bytes,
+            &other_resp.plaintexts,
+            params.response_extra_data,
+        )?;
+        match recover_address_from_ext_signature(
+            &message,
+            params.trusted_eip712_domain,
+            params.response_external_signature,
+        ) {
             Ok(recovered_addr) => {
                 let expected_addr = cur_verf_key.address();
                 if recovered_addr != expected_addr {

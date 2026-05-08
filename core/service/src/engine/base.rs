@@ -29,7 +29,7 @@ use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::abi_encode_plaintexts;
 use kms_grpc::solidity_types::{
     CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
-    PublicDecryptVerification, PublicDecryptVerificationQ126,
+    PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use rand::{RngCore, SeedableRng};
@@ -630,21 +630,8 @@ pub(crate) fn compute_external_pt_signature(
         pts.len(),
         ext_handles_bytes.len()
     );
-    let (ct_handles, decrypted_result) = compute_public_decryption_message(ext_handles_bytes, pts)?;
-    if crate::cryptography::is_legacy_extra_data(extra_data) {
-        let message = PublicDecryptVerificationQ126 {
-            ctHandles: ct_handles,
-            decryptedResult: decrypted_result,
-        };
-        compute_eip712_signature(server_sk, &message, eip712_domain)
-    } else {
-        let message = PublicDecryptVerification {
-            ctHandles: ct_handles,
-            decryptedResult: decrypted_result,
-            extraData: extra_data.to_vec().into(),
-        };
-        compute_eip712_signature(server_sk, &message, eip712_domain)
-    }
+    let message = compute_public_decryption_message(ext_handles_bytes, pts, extra_data)?;
+    compute_eip712_signature(server_sk, &message, eip712_domain)
 }
 
 pub struct BaseKmsStruct {
@@ -838,7 +825,8 @@ pub fn abi_encode_plaintexts_ebytes(ptxts: &[TypedPlaintext]) -> Bytes {
 pub fn compute_public_decryption_message(
     ext_handles_bytes: &[Vec<u8>],
     pts: &[TypedPlaintext],
-) -> anyhow::Result<(Vec<FixedBytes<32>>, Bytes)> {
+    extra_data: &[u8],
+) -> anyhow::Result<PublicDecryptVerification> {
     // convert external_handles back to U256 to be signed
     let external_handles_bytes32: Vec<_> = ext_handles_bytes
         .iter()
@@ -857,11 +845,17 @@ pub fn compute_public_decryption_message(
     let pt_bytes = abi_encode_plaintexts(pts)?;
 
     tracing::info!(
-        "Computed PublicDecryptVerification for handles {:?}.",
+        "Computed PublicDecryptVerification for handles {:?} with extra_data \"{}\".",
         external_handles_bytes32,
+        hex::encode(extra_data)
     );
 
-    Ok((external_handles_bytes32, pt_bytes))
+    // the solidity structure to sign with EIP-712
+    Ok(PublicDecryptVerification {
+        ctHandles: external_handles_bytes32.clone(),
+        decryptedResult: pt_bytes.clone(),
+        extraData: extra_data.to_vec().into(),
+    })
 }
 
 /// Attempt to find the concrete parameters from an enum variant defined by
@@ -1878,30 +1872,21 @@ pub(crate) mod tests {
         // Extra data (empty for now)
         let extra_data: &[u8] = &[];
 
-        let build_msg = |handles: &[Vec<u8>],
-                         pts: &[TypedPlaintext],
-                         extra_data: &[u8]|
-         -> anyhow::Result<PublicDecryptVerification> {
-            let (ct_handles, decrypted_result) = compute_public_decryption_message(handles, pts)?;
-            Ok(PublicDecryptVerification {
-                ctHandles: ct_handles,
-                decryptedResult: decrypted_result,
-                extraData: extra_data.to_vec().into(),
-            })
-        };
-
         // Determinism: same inputs -> same hash
-        let m1 = build_msg(&handles, &pts, extra_data).expect("msg computation should succeed");
+        let m1 = compute_public_decryption_message(&handles, &pts, extra_data)
+            .expect("msg computation should succeed");
         let h1 = m1.eip712_signing_hash(&domain);
-        let m2 = build_msg(&handles, &pts, extra_data).expect("msg computation should succeed");
+        let m2 = compute_public_decryption_message(&handles, &pts, extra_data)
+            .expect("msg computation should succeed");
         let h2 = m2.eip712_signing_hash(&domain);
         assert_eq!(h1, h2, "Hashes must be the same for identical inputs");
 
         // Changing a handle changes the message
         let mut mutated_handles = handles.clone();
         mutated_handles[1][0] ^= 0x23;
-        let m_changed_handle = build_msg(&mutated_handles, &pts, extra_data)
-            .expect("msg computation should succeed");
+        let m_changed_handle =
+            compute_public_decryption_message(&mutated_handles, &pts, extra_data)
+                .expect("msg computation should succeed");
         let h_changed_handle = m_changed_handle.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_handle,
@@ -1911,8 +1896,8 @@ pub(crate) mod tests {
         // Changing a plaintext value changes the hash
         let mut pts_modified = pts.clone();
         pts_modified[0] = TypedPlaintext::from_u16(69);
-        let m_changed_pt =
-            build_msg(&handles, &pts_modified, extra_data).expect("msg computation should succeed");
+        let m_changed_pt = compute_public_decryption_message(&handles, &pts_modified, extra_data)
+            .expect("msg computation should succeed");
         let h_changed_pt = m_changed_pt.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_pt,
@@ -1921,8 +1906,8 @@ pub(crate) mod tests {
 
         // Changing extra data changes the hash
         let extra_data2 = vec![1u8, 2, 3, 5, 23];
-        let m_changed_extra =
-            build_msg(&handles, &pts, &extra_data2).expect("msg computation should succeed");
+        let m_changed_extra = compute_public_decryption_message(&handles, &pts, &extra_data2)
+            .expect("msg computation should succeed");
         let h_changed_extra = m_changed_extra.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_extra,
@@ -1931,7 +1916,7 @@ pub(crate) mod tests {
 
         // Error path: a handle longer than 32 bytes should fail
         let bad_handles = vec![vec![0u8; 33]];
-        let err = compute_public_decryption_message(&bad_handles, &pts).unwrap_err();
+        let err = compute_public_decryption_message(&bad_handles, &pts, &[]).unwrap_err();
         assert!(
             err.to_string().contains("too long: 33 bytes (max 32"),
             "Error message should mention 'too long: 33 bytes (max 32', got: {err}"
