@@ -355,7 +355,7 @@ async fn write_central_keys() {
 
     // write to an empty meta store should fail
     let result = crypto_storage
-        .write_central_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
@@ -377,7 +377,7 @@ async fn write_central_keys() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_central_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
@@ -391,7 +391,7 @@ async fn write_central_keys() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_central_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
@@ -418,7 +418,7 @@ async fn write_central_keys() {
         guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
-        .write_central_keys(
+        .write_fhe_keys(
             &new_req_id,
             &epoch_id,
             key_info,
@@ -492,7 +492,7 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
     }
 
     let result = crypto_storage
-        .write_central_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             key_info,
@@ -530,7 +530,7 @@ async fn write_threshold_empty_update() {
 
     // write to an empty meta store should fail
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
@@ -571,7 +571,7 @@ async fn write_threshold_empty_update() {
         );
     }
     let cache_read = crypto_storage
-        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .read_guarded_fhe_keys(&req_id, &epoch_id)
         .await;
     assert!(
         cache_read.is_err(),
@@ -585,7 +585,7 @@ async fn write_threshold_empty_update() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
@@ -620,7 +620,7 @@ async fn write_threshold_keys_meta_update() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
@@ -638,7 +638,7 @@ async fn write_threshold_keys_meta_update() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
@@ -680,7 +680,7 @@ async fn write_threshold_keys_meta_update() {
     }
 
     let refreshed = crypto_storage
-        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .read_guarded_fhe_keys(&req_id, &epoch_id)
         .await;
     assert!(
         refreshed.is_ok(),
@@ -705,7 +705,7 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
@@ -733,7 +733,7 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &new_req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
@@ -773,7 +773,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 
     // Try to read a non-existent key - should return an error
     let result = crypto_storage
-        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .read_guarded_fhe_keys(&req_id, &epoch_id)
         .await;
 
     assert!(result.is_err());
@@ -801,7 +801,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let result = crypto_storage
-        .write_threshold_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys,
@@ -842,7 +842,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         );
     }
     let cache_read = crypto_storage
-        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .read_guarded_fhe_keys(&req_id, &epoch_id)
         .await;
     assert!(
         cache_read.is_err(),
@@ -875,7 +875,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     }
 
     crypto_storage
-        .write_central_keys(
+        .write_fhe_keys(
             &req_id,
             &epoch_id,
             key_info,

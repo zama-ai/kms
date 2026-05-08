@@ -377,10 +377,7 @@ impl<
             .map(|key_info| async {
                 let keys = self
                     .crypto_storage
-                    .read_guarded_threshold_fhe_keys(
-                        &key_info.key_id,
-                        &verified_previous_epoch.epoch_id,
-                    )
+                    .read_guarded_fhe_keys(&key_info.key_id, &verified_previous_epoch.epoch_id)
                     .await
                     .map_err(|e| {
                         MetricedError::new(
@@ -765,7 +762,7 @@ impl<
             // to not leave the storage in a partial state.
             for key_info in verified_previous_epoch.keys_info.iter() {
                 if !crypto_storage
-                    .purge_threshold_key_material(&key_info.key_id, &new_epoch_id)
+                    .purge_fhe_keys(&key_info.key_id, &new_epoch_id)
                     .await
                 {
                     tracing::warn!(

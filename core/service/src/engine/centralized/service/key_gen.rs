@@ -286,7 +286,7 @@ pub(crate) async fn run_keygen_with_cancel<
                 );
             }
             crypto_storage_cancel
-                .purge_centralized_key_material(&req_id, &epoch_id)
+                .purge_fhe_keys(&req_id, &epoch_id)
                 .await;
         }
     }
@@ -463,7 +463,7 @@ pub(crate) async fn key_gen_background<
                 ),
             };
             if let Err(e) = crypto_storage
-                .write_central_keys(req_id, epoch_id, key_info, pks, meta_store, op_tag)
+                .write_fhe_keys(req_id, epoch_id, key_info, pks, meta_store, op_tag)
                 .await
             {
                 tracing::error!("Failed to write centralized keys for request {req_id}: {e}");

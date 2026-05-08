@@ -69,7 +69,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner.fhe_keys_exists(key_id, epoch_id, false).await
     }
 
-    pub(crate) async fn write_central_keys(
+    pub(crate) async fn write_fhe_keys(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
@@ -109,11 +109,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Purge centralized FHE key material from disk **and** from the in-memory
     /// cache.
-    pub(crate) async fn purge_centralized_key_material(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-    ) -> bool {
+    pub(crate) async fn purge_fhe_keys(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
         let storage_ok = self
             .inner
             .purge_material(

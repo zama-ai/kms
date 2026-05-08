@@ -495,7 +495,7 @@ impl<
                         tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
                         let mut guarded_meta_store = meta_store_cancelled.write().await;
                         let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
-                        crypto_storage_cancelled.purge_threshold_key_material(&req_id, &epoch_id).await;
+                        crypto_storage_cancelled.purge_fhe_keys(&req_id, &epoch_id).await;
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -792,7 +792,7 @@ impl<
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&from_key_id, epoch_id)
+                .read_guarded_fhe_keys(&from_key_id, epoch_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
@@ -808,7 +808,7 @@ impl<
         };
         let private_glwe_compute_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&to_key_id, epoch_id)
+                .read_guarded_fhe_keys(&to_key_id, epoch_id)
                 .await?;
             match threshold_keys.private_keys.glwe_secret_key_share.clone() {
                 GlweSecretKeyShareEnum::Z64(_share) => {
@@ -855,7 +855,7 @@ impl<
 
         let glwe_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys(&glwe_req_id, epoch_id)
+                .read_guarded_fhe_keys(&glwe_req_id, epoch_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share {
                 GlweSecretKeyShareEnum::Z64(_) => anyhow::bail!("expected glwe shares to be z128"),
@@ -865,7 +865,7 @@ impl<
 
         let compression_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys(&compression_req_id, epoch_id)
+                .read_guarded_fhe_keys(&compression_req_id, epoch_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share_compression {
                 Some(compression_enum) => match compression_enum {
@@ -1146,7 +1146,7 @@ impl<
     {
         let existing_private_keys = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &epoch_id)
+                .read_guarded_fhe_keys(&existing_keyset_id, &epoch_id)
                 .await?;
             threshold_keys.private_keys.as_ref().clone()
         };
@@ -1197,7 +1197,7 @@ impl<
     {
         let existing_private_keys = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &epoch_id)
+                .read_guarded_fhe_keys(&existing_keyset_id, &epoch_id)
                 .await?;
             threshold_keys.private_keys.as_ref().clone()
         };
@@ -1459,7 +1459,7 @@ impl<
                 //Note: We can't easily check here whether we succeeded writing to the meta store
                 //thus we can't increment the error counter if it fails
                 if let Err(e) = crypto_storage
-                    .write_threshold_keys(
+                    .write_fhe_keys(
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
@@ -1530,7 +1530,7 @@ impl<
                 // NOTE: when there is an existing compact pk from an older keygen (an older key ID),
                 // then this pk is effectively copied to the new key ID.
                 if let Err(e) = crypto_storage
-                    .write_threshold_keys(
+                    .write_fhe_keys(
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
@@ -1655,7 +1655,7 @@ impl<
     ) -> anyhow::Result<tfhe::CompactPublicKey> {
         let expected_digest = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(existing_keyset_id, epoch_id)
+                .read_guarded_fhe_keys(existing_keyset_id, epoch_id)
                 .await?;
             match &threshold_keys.meta_data {
                 KeyGenMetadata::Current(inner) => inner

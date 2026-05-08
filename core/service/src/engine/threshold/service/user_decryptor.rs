@@ -534,7 +534,7 @@ impl<
         // but this should be ok since write locks
         // happen rarely as keygen is a rare event.
         let fhe_keys_rlock = crypto_storage
-            .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -776,7 +776,7 @@ mod tests {
 
         user_decryptor
             .crypto_storage
-            .write_threshold_keys(
+            .write_fhe_keys(
                 &key_id,
                 &epoch_id,
                 threshold_fhe_keys,
@@ -793,7 +793,7 @@ mod tests {
             // check existence
             let _guard = user_decryptor
                 .crypto_storage
-                .read_guarded_threshold_fhe_keys(&key_id, &epoch_id)
+                .read_guarded_fhe_keys(&key_id, &epoch_id)
                 .await
                 .unwrap();
         }
