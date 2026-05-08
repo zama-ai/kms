@@ -152,10 +152,27 @@ mod legacy_q126 {
             bytes crsDigest;
         }
     }
+
+    alloy_sol_types::sol! {
+        struct UserDecryptResponseVerificationQ126 {
+            bytes publicKey;
+            bytes32[] ctHandles;
+            bytes userDecryptedShare;
+        }
+    }
+
+    alloy_sol_types::sol! {
+        struct PublicDecryptVerificationQ126 {
+            bytes32[] ctHandles;
+            bytes decryptedResult;
+        }
+    }
 }
 
 pub use legacy_q126::CrsgenVerification as CrsgenVerificationQ126;
 pub use legacy_q126::KeygenVerification as KeygenVerificationQ126;
+pub use legacy_q126::PublicDecryptVerificationQ126;
+pub use legacy_q126::UserDecryptResponseVerificationQ126;
 
 impl CrsgenVerificationQ126 {
     pub fn new(crs_id: &RequestId, max_bit_length: usize, crs_digest: Vec<u8>) -> Self {

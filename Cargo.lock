@@ -3030,7 +3030,7 @@ dependencies = [
 
 [[package]]
 name = "error-utils"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "tracing",
@@ -3065,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "experiments"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "aes-prng",
  "anyhow",
@@ -3387,7 +3387,7 @@ checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
 
 [[package]]
 name = "generate-test-material"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4222,7 +4222,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4318,7 +4318,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-client"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -4365,7 +4365,7 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4393,7 +4393,7 @@ dependencies = [
 
 [[package]]
 name = "kms-health-check"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4918,7 +4918,7 @@ dependencies = [
 
 [[package]]
 name = "observability"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "axum",
@@ -7404,7 +7404,7 @@ dependencies = [
 
 [[package]]
 name = "test-utils"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -7415,11 +7415,11 @@ dependencies = [
 
 [[package]]
 name = "test-utils-cc"
-version = "0.13.20-0"
+version = "0.13.20-1"
 
 [[package]]
 name = "test-utils-service"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -7590,7 +7590,7 @@ dependencies = [
 
 [[package]]
 name = "thread-handles"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "error-utils",
@@ -7620,7 +7620,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-algebra"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "aes-prng",
  "anyhow",
@@ -7647,7 +7647,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-bgv"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "aes-prng",
  "anyhow",
@@ -7675,7 +7675,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-execution"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "aes",
  "aes-prng",
@@ -7724,7 +7724,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-hashing"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -7734,7 +7734,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-networking"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7771,7 +7771,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-types"
-version = "0.13.20-0"
+version = "0.13.20-1"
 dependencies = [
  "anyhow",
  "async-trait",

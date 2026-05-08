@@ -17,9 +17,17 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::compute_eip712_signature;
 #[cfg(any(feature = "non-wasm", test))]
 use alloy_dyn_abi::Eip712Domain;
+use alloy_primitives::FixedBytes;
 use kms_grpc::{
-    kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
+    kms::v1::UserDecryptionResponsePayload,
+    solidity_types::{UserDecryptResponseVerification, UserDecryptResponseVerificationQ126},
 };
+
+/// True when `extra_data` should be treated as absent and the legacy Q126
+/// payload layout (no `extraData` field) used instead.
+pub(crate) fn is_legacy_extra_data(extra_data: &[u8]) -> bool {
+    extra_data.is_empty() || (extra_data.len() == 1 && extra_data[0] == 0)
+}
 
 #[cfg(any(feature = "non-wasm", test))]
 pub(crate) fn compute_external_user_decrypt_signature(
@@ -29,16 +37,31 @@ pub(crate) fn compute_external_user_decrypt_signature(
     user_pk_buf: &[u8],
     extra_data: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    let message = compute_user_decrypt_message(payload, user_pk_buf, extra_data)?;
+    let (ct_handles, user_decrypted_share) = compute_user_decrypt_message(payload)?;
     tracing::debug!("Computing signature for UserDecryptResponseVerification");
-    compute_eip712_signature(server_sk, &message, eip712_domain)
+    if is_legacy_extra_data(extra_data) {
+        let message = UserDecryptResponseVerificationQ126 {
+            publicKey: user_pk_buf.to_vec().into(),
+            ctHandles: ct_handles,
+            userDecryptedShare: user_decrypted_share.into(),
+        };
+        compute_eip712_signature(server_sk, &message, eip712_domain)
+    } else {
+        let message = UserDecryptResponseVerification {
+            publicKey: user_pk_buf.to_vec().into(),
+            ctHandles: ct_handles,
+            userDecryptedShare: user_decrypted_share.into(),
+            extraData: extra_data.to_vec().into(),
+        };
+        compute_eip712_signature(server_sk, &message, eip712_domain)
+    }
 }
 
+/// Compute the parts of the UserDecryptResponseVerification payload that are
+/// shared between the current and legacy (Q126) Solidity layouts.
 pub(crate) fn compute_user_decrypt_message(
     payload: &UserDecryptionResponsePayload,
-    user_pk_buf: &[u8],
-    extra_data: &[u8],
-) -> anyhow::Result<UserDecryptResponseVerification> {
+) -> anyhow::Result<(Vec<FixedBytes<32>>, Vec<u8>)> {
     // convert external_handles back to 256-bit bytes32 to be signed
     let external_handles_bytes32: Vec<_> = payload
         .signcrypted_ciphertexts
@@ -51,7 +74,7 @@ pub(crate) fn compute_user_decrypt_message(
                     c.external_handle.len()
                 );
             } else {
-                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
+                Ok(FixedBytes::<32>::left_padding_from(
                     c.external_handle.as_slice(),
                 ))
             }
@@ -61,15 +84,9 @@ pub(crate) fn compute_user_decrypt_message(
     let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
 
     tracing::info!(
-        "Computed UserDecryptResponseVerification for handles {:?} and extra data \"{}\".",
+        "Computed UserDecryptResponseVerification for handles {:?}.",
         external_handles_bytes32,
-        hex::encode(extra_data)
     );
 
-    Ok(UserDecryptResponseVerification {
-        publicKey: user_pk_buf.to_vec().into(),
-        ctHandles: external_handles_bytes32,
-        userDecryptedShare: user_decrypted_share_buf.into(),
-        extraData: extra_data.to_vec().into(),
-    })
+    Ok((external_handles_bytes32, user_decrypted_share_buf))
 }

@@ -8,11 +8,13 @@ use kms_grpc::{
 };
 use std::collections::{HashMap, HashSet};
 
+use kms_grpc::solidity_types::{UserDecryptResponseVerification, UserDecryptResponseVerificationQ126};
+
 use crate::{
     anyhow_error_and_log,
     client::user_decryption_wasm::{ParsedUserDecryptionRequest, compute_link},
     cryptography::{
-        compute_user_decrypt_message,
+        compute_user_decrypt_message, is_legacy_extra_data,
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
@@ -82,11 +84,27 @@ pub(crate) fn check_ext_user_decryption_signature(
     expected_addr: &alloy_primitives::Address,
 ) -> anyhow::Result<()> {
     let extra_data = request.extra_data();
-    let message = compute_user_decrypt_message(payload, request.enc_key(), extra_data)?;
+    let user_pk_buf = request.enc_key();
+    let (ct_handles, user_decrypted_share) = compute_user_decrypt_message(payload)?;
     tracing::debug!(
         "Verifying external user decryption signature for UserDecryptResponseVerification"
     );
-    let addr = recover_address_from_ext_signature(&message, eip712_domain, external_sig)?;
+    let addr = if is_legacy_extra_data(extra_data) {
+        let message = UserDecryptResponseVerificationQ126 {
+            publicKey: user_pk_buf.to_vec().into(),
+            ctHandles: ct_handles,
+            userDecryptedShare: user_decrypted_share.into(),
+        };
+        recover_address_from_ext_signature(&message, eip712_domain, external_sig)?
+    } else {
+        let message = UserDecryptResponseVerification {
+            publicKey: user_pk_buf.to_vec().into(),
+            ctHandles: ct_handles,
+            userDecryptedShare: user_decrypted_share.into(),
+            extraData: extra_data.to_vec().into(),
+        };
+        recover_address_from_ext_signature(&message, eip712_domain, external_sig)?
+    };
     if addr != *expected_addr {
         anyhow::bail!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE);
     }
