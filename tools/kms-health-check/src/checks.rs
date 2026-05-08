@@ -2,6 +2,7 @@ use anyhow::Result;
 use kms_grpc::kms::v1::{BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, RequestId};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::config::{self};
 use crate::grpc_client::GrpcHealthClient;
@@ -518,7 +519,8 @@ pub async fn run_bandwidth_benchmark(
         }),
     };
 
-    let timeout = std::time::Duration::from_secs(duration + 30); // Add buffer to benchmark duration
     let client = GrpcHealthClient::new(endpoint);
-    client.run_bandwidth_benchmark(request, timeout).await
+    client
+        .run_bandwidth_benchmark(request, Duration::from_secs(duration))
+        .await
 }
