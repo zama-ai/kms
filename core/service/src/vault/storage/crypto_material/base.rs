@@ -83,7 +83,7 @@ impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 /// Boxing the inner values keeps the enum cheap to move.
 #[derive(Clone)]
 pub enum PublicKeySet {
-    Standard(Box<FhePubKeySet>),
+    Uncompressed(Box<FhePubKeySet>),
     Compressed {
         compact_public_key: Box<tfhe::CompactPublicKey>,
         compressed_keyset: Box<CompressedXofKeySet>,
@@ -655,13 +655,13 @@ where
         for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let special_pub_type = match &fhe_key_set {
-            PublicKeySet::Standard(_) => PubDataType::ServerKey,
+            PublicKeySet::Uncompressed(_) => PubDataType::ServerKey,
             PublicKeySet::Compressed { .. } => PubDataType::CompressedXofKeySet,
         };
 
         // First try to store the special key (server key or compressed keyset).
         match &fhe_key_set {
-            PublicKeySet::Standard(keys) => {
+            PublicKeySet::Uncompressed(keys) => {
                 self.handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
                     key_id,
                     Some(epoch_id),
@@ -688,7 +688,7 @@ where
             }
         };
         let pk_to_store = match &fhe_key_set {
-            PublicKeySet::Standard(keys) => &keys.public_key,
+            PublicKeySet::Uncompressed(keys) => &keys.public_key,
             PublicKeySet::Compressed {
                 compact_public_key, ..
             } => compact_public_key,

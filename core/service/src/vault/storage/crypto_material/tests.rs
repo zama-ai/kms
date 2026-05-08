@@ -347,7 +347,7 @@ async fn write_central_keys() {
         decompression_key: None,
         public_key_info: dummy_info(),
     };
-    let fhe_key_set = PublicKeySet::Standard(Box::new(FhePubKeySet {
+    let fhe_key_set = PublicKeySet::Uncompressed(Box::new(FhePubKeySet {
         public_key,
         server_key,
     }));
@@ -476,7 +476,7 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
         decompression_key: None,
         public_key_info: dummy_info(),
     };
-    let public_key_set = PublicKeySet::Standard(Box::new(FhePubKeySet {
+    let public_key_set = PublicKeySet::Uncompressed(Box::new(FhePubKeySet {
         public_key,
         server_key,
     }));
@@ -527,7 +527,7 @@ async fn write_threshold_empty_update() {
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set.clone()));
+    let boxed_public_key_set = PublicKeySet::Uncompressed(Box::new(fhe_key_set.clone()));
 
     // write to an empty meta store should fail
     let result = crypto_storage
@@ -611,7 +611,7 @@ async fn write_threshold_keys_meta_update() {
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
-    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set));
+    let boxed_public_key_set = PublicKeySet::Uncompressed(Box::new(fhe_key_set));
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // update the meta store and the write should be ok
@@ -698,7 +698,7 @@ async fn write_threshold_keys_failed_storage() {
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
-    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set));
+    let boxed_public_key_set = PublicKeySet::Uncompressed(Box::new(fhe_key_set));
     // update the meta store and the write should be ok
     {
         let meta_store = meta_store.clone();

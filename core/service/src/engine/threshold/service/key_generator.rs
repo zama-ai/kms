@@ -1463,7 +1463,7 @@ impl<
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
-                        PublicKeySet::Standard(Box::new(pub_key_set)),
+                        PublicKeySet::Uncompressed(Box::new(pub_key_set)),
                         meta_store,
                         op_tag,
                     )
