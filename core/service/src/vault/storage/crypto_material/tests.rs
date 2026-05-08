@@ -27,6 +27,7 @@ use kms_grpc::{
 };
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
+use rasn::de::Error;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1007,12 +1008,12 @@ fn dummy_crs_metadata(seed: u8) -> CrsGenMetadata {
 
 /// Build a `RecoveryValidationMaterial` suitable for `write_backup_keys` tests.
 /// Mirrors the dummy fixture in `engine/backup_operator.rs` tests.
-fn dummy_recovery_material() -> RecoveryValidationMaterial {
+fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
     let mut rng = AesRng::seed_from_u64(0);
     let (verf_key, sig_key) = gen_sig_keys(&mut rng);
     let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_dec_key, enc_key) = enc.keygen().unwrap();
-    let backup_id = derive_request_id("write_backup_keys_test").unwrap();
+    let backup_id = derive_request_id(caller_name).unwrap();
 
     let mut commitments = BTreeMap::new();
     commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
@@ -1368,8 +1369,8 @@ async fn purge_material_paths() {
 #[tokio::test]
 async fn handle_all_storage_no_overwrite_of_existing_data() {
     let storage = fresh_ram_storage();
-    let req_id = derive_request_id("handle_all_dup").unwrap();
-    let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch").unwrap().into();
+    let req_id = derive_request_id("handle_all_dup")?;
+    let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch")?.into();
     let original = TestType { i: 1 };
     let attempted_overwrite = TestType { i: 2 };
 
@@ -1382,8 +1383,7 @@ async fn handle_all_storage_no_overwrite_of_existing_data() {
             false,
             TEST_METRIC,
         )
-        .await
-        .unwrap();
+        .await?;
 
     // Initial entries are present.
     {
@@ -1557,7 +1557,7 @@ async fn write_backup_keys() {
         RamStorage::new(),
         Some(make_unencrypted_backup_vault()),
     );
-    let recovery = dummy_recovery_material();
+    let recovery = dummy_recovery_material("write_backup_keys");
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     // Fails when meta store entry is missing, even though vault is present.
     let err = storage
@@ -1594,7 +1594,7 @@ async fn write_backup_keys() {
 #[tokio::test]
 async fn write_backup_keys_no_vault() {
     let storage = fresh_ram_storage();
-    let recovery = dummy_recovery_material();
+    let recovery = dummy_recovery_material("write_backup_keys_no_vault");
     let req_id = recovery.custodian_context().context_id;
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
