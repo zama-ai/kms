@@ -122,7 +122,7 @@ pub async fn key_gen_impl<
         // Ensure that no key already exists for a given request.
         let already_exists = service
             .crypto_storage
-            .centralized_fhe_keys_exists(&req_id, &epoch_id)
+            .fhe_keys_exists(&req_id, &epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(

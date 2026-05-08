@@ -891,7 +891,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
 
     assert!(
         crypto_storage
-            .centralized_fhe_keys_exists(&req_id, &epoch_id)
+            .fhe_keys_exists(&req_id, &epoch_id)
             .await
             .expect("sanity check: existence query should not fail"),
         "complete compressed layout should be considered present"
@@ -906,7 +906,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
 
     assert!(
         !crypto_storage
-            .centralized_fhe_keys_exists(&req_id, &epoch_id)
+            .fhe_keys_exists(&req_id, &epoch_id)
             .await
             .expect("storage should still be queryable after deleting PublicKey"),
         "compressed keys should be treated as missing when the standalone PublicKey is absent"

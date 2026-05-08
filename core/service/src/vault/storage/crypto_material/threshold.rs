@@ -152,7 +152,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Check if the threshold FHE keys exist for a given key and epoch ID.
     /// The check is agnostic to whether the keys are compressed or not.
-    pub(crate) async fn threshold_fhe_keys_exists(
+    pub(crate) async fn fhe_keys_exists(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,

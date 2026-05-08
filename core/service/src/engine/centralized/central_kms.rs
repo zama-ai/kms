@@ -1533,7 +1533,7 @@ pub(crate) mod tests {
             assert!(
                 inner
                     .crypto_storage
-                    .centralized_fhe_keys_exists(key_id, epoch_id)
+                    .fhe_keys_exists(key_id, epoch_id)
                     .await
                     .unwrap(),
                 "FHE keys for {key_id} not found"
@@ -1749,7 +1749,7 @@ pub(crate) mod tests {
             assert!(
                 inner
                     .crypto_storage
-                    .centralized_fhe_keys_exists(key_id, epoch_id)
+                    .fhe_keys_exists(key_id, epoch_id)
                     .await
                     .unwrap(),
                 "FHE keys for {key_id} not found"

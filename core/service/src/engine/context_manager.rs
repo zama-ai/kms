@@ -329,8 +329,7 @@ where
         // Then store the results
         self.crypto_storage
             .write_backup_keys(recovery_validation, Arc::clone(&self.custodian_meta_store))
-            .await
-            .map_err(|e| anyhow::anyhow!("Backing up failed with error {e}"))?;
+            .await?;
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
             inner_context.context_id,

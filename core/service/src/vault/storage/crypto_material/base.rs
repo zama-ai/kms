@@ -292,7 +292,7 @@ where
     /// However, this should never happen, since since any `req_id` should have been added
     /// to the meta store as pending before this call, which can only be done for a fresh `req_id`.
     #[allow(clippy::too_many_arguments)]
-    pub async fn handle_persistent_and_meta_storage<
+    async fn handle_persistent_and_meta_storage<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
