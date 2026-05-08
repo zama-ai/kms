@@ -357,7 +357,7 @@ This is done over a period of `DURATION_SEC` after which the results are collect
 To better emulate what happens during the execution of an MPC protocol, it's best to perform the bandwidth benchmark on all the parties at the same time, such that all the parties send and receive the same amount of data.
 
 
-__NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION_SEC` plus an additional `30` seconds.
+__NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION_SEC` plus the usual request timeout configurable via environment variable as described above.
 
 
 ```bash

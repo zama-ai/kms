@@ -25,7 +25,8 @@ pub enum HealthCheckStatus {
 }
 
 pub type HealthCheckResult<R> = HashMap<(R, Identity), HealthCheckStatus>;
-pub type BandwidthBenchmarkResult<R> = HashMap<(R, Identity), usize>;
+pub type BandwidthBenchmarkResult<R> =
+    HashMap<(R, Identity), (usize, Duration, Vec<HealthCheckStatus>)>;
 
 impl<R: RoleTrait> HealthCheckSession<R> {
     pub fn new(
@@ -134,20 +135,24 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             join_set.spawn(async move {
                 let mut total_bytes_sent = 0;
                 let start = std::time::Instant::now();
+                let mut answers = Vec::new();
                 while start.elapsed() < duration {
-                    Self::send(
-                        tag_serialized.clone(),
-                        client.clone(),
-                        timeout,
-                        payload.clone(),
-                        role,
-                        id.clone(),
-                    )
-                    .await;
+                    answers.push(
+                        Self::send(
+                            tag_serialized.clone(),
+                            client.clone(),
+                            timeout,
+                            payload.clone(),
+                            role,
+                            id.clone(),
+                        )
+                        .await
+                        .2,
+                    );
                     total_bytes_sent += payload_size;
                 }
                 tracing::debug!("Total bytes sent to party {}: {}", id, total_bytes_sent);
-                ((role, id), total_bytes_sent)
+                ((role, id), (total_bytes_sent, start.elapsed(), answers))
             });
         }
 

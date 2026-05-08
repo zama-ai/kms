@@ -849,6 +849,16 @@ message BandwidthBenchmarkRequest {
   uint32 payload_size_per_session = 4;
 }
 
+// All latency info are in ms
+message LatencyInfo {
+  uint64 average = 1;
+  uint64 p50 = 2;
+  uint64 p90 = 3;
+  uint64 p99 = 4;
+  uint64 slowest = 5;
+  uint64 fastest = 6;
+}
+
 message PeerBandwidthInfo {
   // Peer party ID
   uint32 peer_id = 1;
@@ -856,6 +866,11 @@ message PeerBandwidthInfo {
   string endpoint = 2;
   // Number of bytes sent to this peer
   uint64 bytes_sent = 3;
+  // Effective time spent averaged over all sessions
+  // (may differ from requested duration because we don't stop the experiment abruptly)
+  uint64 duration = 4;
+  // Some measure of latency over all messages sent
+  LatencyInfo latency = 5;
 }
 
 message BandwidthBenchmarkResponse {
