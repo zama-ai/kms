@@ -448,7 +448,7 @@ pub(crate) async fn key_gen_background<
 
             let (pks, key_info) = match keygen_result {
                 CentralizedKeyGenResult::Uncompressed(fhe_key_set, key_info) => {
-                    (PublicKeySet::Uncompressed(Box::new(fhe_key_set)), key_info)
+                    (PublicKeySet::Uncompressed(Arc::new(fhe_key_set)), key_info)
                 }
                 CentralizedKeyGenResult::Compressed(
                     compressed_keyset,
@@ -456,8 +456,8 @@ pub(crate) async fn key_gen_background<
                     key_info,
                 ) => (
                     PublicKeySet::Compressed {
-                        compact_public_key: Box::new(compact_public_key),
-                        compressed_keyset: Box::new(compressed_keyset),
+                        compact_public_key: Arc::new(compact_public_key),
+                        compressed_keyset: Arc::new(compressed_keyset),
                     },
                     key_info,
                 ),

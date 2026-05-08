@@ -80,13 +80,14 @@ impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 /// The public-key payload produced by an FHE keygen and consumed by the
 /// storage helpers.
 ///
-/// Boxing the inner values keeps the enum cheap to move.
+/// The inner values are wrapped in `Arc` so the enum is cheap to clone and
+/// share without deep-copying the underlying key material.
 #[derive(Clone)]
 pub enum PublicKeySet {
-    Uncompressed(Box<FhePubKeySet>),
+    Uncompressed(Arc<FhePubKeySet>),
     Compressed {
-        compact_public_key: Box<tfhe::CompactPublicKey>,
-        compressed_keyset: Box<CompressedXofKeySet>,
+        compact_public_key: Arc<tfhe::CompactPublicKey>,
+        compressed_keyset: Arc<CompressedXofKeySet>,
     },
 }
 

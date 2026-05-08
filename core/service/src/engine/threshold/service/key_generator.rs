@@ -1463,7 +1463,7 @@ impl<
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
-                        PublicKeySet::Uncompressed(Box::new(pub_key_set)),
+                        PublicKeySet::Uncompressed(Arc::new(pub_key_set)),
                         meta_store,
                         op_tag,
                     )
@@ -1535,8 +1535,8 @@ impl<
                         epoch_id,
                         threshold_fhe_keys,
                         PublicKeySet::Compressed {
-                            compact_public_key: Box::new(compact_public_key),
-                            compressed_keyset: Box::new(compressed_keyset),
+                            compact_public_key: Arc::new(compact_public_key),
+                            compressed_keyset: Arc::new(compressed_keyset),
                         },
                         Arc::clone(&meta_store),
                         op_tag,
