@@ -245,12 +245,27 @@ impl SessionMaker {
         &self,
         context_id: &ContextId,
     ) -> anyhow::Result<HealthCheckSession<Role>> {
+        self.get_healthcheck_session_with_pool(context_id, 1).await
+    }
+
+    // Returns a health check session whose per-peer connection pool has
+    // `connections_per_peer` independent gRPC connections. With
+    // `connections_per_peer = 1` this matches [`get_healthcheck_session`].
+    // Used by the bandwidth benchmark to stripe parallel sessions across
+    // multiple HTTP/2 codec tasks.
+    async fn get_healthcheck_session_with_pool(
+        &self,
+        context_id: &ContextId,
+        connections_per_peer: usize,
+    ) -> anyhow::Result<HealthCheckSession<Role>> {
         let nm = self.networking_manager.read().await;
         let role_assignment = self.get_role_assignment(context_id).await?;
         let my_role = self.my_role(context_id).await?;
 
         if let Some(role) = my_role {
-            Ok(nm.make_healthcheck_session(&role_assignment, role).await?)
+            Ok(nm
+                .make_healthcheck_session_with_pool(&role_assignment, role, connections_per_peer)
+                .await?)
         } else {
             Err(anyhow::anyhow!(
                 "My role is not defined for context {}",
@@ -863,11 +878,25 @@ impl ImmutableSessionMaker {
     }
 
     // Returns a health check session for the given context.
-    pub(crate) async fn get_healthcheck_session(
+    //pub(crate) async fn get_healthcheck_session(
+    //    &self,
+    //    context_id: &ContextId,
+    //) -> anyhow::Result<HealthCheckSession<Role>> {
+    //    self.inner.get_healthcheck_session(context_id).await
+    //}
+
+    // Returns a health check session for the given context whose per-peer
+    // connection pool has `connections_per_peer` independent gRPC
+    // connections. With `connections_per_peer = 1` this matches
+    // [`get_healthcheck_session`]. Used by the bandwidth benchmark.
+    pub(crate) async fn get_healthcheck_session_with_pool(
         &self,
         context_id: &ContextId,
+        connections_per_peer: usize,
     ) -> anyhow::Result<HealthCheckSession<Role>> {
-        self.inner.get_healthcheck_session(context_id).await
+        self.inner
+            .get_healthcheck_session_with_pool(context_id, connections_per_peer)
+            .await
     }
 }
 
