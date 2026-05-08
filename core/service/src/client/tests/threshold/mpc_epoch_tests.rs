@@ -361,7 +361,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             None,
             1,
             None,
-            false, // use the default compressed keyset
         )
         .await;
     }

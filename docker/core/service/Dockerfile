@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     ./core/service/bin
 
 
-ARG YQ_VERSION=v4.52.4
+ARG YQ_VERSION=v4.53.2
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \

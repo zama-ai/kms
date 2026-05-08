@@ -459,7 +459,6 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
-            false,
         )
         .await;
 

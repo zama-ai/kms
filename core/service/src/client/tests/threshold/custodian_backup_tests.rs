@@ -321,8 +321,6 @@ async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case
 
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
-    use crate::client::tests::common::OptKeySetConfigAccessor;
-
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let mut env = ThresholdBackupTestEnv::new(
         &format!("decrypt_after_recovery_threshold_{n}_{amount_custodians}_{threshold}"),
@@ -397,7 +395,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         1,
         env.test_path(),
-        !keyset_config.is_compressed(),
     )
     .await;
 }
