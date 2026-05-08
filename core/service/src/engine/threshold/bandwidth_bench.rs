@@ -26,11 +26,15 @@ pub(crate) async fn run_bandwidth_benchmark(
     let payload_size = request.payload_size_per_session as usize;
     let num_sessions = request.number_sessions as usize;
     let duration = Duration::from_secs(request.duration);
+    // A value of 0 (the proto default for older clients) is treated as 1
+    // so this remains backward-compatible with the historical
+    // single-connection benchmark.
+    let connections_per_peer = (request.connections_per_peer as usize).max(1);
 
     let mut join_set = tokio::task::JoinSet::new();
-    for _ in 0..num_sessions {
+    for session_idx in 0..num_sessions {
         let session = session_maker
-            .get_healthcheck_session(&context_id)
+            .get_healthcheck_session_with_pool(&context_id, connections_per_peer)
             .await
             .map_err(|e| {
                 Status::internal(format!(
@@ -40,7 +44,7 @@ pub(crate) async fn run_bandwidth_benchmark(
             })?;
         join_set.spawn(async move {
             session
-                .run_bandwidth_benchmark(payload_size, duration)
+                .run_bandwidth_benchmark(payload_size, duration, session_idx)
                 .await
         });
     }

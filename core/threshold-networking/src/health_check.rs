@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use super::ggen::gnetworking_client::GnetworkingClient;
 use crate::grpc::HealthTag;
 use error_utils::anyhow_error_and_log;
@@ -14,8 +15,15 @@ pub struct HealthCheckSession<R: RoleTrait> {
     /// My own [`Role`]
     pub(crate) my_role: R,
     pub(crate) timeout: Duration,
-    pub(crate) connection_channels:
-        HashMap<(R, Identity), GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
+    /// One or more gRPC clients per peer. The first entry is the cached,
+    /// shared client used for ordinary health checks. Additional entries
+    /// (only populated by [`crate::grpc::GrpcNetworkingManager::make_healthcheck_session_with_pool`])
+    /// are independent connections used by the bandwidth benchmark to
+    /// stripe sessions across multiple HTTP/2 codec tasks.
+    pub(crate) connection_channels: HashMap<
+        (R, Identity),
+        Vec<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
+    >,
 }
 
 pub enum HealthCheckStatus {
@@ -35,7 +43,7 @@ impl<R: RoleTrait> HealthCheckSession<R> {
         timeout: Duration,
         connection_channels: HashMap<
             (R, Identity),
-            GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
+            Vec<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
         >,
     ) -> Self {
         Self {
@@ -68,7 +76,18 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             .map_err(|_| anyhow_error_and_log("Failed to serialize the Health Check Tag"))?;
 
         let mut tasks = JoinSet::new();
-        for ((role, id), client) in self.connection_channels.iter() {
+        for ((role, id), clients) in self.connection_channels.iter() {
+            // For an ordinary health check we just use the first (cached)
+            // client; any extra pool slots are reserved for the bandwidth
+            // benchmark. `connection_channels` is built such that every
+            // peer has at least one client — see
+            // [`crate::grpc::GrpcNetworkingManager::make_healthcheck_session_with_pool`].
+            let client = clients.first().ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "Empty connection pool for peer {:?} in HealthCheckSession",
+                    id
+                ))
+            })?;
             let (role, id, client, tag_serialized, timeout) = (
                 *role,
                 id.clone(),
@@ -101,9 +120,16 @@ impl<R: RoleTrait> HealthCheckSession<R> {
         &self,
         payload_size: usize,
         duration: Duration,
+        session_idx: usize,
     ) -> anyhow::Result<BandwidthBenchmarkResult<R>> {
         // For duration, hit all the other parties with a payload of the given size.
         // As soon as the other party has answered, hit it with the next payload until the duration has elapsed.
+        //
+        // `session_idx` is the index of this session within the surrounding
+        // benchmark request (see `run_bandwidth_benchmark` in
+        // `core/service/src/engine/threshold/bandwidth_bench.rs`). It is used to
+        // stripe sessions across the per-peer connection pool so that
+        // independent sessions land on independent HTTP/2 codec tasks.
 
         let tag = HealthTag {
             sender: self.owner.mpc_identity(),
@@ -122,14 +148,22 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             .map(|_| rand::random::<u8>())
             .collect::<Vec<u8>>();
 
-        for ((role, id), client) in self.connection_channels.iter() {
-            let (role, id, client, tag_serialized, timeout) = (
-                *role,
-                id.clone(),
-                client.clone(),
-                tag_serialized.clone(),
-                self.timeout,
-            );
+        for ((role, id), clients) in self.connection_channels.iter() {
+            // Stripe sessions across the per-peer pool. The pool is built by
+            // `make_healthcheck_session_with_pool` and always has at least
+            // one entry; the empty-pool branch below should be unreachable,
+            // but guarding it keeps the modulo from trapping on a malformed
+            // session.
+            let pool_len = clients.len();
+            if pool_len == 0 {
+                return Err(anyhow_error_and_log(format!(
+                    "Empty connection pool for peer {:?} in HealthCheckSession",
+                    id
+                )));
+            }
+            let client = clients[session_idx % pool_len].clone();
+            let (role, id, tag_serialized, timeout) =
+                (*role, id.clone(), tag_serialized.clone(), self.timeout);
 
             let payload = payload.clone();
             join_set.spawn(async move {

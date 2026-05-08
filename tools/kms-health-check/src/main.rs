@@ -79,6 +79,15 @@ enum Commands {
         /// Payload size per session in bytes
         #[arg(short, long)]
         payload_size: u32,
+
+        /// Number of independent gRPC connections to open per peer.
+        /// Sessions are striped round-robin across these connections so
+        /// they no longer all share a single HTTP/2 codec task.
+        /// Defaults to 1, which preserves the historical single-connection
+        /// behavior; raise it (e.g. 8) when investigating small-payload
+        /// throughput.
+        #[arg(long, default_value_t = 1)]
+        connections_per_peer: u32,
     },
 }
 
@@ -133,6 +142,7 @@ async fn main() -> Result<()> {
             duration,
             num_sessions,
             payload_size,
+            connections_per_peer,
         } => {
             if let OutputFormat::Json = cli.format {
                 println!(
@@ -149,6 +159,7 @@ async fn main() -> Result<()> {
                         duration,
                         num_sessions,
                         payload_size,
+                        connections_per_peer,
                     )
                     .await;
                     (ep, result)
@@ -160,7 +171,13 @@ async fn main() -> Result<()> {
                 let result = result?;
                 results.push((endpoint, result));
             }
-            print_bandwidth_benchmark_text(duration, num_sessions, payload_size, results)?;
+            print_bandwidth_benchmark_text(
+                duration,
+                num_sessions,
+                payload_size,
+                connections_per_peer,
+                results,
+            )?;
         }
     };
 

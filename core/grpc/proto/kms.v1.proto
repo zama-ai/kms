@@ -847,6 +847,14 @@ message BandwidthBenchmarkRequest {
   uint32 number_sessions = 3;
   // Size of the payload each session will send at a time
   uint32 payload_size_per_session = 4;
+  // Number of independent gRPC connections to open per peer for the
+  // benchmark. The `number_sessions` sessions are striped across these
+  // connections (round-robin) so they no longer all share a single
+  // HTTP/2 codec task. A value of 0 is treated as 1, which preserves
+  // the historical single-connection behavior. Useful for measuring
+  // small-payload throughput, where the per-connection codec task is
+  // typically the bottleneck.
+  uint32 connections_per_peer = 5;
 }
 
 // All latency info are in ms
