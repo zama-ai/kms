@@ -27,7 +27,6 @@ use kms_grpc::{
 };
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
-use rasn::de::Error;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1369,8 +1368,8 @@ async fn purge_material_paths() {
 #[tokio::test]
 async fn write_all_no_overwrite_of_existing_data() {
     let storage = fresh_ram_storage();
-    let req_id = derive_request_id("handle_all_dup")?;
-    let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch")?.into();
+    let req_id = derive_request_id("handle_all_dup").unwrap();
+    let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch").unwrap().into();
     let original = TestType { i: 1 };
     let attempted_overwrite = TestType { i: 2 };
 
@@ -1383,7 +1382,8 @@ async fn write_all_no_overwrite_of_existing_data() {
             false,
             TEST_METRIC,
         )
-        .await?;
+        .await
+        .unwrap();
 
     // Initial entries are present.
     {
