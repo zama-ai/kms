@@ -51,19 +51,19 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
     #[error("Trying to write content that already exists")]
-    DuplicateError,
+    Duplicate,
     #[error("Writing error")]
-    WritingError,
+    Writing,
     #[error("Reading error")]
-    ReadingError,
+    Reading,
     #[error("Purging error")]
-    PurgingError,
+    Purging,
     #[error("Backup vault purging error")]
-    BackupVaultPurgingError,
+    BackupVaultPurging,
     #[error("MetaStore error: {0}")]
-    MetaStoreError(String),
+    MetaStore(String),
     #[error("Error when backing up material")]
-    BackupError,
+    Backup,
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -206,7 +206,7 @@ where
         for cur_pub_data in pub_data_type {
             if !data_exists(&*pub_storage, req_id, &cur_pub_data.to_string())
                 .await
-                .map_err(|_| StorageError::ReadingError)?
+                .map_err(|_| StorageError::Reading)?
             {
                 return Ok(false);
             }
@@ -214,7 +214,7 @@ where
         for cur_priv_data in priv_data_type {
             if !data_exists_at_epoch(&*priv_storage, req_id, epoch_id, &cur_priv_data.to_string())
                 .await
-                .map_err(|_| StorageError::ReadingError)?
+                .map_err(|_| StorageError::Reading)?
             {
                 return Ok(false);
             }
@@ -313,7 +313,7 @@ where
         // First ensure that the meta store request is pending
         ensure_meta_store_request_pending(&meta_store, req_id)
             .await
-            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
             .handle_all_storage(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
@@ -360,14 +360,14 @@ where
                 .data_exists_at_epoch(req_id, inner_epoch_id, &pub_type, &priv_type)
                 .await?
         {
-            return Err(StorageError::DuplicateError);
+            return Err(StorageError::Duplicate);
         }
         if self
             .data_exists(req_id, &pub_type, &priv_type)
             .await
             .map_err(|e| StorageError::Other(e.to_string()))?
         {
-            return Err(StorageError::DuplicateError);
+            return Err(StorageError::Duplicate);
         }
         // Now proceed with writing
         if self
@@ -378,7 +378,7 @@ where
                 // If storage is ok, then update the backup
                 if !self.update_backup_vault(false, op_metric_tag).await {
                     // Observe that even if backup fails, we do not want to purge the material
-                    return Err(StorageError::BackupError);
+                    return Err(StorageError::Backup);
                 }
             }
         } else {
@@ -389,9 +389,9 @@ where
                 .purge_material(req_id, epoch_id, &pub_types, &priv_types)
                 .await
             {
-                return Err(StorageError::PurgingError);
+                return Err(StorageError::Purging);
             }
-            return Err(StorageError::WritingError);
+            return Err(StorageError::Writing);
         }
         tracing::info!(
             "Successfully stored public data element {pub_type:?} and private data element {priv_type:?} under the handle {req_id} with epoch {epoch_id:?} for metric {op_metric_tag}",
@@ -705,7 +705,7 @@ where
             )
             .await;
         match &res {
-            Ok(_) | Err(StorageError::BackupError) => {
+            Ok(_) | Err(StorageError::Backup) => {
                 // Backup-only failures still leave the keys safely persisted, so
                 // refresh the cache as if the write had succeeded.
                 let mut guarded_fhe_keys = cache.write().await;
@@ -727,7 +727,7 @@ where
                         "Failed to purge orphan {special_pub_type} for {key_id} after FHE-key write failure; original error: {:?}",
                         res
                     );
-                    return Err(StorageError::PurgingError);
+                    return Err(StorageError::Purging);
                 }
             }
         }
@@ -768,7 +768,7 @@ where
         // First ensure that the meta store request is pending
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
-            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
             .handle_all_storage::<DecompressionKey, DecompressionKey>(
                 key_id,
@@ -817,7 +817,7 @@ where
         ensure_meta_store_request_pending(&meta_store, &req_id)
             .await
             .map_err(|e| {
-                StorageError::MetaStoreError(format!(
+                StorageError::MetaStore(format!(
                     "Meta store is not ready for request ID {req_id}: {e}"
                 ))
             })?;
@@ -828,7 +828,7 @@ where
                 tracing::error!(
                     "No backup vault configured, cannot write backup keys for request {req_id}"
                 );
-                return Err(StorageError::BackupError);
+                return Err(StorageError::Backup);
             }
         };
         let mut res = self
@@ -850,7 +850,7 @@ where
                     tracing::error!(
                         "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
                     );
-                    StorageError::BackupVaultPurgingError
+                    StorageError::BackupVaultPurging
                 });
         }
         let mut guarded_meta_store = meta_store.write().await;
@@ -1095,7 +1095,7 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
 ) -> Result<(), StorageError> {
     let mut meta_store_ok = true;
     if let Err(e) = &storage_res
-        && e != &StorageError::BackupError
+        && e != &StorageError::Backup
     {
         // We don't want to fail on backup errors
         meta_store_ok &=
@@ -1111,11 +1111,11 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
             "Failed to update meta store in metric {op_metric_tag} for request {req_id}",
         );
         if let Err(e) = &storage_res {
-            return Err(StorageError::MetaStoreError(format!(
+            return Err(StorageError::MetaStore(format!(
                 "Failed to update meta store for request {req_id}. Also failed to store data with error: {e}",
             )));
         } else {
-            return Err(StorageError::MetaStoreError(format!(
+            return Err(StorageError::MetaStore(format!(
                 "Failed to update meta store for request {req_id}, but storage succeeded."
             )));
         }

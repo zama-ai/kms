@@ -1416,7 +1416,7 @@ async fn handle_all_storage_no_overwrite_of_existing_data() {
             )
             .await
             .unwrap_err(),
-        StorageError::DuplicateError
+        StorageError::Duplicate
     ));
     // Initial entries are still there and unchanged.
     {
@@ -1458,7 +1458,7 @@ async fn handle_all_storage_purges_on_write_failure() {
             TEST_METRIC,
         )
         .await;
-    assert_eq!(res, Err(StorageError::WritingError));
+    assert_eq!(res, Err(StorageError::Writing));
 
     let priv_g = storage.private_storage.lock().await;
     assert!(
@@ -1565,7 +1565,7 @@ async fn write_backup_keys() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, StorageError::MetaStoreError(_)),
+        matches!(err, StorageError::MetaStore(_)),
         "expected MetaStoreError when meta store entry is missing, got: {err:?}"
     );
 
@@ -1600,7 +1600,7 @@ async fn write_backup_keys_no_vault() {
     add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
     assert_eq!(
         storage.write_backup_keys(recovery, meta_store).await,
-        Err(StorageError::BackupError),
+        Err(StorageError::Backup),
     );
 }
 
@@ -1628,25 +1628,25 @@ async fn update_meta_store_storage_outcomes() {
         );
         assert_eq!(
             update_meta_store(
-                Err(StorageError::BackupError),
+                Err(StorageError::Backup),
                 &req_backup,
                 7_u32,
                 &mut write_guard,
                 TEST_METRIC,
             )
             .await,
-            Err(StorageError::BackupError),
+            Err(StorageError::Backup),
         );
         assert_eq!(
             update_meta_store(
-                Err(StorageError::WritingError),
+                Err(StorageError::Writing),
                 &req_writing,
                 0_u32,
                 &mut write_guard,
                 TEST_METRIC,
             )
             .await,
-            Err(StorageError::WritingError),
+            Err(StorageError::Writing),
         );
     }
     assert_eq!(
@@ -1690,14 +1690,14 @@ async fn update_meta_store_failure_paths() {
         .await
         .unwrap_err()
     {
-        StorageError::MetaStoreError(msg) => assert!(
+        StorageError::MetaStore(msg) => assert!(
             msg.contains("but storage succeeded"),
             "expected 'but storage succeeded' in: {msg}"
         ),
         other => panic!("expected MetaStoreError, got {other:?}"),
     }
     match update_meta_store(
-        Err(StorageError::WritingError),
+        Err(StorageError::Writing),
         &missing,
         2_u32,
         &mut guard,
@@ -1706,7 +1706,7 @@ async fn update_meta_store_failure_paths() {
     .await
     .unwrap_err()
     {
-        StorageError::MetaStoreError(msg) => assert!(
+        StorageError::MetaStore(msg) => assert!(
             msg.contains("Also failed to store data"),
             "expected combined error in: {msg}"
         ),
@@ -1714,7 +1714,7 @@ async fn update_meta_store_failure_paths() {
     }
     assert!(matches!(
         update_meta_store(Ok(()), &already_set, 1_u32, &mut guard, TEST_METRIC).await,
-        Err(StorageError::MetaStoreError(_)),
+        Err(StorageError::MetaStore(_)),
     ));
 }
 

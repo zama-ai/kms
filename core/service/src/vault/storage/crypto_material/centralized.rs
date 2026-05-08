@@ -81,7 +81,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // First ensure that the meta store request is pending
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
-            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let meta_res = central_fhe_keys.public_key_info.clone();
         let res = self
             .inner

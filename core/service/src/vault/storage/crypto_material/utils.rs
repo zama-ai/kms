@@ -170,7 +170,7 @@ pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     // No need to use epoch for public data existence check
     if !data_exists(pub_storage, req_id, &pub_data_type.to_string())
         .await
-        .map_err(|_| StorageError::ReadingError)?
+        .map_err(|_| StorageError::Reading)?
     {
         let msg = format!(
             "Some public data (at least one of {pub_data_type:?}) not found for request {req_id} and epoch {epoch_id}"
@@ -180,7 +180,7 @@ pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     }
     if !data_exists_at_epoch(priv_storage, req_id, epoch_id, &priv_data_type.to_string())
         .await
-        .map_err(|_| StorageError::ReadingError)?
+        .map_err(|_| StorageError::Reading)?
     {
         let msg = format!(
             "Some private data (at least one of {priv_data_type:?}) not found for request {req_id} and epoch {epoch_id}"

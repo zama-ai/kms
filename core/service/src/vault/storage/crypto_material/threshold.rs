@@ -142,7 +142,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 OP_NEW_EPOCH,
             )
             .await;
-        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::Backup) {
             // Add the new data to the cache
             let mut guarded_fhe_keys = self.fhe_keys.write().await;
             let _ = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
@@ -172,7 +172,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // First ensure that the meta store request is pending
         ensure_meta_store_request_pending(&meta_store, key_id)
             .await
-            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let meta_res = threshold_fhe_keys.meta_data.clone();
         let res = self
             .inner
