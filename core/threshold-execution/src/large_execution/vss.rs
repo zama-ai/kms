@@ -15,7 +15,7 @@ use crate::{
     },
 };
 use algebra::{
-    bivariate::{BivariateEval, BivariatePoly},
+    bivariate::BivariatePoly,
     poly::Poly,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
@@ -1184,7 +1184,6 @@ pub(crate) mod tests {
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use algebra::{
-        bivariate::BivariateEval,
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
