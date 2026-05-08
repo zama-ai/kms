@@ -108,10 +108,10 @@ impl GrpcHealthClient {
     pub async fn run_bandwidth_benchmark(
         &self,
         request: BandwidthBenchmarkRequest,
-        timeout: std::time::Duration,
+        duration: std::time::Duration,
     ) -> Result<BandwidthBenchmarkResponse> {
         let channel = Channel::from_shared(self.endpoint.clone())?
-            .timeout(timeout)
+            .timeout(duration + self.timeouts.request_timeout) // Set timeout to benchmark duration + buffer
             .connect()
             .await?;
 

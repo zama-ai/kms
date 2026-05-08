@@ -208,28 +208,74 @@ pub fn print_bandwidth_benchmark_text(
     payload_size: u32,
     results: Vec<(String, BandwidthBenchmarkResponse)>,
 ) -> Result<()> {
-    let mut output = String::with_capacity(1024);
-    writeln!(output, "Duration of benchmark: {} seconds", duration)?;
-    writeln!(output, "Number of sessions in parallel: {}", num_sessions)?;
-    writeln!(output, "Payload size per session: {} bytes", payload_size)?;
+    let mut output = String::with_capacity(4096);
+    writeln!(output, "\n[KMS BANDWIDTH BENCHMARK]")?;
+    writeln!(output, "{}", "=".repeat(78))?;
+    writeln!(output, "Duration target:     {} seconds", duration)?;
+    writeln!(output, "Parallel sessions:   {}", num_sessions)?;
+    writeln!(output, "Payload per session: {} bytes", payload_size)?;
+
     for (endpoint, result) in results {
-        writeln!(output, "\n[BANDWIDTH BENCHMARK RESULT for {}]", endpoint)?;
-        writeln!(output, "{}", "=".repeat(50))?;
+        writeln!(output, "\n{}", "-".repeat(78))?;
+        writeln!(output, "Endpoint: {}", endpoint)?;
+        writeln!(output, "Peers:    {}", result.peers_info.len())?;
+        writeln!(output, "{}", "-".repeat(78))?;
+        writeln!(
+            output,
+            "{:>7}  {:<24}  {:>12}  {:>8}  {:>10}",
+            "Peer", "Address", "Sent (MiB)", "Secs", "MiB/s"
+        )?;
+        writeln!(output, "{}", "-".repeat(78))?;
+
+        let mut total_bytes_sent: u64 = 0;
+        let mut max_duration_secs: u64 = 0;
 
         for peer in &result.peers_info {
+            total_bytes_sent = total_bytes_sent.saturating_add(peer.bytes_sent);
+            max_duration_secs = max_duration_secs.max(peer.duration);
+
+            let sent_mib = peer.bytes_sent as f64 / (1024.0 * 1024.0);
+            let throughput_mib_per_sec = if peer.duration == 0 {
+                0.0
+            } else {
+                sent_mib / (peer.duration as f64)
+            };
+
             writeln!(
                 output,
-                "Peer {} @ {}: {} bytes sent over {} seconds: \n\t\t {} MB/sec",
-                peer.peer_id,
-                peer.endpoint,
-                peer.bytes_sent,
-                duration,
-                (peer.bytes_sent as f64 / (1024.0 * 1024.0)) / (duration as f64)
+                "{:>7}  {:<24}  {:>12.2}  {:>8}  {:>10.2}",
+                peer.peer_id, peer.endpoint, sent_mib, peer.duration, throughput_mib_per_sec
             )?;
+
+            if let Some(latency) = &peer.latency {
+                writeln!(
+                    output,
+                    "         latency(ms) avg/p50/p90/p99/slow/fast: {}/{}/{}/{}/{}/{}",
+                    latency.average,
+                    latency.p50,
+                    latency.p90,
+                    latency.p99,
+                    latency.slowest,
+                    latency.fastest
+                )?;
+            }
         }
 
-        writeln!(output, "\n{}", "=".repeat(50))?;
+        let total_mib = total_bytes_sent as f64 / (1024.0 * 1024.0);
+        let aggregate_mib_per_sec = if max_duration_secs == 0 {
+            0.0
+        } else {
+            total_mib / (max_duration_secs as f64)
+        };
+        writeln!(output, "{}", "-".repeat(78))?;
+        writeln!(
+            output,
+            "Summary: total {:.2} MiB in ~{}s, aggregate {:.2} MiB/s",
+            total_mib, max_duration_secs, aggregate_mib_per_sec
+        )?;
     }
+
+    writeln!(output, "\n{}", "=".repeat(78))?;
     print!("{}", output);
     Ok(())
 }
