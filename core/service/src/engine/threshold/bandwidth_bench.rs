@@ -42,16 +42,17 @@ pub(crate) async fn run_bandwidth_benchmark(
             session
                 .run_bandwidth_benchmark(payload_size, duration)
                 .await
-                .expect("Bandwidth benchmark failed, nothing we can do about it here")
         });
     }
 
     let mut results = HashMap::new();
 
     while let Some(result) = join_set.join_next().await {
-        let result = result.map_err(|e| {
-            Status::internal(format!("Failed to join bandwidth benchmark task: {}", e))
-        })?;
+        let result = result
+            .map_err(|e| {
+                Status::internal(format!("Failed to join bandwidth benchmark task: {}", e))
+            })?
+            .map_err(|e| Status::internal(format!("Bandwidth benchmark task failed: {}", e)))?;
         for ((role, id), (bytes_sent, duration, status)) in result {
             let (entry_sent, entry_duration, entry_status) = results
                 .entry((role, id))
