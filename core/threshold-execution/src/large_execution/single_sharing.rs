@@ -1,13 +1,12 @@
 use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
-    matrix::MatrixMul,
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+    matrix::VdmMatrix,
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring},
 };
 use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
-use ndarray::{ArrayD, IxDyn};
 use std::collections::HashMap;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
@@ -29,10 +28,10 @@ pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
 //as that'll influence how to reconstruct stuff later on
 pub struct RealSingleSharing<Z, S: LocalSingleShare> {
     local_single_share: S,
-    available_lsl: Vec<ArrayD<Z>>,
+    available_lsl: Vec<Vec<Z>>,
     available_shares: Vec<Z>,
     max_num_iterations: usize,
-    vdm_matrix: ArrayD<Z>,
+    vdm_matrix: VdmMatrix<Z>,
 }
 
 impl<Z, S: LocalSingleShare> ProtocolDescription for RealSingleSharing<Z, S> {
@@ -62,7 +61,7 @@ impl<Z: Default, S: LocalSingleShare> RealSingleSharing<Z, S> {
             available_lsl: Vec::default(),
             available_shares: Vec::default(),
             max_num_iterations: usize::default(),
-            vdm_matrix: ArrayD::<Z>::default(IxDyn::default()),
+            vdm_matrix: VdmMatrix::default(),
         }
     }
 }
@@ -99,11 +98,13 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
         self.max_num_iterations = l;
 
         //Init vdm matrix only once or when dim changes
-        let shape = self.vdm_matrix.shape();
         let curr_height = session.num_parties();
         let curr_width = session.num_parties() - session.threshold() as usize;
-        if self.vdm_matrix.is_empty() || curr_height != shape[0] || curr_width != shape[1] {
-            self.vdm_matrix = init_vdm(
+        if self.vdm_matrix.is_empty()
+            || curr_height != self.vdm_matrix.height()
+            || curr_width != self.vdm_matrix.width()
+        {
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
                 session.num_parties(),
                 session.num_parties() - session.threshold() as usize,
             )?;
@@ -130,43 +131,19 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
     }
 }
 
-///Create the VDM matrix of dimension (height, width) such that
-/// VDM_{i,j} = alpha_i^j, with alpha_i the ith element of the exceptional set
-pub fn init_vdm<Z: RingWithExceptionalSequence>(
-    height: usize,
-    width: usize,
-) -> anyhow::Result<ArrayD<Z>> {
-    // We could actually probably take 0 in the VDM matrix, but to match the alpha indexing with the one we use for parties,
-    //we skip it
-    let exceptional_sequence: Vec<Z> = (0..height)
-        .map(|idx| Z::get_from_exceptional_sequence(idx + 1))
-        .try_collect()?;
-
-    let mut powers_of_exceptional_sequence = Vec::with_capacity(height * width);
-    for point in exceptional_sequence {
-        let mut power = Z::ONE;
-        for _ in 0..width {
-            powers_of_exceptional_sequence.push(power);
-            power *= point;
-        }
-    }
-
-    Ok(ArrayD::from_shape_vec(IxDyn(&[height, width]), powers_of_exceptional_sequence)?.into_dyn())
-}
-
 ///Have to be careful about ordering (e.g. cant just iterate over the set of key as its unordered)
 ///
 ///Format the map with keys role_i in Roles
 ///
 ///role_i -> [<x_1^{(i)}>_{self}, ... , <x_l^{(i)}>_{self}]
 ///
-///to a vector appropriate fro the randomness extraction with keys j in [l]
+///to a vector appropriate for the randomness extraction with keys j in [l]
 ///
 /// j -> [<x_j^{(1)}>_{self}, ..., <x_j^{(n)}>_{self}]
 fn format_for_next<Z: Ring>(
     local_single_shares: HashMap<Role, Vec<Z>>,
     l: usize,
-) -> anyhow::Result<Vec<ArrayD<Z>>> {
+) -> anyhow::Result<Vec<Vec<Z>>> {
     let num_parties = local_single_shares.len();
     let mut res = Vec::with_capacity(l);
     for i in 0..l {
@@ -183,27 +160,24 @@ fn format_for_next<Z: Ring>(
                     })?[i],
             );
         }
-        res.push(ArrayD::from_shape_vec(IxDyn(&[num_parties]), vec)?.into_dyn());
+        res.push(vec);
     }
     Ok(res)
 }
 
 ///Extract randomness using the parties contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
-    formatted_lsl: &mut Vec<ArrayD<Z>>,
-    vdm: &ArrayD<Z>,
+    formatted_lsl: &mut Vec<Vec<Z>>,
+    vdm: &VdmMatrix<Z>,
 ) -> anyhow::Result<Vec<Z>> {
-    let res = formatted_lsl
+    let shares = formatted_lsl
         .pop()
-        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formatted_lsl vector"))?
-        .matmul(vdm)?;
-    Ok(res.into_raw_vec_and_offset().0)
+        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formatted_lsl vector"))?;
+    vdm.mul_vector(&shares)
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    #[cfg(feature = "slow_tests")]
-    use super::init_vdm;
     use crate::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -214,7 +188,11 @@ pub(crate) mod tests {
     };
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
     #[cfg(feature = "slow_tests")]
-    use algebra::galois_rings::degree_8::ResiduePolyF8;
+    use algebra::galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128};
+    #[cfg(feature = "slow_tests")]
+    use algebra::matrix::VdmMatrix;
+    #[cfg(feature = "slow_tests")]
+    use algebra::structure_traits::{One, Zero};
     use algebra::{
         sharing::{
             shamir::{RevealOp, ShamirSharings},
@@ -222,8 +200,6 @@ pub(crate) mod tests {
         },
         structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
-    #[cfg(feature = "slow_tests")]
-    use ndarray::Ix2;
     use num_integer::div_ceil;
     use rstest::rstest;
     #[cfg(feature = "slow_tests")]
@@ -375,8 +351,8 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn test_vdm() {
-        let vdm = init_vdm(4, 4).unwrap();
-        let coefs = vec![
+        let vdm = VdmMatrix::<ResiduePolyF8Z128>::from_exceptional_sequence(4, 4).unwrap();
+        let coefs: Vec<ResiduePolyF8Z128> = vec![
             ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
@@ -571,10 +547,13 @@ pub(crate) mod tests {
             }, //X^6
         ];
 
-        let vdm = vdm.into_dimensionality::<Ix2>().unwrap();
         for i in 0..4 {
+            let mut row_selector = vec![ResiduePolyF8Z128::ZERO; 4];
+            row_selector[i] = ResiduePolyF8Z128::ONE;
+            let row = vdm.mul_vector(&row_selector).unwrap();
+
             for j in 0..4 {
-                assert_eq!(coefs[4 * i + j], vdm[(i, j)]);
+                assert_eq!(coefs[4 * i + j], row[j]);
             }
         }
     }

@@ -1,16 +1,12 @@
-use super::{
-    local_double_share::{DoubleShares, LocalDoubleShare, SecureLocalDoubleShare},
-    single_sharing::init_vdm,
-};
+use super::local_double_share::{DoubleShares, LocalDoubleShare, SecureLocalDoubleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
-    matrix::MatrixMul,
+    matrix::VdmMatrix,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring},
 };
 use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
-use ndarray::{ArrayD, IxDyn};
 use std::collections::HashMap;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
@@ -18,7 +14,7 @@ use tracing::instrument;
 
 pub type SecureDoubleSharing<Z> = RealDoubleSharing<Z, SecureLocalDoubleShare>;
 
-type DoubleArrayShares<Z> = (ArrayD<Z>, ArrayD<Z>);
+type DoubleShareVectors<Z> = (Vec<Z>, Vec<Z>);
 
 pub struct DoubleShare<Z> {
     pub(crate) degree_t: Z,
@@ -43,10 +39,10 @@ pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
 //as that'll influence how to reconstruct stuff later on
 pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
     local_double_share: S,
-    available_ldl: Vec<DoubleArrayShares<Z>>,
+    available_ldl: Vec<DoubleShareVectors<Z>>,
     available_shares: Vec<(Z, Z)>,
     max_num_iterations: usize,
-    vdm_matrix: ArrayD<Z>,
+    vdm_matrix: VdmMatrix<Z>,
 }
 
 impl<Z, S: LocalDoubleShare> ProtocolDescription for RealDoubleSharing<Z, S> {
@@ -76,7 +72,7 @@ impl<Z: Default, S: LocalDoubleShare> RealDoubleSharing<Z, S> {
             available_ldl: Vec::default(),
             available_shares: Vec::default(),
             max_num_iterations: usize::default(),
-            vdm_matrix: ArrayD::<Z>::default(IxDyn::default()),
+            vdm_matrix: VdmMatrix::default(),
         }
     }
 }
@@ -113,11 +109,13 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
         self.max_num_iterations = l;
 
         //Init vdm matrix only once or when dim changes
-        let shape = self.vdm_matrix.shape();
         let curr_height = session.num_parties();
         let curr_width = session.num_parties() - session.threshold() as usize;
-        if self.vdm_matrix.is_empty() || curr_height != shape[0] || curr_width != shape[1] {
-            self.vdm_matrix = init_vdm(
+        if self.vdm_matrix.is_empty()
+            || curr_height != self.vdm_matrix.height()
+            || curr_width != self.vdm_matrix.width()
+        {
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
                 session.num_parties(),
                 session.num_parties() - session.threshold() as usize,
             )?;
@@ -168,7 +166,7 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
 fn format_for_next<Z: Ring>(
     local_double_shares: HashMap<Role, DoubleShares<Z>>,
     l: usize,
-) -> anyhow::Result<Vec<DoubleArrayShares<Z>>> {
+) -> anyhow::Result<Vec<DoubleShareVectors<Z>>> {
     let num_parties = local_double_shares.len();
     let mut res = Vec::with_capacity(l);
     for i in 0..l {
@@ -183,32 +181,21 @@ fn format_for_next<Z: Ring>(
             vec_t.push(double_share_j.share_t[i]);
             vec_2t.push(double_share_j.share_2t[i]);
         }
-        res.push((
-            ArrayD::from_shape_vec(IxDyn(&[num_parties]), vec_t)?.into_dyn(),
-            ArrayD::from_shape_vec(IxDyn(&[num_parties]), vec_2t)?.into_dyn(),
-        ));
+        res.push((vec_t, vec_2t));
     }
     Ok(res)
 }
 
 /// Extract randomness of degree t and 2t using the parties' contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
-    formatted_ldl: &mut Vec<DoubleArrayShares<Z>>,
-    vdm: &ArrayD<Z>,
+    formatted_ldl: &mut Vec<DoubleShareVectors<Z>>,
+    vdm: &VdmMatrix<Z>,
 ) -> anyhow::Result<Vec<(Z, Z)>> {
     let next_formatted_ldl = formatted_ldl
         .pop()
         .ok_or_else(|| anyhow_error_and_log("Can not access pop empty formatted_ldl vector"))?;
-    let res_t = next_formatted_ldl
-        .0
-        .matmul(vdm)?
-        .into_raw_vec_and_offset()
-        .0;
-    let res_2t = next_formatted_ldl
-        .1
-        .matmul(vdm)?
-        .into_raw_vec_and_offset()
-        .0;
+    let res_t = vdm.mul_vector(&next_formatted_ldl.0)?;
+    let res_2t = vdm.mul_vector(&next_formatted_ldl.1)?;
     if res_t.len() != res_2t.len() {
         return Err(anyhow_error_and_log(
             "The size of the degree t and 2t vectors are not equal",
