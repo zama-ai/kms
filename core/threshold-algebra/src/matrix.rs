@@ -1,18 +1,94 @@
-use crate::structure_traits::{One, Ring};
+use crate::structure_traits::{One, Ring, RingWithExceptionalSequence};
 
 use anyhow::Result;
 use error_utils::anyhow_error_and_log;
-use itertools::Itertools;
-use ndarray::{Array, ArrayD, IxDyn};
 use std::ops::Mul;
 
-pub trait MatrixMul<Rhs = Self>: Sized {
-    type Output;
-    fn matmul(&self, rhs: &Rhs) -> Result<Self::Output>;
+/// Row-major Vandermonde matrix used for randomness extraction.
+#[derive(Debug, Default)]
+pub struct VdmMatrix<Z> {
+    height: usize,
+    width: usize,
+    coefs: Vec<Z>,
+}
+
+impl<Z> VdmMatrix<Z> {
+    /// Returns true if the matrix has no coefficients.
+    pub fn is_empty(&self) -> bool {
+        self.coefs.is_empty()
+    }
+
+    /// Returns the matrix height.
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// Returns the matrix width.
+    pub fn width(&self) -> usize {
+        self.width
+    }
+}
+
+impl<Z: RingWithExceptionalSequence> VdmMatrix<Z> {
+    /// Creates the VDM matrix where row `i` is `[1, alpha_i, ..., alpha_i^(width - 1)]`.
+    ///
+    /// `alpha_i` is the `i + 1` entry from the exceptional sequence.
+    pub fn from_exceptional_sequence(height: usize, width: usize) -> Result<Self> {
+        if width == 0 {
+            return Ok(Self {
+                height,
+                width,
+                coefs: Vec::new(),
+            });
+        }
+
+        let mut coefs = Vec::with_capacity(height * width);
+        for idx in 0..height {
+            let point = Z::get_from_exceptional_sequence(idx + 1)?;
+            let mut power = Z::ONE;
+            coefs.push(power);
+            for _ in 1..width {
+                power *= point;
+                coefs.push(power);
+            }
+        }
+
+        debug_assert_eq!(coefs.len(), height * width);
+        Ok(Self {
+            height,
+            width,
+            coefs,
+        })
+    }
+}
+
+impl<Z: Ring> VdmMatrix<Z> {
+    /// Multiplies a row vector by this VDM matrix.
+    pub fn mul_vector(&self, lhs: &[Z]) -> Result<Vec<Z>> {
+        if lhs.len() != self.height {
+            return Err(anyhow_error_and_log(format!(
+                "Cannot multiply vector of length {} by VDM matrix of shape ({}, {})",
+                lhs.len(),
+                self.height,
+                self.width,
+            )));
+        }
+        if self.width == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut res = vec![Z::ZERO; self.width];
+        for (lhs_coef, row) in lhs.iter().zip(self.coefs.chunks_exact(self.width)) {
+            for (res_coef, matrix_coef) in res.iter_mut().zip(row) {
+                *res_coef += *lhs_coef * *matrix_coef;
+            }
+        }
+        Ok(res)
+    }
 }
 
 /// Computes powers of a specific point up to degree: p^0, p^1,...,p^degree
-pub fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) -> Vec<Z> {
+pub(crate) fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) -> Vec<Z> {
     let mut powers_of_point = Vec::with_capacity(degree + 1);
     powers_of_point.push(Z::ONE);
     for i in 1..=degree {
@@ -31,91 +107,6 @@ pub fn compute_powers_list<F: One + Mul<Output = F> + Copy>(
         alpha_powers.push(compute_powers(*p, max_exponent));
     }
     alpha_powers
-}
-
-impl<Z: Ring> MatrixMul<ArrayD<Z>> for ArrayD<Z> {
-    type Output = ArrayD<Z>;
-
-    fn matmul(&self, rhs: &ArrayD<Z>) -> Result<Self::Output> {
-        match (self.ndim(), rhs.ndim()) {
-            (1, 1) => {
-                if self.dim() != rhs.dim() {
-                    return Err(anyhow_error_and_log(format!(
-                        "Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
-                        self.dim(),
-                        rhs.dim()
-                    )));
-                }
-                if self.len() != rhs.len() {
-                    return Err(anyhow_error_and_log(format!(
-                        "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors",
-                        self.len(),
-                        rhs.len()
-                    )));
-                }
-                let res = self
-                    .iter()
-                    .zip_eq(rhs)
-                    .fold(Z::ZERO, |acc, (a, b)| acc + *a * *b);
-                Ok(Array::from_elem(IxDyn(&[1]), res).into_dyn())
-            }
-            (1, 2) => {
-                if self.dim()[0] != rhs.dim()[0] {
-                    Err(anyhow_error_and_log(format!(
-                        "Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}",
-                        self.dim(),
-                        rhs.dim()
-                    )))
-                } else {
-                    let mut res = Vec::with_capacity(rhs.shape()[1]);
-                    for col in rhs.columns() {
-                        if col.len() != self.len() {
-                            return Err(anyhow_error_and_log(format!(
-                                "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors and rank 2 tensors",
-                                self.len(),
-                                rhs.len()
-                            )));
-                        }
-                        let s = col
-                            .iter()
-                            .zip_eq(self)
-                            .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
-                        res.push(s);
-                    }
-                    Ok(Array::from_vec(res).into_dyn())
-                }
-            }
-            (2, 1) => {
-                if self.dim()[1] != rhs.dim()[0] {
-                    Err(anyhow_error_and_log(format!(
-                        "Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
-                        self.dim(),
-                        rhs.dim()
-                    )))
-                } else {
-                    let mut res = Vec::with_capacity(self.shape()[0]);
-                    for row in self.rows() {
-                        if row.len() != rhs.len() {
-                            return Err(anyhow_error_and_log(format!(
-                                "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 2 tensors and rank 1 tensors",
-                                self.len(),
-                                rhs.len()
-                            )));
-                        }
-                        let s = row
-                            .iter()
-                            .zip_eq(rhs)
-                            .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
-                        res.push(s);
-                    }
-                    Ok(Array::from_vec(res).into_dyn())
-                }
-            }
-            (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
-                "Matmul not implemented for tensors of rank {l_rank:?}, {r_rank:?}",
-            ))),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -153,53 +144,51 @@ mod tests {
     }
 
     #[test]
-    fn matmul_rank1_dot() {
-        let a = ArrayD::from_shape_vec(IxDyn(&[3]), vec![rp(1), rp(2), rp(3)]).unwrap();
-        let b = ArrayD::from_shape_vec(IxDyn(&[3]), vec![rp(4), rp(5), rp(6)]).unwrap();
-        let res = a.matmul(&b).unwrap();
-        // 1*4 + 2*5 + 3*6 = 32
-        assert_eq!(res.into_raw_vec_and_offset().0, vec![rp(32)]);
+    fn vdm_matrix_mul_left_vector() {
+        let vdm = VdmMatrix {
+            height: 2,
+            width: 3,
+            coefs: vec![rp(1), rp(2), rp(3), rp(4), rp(5), rp(6)],
+        };
+        let res = vdm.mul_vector(&[rp(1), rp(2)]).unwrap();
+        assert_eq!(res, vec![rp(9), rp(12), rp(15)]);
     }
 
     #[test]
-    fn matmul_vector_matrix() {
-        // [1,2] * [[1,2,3],[4,5,6]] = [9, 12, 15]
-        let v = ArrayD::from_shape_vec(IxDyn(&[2]), vec![rp(1), rp(2)]).unwrap();
-        let m = ArrayD::from_shape_vec(
-            IxDyn(&[2, 3]),
-            vec![rp(1), rp(2), rp(3), rp(4), rp(5), rp(6)],
-        )
-        .unwrap();
-        let res = v.matmul(&m).unwrap();
-        assert_eq!(res.into_raw_vec_and_offset().0, vec![rp(9), rp(12), rp(15)]);
+    fn vdm_matrix_dim_mismatch_err() {
+        let vdm = VdmMatrix {
+            height: 2,
+            width: 2,
+            coefs: vec![rp(1); 4],
+        };
+        assert!(vdm.mul_vector(&[rp(1); 3]).is_err());
     }
 
     #[test]
-    fn matmul_matrix_vector() {
-        // [[1,2,3],[4,5,6]] * [7,8,9] = [50, 122]
-        let m = ArrayD::from_shape_vec(
-            IxDyn(&[2, 3]),
-            vec![rp(1), rp(2), rp(3), rp(4), rp(5), rp(6)],
-        )
-        .unwrap();
-        let v = ArrayD::from_shape_vec(IxDyn(&[3]), vec![rp(7), rp(8), rp(9)]).unwrap();
-        let res = m.matmul(&v).unwrap();
-        assert_eq!(res.into_raw_vec_and_offset().0, vec![rp(50), rp(122)]);
+    fn vdm_matrix_from_exceptional_sequence_zero_width() {
+        let vdm = VdmMatrix::<ResiduePolyF4Z128>::from_exceptional_sequence(2, 0).unwrap();
+
+        assert!(vdm.is_empty());
+        assert_eq!(vdm.height(), 2);
+        assert_eq!(vdm.width(), 0);
+        assert_eq!(vdm.mul_vector(&[rp(1), rp(2)]).unwrap(), Vec::new());
     }
 
     #[test]
-    fn matmul_dim_mismatches_err() {
-        let v3 = ArrayD::from_shape_vec(IxDyn(&[3]), vec![rp(1); 3]).unwrap();
-        let v2 = ArrayD::from_shape_vec(IxDyn(&[2]), vec![rp(1); 2]).unwrap();
-        // rank-1 length mismatch
-        assert!(v3.matmul(&v2).is_err());
-        // rank mismatch on rank-2 sides
-        let m22 = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![rp(1); 4]).unwrap();
-        assert!(m22.matmul(&m22).is_err());
-        // (1, 2) shape mismatch
-        let m23 = ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![rp(1); 6]).unwrap();
-        assert!(v3.matmul(&m23).is_err());
-        // (2, 1) shape mismatch
-        assert!(m23.matmul(&v2).is_err());
+    fn vdm_matrix_from_exceptional_sequence() {
+        let vdm = VdmMatrix::<ResiduePolyF4Z128>::from_exceptional_sequence(2, 3).unwrap();
+        let alpha_1 = ResiduePolyF4Z128::get_from_exceptional_sequence(1).unwrap();
+        let alpha_2 = ResiduePolyF4Z128::get_from_exceptional_sequence(2).unwrap();
+
+        assert_eq!(
+            vdm.mul_vector(&[ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ZERO])
+                .unwrap(),
+            vec![ResiduePolyF4Z128::ONE, alpha_1, alpha_1 * alpha_1]
+        );
+        assert_eq!(
+            vdm.mul_vector(&[ResiduePolyF4Z128::ZERO, ResiduePolyF4Z128::ONE])
+                .unwrap(),
+            vec![ResiduePolyF4Z128::ONE, alpha_2, alpha_2 * alpha_2,]
+        );
     }
 }
