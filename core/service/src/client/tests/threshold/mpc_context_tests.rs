@@ -166,7 +166,6 @@ async fn do_context_switch(
         None,
         1,
         Some(&material_path),
-        false, // test material uses compressed keys
     )
     .await;
 
@@ -206,7 +205,6 @@ async fn do_context_switch(
         1,
         Some(&material_path),
         true,
-        false, // test material uses compressed keys
     )
     .await;
 
@@ -224,7 +222,6 @@ async fn do_context_switch(
         None,
         1,
         Some(&material_path),
-        false, // test material uses compressed keys
     )
     .await;
 
