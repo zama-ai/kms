@@ -14,7 +14,12 @@ use tracing::instrument;
 
 pub type SecureDoubleSharing<Z> = RealDoubleSharing<Z, SecureLocalDoubleShare>;
 
-type DoubleShareVectors<Z> = (Vec<Z>, Vec<Z>);
+/// One extraction step's worth of double-shares: the degree-t and degree-2t shares
+/// gathered from every party at the same position `j`.
+struct DoubleShareBatch<Z> {
+    deg_t: Vec<Z>,
+    deg_2t: Vec<Z>,
+}
 
 pub struct DoubleShare<Z> {
     pub(crate) degree_t: Z,
@@ -39,7 +44,7 @@ pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
 //as that'll influence how to reconstruct stuff later on
 pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
     local_double_share: S,
-    available_ldl: Vec<DoubleShareVectors<Z>>,
+    available_ldl: Vec<DoubleShareBatch<Z>>,
     available_shares: Vec<(Z, Z)>,
     max_num_iterations: usize,
     vdm_matrix: VdmMatrix<Z>,
@@ -166,36 +171,36 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
 fn format_for_next<Z: Ring>(
     local_double_shares: HashMap<Role, DoubleShares<Z>>,
     l: usize,
-) -> anyhow::Result<Vec<DoubleShareVectors<Z>>> {
+) -> anyhow::Result<Vec<DoubleShareBatch<Z>>> {
     let num_parties = local_double_shares.len();
     let mut res = Vec::with_capacity(l);
     for i in 0..l {
-        let mut vec_t = Vec::with_capacity(num_parties);
-        let mut vec_2t = Vec::with_capacity(num_parties);
+        let mut deg_t = Vec::with_capacity(num_parties);
+        let mut deg_2t = Vec::with_capacity(num_parties);
         for party_idx in 0..num_parties {
             let double_share_j = local_double_shares
                 .get(&Role::indexed_from_zero(party_idx))
                 .ok_or_else(|| {
                     anyhow_error_and_log(format!("Can not find shares for Party {}", party_idx + 1))
                 })?;
-            vec_t.push(double_share_j.share_t[i]);
-            vec_2t.push(double_share_j.share_2t[i]);
+            deg_t.push(double_share_j.share_t[i]);
+            deg_2t.push(double_share_j.share_2t[i]);
         }
-        res.push((vec_t, vec_2t));
+        res.push(DoubleShareBatch { deg_t, deg_2t });
     }
     Ok(res)
 }
 
 /// Extract randomness of degree t and 2t using the parties' contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
-    formatted_ldl: &mut Vec<DoubleShareVectors<Z>>,
+    formatted_ldl: &mut Vec<DoubleShareBatch<Z>>,
     vdm: &VdmMatrix<Z>,
 ) -> anyhow::Result<Vec<(Z, Z)>> {
-    let next_formatted_ldl = formatted_ldl
+    let batch = formatted_ldl
         .pop()
         .ok_or_else(|| anyhow_error_and_log("Can not access pop empty formatted_ldl vector"))?;
-    let res_t = vdm.mul_vector(&next_formatted_ldl.0)?;
-    let res_2t = vdm.mul_vector(&next_formatted_ldl.1)?;
+    let res_t = vdm.mul_vector(&batch.deg_t)?;
+    let res_2t = vdm.mul_vector(&batch.deg_2t)?;
     if res_t.len() != res_2t.len() {
         return Err(anyhow_error_and_log(
             "The size of the degree t and 2t vectors are not equal",
