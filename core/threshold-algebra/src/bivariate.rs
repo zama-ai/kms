@@ -4,13 +4,12 @@ use super::structure_traits::Sample;
 
 use rand::{CryptoRng, Rng};
 
-/// Bivariate polynomial represented as a row-major square matrix of coefficients.
+/// Bivariate polynomial represented as a row-major square matrix of coefficients of ResiduePolynomials.
 ///
 /// The row view of the polynomials is the following:
 /// [[a_{00}, a_{01}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}]]
 ///
-/// Constructors establish and maintain the invariant `coefs.len() == (degree + 1)^2`,
-/// so every row in `coefs.chunks_exact(degree + 1)` has exactly `degree + 1` entries.
+/// Invariant: `coefs.len() == (degree + 1)^2`
 #[derive(Clone, Debug)]
 pub struct BivariatePoly<Z> {
     /// Row-major; `(degree + 1)^2` elements.
@@ -33,6 +32,7 @@ impl<Z> BivariatePoly<Z> {
         BivariatePoly { coefs, degree }
     }
 
+    // Test-only constructor to allow for externally generated test-vectors (e.g. Sage).
     #[cfg(test)]
     fn from_coeffs(coefs: Vec<Z>, degree: usize) -> Self {
         let d = degree + 1;
