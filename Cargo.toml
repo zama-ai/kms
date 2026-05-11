@@ -220,6 +220,7 @@ typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maint
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
 validator = { version = "=0.20.0", features = ["derive"] }  # Struct validation - HIGH RISK: Individual maintainer (Keats), less active maintenance
+walkdir = "=2.5.0"  # Recursive directory walking - LOW RISK: BurntSushi, 250M+ downloads, test-only dependency
 wasm-bindgen = { version = "=0.2.114", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
 x509-parser = { version = "=0.18.0", features = ["verify-aws"] }  # X.509 certificate parsing - LOW RISK: rusticata team
 zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }  # Secure memory wiping - LOW RISK: RustCrypto org, critical for key management

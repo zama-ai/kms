@@ -142,10 +142,14 @@ threshold-execution = { workspace = true, features = ["testing", "malicious_stra
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
 rstest.workspace = true
+serde = { workspace = true, features = ["derive"] }
+syn = { workspace = true }
 sysinfo.workspace = true
 tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
+toml = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
+walkdir = { workspace = true }
 
 
 [features]
