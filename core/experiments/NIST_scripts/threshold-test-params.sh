@@ -19,12 +19,21 @@
 # At the end of the scripts, the timing resulsts are parsed and put in the threshold folder with the tag "TestParams".
 # We do not perform a memory benchmark on top of these tests as memory benchmark are much slower.
 
-# Function to stop and rm docker containers if any is still running
+# Function to stop and remove docker containers for a specific compose file
 function cleanup_docker {
-    if [ "$(docker ps -a -q)" ]; then
-        echo "Cleaning up docker containers..."
-        docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+    local compose_file="$1"
+
+    if [ -z "$compose_file" ]; then
+        echo "cleanup_docker requires a docker-compose file path"
+        return 1
     fi
+
+    if [ ! -f "$compose_file" ]; then
+        return 0
+    fi
+
+    echo "Cleaning up docker containers for $compose_file..."
+    docker compose --progress=quiet -f "$compose_file" down --remove-orphans
 }
 
 # Scripts are in test_scripts folder
@@ -34,8 +43,11 @@ PATH_TO_ROOT="$PATH_TO_HERE/.."
 # Set current workdirectory as root of experiments
 cd "$PATH_TO_ROOT"
 
-# Start with cleaning up all docker things
-cleanup_docker
+# Start with cleaning up any leftover containers for the targeted benchmark compose files
+cleanup_docker "temp/tfhe-bench-run-4p.yml"
+cleanup_docker "temp/tfhe-bench-run-5p.yml"
+cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
+cleanup_docker "temp/bgv-bench-run.yml"
 
 ### TFHE
 # Prepare the tfhe docker image
@@ -47,7 +59,7 @@ cargo make tfhe-bench-run-4p
 # Run the test script
 ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml GEN
 # Teardown docker
-cleanup_docker
+cleanup_docker "temp/tfhe-bench-run-4p.yml"
 
 ## large session
 # Create the test setup and starts the docker containers
@@ -55,7 +67,7 @@ cargo make tfhe-bench-run-5p
 # Run the test script
 ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml GEN
 # Teardown docker
-cleanup_docker
+cleanup_docker "temp/tfhe-bench-run-5p.yml"
 
 ## small session with malicious party
 # Create the test setup and starts the docker containers
@@ -63,7 +75,7 @@ cargo make tfhe-bench-run-4p-malicious-bcast
 # Run the test script
 ./test_scripts/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml GEN
 # Teardown docker
-cleanup_docker
+cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
 
 ### BGV
 # Prepare the bgv docker image
@@ -74,7 +86,7 @@ cargo make bgv-bench-run
 # Run the test script
 ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run.toml GEN
 # Teardown docker
-cleanup_docker
+cleanup_docker "temp/bgv-bench-run.yml"
 
 
 ### Run stats parser
