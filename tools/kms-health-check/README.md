@@ -341,7 +341,7 @@ docker run -v $(pwd):/workspace \
 
 The tool can also be used to perform a bandwidth benchmark between the different parties.
 As for the healthcheck, the benchmark will use the same gRPC server as the MPC protocol,
-and will also perform the party authentication.
+and will also perform the party authentication. Both a text and a json output format are available.
 
 
 The bandwidth benchmark expects the following parameters:
@@ -350,9 +350,12 @@ The bandwidth benchmark expects the following parameters:
 - `NUM_SESSIONS` the number of sessions spawned in parallel
 - `PAYLOAD_SIZE` the size of the payload sent over and over by each sessions (in bytes)
 - `ENDPOINT` the address of the nodes that will be sending data
+- `CONNECTIONS_PER_PEER` the number of dedicated TCP connections to the other peers
 
 The bandwidth benchmark consists in spawning `NUM_SESSIONS` sessions (each in their own tokio task) that will send a payload of `PAYLOAD_SIZE` bytes, wait for the ack from the other party and repeat.
 This is done over a period of `DURATION_SEC` after which the results are collected and displayed.
+
+If the `DURATION_SEC` is set to 0, then we only send a single payload per session; this may be useful to test how long it takes to clear a big number of sessions.
 
 To better emulate what happens during the execution of an MPC protocol, it's best to perform the bandwidth benchmark on all the parties at the same time, such that all the parties send and receive the same amount of data.
 
@@ -362,60 +365,105 @@ __NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION
 
 ```bash
 # Running the bandwidth benchmark on all 4 parties at the same time
-kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...>
+kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...> --connections-per-peer <CONNECTIONS_PER_PEER>
 ```
 
 
 An example output is:
 
 ```
-kms-health-check bandwidth-bench -c 0700000000000000000000000000000000000000000000000000000000000001 -d 120 -n 10 -p 100000 -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400
+❯ ./target/release/kms-health-check bandwidth-bench -c 0700000000000000000000000000000000000000000000000000000000000001 -d 30 -n 100 -p 100000 -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400 --connections-per-peer 3
 
-Duration of benchmark: 120 seconds
-Number of sessions in parallel: 10
-Payload size per session: 100000 bytes
+[KMS BANDWIDTH BENCHMARK]
+==============================================================================
+Benchmark type:      Duration-based (30 seconds)
+Parallel sessions:   100
+Payload per session: 100000 bytes
+Connections / peer:  3
 
-[BANDWIDTH BENCHMARK RESULT for localhost:50100]
-==================================================
-Peer 4 @ abcd.dev-kms-core-4.com: 31801400000 bytes sent over 120 seconds:
-		 252.7348200480143 MB/sec
-Peer 3 @ abcd.dev-kms-core-3.com: 31718900000 bytes sent over 120 seconds:
-		 252.07916895548502 MB/sec
-Peer 2 @ abcd.dev-kms-core-2.com: 31893800000 bytes sent over 120 seconds:
-		 253.46914927164713 MB/sec
+------------------------------------------------------------------------------
+Endpoint: localhost:50400
+Peers:    3
+------------------------------------------------------------------------------
+   Peer  Address                     Sent (MiB)      Secs       MiB/s
+------------------------------------------------------------------------------
+      2  abcd.dev-kms-core-2.com        8339.98        30      278.00
+         latency(ms) avg: 33
+                     p50/p90/p99: 32/52/74
+                     slowest/fastest: 111/0
+      1  abcd.dev-kms-core-1.com        8475.02        30      282.50
+         latency(ms) avg: 33
+                     p50/p90/p99: 31/51/78
+                     slowest/fastest: 172/0
+      3  abcd.dev-kms-core-3.com        7073.50        30      235.78
+         latency(ms) avg: 39
+                     p50/p90/p99: 29/54/343
+                     slowest/fastest: 999/0
+------------------------------------------------------------------------------
+Summary: total 23888.49 MiB in ~30s, aggregate 796.28 MiB/s
 
-==================================================
+------------------------------------------------------------------------------
+Endpoint: localhost:50100
+Peers:    3
+------------------------------------------------------------------------------
+   Peer  Address                     Sent (MiB)      Secs       MiB/s
+------------------------------------------------------------------------------
+      2  abcd.dev-kms-core-2.com       11069.58        30      368.99
+         latency(ms) avg: 25
+                     p50/p90/p99: 22/42/73
+                     slowest/fastest: 154/1
+      3  abcd.dev-kms-core-3.com        4642.01        30      154.73
+         latency(ms) avg: 61
+                     p50/p90/p99: 26/164/395
+                     slowest/fastest: 908/1
+      4  abcd.dev-kms-core-4.com        9154.03        30      305.13
+         latency(ms) avg: 30
+                     p50/p90/p99: 28/48/85
+                     slowest/fastest: 224/1
+------------------------------------------------------------------------------
+Summary: total 24865.63 MiB in ~30s, aggregate 828.85 MiB/s
 
-[BANDWIDTH BENCHMARK RESULT for localhost:50300]
-==================================================
-Peer 1 @ abcd.dev-kms-core-1.com: 31534700000 bytes sent over 120 seconds:
-		 250.61527887980142 MB/sec
-Peer 2 @ abcd.dev-kms-core-2.com: 31524400000 bytes sent over 120 seconds:
-		 250.5334218343099 MB/sec
-Peer 4 @ abcd.dev-kms-core-4.com: 31417800000 bytes sent over 120 seconds:
-		 249.68624114990234 MB/sec
+------------------------------------------------------------------------------
+Endpoint: localhost:50200
+Peers:    3
+------------------------------------------------------------------------------
+   Peer  Address                     Sent (MiB)      Secs       MiB/s
+------------------------------------------------------------------------------
+      3  abcd.dev-kms-core-3.com        7960.61        30      265.35
+         latency(ms) avg: 35
+                     p50/p90/p99: 18/53/331
+                     slowest/fastest: 965/0
+      4  abcd.dev-kms-core-4.com       11151.60        30      371.72
+         latency(ms) avg: 25
+                     p50/p90/p99: 24/39/56
+                     slowest/fastest: 97/0
+      1  abcd.dev-kms-core-1.com        9324.65        30      310.82
+         latency(ms) avg: 30
+                     p50/p90/p99: 20/37/291
+                     slowest/fastest: 818/0
+------------------------------------------------------------------------------
+Summary: total 28436.85 MiB in ~30s, aggregate 947.90 MiB/s
 
-==================================================
+------------------------------------------------------------------------------
+Endpoint: localhost:50300
+Peers:    3
+------------------------------------------------------------------------------
+   Peer  Address                     Sent (MiB)      Secs       MiB/s
+------------------------------------------------------------------------------
+      4  abcd.dev-kms-core-4.com       10526.08        30      350.87
+         latency(ms) avg: 26
+                     p50/p90/p99: 24/42/77
+                     slowest/fastest: 241/0
+      2  abcd.dev-kms-core-2.com        7986.55        30      266.22
+         latency(ms) avg: 35
+                     p50/p90/p99: 21/56/332
+                     slowest/fastest: 805/1
+      1  abcd.dev-kms-core-1.com       15588.28        30      519.61
+         latency(ms) avg: 17
+                     p50/p90/p99: 16/29/43
+                     slowest/fastest: 75/0
+------------------------------------------------------------------------------
+Summary: total 34100.91 MiB in ~30s, aggregate 1136.70 MiB/s
 
-[BANDWIDTH BENCHMARK RESULT for localhost:50200]
-==================================================
-Peer 1 @ abcd.dev-kms-core-1.com: 31828500000 bytes sent over 120 seconds:
-		 252.95019149780273 MB/sec
-Peer 4 @ abcd.dev-kms-core-4.com: 31668700000 bytes sent over 120 seconds:
-		 251.68021519978842 MB/sec
-Peer 3 @ abcd.dev-kms-core-3.com: 31436700000 bytes sent over 120 seconds:
-		 249.83644485473633 MB/sec
-
-==================================================
-
-[BANDWIDTH BENCHMARK RESULT for localhost:50400]
-==================================================
-Peer 2 @ abcd.dev-kms-core-2.com: 31636500000 bytes sent over 120 seconds:
-		 251.42431259155273 MB/sec
-Peer 3 @ abcd.dev-kms-core-3.com: 31438600000 bytes sent over 120 seconds:
-		 249.85154469807944 MB/sec
-Peer 1 @ abcd.dev-kms-core-1.com: 31724600000 bytes sent over 120 seconds:
-		 252.1244684855143 MB/sec
-
-==================================================
+==============================================================================
 ```
