@@ -1,5 +1,7 @@
 use anyhow::Result;
-use kms_grpc::kms::v1::{BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, RequestId};
+use kms_grpc::kms::v1::{
+    BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, BandwidthKind, RequestId,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -511,6 +513,12 @@ pub async fn run_bandwidth_benchmark(
     payload_size: u32,
     connections_per_peer: u32,
 ) -> Result<BandwidthBenchmarkResponse> {
+    let kind = if duration == 0 {
+        BandwidthKind::Once
+    } else {
+        BandwidthKind::Duration
+    }
+    .into();
     let request = BandwidthBenchmarkRequest {
         duration,
         number_sessions: num_sessions,
@@ -519,6 +527,7 @@ pub async fn run_bandwidth_benchmark(
             request_id: context_id,
         }),
         connections_per_peer,
+        kind,
     };
 
     let client = GrpcHealthClient::new(endpoint);

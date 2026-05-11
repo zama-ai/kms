@@ -837,6 +837,10 @@ message DestroyMpcEpochRequest {
   RequestId epoch_id = 1;
 }
 
+enum BandwidthKind {
+  Duration = 0;
+  Once = 1;
+}
 
 message BandwidthBenchmarkRequest {
   // The KMS context for which to perform the benchmark
@@ -855,6 +859,7 @@ message BandwidthBenchmarkRequest {
   // small-payload throughput, where the per-connection codec task is
   // typically the bottleneck.
   uint32 connections_per_peer = 5;
+  BandwidthKind kind = 6;
 }
 
 // All latency info are in ms

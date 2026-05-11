@@ -209,10 +209,22 @@ pub fn print_bandwidth_benchmark_text(
     connections_per_peer: u32,
     results: Vec<(String, BandwidthBenchmarkResponse)>,
 ) -> Result<()> {
+    let oneshot = duration == 0;
     let mut output = String::with_capacity(4096);
     writeln!(output, "\n[KMS BANDWIDTH BENCHMARK]")?;
     writeln!(output, "{}", "=".repeat(78))?;
-    writeln!(output, "Duration target:     {} seconds", duration)?;
+    if oneshot {
+        writeln!(
+            output,
+            "Benchmark type:      One-shot (single payload per session)"
+        )?;
+    } else {
+        writeln!(
+            output,
+            "Benchmark type:      Duration-based ({} seconds)",
+            duration
+        )?;
+    }
     writeln!(output, "Parallel sessions:   {}", num_sessions)?;
     writeln!(output, "Payload per session: {} bytes", payload_size)?;
     writeln!(
@@ -254,15 +266,16 @@ pub fn print_bandwidth_benchmark_text(
             )?;
 
             if let Some(latency) = &peer.latency {
+                writeln!(output, "         latency(ms) avg: {}", latency.average,)?;
                 writeln!(
                     output,
-                    "         latency(ms) avg/p50/p90/p99/slow/fast: {}/{}/{}/{}/{}/{}",
-                    latency.average,
-                    latency.p50,
-                    latency.p90,
-                    latency.p99,
-                    latency.slowest,
-                    latency.fastest
+                    "                     p50/p90/p99: {}/{}/{}",
+                    latency.p50, latency.p90, latency.p99,
+                )?;
+                writeln!(
+                    output,
+                    "                     slowest/fastest: {}/{}",
+                    latency.slowest, latency.fastest
                 )?;
             }
         }
