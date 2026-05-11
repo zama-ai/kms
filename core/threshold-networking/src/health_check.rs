@@ -32,6 +32,12 @@ pub enum HealthCheckStatus {
     TimeOut(Duration),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum BenchKind {
+    Once,
+    Duration(Duration),
+}
+
 pub type HealthCheckResult<R> = HashMap<(R, Identity), HealthCheckStatus>;
 pub type BandwidthBenchmarkResult<R> =
     HashMap<(R, Identity), (usize, Duration, Vec<HealthCheckStatus>)>;
@@ -119,7 +125,7 @@ impl<R: RoleTrait> HealthCheckSession<R> {
     pub async fn run_bandwidth_benchmark(
         &self,
         payload_size: usize,
-        duration: Duration,
+        duration: BenchKind,
         session_idx: usize,
     ) -> anyhow::Result<BandwidthBenchmarkResult<R>> {
         // For duration, hit all the other parties with a payload of the given size.
@@ -170,20 +176,41 @@ impl<R: RoleTrait> HealthCheckSession<R> {
                 let mut total_bytes_sent = 0;
                 let start = std::time::Instant::now();
                 let mut answers = Vec::new();
-                while start.elapsed() < duration {
-                    answers.push(
-                        Self::send(
-                            tag_serialized.clone(),
-                            client.clone(),
-                            timeout,
-                            payload.clone(),
-                            role,
-                            id.clone(),
-                        )
-                        .await
-                        .2,
-                    );
-                    total_bytes_sent += payload_size;
+                match duration {
+                    BenchKind::Once => {
+                        // For the "once" kind, we just send one payload and return the result.
+                        answers.push(
+                            Self::send(
+                                tag_serialized.clone(),
+                                client.clone(),
+                                timeout,
+                                payload.clone(),
+                                role,
+                                id.clone(),
+                            )
+                            .await
+                            .2,
+                        );
+                        total_bytes_sent += payload_size;
+                    }
+                    BenchKind::Duration(target_duration) => {
+                        // For the "duration" kind, we keep sending payloads until the target duration has elapsed.
+                        while start.elapsed() < target_duration {
+                            answers.push(
+                                Self::send(
+                                    tag_serialized.clone(),
+                                    client.clone(),
+                                    timeout,
+                                    payload.clone(),
+                                    role,
+                                    id.clone(),
+                                )
+                                .await
+                                .2,
+                            );
+                            total_bytes_sent += payload_size;
+                        }
+                    }
                 }
                 tracing::debug!("Total bytes sent to party {}: {}", id, total_bytes_sent);
                 ((role, id), (total_bytes_sent, start.elapsed(), answers))
