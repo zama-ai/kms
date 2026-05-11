@@ -1,6 +1,6 @@
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/trailofbits/dylint", pattern = "examples/general/non_local_effect_before_error_return" },
+    { git = "https://github.com/trailofbits/dylint", rev = "2c20d164e06c446de2cecadff0c55e16a877c006", pattern = "examples/general/non_local_effect_before_error_return" },
 ]
 
 [non_local_effect_before_error_return]

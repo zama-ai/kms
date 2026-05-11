@@ -214,7 +214,6 @@ pub(crate) async fn user_decryption_centralized(
         key_id,
         None,
         enc_config,
-        false,
     )
     .await;
 
