@@ -10,10 +10,7 @@ use crate::{
     {
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         constants::{PRSS_SIZE_MAX, STATSEC},
-        large_execution::{
-            single_sharing::init_vdm,
-            vss::{SecureVss, Vss},
-        },
+        large_execution::vss::{SecureVss, Vss},
         runtime::sessions::{
             base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
@@ -21,14 +18,13 @@ use crate::{
     },
 };
 use algebra::{
-    bivariate::{MatrixMul, compute_powers_list},
+    matrix::{VdmMatrix, compute_powers_list},
     poly::Poly,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
-use ndarray::{ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -293,13 +289,12 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
         let vss_res = self.vss.execute_many(session, &secrets).await?;
 
         let mut to_open = Vec::with_capacity(c * (n - t));
-        let m_inverse = transpose_vdm(n - t, n)?;
+        let vdm = VdmMatrix::<Z>::from_exceptional_sequence(n, n - t)?;
         for i in 0..c {
             //Retrieve the ith VSSed contribution of all parties
             let vss_s = vss_res.iter().map(|s| s[i]).collect_vec();
             //Apply randomness extraction
-            let random_val = m_inverse.matmul(&ArrayD::from_shape_vec(IxDyn(&[n]), vss_s)?)?;
-            to_open.append(&mut random_val.into_raw_vec_and_offset().0);
+            to_open.append(&mut vdm.mul_vector(&vss_s)?);
         }
 
         // create all the subsets A that contain the party id
@@ -1113,20 +1108,6 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
             broadcast: SyncReliableBroadcast::default(),
         }
     }
-}
-
-/// Compute the transposed Vandermonde matrix with a_i = embed(i).
-/// That is:
-/// 1               1               1           ...    1
-/// a_1             a_2             a_3         ...    a_columns
-/// a_1^2           a_2^2           a_3^2       ...    a_columns^2
-/// ...
-/// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_columns^{rows-1}
-fn transpose_vdm<Z: RingWithExceptionalSequence>(
-    rows: usize,
-    columns: usize,
-) -> anyhow::Result<ArrayD<Z>> {
-    Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
 pub(crate) fn create_sets(all_roles: &[Role], t: usize) -> Vec<Vec<Role>> {
@@ -2538,53 +2519,19 @@ mod tests {
     }
 
     #[test]
-    fn test_vdm_inverse() {
-        let res = transpose_vdm(3, 4).unwrap();
-        // Check first row is
-        // 1, 1, 1, 1
-        assert_eq!(ResiduePolyF4::ONE, res[[0, 0]]);
-        assert_eq!(ResiduePolyF4::ONE, res[[0, 1]]);
-        assert_eq!(ResiduePolyF4::ONE, res[[0, 2]]);
-        assert_eq!(ResiduePolyF4::ONE, res[[0, 3]]);
-        // Check second row is
-        // 1, 2, 3, 4 = 1, x, 1+x, 2x
-        assert_eq!(
-            ResiduePolyF4::get_from_exceptional_sequence(1).unwrap(),
-            res[[1, 0]]
-        );
-        assert_eq!(
-            ResiduePolyF4::get_from_exceptional_sequence(2).unwrap(),
-            res[[1, 1]]
-        );
-        assert_eq!(
-            ResiduePolyF4::get_from_exceptional_sequence(3).unwrap(),
-            res[[1, 2]]
-        );
-        assert_eq!(
-            ResiduePolyF4::get_from_exceptional_sequence(4).unwrap(),
-            res[[1, 3]]
-        );
-        // Check third row is
-        // 1, x^2, (1+x)^2, (2x)^2
-        assert_eq!(
-            ResiduePolyF4::get_from_exceptional_sequence(1).unwrap(),
-            res[[2, 0]]
-        );
-        assert_eq!(
-            ResiduePolyF4Z128::get_from_exceptional_sequence(2).unwrap()
-                * ResiduePolyF4Z128::get_from_exceptional_sequence(2).unwrap(),
-            res[[2, 1]]
-        );
-        assert_eq!(
-            ResiduePolyF4Z128::get_from_exceptional_sequence(3).unwrap()
-                * ResiduePolyF4Z128::get_from_exceptional_sequence(3).unwrap(),
-            res[[2, 2]]
-        );
-        assert_eq!(
-            ResiduePolyF4Z128::get_from_exceptional_sequence(4).unwrap()
-                * ResiduePolyF4Z128::get_from_exceptional_sequence(4).unwrap(),
-            res[[2, 3]]
-        );
+    fn test_vdm_matrix() {
+        let vdm = VdmMatrix::<ResiduePolyF4Z128>::from_exceptional_sequence(4, 3).unwrap();
+
+        for row_idx in 0..4 {
+            let alpha = ResiduePolyF4Z128::get_from_exceptional_sequence(row_idx + 1).unwrap();
+            let mut row_selector = vec![ResiduePolyF4Z128::ZERO; 4];
+            row_selector[row_idx] = ResiduePolyF4Z128::ONE;
+            let row = vdm.mul_vector(&row_selector).unwrap();
+
+            assert_eq!(ResiduePolyF4Z128::ONE, row[0]);
+            assert_eq!(alpha, row[1]);
+            assert_eq!(alpha * alpha, row[2]);
+        }
     }
 
     /// Test that compute_result fails as expected when a set is not present in the `true_psi_vals` given as input
