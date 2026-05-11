@@ -190,9 +190,8 @@ cargo build --bin stairwayctl
 ### Pre-defined commands
 
 With `cargo make` we have pre-defined targets to spin up experiments for both
-`TFHE` and `BGV`. The Makefile now exposes a small, fixed set of party
-clusters rather than a family of "fake DKG" / "real DKG" one-liners — the
-choreographer commands that drive the actual benchmark are run from the
+`TFHE` and `BGV`. The Makefile exposes a small, fixed set of party
+clusters — the choreographer commands that drive the actual benchmark are run from the
 `test_scripts` shell scripts (see below).
 
 First generate the TLS certificates, say for 5 MPC parties:
@@ -260,14 +259,7 @@ telemetry under `temp/`):
 cargo make --env EXPERIMENT_NAME=tfhe-bench-run-4p shutdown
 ```
 
-Or, more aggressively, stop and remove every running docker container:
-
-```sh
-docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
-```
-
-The reproducible test scripts use the latter form via a `cleanup_docker`
-helper.
+The reproducible test scripts use a `cleanup_docker` helper to shutdown the experiments.
 
 ### Reproducible end-to-end runs
 
@@ -291,11 +283,10 @@ Two flavours are shipped:
   - `bgv_reproducible.sh` (4 parties, t = 1, real BGV parameters).
 
 Each reproducible script expects the choreographer `.toml` as its first
-argument (and an optional `GEN` flag to print the new hashes when parameters
-change), for example:
+argument (and an optional `GEN` flag to generate the encryptions), for example:
 
 ```sh
-./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml
+./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml GEN
 ```
 
 These reproducible scripts use the test parameter set `params-test-bk-sns`
@@ -326,8 +317,7 @@ results:
   `cargo bench --features=measure_memory` for memory), then parses the output
   with `non-threshold-parser.py`.
 - `non-threshold-zk-pok-bench.sh` — same idea for the `tfhe-zk-pok`
-  benchmarks (speed, memory, and the new size benchmark added by this
-  branch).
+  benchmarks (speed, memory, and the size benchmark).
 - `non-threshold-kat.sh` — runs the `non-threshold-tfhe-kat` and
   `non-threshold-zk-pok-kat` binaries used for the NIST KAT coverage.
 - `non-threshold-parser.py` / `session-stats-parser.py` — post-process the
