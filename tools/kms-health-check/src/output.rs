@@ -298,3 +298,102 @@ pub fn print_bandwidth_benchmark_text(
     print!("{}", output);
     Ok(())
 }
+
+/// JSON-formatted equivalent of [`print_bandwidth_benchmark_text`].
+///
+/// Emits a single pretty-printed JSON document to stdout containing the
+/// same configuration, per-peer measurements, and per-endpoint summary
+/// statistics. The shape is intentionally machine-friendly (no padding,
+/// fully explicit unit suffixes in field names) so downstream tooling can
+/// parse it with `jq` or `serde_json` directly.
+///
+/// All MiB values are computed with a 1024 × 1024 divisor (matching the
+/// text formatter). Throughput fields are 0.0 when the relevant duration
+/// is 0 (one-shot mode), since per-second rates are not meaningful in
+/// that case.
+pub fn print_bandwidth_benchmark_json(
+    duration: u64,
+    num_sessions: u32,
+    payload_size: u32,
+    connections_per_peer: u32,
+    results: Vec<(String, BandwidthBenchmarkResponse)>,
+) -> Result<()> {
+    let oneshot = duration == 0;
+
+    let endpoints: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(endpoint, result)| {
+            let mut total_bytes_sent: u64 = 0;
+            let mut max_duration_secs: u64 = 0;
+
+            let peers: Vec<serde_json::Value> = result
+                .peers_info
+                .iter()
+                .map(|peer| {
+                    total_bytes_sent = total_bytes_sent.saturating_add(peer.bytes_sent);
+                    max_duration_secs = max_duration_secs.max(peer.duration);
+
+                    let sent_mib = peer.bytes_sent as f64 / (1024.0 * 1024.0);
+                    let throughput_mib_per_sec = if peer.duration == 0 {
+                        0.0
+                    } else {
+                        sent_mib / (peer.duration as f64)
+                    };
+
+                    let latency = peer.latency.as_ref().map(|l| {
+                        serde_json::json!({
+                            "average_ms": l.average,
+                            "p50_ms": l.p50,
+                            "p90_ms": l.p90,
+                            "p99_ms": l.p99,
+                            "slowest_ms": l.slowest,
+                            "fastest_ms": l.fastest,
+                        })
+                    });
+
+                    serde_json::json!({
+                        "peer_id": peer.peer_id,
+                        "endpoint": peer.endpoint,
+                        "bytes_sent": peer.bytes_sent,
+                        "duration_secs": peer.duration,
+                        "throughput_mib_per_sec": throughput_mib_per_sec,
+                        "latency": latency,
+                    })
+                })
+                .collect();
+
+            let total_mib = total_bytes_sent as f64 / (1024.0 * 1024.0);
+            let aggregate_mib_per_sec = if max_duration_secs == 0 {
+                0.0
+            } else {
+                total_mib / (max_duration_secs as f64)
+            };
+
+            serde_json::json!({
+                "endpoint": endpoint,
+                "num_peers": peers.len(),
+                "peers": peers,
+                "summary": {
+                    "total_bytes_sent": total_bytes_sent,
+                    "total_mib": total_mib,
+                    "duration_secs": max_duration_secs,
+                    "aggregate_mib_per_sec": aggregate_mib_per_sec,
+                },
+            })
+        })
+        .collect();
+
+    let report = serde_json::json!({
+        "config": {
+            "benchmark_type": if oneshot { "oneshot" } else { "duration" },
+            "duration_secs": duration,
+            "num_sessions": num_sessions,
+            "payload_size_bytes": payload_size,
+            "connections_per_peer": connections_per_peer.max(1),
+        },
+        "endpoints": endpoints,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}

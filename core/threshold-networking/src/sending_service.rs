@@ -152,8 +152,7 @@ impl GrpcSendingService {
     /// the single-connection variant. Index 0 is the same client that
     /// [`Self::connect_to_party`] returns. Indices `1..pool_size` are
     /// additional, independent TCP/HTTP-2 connections (and therefore have
-    /// independent h2 codec tasks), which is what removes the
-    /// single-codec-task bottleneck for small-payload throughput.
+    /// independent h2 codec tasks).
     ///
     /// `pool_size` is clamped to at least 1. Once the pool has grown the
     /// extra connections stay alive for the lifetime of the
@@ -161,7 +160,7 @@ impl GrpcSendingService {
     /// runs do not pay the connection-establishment cost each time, but it
     /// does mean shrinking is not supported. Intended for the bandwidth
     /// benchmark; production MPC traffic should keep using
-    /// [`Self::connect_to_party`].
+    /// [`Self::connect_to_party`] until we see real benefits of pooling.
     pub(crate) async fn connect_to_party_pool(
         &self,
         receiver: &Identity,

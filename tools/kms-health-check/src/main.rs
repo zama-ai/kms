@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::output::print_bandwidth_benchmark_text;
+use crate::output::{print_bandwidth_benchmark_json, print_bandwidth_benchmark_text};
 
 mod checks;
 mod config;
@@ -145,11 +145,6 @@ async fn main() -> Result<()> {
             payload_size,
             connections_per_peer,
         } => {
-            if let OutputFormat::Json = cli.format {
-                println!(
-                    "Json not suported for bandwidth benchmark results, defaulting to text output"
-                );
-            }
             let mut joinset = tokio::task::JoinSet::new();
             for ep in endpoints {
                 let context_id = context_id.clone();
@@ -172,13 +167,22 @@ async fn main() -> Result<()> {
                 let result = result?;
                 results.push((endpoint, result));
             }
-            print_bandwidth_benchmark_text(
-                duration,
-                num_sessions,
-                payload_size,
-                connections_per_peer,
-                results,
-            )?;
+            match cli.format {
+                OutputFormat::Json => print_bandwidth_benchmark_json(
+                    duration,
+                    num_sessions,
+                    payload_size,
+                    connections_per_peer,
+                    results,
+                )?,
+                OutputFormat::Text => print_bandwidth_benchmark_text(
+                    duration,
+                    num_sessions,
+                    payload_size,
+                    connections_per_peer,
+                    results,
+                )?,
+            }
         }
     };
 
