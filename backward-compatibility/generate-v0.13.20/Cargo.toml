@@ -9,26 +9,19 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-# TODO the references in this file to e678eb2c56e637b5d08ef417c698c9e58764951b should be updated to the release tag of 0_13_20 once it is made
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "e678eb2c56e637b5d08ef417c698c9e58764951b" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", tag = "v0.13.20-0" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
 # Each generator may need different versions to match its target KMS version.
 
-# This is a list of kms-core versions we will generate data for. This list will grow over time.
-# TODO observe that the commit is only temporary to make the new tests work and must be updated when cutting the real 0_13_20 release
-# Observe that modification here also requires temporarily removing the `--locked` flag in the `generate-backward-compatibility-v0_13_20` in Makefile in order to properly update and compile the correct version of the KMS to test
-kms_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "e678eb2c56e637b5d08ef417c698c9e58764951b"}
-kms_grpc_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "e678eb2c56e637b5d08ef417c698c9e58764951b"}
-threshold_fhe_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "e678eb2c56e637b5d08ef417c698c9e58764951b", features = [
-    "testing",
-] }
-algebra_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "e678eb2c56e637b5d08ef417c698c9e58764951b" }
-hashing_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-hashing", default-features = false, rev = "e678eb2c56e637b5d08ef417c698c9e58764951b" }
-threshold_execution_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "e678eb2c56e637b5d08ef417c698c9e58764951b" }
-threshold_networking_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "e678eb2c56e637b5d08ef417c698c9e58764951b" }
-threshold_types_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "e678eb2c56e637b5d08ef417c698c9e58764951b" }
+# All dependencies below target tag v0.13.20-0.
+kms_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "kms", tag = "v0.13.20-0"}
+kms_grpc_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", tag = "v0.13.20-0"}
+algebra_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, tag = "v0.13.20-0" }
+threshold_execution_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, tag = "v0.13.20-0", features = ["testing"] }
+threshold_networking_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, tag = "v0.13.20-0" }
+threshold_types_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, tag = "v0.13.20-0" }
 #error-utils_0_13_20 = { path = "./core/error-utils", default-features = false }
 #thread-handles_0_13_20 = { path = "./core/thread-handles" }
 
@@ -37,7 +30,7 @@ threshold_types_0_13_20 = { git = "https://github.com/zama-ai/kms.git", package 
 # modules as much as possible to avoid serialization differences
 cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
 tfhe_versionable_0_7 = { package = "tfhe-versionable", version = "=0.7.0" }
-tfhe_1_5_4 = { package = "tfhe", version = "1.5.4", features = [
+tfhe_1_6_1 = { package = "tfhe", version = "=1.6.1", features = [
     "shortint",
 ] }
 alloy-sol-types-1_4_1 = { package = "alloy-sol-types", version = "=1.4.1" }

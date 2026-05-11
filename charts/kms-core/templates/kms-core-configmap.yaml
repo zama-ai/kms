@@ -69,6 +69,10 @@ data:
     [backup_vault.keychain.aws_kms]
     root_key_id = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
+    {{- else }}
+      {{- if .Values.kmsCore.custodianBackup }}
+    [backup_vault.keychain.secret_sharing]
+      {{- end }}
     {{- end }}
   kms-gen-keys.toml: |
     [keygen]
