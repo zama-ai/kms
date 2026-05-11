@@ -13,6 +13,7 @@ NUM_CTXTS=10
 CTXT_VALUE=12345
 
 mkdir -p $KEY_PATH
+mkdir -p $CTXT_PATH
 
 exec 2>&1
 set -x
@@ -44,7 +45,6 @@ SEED=$(( SEED + 1 ))
 $STAIRWAYCTL_EXEC -c $1 threshold-key-gen --sid $CURR_SID --preproc-sid $((CURR_SID - 1)) --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 30
 #Get the key
-mkdir -p $KEY_PATH
 $STAIRWAYCTL_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID --storage-path $KEY_PATH
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
@@ -61,7 +61,6 @@ fi
 
 if [ "${2:-}" = "GEN" ]; then
     echo "Generating ctxts"
-    mkdir -p $CTXT_PATH
     ### Generate all ctxts
     # Encrypt
      $STAIRWAYCTL_EXEC -c $1 encrypt --path-pubkey $KEY_PATH/pk.bin --value $CTXT_VALUE --output-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin

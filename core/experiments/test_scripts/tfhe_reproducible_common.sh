@@ -22,6 +22,7 @@ KEY_SID=0
 mkdir -p $KEY_PATH
 mkdir -p $RESHARED_KEY_PATH
 mkdir -p $CRS_PATH
+mkdir -p $CTXT_PATH
 
 export RUN_MODE=dev
 
@@ -56,7 +57,6 @@ $MOBYGO_EXEC -c $1 threshold-key-gen --dkg-params $PARAMS --sid $CURR_SID  --pre
 #Checking every 30s
 $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 30
 #Get the key
-mkdir -p $KEY_PATH
 $MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID  --storage-path $KEY_PATH
 KEY_SID=$CURR_SID
 CURR_SID=$(( CURR_SID + 1 ))
@@ -75,7 +75,6 @@ fi
 
 if [ "${2:-}" = "GEN" ]; then
     echo "Generating ctxts"
-    mkdir -p $CTXT_PATH
     ### Generate all ctxts
     VALUE=$INIT_VALUE
     for CTXT_TYPE in bool u4 u8 u16 u32 u64 u128
