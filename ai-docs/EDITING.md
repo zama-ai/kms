@@ -4,7 +4,7 @@ Rules for changing code, configuration, or documentation in this repository.
 
 ## Process
 
-- State assumptions explicitly. If uncertain, ask rather than guess.
+- State assumptions explicitly. If uncertain, first inspect the relevant code/docs/tests. If uncertainty remains and affects correctness, ask rather than guess.
 - Present multiple interpretations when ambiguity exists.
 - Stop when confused. Name what's unclear.
 - Define success criteria. Loop until verified.
@@ -22,6 +22,7 @@ Rules for changing code, configuration, or documentation in this repository.
 
 - Modify the smallest amount of code necessary.
 - No features beyond what was asked. No abstractions for single-use code.
+- For cryptographic, MPC, serialization, consensus, compatibility, or security-sensitive code, preserve existing behavior. In particular including wire formats, parameter choices, and transcript/hash inputs. The only exception is if explicitely requested to change these, even in this case, request an explicit design choice from your human.
 - Do not make large rewrites, and do not copy-paste code, unless explicitly instructed to do so or unless you are working in test code. Prefer focused changes.
 - Touch only what you must. Clean up only your own mess.
 - Don't "improve" adjacent code, comments, or formatting.
