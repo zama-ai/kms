@@ -971,7 +971,6 @@ fn cmd_config(config_path: &Path, command: CCCommand, max_iter: usize) -> CmdCon
 }
 
 /// Build a `CipherParameters` with sensible defaults, overriding only what varies per test case.
-#[allow(clippy::too_many_arguments)]
 fn cipher_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -979,7 +978,6 @@ fn cipher_params(
     batch_size: usize,
     no_compression: bool,
     no_precompute_sns: bool,
-    uncompressed_keys: bool,
     ciphertext_output_path: Option<PathBuf>,
 ) -> CipherParameters {
     CipherParameters {
@@ -995,7 +993,6 @@ fn cipher_params(
         parallel_requests: 1,
         ciphertext_output_path,
         inter_request_delay_ms: 0,
-        uncompressed_keys,
         extra_data: None,
     }
 }
@@ -1081,7 +1078,7 @@ async fn integration_test_commands(
     let ctxt_with_sns_path = keys_folder.join("test_encrypt_cipher_with_sns.txt");
 
     let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, no_comp, no_sns, false, None)
+        cipher_params(val, dt, key_id, bs, no_comp, no_sns, None)
     };
 
     // Commands without SnS precompute (no_precompute_sns=true)
@@ -1142,7 +1139,6 @@ async fn integration_test_commands(
             1,
             false,
             true,
-            false,
             Some(ctxt_path.clone()),
         )),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
@@ -1213,7 +1209,6 @@ async fn integration_test_commands(
             key_id,
             1,
             true,
-            false,
             false,
             Some(ctxt_with_sns_path.clone()),
         )),
@@ -1312,8 +1307,8 @@ async fn integration_test_commands(
 /// Run a subset of integration test commands using the default keyset format.
 ///
 /// The default public material stores only `CompressedXofKeySet`
-/// (no separate `PublicKey`/`ServerKey`), so all commands must use
-/// `uncompressed_keys: false`.
+/// (no separate `PublicKey`/`ServerKey`); the storage probe in
+/// [`fetch_keys_auto_detect`] resolves which layout to load.
 async fn integration_test_commands_default_keys(
     config_path: &Path,
     keys_folder: &Path,
@@ -1322,7 +1317,7 @@ async fn integration_test_commands_default_keys(
     let key_id = KeyId::from_str(&key_id)?;
 
     let cp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, false, no_sns, false, None)
+        cipher_params(val, dt, key_id, bs, false, no_sns, None)
     };
 
     let commands = vec![
@@ -2483,7 +2478,6 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
         1,
         false,
         true,
-        false,
         None,
     );
     params.context_id = Some(context_id);
@@ -2641,7 +2635,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// Full generation test - threshold sequential preprocessing and keygen with Default params.
 ///
 /// Requires pre-generated material in the test-material/default directory
-/// (produced by `generate-test-material --profile secure --parties 4,10,13`):
+/// (produced by `generate-test-material --profile secure --parties 4,13`):
 /// - **PRSS**: loaded at server startup (`ensure_default_prss=true`); fast to generate but must exist before the test runs.
 /// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
 ///
@@ -3166,7 +3160,6 @@ async fn test_threshold_reshare() -> Result<()> {
             ciphertext_output_path: None,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            uncompressed_keys: false,
             extra_data: None,
         })),
         200,

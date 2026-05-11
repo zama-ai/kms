@@ -10,10 +10,7 @@ on:
   # `gh workflow run docker-build.yml --ref <sha>`.
   # Each image can be toggled; unticking a parent also skips its dependents.
   workflow_dispatch:
-    # Anchored so workflow_call below reuses the same input set; without
-    # workflow_call inputs, the per-image `if` gates evaluate `inputs.build-*`
-    # to null when invoked from another workflow and skip every image.
-    inputs: &build_inputs
+    inputs:
       build-golden-image:
         description: 'Build rust-golden-image (parent of core-client, core-service, enclave)'
         type: boolean
@@ -32,7 +29,23 @@ on:
         default: true
   #=======================================================
   workflow_call:
-    inputs: *build_inputs
+    inputs:
+      build-golden-image:
+        description: 'Build rust-golden-image (parent of core-client, core-service, enclave)'
+        type: boolean
+        default: true
+      build-core-client:
+        description: 'Build core-client (needs golden-image)'
+        type: boolean
+        default: true
+      build-core-service:
+        description: 'Build core-service (needs golden-image; parent of enclave)'
+        type: boolean
+        default: true
+      build-enclave:
+        description: 'Build core-service-enclave (needs core-service)'
+        type: boolean
+        default: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -62,8 +75,10 @@ on:
 permissions: {}
 
 concurrency:
-  group: docker-build-rust-golden-latest
-  cancel-in-progress: false
+  # Scope concurrency to source branch (+ head repo for forks), so different PRs
+  # can build in parallel while newer pushes on the same branch cancel older runs.
+  group: docker-build-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   ############################################################################
@@ -194,6 +209,12 @@ jobs:
   golden-image-latest:
     name: docker-build/golden-image-latest
     runs-on: ubuntu-latest
+    # `rust-golden-image:latest` is a shared mutable tag across branches.
+    # Serialize only this retag job globally to avoid cross-PR races while
+    # keeping the rest of the workflow parallelized per branch.
+    concurrency:
+      group: docker-build-golden-image-latest-global
+      cancel-in-progress: false
     needs:
       - golden-image-tag
       - golden-image
@@ -243,7 +264,6 @@ jobs:
   core-client:
     name: docker-build/core-client (bpr)
     needs:
-      # - start-amd64-runner
       - golden-image-latest
     if: |
       !cancelled() &&
@@ -281,7 +301,6 @@ jobs:
   core-service:
     name: docker-build/core-service (bpr)
     needs:
-      # - start-amd64-runner
       - golden-image-latest
     if: |
       !cancelled() &&
@@ -318,10 +337,12 @@ jobs:
   #
   enclave:
     name: docker-build/core-service-enclave (bpr)
-    if: github.event_name != 'workflow_dispatch' || inputs.build-enclave
     needs:
-      # - start-amd64-runner
       - core-service
+    if: |
+      !cancelled() &&
+      needs.core-service.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.build-enclave)
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
       actions: read # Required to read workflow run information
