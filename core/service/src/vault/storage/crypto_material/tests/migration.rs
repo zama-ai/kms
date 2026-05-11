@@ -365,7 +365,7 @@ async fn test_copy_compressed_key_to_original_success() {
     // and metadata signed under old_key_id.
     {
         let guarded = crypto_storage
-            .read_guarded_threshold_fhe_keys(&old_key_id, &epoch_id)
+            .read_guarded_fhe_keys(&old_key_id, &epoch_id)
             .await
             .unwrap();
         assert!(
@@ -509,7 +509,7 @@ async fn test_copy_compressed_key_overwrite() {
 
     {
         let guarded = crypto_storage
-            .read_guarded_threshold_fhe_keys(&old_key_id, &epoch_id)
+            .read_guarded_fhe_keys(&old_key_id, &epoch_id)
             .await
             .unwrap();
         assert!(
@@ -706,7 +706,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     // ThresholdFheKeys (uncompressed) — unchanged.
     {
         let guarded = crypto_storage
-            .read_guarded_threshold_fhe_keys(&old_key_id, &epoch_id)
+            .read_guarded_fhe_keys(&old_key_id, &epoch_id)
             .await
             .unwrap();
         assert!(

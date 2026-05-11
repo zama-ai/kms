@@ -103,9 +103,7 @@ where
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (ephem_operator_priv_key, ephem_operator_pub_key) = enc
-            .keygen()
-            .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
+        let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;
         let mut grpc_cts = HashMap::new();
         for (cur_cus_role, cur_cus_ct) in cts {
             grpc_cts.insert(cur_cus_role.one_based() as u64, cur_cus_ct.try_into()?);
