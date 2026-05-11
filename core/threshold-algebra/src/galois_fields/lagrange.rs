@@ -1,6 +1,9 @@
 use std::num::NonZero;
 
-use crate::{poly::lagrange_polynomials, structure_traits::Field};
+use crate::{
+    poly::lagrange_polynomials,
+    structure_traits::{Field, Ring},
+};
 use itertools::Itertools;
 
 /// Map from evaluation points to their precomputed Lagrange polynomials.
@@ -27,7 +30,6 @@ pub fn build_lagrange_map<F: Field>(
     Ok(map)
 }
 
-#[allow(unused_variables)]
 /// Pre-computes Lagrange polynomial stores for all enabled Galois field types.
 /// Must be called at startup with the known number of parties and threshold.
 ///
@@ -36,18 +38,21 @@ pub fn build_lagrange_map<F: Field>(
 pub fn init_lagrange_stores(
     num_parties: NonZero<usize>,
     min_threshold: usize,
+    extension_degree: usize,
 ) -> anyhow::Result<()> {
-    super::gf32::LAGRANGE_STORE
-        .set(build_lagrange_map(num_parties, min_threshold)?)
-        .ok();
-    super::gf64::LAGRANGE_STORE
-        .set(build_lagrange_map(num_parties, min_threshold)?)
-        .ok();
-    super::gf128::LAGRANGE_STORE
-        .set(build_lagrange_map(num_parties, min_threshold)?)
-        .ok();
-    super::gf256::LAGRANGE_STORE
-        .set(build_lagrange_map(num_parties, min_threshold)?)
-        .ok();
-    Ok(())
+    match extension_degree {
+        super::gf32::GF32::EXTENSION_DEGREE => super::gf32::LAGRANGE_STORE
+            .set(build_lagrange_map(num_parties, min_threshold)?)
+            .map_err(|_| anyhow::anyhow!("Failed to set GF32 Lagrange store")),
+        super::gf64::GF64::EXTENSION_DEGREE => super::gf64::LAGRANGE_STORE
+            .set(build_lagrange_map(num_parties, min_threshold)?)
+            .map_err(|_| anyhow::anyhow!("Failed to set GF64 Lagrange store")),
+        super::gf128::GF128::EXTENSION_DEGREE => super::gf128::LAGRANGE_STORE
+            .set(build_lagrange_map(num_parties, min_threshold)?)
+            .map_err(|_| anyhow::anyhow!("Failed to set GF128 Lagrange store")),
+        super::gf256::GF256::EXTENSION_DEGREE => super::gf256::LAGRANGE_STORE
+            .set(build_lagrange_map(num_parties, min_threshold)?)
+            .map_err(|_| anyhow::anyhow!("Failed to set GF256 Lagrange store")),
+        _ => Ok(()),
+    }
 }
