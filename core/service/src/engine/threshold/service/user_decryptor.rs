@@ -534,7 +534,7 @@ impl<
         // but this should be ok since write locks
         // happen rarely as keygen is a rare event.
         let fhe_keys_rlock = crypto_storage
-            .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -671,7 +671,7 @@ mod tests {
         },
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
-        vault::storage::ram,
+        vault::storage::{crypto_material::PublicKeySet, ram},
     };
 
     use super::*;
@@ -776,12 +776,13 @@ mod tests {
 
         user_decryptor
             .crypto_storage
-            .write_threshold_keys_with_dkg_meta_store(
+            .write_fhe_keys(
                 &key_id,
                 &epoch_id,
                 threshold_fhe_keys,
-                fhe_key_set,
+                PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                "",
             )
             .await
             .unwrap_or_else(|_| {
@@ -792,7 +793,7 @@ mod tests {
             // check existence
             let _guard = user_decryptor
                 .crypto_storage
-                .read_guarded_threshold_fhe_keys(&key_id, &epoch_id)
+                .read_guarded_fhe_keys(&key_id, &epoch_id)
                 .await
                 .unwrap();
         }

@@ -36,6 +36,7 @@ Rules for changing code, configuration, or documentation in this repository.
 
 - Validate potential errors (e.g. malformed data) as early as possible; do not defer checks.
 - Errors caused by bad input or adversarial behavior must not panic. Log them with enough detail that the log line alone identifies where and why the error occurred.
+- Tracing of errors should happen at the point where the error gets constructed, not when it is received by the caller.
 - Errors that can only occur because of a bug should panic. For example: an out-of-bounds index on a vector of known size, or a `None` in a branch that should be unreachable.
 - Every `panic!` or `expect` must be accompanied by a comment explaining why the failure is a bug and cannot happen in correct execution — unless the reason is obvious in context.
 - Prefer `expect("...")` with a descriptive message over a bare `unwrap()` (the only exception is in tests, where unwrap is normally preferred for conciseness).
