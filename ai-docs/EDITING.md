@@ -12,7 +12,6 @@ Rules for changing code, configuration, or documentation in this repository.
 - Before adding code, read exports, immediate callers, shared utilities. "Looks orthogonal" is dangerous. If unsure why code is structured a way, ask.
 - Summarize what was done, what's verified, what's left. Don't continue from a state you can't describe back.
 - Default to surfacing uncertainty, not hiding it. "Completed" is wrong if anything was skipped silently. "Tests pass" is wrong if any were skipped. 
-- When uncertain about requirements, ask clarifying questions. Do not guess.
 - It is fine to iterate: make a working change in a first pass, then re-read the agent rule files and bring the result into compliance before presenting it.
 - When finishing any task, update all affected documentation — function doc comments, markdown files, deployment configs, and the relevant sections of [ARCHITECTURE.md](./ARCHITECTURE.md).
 - If you find errors or incorrect information in any documentation or markdown file you read in this project, notify your human.
@@ -27,8 +26,7 @@ Rules for changing code, configuration, or documentation in this repository.
 - Touch only what you must. Clean up only your own mess.
 - Don't "improve" adjacent code, comments, or formatting.
 - Don't refactor what isn't broken. Match existing style.
-- If two patterns contradict, pick one (more recent / more tested).
-- Explain why. Flag the other for cleanup.
+- If two patterns contradict, pick one (more recent / more tested). Explain why. Flag the other for cleanup.
 - Don't blend conflicting patterns.
 - Respect the existing folder structure (see [ARCHITECTURE.md](./ARCHITECTURE.md)).
 - Reuse existing utilities instead of duplicating logic. Check `util` (or similarly named) files for helpers before writing new ones.
