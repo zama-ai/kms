@@ -962,6 +962,7 @@ async fn gen_recovery_validation(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,
+        mpc_context_id,
     )?;
     let ct_map = signcrypt_result.ct_shares;
     let commitments = signcrypt_result.commitments;
@@ -970,7 +971,6 @@ async fn gen_recovery_validation(
         commitments,
         custodian_context.to_owned(),
         sig_key,
-        mpc_context_id,
     )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",

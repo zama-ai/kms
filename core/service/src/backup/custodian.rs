@@ -10,10 +10,10 @@ use crate::cryptography::{
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use hashing::DomainSep;
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CustodianContext, CustodianRecoveryOutput, CustodianSetupMessage, OperatorBackupOutput,
 };
+use kms_grpc::{ContextId, RequestId};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -43,7 +43,7 @@ pub struct InternalCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
     pub operator_verification_key: PublicSigKey,
-    pub mpc_context_id: RequestId,
+    pub mpc_context_id: ContextId,
 }
 
 impl Named for InternalCustodianRecoveryOutput {
@@ -313,10 +313,8 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
-        mpc_context_id: RequestId,
         operator_verification_key: &PublicSigKey,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
-        backup_id: RequestId,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         tracing::debug!(
             "Verifying and re-encrypting backup for operator: {}",
@@ -333,7 +331,7 @@ impl Custodian {
             .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
             .map_err(|e| {
                 tracing::warn!(
-                    "Unsigncryption failed for backup {backup_id} for operator {}: {e}",
+                    "Unsigncryption failed for operator {}: {e}",
                     operator_verification_key.address(),
                 );
                 BackupError::CustodianRecoveryError
@@ -342,9 +340,24 @@ impl Custodian {
             "Decrypted ciphertext for operator: {}",
             operator_verification_key.address()
         );
+        if !backup_material.backup_id.is_valid() {
+            tracing::error!(
+                "Invalid backup_id {} in the decrypted backup material for operator with address: {}",
+                backup_material.backup_id,
+                operator_verification_key.address()
+            );
+            return Err(BackupError::CustodianRecoveryError);
+        }
+        if !backup_material.mpc_context_id.is_valid() {
+            tracing::error!(
+                "Invalid MPC context ID {} in the decrypted backup material for operator with address: {}",
+                backup_material.mpc_context_id,
+                operator_verification_key.address()
+            );
+            return Err(BackupError::CustodianRecoveryError);
+        }
         // check the decrypted result
         if !backup_material.matches_expected_metadata(
-            backup_id,
             &self.signing_key.verf_key(),
             self.role,
             &operator_verification_key.verf_key_id(),
@@ -372,7 +385,7 @@ impl Custodian {
             signcryption,
             custodian_role: self.role,
             operator_verification_key: operator_verification_key.clone(),
-            mpc_context_id,
+            mpc_context_id: backup_material.mpc_context_id,
         })
     }
 

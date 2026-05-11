@@ -285,6 +285,32 @@ where
         .await
     }
 
+    pub async fn custodian_context_exists(
+        &self,
+        cus_context_id: &ContextId,
+    ) -> Result<bool, StorageError> {
+        self.data_exists(
+            &RequestId::from(*cus_context_id),
+            &[PubDataType::RecoveryMaterial],
+            &[],
+        )
+        .await
+        .map_err(|_e| StorageError::Reading)
+    }
+
+    pub async fn mpc_context_exists(
+        &self,
+        mpc_context_id: &ContextId,
+    ) -> Result<bool, StorageError> {
+        self.data_exists(
+            &RequestId::from(*mpc_context_id),
+            &[],
+            &[PrivDataType::ContextInfo],
+        )
+        .await
+        .map_err(|_e| StorageError::Reading)
+    }
+
     /// Handle the storage of data after generation, and update the meta store accordingly.
     /// This methods assumes that `req_id` has already been added to the meta store and will fail if not.
     ///

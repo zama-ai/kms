@@ -3,6 +3,7 @@ use super::{
     error::{BackupError, SetupSkipReason},
     secretsharing,
 };
+use crate::backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput};
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
@@ -12,15 +13,11 @@ use crate::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
     },
-    engine::{base::safe_serialize_hash_element_versioned, validation::RequestIdParsingErr},
+    engine::base::safe_serialize_hash_element_versioned,
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
-};
-use crate::{
-    backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
-    engine::validation::parse_optional_grpc_request_id,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -65,8 +62,6 @@ impl Named for InternalRecoveryRequest {
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    backup_id: RequestId,
-    operator_verification_key: PublicSigKey,
 }
 
 impl InternalRecoveryRequest {
@@ -74,20 +69,11 @@ impl InternalRecoveryRequest {
     pub fn new(
         ephem_op_enc_key: UnifiedPublicEncKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-        backup_id: RequestId,
-        operator_verification_key: PublicSigKey,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
             ephem_op_enc_key,
             cts,
-            backup_id,
-            operator_verification_key,
         };
-        if !backup_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "InternalRecoveryRequest has an invalid backup ID",
-            ));
-        }
         Ok(res)
     }
 
@@ -97,10 +83,6 @@ impl InternalRecoveryRequest {
         custodian_role: Role,
         unsigncrypt_key: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<bool> {
-        if !self.backup_id.is_valid() {
-            tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
-            return Ok(false);
-        }
         let output = match self.cts.get(&custodian_role) {
             Some(output) => output,
             None => {
@@ -129,24 +111,11 @@ impl InternalRecoveryRequest {
     pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
         self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
-
-    pub fn backup_id(&self) -> RequestId {
-        self.backup_id
-    }
-
-    pub fn operator_verification_key(&self) -> &PublicSigKey {
-        &self.operator_verification_key
-    }
 }
 
 impl Display for InternalRecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "InternalRecoveryRequest with:\n backup id: {}\n operator : {}",
-            self.backup_id,
-            self.operator_verification_key.address(),
-        )
+        write!(f, "InternalRecoveryRequest",)
     }
 }
 
@@ -165,15 +134,9 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             let inner_ct: InnerOperatorBackupOutput = cur_backup_out.try_into()?;
             cts.insert(role, inner_ct);
         }
-        let backup_id: RequestId =
-            parse_optional_grpc_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
-        let operator_verification_key: PublicSigKey =
-            bc2wrap::deserialize_safe(&value.operator_verification_key)?;
         Ok(Self {
             ephem_op_enc_key,
             cts,
-            backup_id,
-            operator_verification_key,
         })
     }
 }
@@ -292,7 +255,6 @@ impl RecoveryValidationMaterial {
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
-        mpc_context: ContextId,
     ) -> anyhow::Result<Self> {
         if custodian_context.custodian_nodes.len() != cts.len() {
             return Err(anyhow::anyhow!(
@@ -314,7 +276,6 @@ impl RecoveryValidationMaterial {
             cts,
             commitments,
             custodian_context,
-            mpc_context,
         };
         let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
@@ -398,8 +359,6 @@ pub struct RecoveryValidationMaterialPayload {
     pub commitments: BTreeMap<Role, Vec<u8>>,
     /// The custodian context used during backup
     pub custodian_context: InternalCustodianContext,
-    /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
-    pub mpc_context: ContextId,
 }
 impl Named for RecoveryValidationMaterialPayload {
     const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
@@ -410,7 +369,6 @@ fn checked_decryption_deserialize(
     unsign_key: &UnifiedUnsigncryptionKey,
     signcryption: &UnifiedSigncryption,
     commitment: &[u8],
-    backup_id: RequestId,
     custodian_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
     let backup_material: BackupMaterial = unsign_key
@@ -420,9 +378,24 @@ fn checked_decryption_deserialize(
                 "Failed to unsigncrypt backup share for custodian role {custodian_role}: {e}",
             ))
         })?;
+    if !backup_material.backup_id.is_valid() {
+        tracing::error!(
+            "Invalid backup_id {} in the decrypted backup material for operator with address: {}",
+            backup_material.backup_id,
+            backup_material.operator_pk.address()
+        );
+        return Err(BackupError::CustodianRecoveryError);
+    }
+    if !backup_material.mpc_context_id.is_valid() {
+        tracing::error!(
+            "Invalid MPC context ID {} in the decrypted backup material for operator with address: {}",
+            backup_material.mpc_context_id,
+            backup_material.operator_pk.address()
+        );
+        return Err(BackupError::CustodianRecoveryError);
+    }
     // check metadata
     if !backup_material.matches_expected_metadata(
-        backup_id,
         unsign_key.sender_verf_key,
         custodian_role,
         unsign_key.receiver_id,
@@ -453,7 +426,10 @@ pub enum BackupMaterialVersioned {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(BackupMaterialVersioned)]
 pub struct BackupMaterial {
-    pub backup_id: RequestId,
+    /// The custodian context ID
+    pub backup_id: RequestId, // TODO should be contextID
+    /// MPC context ID
+    pub mpc_context_id: ContextId, // todo ensure validation
     // receiver
     pub custodian_pk: PublicSigKey,
     pub custodian_role: Role,
@@ -465,19 +441,10 @@ pub struct BackupMaterial {
 impl BackupMaterial {
     pub fn matches_expected_metadata(
         &self,
-        backup_id: RequestId,
         custodian_verf_key: &PublicSigKey,
         custodian_role: Role,
         operator_pk_id: &[u8],
     ) -> bool {
-        if self.backup_id != backup_id {
-            tracing::error!(
-                "backup_id mismatch: expected {} but got {}",
-                self.backup_id,
-                backup_id
-            );
-            return false;
-        }
         if self.custodian_role != custodian_role {
             tracing::error!(
                 "custodian_role mismatch: expected {} but got {}",
@@ -567,6 +534,7 @@ impl Operator {
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
+        mpc_context_id: ContextId,
     ) -> Result<SigncryptResult, BackupError> {
         let sk = match &self.signing_key {
             None => {
@@ -639,6 +607,7 @@ impl Operator {
             };
             let backup_material = BackupMaterial {
                 backup_id,
+                mpc_context_id,
                 custodian_pk: custodian_verf_key.clone(),
                 custodian_role: role_j,
                 operator_pk: self.verification_key.clone(),
@@ -694,7 +663,6 @@ impl Operator {
         &self,
         custodian_recovery_output: &[InternalCustodianRecoveryOutput],
         recovery_material: &RecoveryValidationMaterial,
-        backup_id: RequestId,
         ephm_dec_key: &UnifiedPrivateEncKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Vec<u8>, BackupError> {
@@ -727,7 +695,6 @@ impl Operator {
                     &unsign_key,
                     &custodian_output.signcryption,
                     commitment,
-                    backup_id,
                     custodian_output.custodian_role,
                 )
             })
@@ -875,7 +842,6 @@ mod tests {
     use super::*;
     use crate::{
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
-        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{SigningSchemeType, gen_sig_keys},
@@ -941,14 +907,9 @@ mod tests {
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
-        let rvm = RecoveryValidationMaterial::new(
-            cts,
-            commitments,
-            internal_custodian_context,
-            &sig_key,
-            *DEFAULT_MPC_CONTEXT,
-        )
-        .unwrap();
+        let rvm =
+            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
+                .unwrap();
         assert!(rvm.validate(&verf_key));
     }
 

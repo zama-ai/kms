@@ -38,6 +38,7 @@ use crate::{
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
     RequestId,
@@ -123,8 +124,6 @@ where
         let recovery_request = RecoveryRequest {
             ephem_op_enc_key: serialized_pub_key,
             cts: grpc_cts,
-            backup_id: Some(backup_id.into()),
-            operator_verification_key: bc2wrap::serialize(&self.base_kms.verf_key())?,
         };
         tracing::info!(
             "Generated outer recovery request for backup_id/context_id={}",
@@ -137,13 +136,18 @@ where
         ))
     }
 
+    /// Validate the recovery request from the custodian, and if valid return the parsed recovery outputs from the custodians along with the recovery material and context ID.
+    /// Validation ensures that there is a sufficient amount of recovery outputs from the custodians, and that each of them is correctly signed by the custodian and intended for the current operator.
+    ///
+    /// Returns a tuple of (custodian_context_id, mpc_context_id, recovery_material, parsed_custodian_rec)
     pub(crate) async fn validate_custodian_backup_recovery_request(
         &self,
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
     ) -> anyhow::Result<(
-        RequestId,
+        ContextId,
+        ContextId,
         RecoveryValidationMaterial,
         HashMap<Role, InternalCustodianRecoveryOutput>,
     )> {
@@ -180,8 +184,28 @@ where
             ));
         }
 
+        // Observe we have already validated that every mpc context ID is equal, and that there is at least t+1 entries
+        let pivot_cus_res = *parsed_custodian_rec.keys().next().unwrap();
+        for cur_cus_res in parsed_custodian_rec.values() {
+            if cur_cus_res.mpc_context_id != parsed_custodian_rec[&pivot_cus_res].mpc_context_id {
+                return Err(anyhow::anyhow!(
+                    "MPC context ID mismatch among recovery outputs"
+                ));
+            }
+        }
+
+        if !parsed_custodian_rec[&pivot_cus_res]
+            .mpc_context_id
+            .is_valid()
+        {
+            return Err(anyhow::anyhow!(
+                "Invalid MPC context ID in recovery outputs"
+            ));
+        }
+
         Ok((
             custodian_context_id,
+            parsed_custodian_rec[&pivot_cus_res].mpc_context_id, // We have already validated they are all equal
             recovery_material,
             parsed_custodian_rec,
         ))
@@ -351,7 +375,7 @@ where
             }
         };
         let inner = request.into_inner();
-        let (context_id, recovery_material, parsed_custodian_rec) = self
+        let (custodian_context_id, mpc_context_id, recovery_material, parsed_custodian_rec) = self
             .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
@@ -366,6 +390,52 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        // Validate that the contexts are still valid
+        if !self
+            .crypto_storage
+            .custodian_context_exists(&custodian_context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Failed to check existence of custodian context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?
+        {
+            return Err(MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!(
+                    "The custodian context associated with the provided context ID does not exist, thus is not valid"
+                ),
+                tonic::Code::InvalidArgument,
+            ));
+        }
+        if !self
+            .crypto_storage
+            .custodian_context_exists(&mpc_context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Failed to check existence of MPC context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?
+        {
+            return Err(MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!(
+                    "The MPC context associated with the provided context ID does not exist, thus is not valid"
+                ),
+                tonic::Code::InvalidArgument,
+            ));
+        }
+
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -397,7 +467,6 @@ where
                             .verify_and_recover(
                                 &custodian_outputs,
                                 &recovery_material,
-                                context_id,
                                 &ephemeral_dec_key,
                                 &ephemeral_enc_key,
                             )
@@ -519,7 +588,7 @@ where
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
-    custodian_context_id: &RequestId,
+    custodian_context_id: &ContextId,
     verf_key: &Arc<PublicSigKey>,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
@@ -528,11 +597,11 @@ where
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
         .read_data(
-            custodian_context_id,
+            &(*custodian_context_id).into(),
             &PubDataType::RecoveryMaterial.to_string(),
         )
         .await?;
-    if &recovery_material.custodian_context().context_id != custodian_context_id {
+    if recovery_material.custodian_context().context_id != (*custodian_context_id).into() {
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
     }
     if !recovery_material.validate(verf_key) {

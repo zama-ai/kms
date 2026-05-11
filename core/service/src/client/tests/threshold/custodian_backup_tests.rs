@@ -1068,8 +1068,6 @@ async fn emulate_custodian(
         let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
         for (i, cur_recovery_req) in &recovery_requests {
-            let cur_verf_key: PublicSigKey =
-                bc2wrap::deserialize_safe(&cur_recovery_req.operator_verification_key).unwrap();
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
                 std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
@@ -1080,12 +1078,12 @@ async fn emulate_custodian(
                 .verify_reencrypt(
                     rng,
                     &cur_cus_reenc.to_owned().try_into().unwrap(),
-                    kms_grpc::RequestId::from_bytes([7u8; 32]),
                     &cur_verf_key,
                     &cur_enc_key,
-                    backup_id.clone().try_into().unwrap(),
                 )
                 .unwrap();
+            let cur_verf_key: PublicSigKey =
+                bc2wrap::deserialize_safe(&cur_out.operator_verification_key).unwrap();
             // Add the result from this custodian to the map of results to the correct operator
             match outputs_for_operators.entry((*i, cur_verf_key.address())) {
                 std::collections::hash_map::Entry::Occupied(occupied_entry) => {

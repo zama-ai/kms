@@ -94,6 +94,7 @@ fn custodian_reencrypt() {
     let operator_count = 4usize;
     let secret_len = 32usize;
     let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
+    let mpc_context_id = *DEFAULT_MPC_CONTEXT;
 
     let mut rng = OsRng;
 
@@ -142,13 +143,13 @@ fn custodian_reencrypt() {
         .zip_eq(&secrets)
         .map(|(operator, secret)| {
             operator
-                .secret_share_and_signcrypt(&mut rng, secret, backup_id)
+                .secret_share_and_signcrypt(&mut rng, secret, backup_id, mpc_context_id)
                 .unwrap()
         })
         .collect::<Vec<_>>();
 
     let verification_key = operators[0].verification_key();
-    let mpc_context_id = RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]);
+
     let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
