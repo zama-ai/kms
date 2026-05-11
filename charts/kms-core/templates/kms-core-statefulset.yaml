@@ -357,8 +357,6 @@ spec:
             {{- else }}
               --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
             {{- end }}
-            {{- else }}
-              --write-privkey
             {{- end }}
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
