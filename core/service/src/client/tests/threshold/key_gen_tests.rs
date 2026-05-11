@@ -1257,12 +1257,12 @@ fn try_reconstruct_shares(
     )
 }
 
-/// Enum to hold either standard or compressed public keys during verification
+/// Enum to hold either uncompressed or compressed public keys during verification
 // allow large enum variant for testing
 #[allow(clippy::large_enum_variant)]
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 enum RetrievedKeysForVerification {
-    Standard(tfhe::ServerKey, tfhe::CompactPublicKey),
+    Uncompressed(tfhe::ServerKey, tfhe::CompactPublicKey),
     Compressed(
         tfhe::xof_key_set::CompressedXofKeySet,
         tfhe::CompactPublicKey,
@@ -1273,7 +1273,7 @@ enum RetrievedKeysForVerification {
 impl RetrievedKeysForVerification {
     fn to_bytes_for_verification(&self) -> Vec<u8> {
         match self {
-            RetrievedKeysForVerification::Standard(sk, pk) => [
+            RetrievedKeysForVerification::Uncompressed(sk, pk) => [
                 bc2wrap::serialize(sk).unwrap(),
                 bc2wrap::serialize(pk).unwrap(),
             ]
@@ -1347,7 +1347,7 @@ pub(crate) async fn verify_keygen_responses(
             assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
             assert_eq!(&tfhe::Tag::from(req_get_keygen), public_key.tag());
 
-            RetrievedKeysForVerification::Standard(server_key, public_key)
+            RetrievedKeysForVerification::Uncompressed(server_key, public_key)
         };
 
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
@@ -1398,7 +1398,7 @@ pub(crate) async fn verify_keygen_responses(
     .unwrap();
 
     let result = match final_keys.unwrap() {
-        RetrievedKeysForVerification::Standard(server_key, public_key) => {
+        RetrievedKeysForVerification::Uncompressed(server_key, public_key) => {
             TestKeyGenResult::Uncompressed((client_key, public_key, server_key))
         }
         RetrievedKeysForVerification::Compressed(keyset, pk) => {
