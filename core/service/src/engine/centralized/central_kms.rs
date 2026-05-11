@@ -162,25 +162,22 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    storage
-        .refresh_centralized_fhe_keys(keyset1_id, epoch_id)
-        .await?;
-    storage
-        .refresh_centralized_fhe_keys(keyset2_id, epoch_id)
-        .await?;
-
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _, _, _, _) = storage
+    let client_key_2 = storage
         .read_centralized_fhe_keys(keyset2_id, epoch_id)
         .await?
         .client_key
-        .into_raw_parts();
+        .clone()
+        .into_raw_parts()
+        .0;
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _, _, _, _) = storage
+    let compression_private_key_1 = storage
         .read_centralized_fhe_keys(keyset1_id, epoch_id)
         .await?
         .client_key
-        .into_raw_parts();
+        .clone()
+        .into_raw_parts()
+        .2;
 
     match compression_private_key_1 {
         Some(private_compression_key) => {
@@ -1536,20 +1533,16 @@ pub(crate) mod tests {
             assert!(
                 inner
                     .crypto_storage
-                    .inner
-                    .fhe_keys_exist(key_id, epoch_id)
+                    .fhe_keys_exists(key_id, epoch_id)
                     .await
-                    .unwrap()
+                    .unwrap(),
+                "FHE keys for {key_id} not found"
             );
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_id, epoch_id, keys.params).await;
             }
             inner
         };
-        kms.crypto_storage
-            .refresh_centralized_fhe_keys(key_id, epoch_id)
-            .await
-            .unwrap();
         let key_handle = kms
             .crypto_storage
             .read_centralized_fhe_keys(key_id, epoch_id)
@@ -1667,25 +1660,20 @@ pub(crate) mod tests {
         let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let wrong_client_key = tfhe::ClientKey::generate(config);
 
-        // First refresh the cache from storage (in case it's not populated yet)
-        inner
-            .crypto_storage
-            .refresh_centralized_fhe_keys(key_id, epoch_id)
-            .await
-            .unwrap();
-
         // Read existing key handles from cache to preserve other fields
-        let existing_handles = inner
-            .crypto_storage
-            .read_centralized_fhe_keys(key_id, epoch_id)
-            .await
-            .unwrap();
+        let wrong_handles = {
+            let existing_handles = inner
+                .crypto_storage
+                .read_centralized_fhe_keys(key_id, epoch_id)
+                .await
+                .unwrap();
 
-        // Create new handles with the wrong client key but same metadata
-        let wrong_handles = KmsFheKeyHandles {
-            client_key: wrong_client_key,
-            decompression_key: existing_handles.decompression_key,
-            public_key_info: existing_handles.public_key_info,
+            // Create new handles with the wrong client key but same metadata
+            KmsFheKeyHandles {
+                client_key: wrong_client_key,
+                decompression_key: existing_handles.decompression_key.clone(),
+                public_key_info: existing_handles.public_key_info.clone(),
+            }
         };
 
         {
@@ -1761,10 +1749,10 @@ pub(crate) mod tests {
             assert!(
                 inner
                     .crypto_storage
-                    .inner
-                    .fhe_keys_exist(key_id, epoch_id)
+                    .fhe_keys_exists(key_id, epoch_id)
                     .await
-                    .unwrap()
+                    .unwrap(),
+                "FHE keys for {key_id} not found"
             );
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_id, epoch_id, keys.params).await;
@@ -1797,10 +1785,6 @@ pub(crate) mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().await;
-        kms.crypto_storage
-            .refresh_centralized_fhe_keys(key_id, epoch_id)
-            .await
-            .unwrap();
 
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage

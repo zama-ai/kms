@@ -14,6 +14,7 @@ cfg_if::cfg_if! {
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits,  data_exists, get_core_signing_key,
         };
+        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
@@ -350,27 +351,25 @@ where
     PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-
-    use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-
     match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         crs_id,
         epoch_id,
-        &[PubDataType::CRS.to_string()],
-        &[PrivDataType::CrsInfo.to_string()],
+        &PubDataType::CRS,
+        &PrivDataType::CrsInfo,
     )
     .await
     {
         Ok(true) => {
-            log_data_exists(priv_storage.info(), Some(pub_storage.info()), crs_id, "CRS");
             return false;
         }
-        Ok(false) => {} // Continue with generation
+        Ok(false) => {
+            // continue with generation
+            tracing::info!("CRS does not exist, proceeding with generation.");
+        }
         Err(e) => {
-            tracing::warn!("Error checking if CRS exists: {}", e);
-            // Continue with generation, assuming data doesn't exist
+            tracing::warn!("Failed to check if CRS exists, proceeding with generation anyway: {e}");
         }
     }
 
@@ -1285,28 +1284,26 @@ where
     // PANICS: If storage access fails or if no storage is available
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-
         match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             crs_id,
             epoch_id,
-            &[PubDataType::CRS.to_string()],
-            &[PrivDataType::CrsInfo.to_string()],
+            &PubDataType::CRS,
+            &PrivDataType::CrsInfo,
         )
         .await
         {
-            Ok(true) => {
-                continue; // Data exists for this party, check next
-            }
+            Ok(true) => continue,
             Ok(false) => {
+                tracing::info!("CRS does not exist, proceeding with generation.");
                 all_data_exists = false;
                 break;
             }
             Err(e) => {
-                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-                // Continue with generation, assuming data doesn't exist
+                tracing::warn!(
+                    "Failed to check if threshold CRS exists, proceeding with generation anyway: {e}"
+                );
                 all_data_exists = false;
                 break;
             }
