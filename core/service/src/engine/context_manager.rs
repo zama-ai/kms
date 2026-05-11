@@ -12,6 +12,7 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
+use crate::util::meta_store::add_req_to_meta_store;
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
@@ -136,6 +137,26 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                None,
+                anyhow::anyhow!("new_custodian_context is required in NewCustodianContextRequest"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        let custodian_context_id = parse_optional_grpc_request_id(
+            &custodian_context.custodian_context_id,
+            RequestIdParsingErr::CustodianContext,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                None,
+                anyhow::anyhow!("Failed to parse custodian_context_id: {}", e),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         {
             let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
             if !data_exists(
@@ -160,14 +181,12 @@ where
                 ));
             }
         }
-        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
-            MetricedError::new(
-                OP_NEW_CUSTODIAN_CONTEXT,
-                None,
-                anyhow::anyhow!("new_custodian_context is required in NewCustodianContextRequest"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+
+        add_req_to_meta_store(
+            &mut self.custodian_meta_store.write().await,
+            &custodian_context_id,
+            OP_NEW_CUSTODIAN_CONTEXT,
+        )?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
@@ -175,7 +194,6 @@ where
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
-
         self.inner_new_custodian_context(custodian_context, mpc_context_id)
             .await
             .map_err(|e| {
@@ -207,26 +225,11 @@ where
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
         let mut cus_meta_store = self.custodian_meta_store.write().await;
-        match cus_meta_store.delete(&context_id) {
-            Some(cell) => {
-                if cell.get().await.as_ref().is_err() {
-                    return Err(MetricedError::new(
-                        OP_DESTROY_CUSTODIAN_CONTEXT,
-                        Some(context_id),
-                        anyhow::anyhow!("Custodian context could not be removed from meta store",),
-                        tonic::Code::Internal,
-                    ));
-                }
-            }
-            None => {
-                // It might already have been automatically removed from the RAM, so we just log this and continue
-                tracing::warn!(
-                    "Custodian context with id {:?} does not exist in meta store",
-                    context_id
-                );
-            }
+        if cus_meta_store.delete(&context_id).is_none() {
+            tracing::warn!(
+                "Custodian context with id {context_id} to be deleted does not exist in meta store"
+            );
         }
-
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
@@ -268,7 +271,6 @@ where
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
-
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -326,11 +328,8 @@ where
         );
         // Then store the results
         self.crypto_storage
-            .write_backup_keys_with_meta_store(
-                &recovery_validation,
-                Arc::clone(&self.custodian_meta_store),
-            )
-            .await;
+            .write_backup_keys(recovery_validation, Arc::clone(&self.custodian_meta_store))
+            .await?;
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
             inner_context.context_id,
@@ -574,7 +573,7 @@ where
         let res = self
             .inner
             .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context)
+            .write_context_info(new_context.context_id(), &new_context, OP_NEW_MPC_CONTEXT)
             .await;
 
         {
@@ -779,7 +778,7 @@ async fn atomic_update_context<
 ) -> anyhow::Result<()> {
     let context_id = new_context.context_id();
     let res1 = crypto_storage
-        .write_context_info(new_context.context_id(), new_context)
+        .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
         .await;
 
     let res2 = session_maker.add_context_info(my_role, new_context).await;

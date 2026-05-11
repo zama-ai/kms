@@ -87,7 +87,10 @@ use crate::{
         },
     },
     util::{
-        meta_store::{MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store},
+        meta_store::{
+            MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store,
+            update_req_in_meta_store,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{
@@ -353,12 +356,6 @@ impl<
 
         crypto_storage.write_prss_info(epoch_id, &prss).await?;
         session_maker.add_epoch(*epoch_id, prss).await;
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        crypto_storage
-            .inner
-            .update_backup_vault(false, OP_NEW_EPOCH)
-            .await;
-
         tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
             epoch_id,
@@ -380,10 +377,7 @@ impl<
             .map(|key_info| async {
                 let keys = self
                     .crypto_storage
-                    .read_guarded_threshold_fhe_keys(
-                        &key_info.key_id,
-                        &verified_previous_epoch.epoch_id,
-                    )
+                    .read_guarded_fhe_keys(&key_info.key_id, &verified_previous_epoch.epoch_id)
                     .await
                     .map_err(|e| {
                         MetricedError::new(
@@ -664,12 +658,10 @@ impl<
 
                     storage_tasks.push(
                         crypto_storage
-                            .inner_write_threshold_keys(
+                            .resharing_fhe_write_no_backup(
                                 &key_info.key_id,
                                 &new_epoch_id,
                                 threshold_fhe_keys,
-                                fhe_pubkeys,
-                                Arc::clone(&meta_store),
                             )
                             .boxed(),
                     );
@@ -717,19 +709,13 @@ impl<
                         info.clone(),
                     );
 
-                    let meta_store = Arc::clone(&meta_store);
                     storage_tasks.push(
                         async move {
-                            let compressed_keyset = compressed_keyset;
-                            let compact_public_key = compact_public_key;
                             crypto_storage
-                                .inner_write_threshold_keys_compressed(
+                                .resharing_fhe_write_no_backup(
                                     &key_info.key_id,
                                     &new_epoch_id,
                                     threshold_fhe_keys,
-                                    &compressed_keyset,
-                                    &compact_public_key,
-                                    meta_store,
                                 )
                                 .await
                         }
@@ -757,29 +743,75 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .resharing_crs_write(
-                        &crs_info.crs_id,
-                        &new_epoch_id,
-                        crs,
-                        crs_meta_data,
-                        Arc::clone(&meta_store),
-                    )
+                    .resharing_crs_write_no_backup(&crs_info.crs_id, &new_epoch_id, crs_meta_data)
                     .boxed(),
             );
         }
 
-        // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
-        join_all(storage_tasks).await;
-        meta_store.write().await.update(
+        let res = join_all(storage_tasks).await;
+        let error_agg = res.iter().filter(|r| r.is_err()).collect::<Vec<_>>();
+        let mut err_msgs = Vec::new();
+        let agg_res = if !error_agg.is_empty() {
+            let storage_err_msg = format!(
+                "Failed to store all reshared keys for new epoch {}: {:?}",
+                new_epoch_id, error_agg
+            );
+            err_msgs.push(storage_err_msg.clone());
+
+            // Roll back any partial successes in case something fails during the resharing,
+            // to not leave the storage in a partial state.
+            for key_info in verified_previous_epoch.keys_info.iter() {
+                if !crypto_storage
+                    .purge_fhe_keys(&key_info.key_id, &new_epoch_id)
+                    .await
+                {
+                    tracing::warn!(
+                        "Best-effort rollback failed to purge threshold key material for key_id={} new_epoch_id={}",
+                        key_info.key_id,
+                        new_epoch_id
+                    );
+                }
+            }
+            for crs_info in verified_previous_epoch.crs_info.iter() {
+                if !crypto_storage
+                    .inner
+                    .purge_crs_material(&crs_info.crs_id, &new_epoch_id)
+                    .await
+                {
+                    tracing::warn!(
+                        "Best-effort rollback failed to purge CRS material for crs_id={} new_epoch_id={}",
+                        crs_info.crs_id,
+                        new_epoch_id
+                    );
+                }
+            }
+
+            Err(storage_err_msg)
+        } else {
+            // If the resharing went well, then update the backup
+            crypto_storage
+                .inner
+                .update_backup_vault(false, OP_NEW_EPOCH)
+                .await;
+            Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
+        };
+        // Finally update the meta store
+        if !update_req_in_meta_store(
+            &mut meta_store.write().await,
             &new_epoch_id.into(),
-            Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas))),
-        )?;
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        crypto_storage
-            .inner
-            .update_backup_vault(false, OP_NEW_EPOCH)
-            .await;
-        Ok(())
+            agg_res,
+            OP_NEW_EPOCH,
+        ) {
+            err_msgs.push(format!(
+                "Failed to update the meta store with error for new epoch {}.",
+                new_epoch_id
+            ));
+        }
+        if err_msgs.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(err_msgs.join(", ")))
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
