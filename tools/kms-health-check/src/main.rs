@@ -69,6 +69,7 @@ enum Commands {
         context_id: String,
 
         /// Duration of the benchmark in seconds
+        /// If Duration is set to 0 we only send one payload per session to each party and return the result immediately.
         #[arg(short, long)]
         duration: u64,
 

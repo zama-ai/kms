@@ -4,10 +4,11 @@ use itertools::Itertools;
 use kms_grpc::{
     ContextId,
     kms::v1::{
-        BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, LatencyInfo, PeerBandwidthInfo,
+        BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, BandwidthKind, LatencyInfo,
+        PeerBandwidthInfo,
     },
 };
-use threshold_networking::health_check::HealthCheckStatus;
+use threshold_networking::health_check::{BenchKind, HealthCheckStatus};
 use tonic::{Request, Response, Status};
 
 use crate::engine::{
@@ -25,7 +26,16 @@ pub(crate) async fn run_bandwidth_benchmark(
         parse_optional_grpc_request_id(&request.context_id, RequestIdParsingErr::Context)?;
     let payload_size = request.payload_size_per_session as usize;
     let num_sessions = request.number_sessions as usize;
-    let duration = Duration::from_secs(request.duration);
+    let kind: BandwidthKind = request.kind.try_into().map_err(|e| {
+        Status::invalid_argument(format!(
+            "Invalid bandwidth benchmark kind {}: {}",
+            request.kind, e
+        ))
+    })?;
+    let duration = match kind {
+        BandwidthKind::Once => BenchKind::Once,
+        BandwidthKind::Duration => BenchKind::Duration(Duration::from_secs(request.duration)),
+    };
     // A value of 0 (the proto default for older clients) is treated as 1
     // so this remains backward-compatible with the historical
     // single-connection benchmark.
@@ -74,12 +84,22 @@ pub(crate) async fn run_bandwidth_benchmark(
             let latency = make_latency(status)
                 .inspect_err(|e| tracing::warn!("Error computing latency info: {}", e))
                 .ok();
+            let duration = match kind {
+                BandwidthKind::Once => durations
+                    .into_iter()
+                    .map(|d| d.as_secs())
+                    .max()
+                    .unwrap_or(0),
+                BandwidthKind::Duration => {
+                    (durations.iter().sum::<Duration>().as_secs_f64() / durations.len() as f64)
+                        as u64
+                }
+            };
             PeerBandwidthInfo {
                 peer_id: role.one_based() as u32,
                 endpoint: id.hostname().to_string(),
                 bytes_sent: bytes_sent as u64,
-                duration: (durations.iter().sum::<Duration>().as_secs_f64()
-                    / durations.len() as f64) as u64,
+                duration,
                 latency,
             }
         })
