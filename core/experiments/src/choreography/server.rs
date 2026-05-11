@@ -1,12 +1,11 @@
 use crate::conf::party::PartyConf;
 use algebra::{
     base_ring::{Z64, Z128},
-    galois_fields::lagrange::init_lagrange_stores,
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
 use observability::telemetry::make_span;
-use std::{num::NonZero, sync::Arc};
+use std::sync::Arc;
 use threshold_execution::online::preprocessing::{
     PreprocessorFactory, create_memory_factory, create_redis_factory,
 };
