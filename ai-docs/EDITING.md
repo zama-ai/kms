@@ -4,7 +4,14 @@ Rules for changing code, configuration, or documentation in this repository.
 
 ## Process
 
+- State assumptions explicitly. If uncertain, ask rather than guess.
+- Present multiple interpretations when ambiguity exists.
+- Stop when confused. Name what's unclear.
+- Define success criteria. Loop until verified.
 - Always explain major changes before implementing them.
+- Before adding code, read exports, immediate callers, shared utilities. "Looks orthogonal" is dangerous. If unsure why code is structured a way, ask.
+- Summarize what was done, what's verified, what's left. Don't continue from a state you can't describe back.
+- Default to surfacing uncertainty, not hiding it. "Completed" is wrong if anything was skipped silently. "Tests pass" is wrong if any were skipped. 
 - When uncertain about requirements, ask clarifying questions. Do not guess.
 - It is fine to iterate: make a working change in a first pass, then re-read the agent rule files and bring the result into compliance before presenting it.
 - When finishing any task, update all affected documentation — function doc comments, markdown files, deployment configs, and the relevant sections of [ARCHITECTURE.md](./ARCHITECTURE.md).
@@ -15,10 +22,15 @@ Rules for changing code, configuration, or documentation in this repository.
 ## Scope of changes
 
 - Modify the smallest amount of code necessary.
+- No features beyond what was asked. No abstractions for single-use code.
 - Do not make large rewrites, and do not copy-paste code, unless explicitly instructed to do so or unless you are working in test code. Prefer focused changes.
-- Do not rewrite entire files unless explicitly asked.
+- Touch only what you must. Clean up only your own mess.
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor what isn't broken. Match existing style.
+- If two patterns contradict, pick one (more recent / more tested).
+- Explain why. Flag the other for cleanup.
+- Don't blend conflicting patterns.
 - Respect the existing folder structure (see [ARCHITECTURE.md](./ARCHITECTURE.md)).
-- Avoid introducing new patterns without justification.
 - Reuse existing utilities instead of duplicating logic. Check `util` (or similarly named) files for helpers before writing new ones.
 - Always try to preserve git history when possible, so prefer `git mv` to `mv` or rewriting code.
 
