@@ -108,7 +108,7 @@ where
 
 impl<Z: Ring> DoublePoly<Z> {
     pub(crate) fn from_bivariate(poly: &BivariatePoly<Z>, point: Z) -> Self {
-        // `partial_evaluations` returns `(F(alpha, Y), F(X, alpha))`, which are the
+        // `partial_evals` returns `(F(alpha, Y), F(X, alpha))`, which are the
         // recipient's Y-share and X-share respectively.
         let (share_in_y, share_in_x) = poly.partial_evals(point);
         Self {
