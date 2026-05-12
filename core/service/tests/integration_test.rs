@@ -787,6 +787,7 @@ mod kms_custodian_binary_tests {
                 &mut rng,
                 &bc2wrap::serialize(&backup_ske).unwrap(),
                 backup_id,
+                *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
         let ct_map = signcrypt_result.ct_shares;
@@ -817,13 +818,8 @@ mod kms_custodian_binary_tests {
             let ct = ct_map.get(&custodian_role).unwrap();
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
-        let recovery_request = InternalRecoveryRequest::new(
-            ephemeral_pub_key.clone(),
-            ciphertexts,
-            backup_id,
-            verification_key.clone(),
-        )
-        .unwrap();
+        let recovery_request =
+            InternalRecoveryRequest::new(ephemeral_pub_key.clone(), ciphertexts).unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
             .await
             .unwrap();
@@ -862,13 +858,7 @@ mod kms_custodian_binary_tests {
             outputs.push(payload);
         }
         operator
-            .verify_and_recover(
-                &outputs,
-                recovery_material,
-                backup_id,
-                ephem_dec_key,
-                ephem_enc_key,
-            )
+            .verify_and_recover(&outputs, recovery_material, ephem_dec_key, ephem_enc_key)
             .unwrap()
     }
 }

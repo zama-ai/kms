@@ -165,10 +165,8 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 bad_results[0].ct_shares.get(&operator_role).unwrap(),
-                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
-                backup_id,
             )
             .unwrap_err();
         assert!(matches!(err, BackupError::CustodianRecoveryError));
@@ -186,27 +184,8 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 bad_results[0].ct_shares.get(&operator_role).unwrap(),
-                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
-                backup_id,
-            )
-            .unwrap_err();
-        assert!(matches!(err, BackupError::CustodianRecoveryError));
-    }
-
-    // use the wrong backup_id
-    {
-        let operator_role = Role::indexed_from_zero(0);
-        let bad_backup_id = RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]);
-        let err = custodians[0]
-            .verify_reencrypt(
-                &mut rng,
-                signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
-                mpc_context_id,
-                verification_key,
-                &ephemeral_enc_key,
-                bad_backup_id,
             )
             .unwrap_err();
         assert!(matches!(err, BackupError::CustodianRecoveryError));
@@ -219,10 +198,8 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
-                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
-                backup_id,
             )
             .unwrap();
     }
@@ -252,7 +229,6 @@ fn full_flow(
     let ops_addresses = operators.keys();
     let backups = custodian_recover(
         &mut rng,
-        &backup_id,
         &mnemonics,
         &payload_for_custodians,
         custodian_threshold,
@@ -304,7 +280,6 @@ fn full_flow_drop_msg() {
     assert!(mnemonics_dropped.len() > custodian_threshold);
     let backups = custodian_recover(
         &mut rng,
-        &backup_id,
         &mnemonics_dropped,
         &payload_for_custodians,
         custodian_threshold,
@@ -385,6 +360,7 @@ fn full_flow_malicious_custodian_init() {
                 &mut rng,
                 &bc2wrap::serialize(&backup_priv_key).unwrap(),
                 backup_id,
+                *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
         assert!(
@@ -424,7 +400,6 @@ fn full_flow_malicious_custodian_second() {
                 .to_string());
         let backups = custodian_recover(
             &mut rng,
-            &backup_id,
             &mnemonics_malicious,
             &payload_for_custodians,
             custodian_threshold,
@@ -465,7 +440,6 @@ fn full_flow_malicious_custodian_second() {
                 .to_string());
         let backups = custodian_recover(
             &mut rng,
-            &backup_id,
             &mnemonics_malicious_dropped,
             &payload_for_custodians,
             custodian_threshold,
@@ -528,7 +502,6 @@ fn full_flow_malicious_operator() {
 
         let backups = custodian_recover(
             &mut rng,
-            &backup_id,
             &mnemonics,
             &payload_for_custodians_malicious,
             custodian_threshold,
@@ -603,6 +576,7 @@ fn operator_handle_init(
                 rng,
                 &bc2wrap::serialize(&backup_dec_key).unwrap(),
                 *backup_id,
+                *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
         let cur_op_output = signcrypt_result.ct_shares;
@@ -657,7 +631,6 @@ type OperatorsMap = BTreeMap<
 
 fn custodian_recover(
     rng: &mut AesRng,
-    backup_id: &RequestId,
     mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
     backups: &CustodianBackupsMap, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
@@ -671,10 +644,8 @@ fn custodian_recover(
             match custodian.verify_reencrypt(
                 rng,
                 cur_backup.get(cur_cus_role).unwrap(),
-                RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]),
                 verification_key,
                 ephemeral_enc_key,
-                *backup_id,
             ) {
                 Ok(cur_res) => cur_operator_res.insert(*cur_cus_role, cur_res),
                 Err(_) => {
@@ -693,7 +664,7 @@ fn custodian_recover(
 fn operator_recover(
     reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
     operators: &OperatorsMap,
-    backup_id: &RequestId,
+    _backup_id: &RequestId,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();
     for (cur_op_addr, (cur_op, cur_com, cur_emphemeral_dec, cur_ephemeral_enc)) in operators {
@@ -702,7 +673,6 @@ fn operator_recover(
             match cur_op.verify_and_recover(
                 &reencs_vec,
                 cur_com,
-                *backup_id,
                 cur_emphemeral_dec,
                 cur_ephemeral_enc,
             ) {

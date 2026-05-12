@@ -14,7 +14,6 @@ pub enum SetupSkipReason {
 /// Why a single custodian recovery output was skipped during filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoverySkipReason {
-    WrongOperator,
     InvalidRole,
     MissingVerificationKey,
     MissingSigncryption,

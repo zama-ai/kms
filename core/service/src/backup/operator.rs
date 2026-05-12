@@ -255,6 +255,7 @@ impl RecoveryValidationMaterial {
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
+        mpc_context: ContextId,
     ) -> anyhow::Result<Self> {
         if custodian_context.custodian_nodes.len() != cts.len() {
             return Err(anyhow::anyhow!(
@@ -276,6 +277,7 @@ impl RecoveryValidationMaterial {
             cts,
             commitments,
             custodian_context,
+            mpc_context,
         };
         let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
@@ -310,6 +312,10 @@ impl RecoveryValidationMaterial {
 
     pub fn custodian_context(&self) -> &InternalCustodianContext {
         &self.payload.custodian_context
+    }
+
+    pub fn mpc_context(&self) -> ContextId {
+        self.payload.mpc_context
     }
 
     /// Validated the signature on the recovery validation material.
@@ -359,6 +365,8 @@ pub struct RecoveryValidationMaterialPayload {
     pub commitments: BTreeMap<Role, Vec<u8>>,
     /// The custodian context used during backup
     pub custodian_context: InternalCustodianContext,
+    /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
+    pub mpc_context: ContextId,
 }
 impl Named for RecoveryValidationMaterialPayload {
     const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
@@ -370,6 +378,8 @@ fn checked_decryption_deserialize(
     signcryption: &UnifiedSigncryption,
     commitment: &[u8],
     custodian_role: Role,
+    expected_backup_id: RequestId,
+    expected_mpc_context_id: ContextId,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
     let backup_material: BackupMaterial = unsign_key
         .unsigncrypt(&DSEP_BACKUP_RECOVERY, signcryption)
@@ -391,6 +401,22 @@ fn checked_decryption_deserialize(
             "Invalid MPC context ID {} in the decrypted backup material for operator with address: {}",
             backup_material.mpc_context_id,
             backup_material.operator_pk.address()
+        );
+        return Err(BackupError::CustodianRecoveryError);
+    }
+    if backup_material.backup_id != expected_backup_id {
+        tracing::error!(
+            "backup_id mismatch in backup material: expected {} but got {}",
+            expected_backup_id,
+            backup_material.backup_id
+        );
+        return Err(BackupError::CustodianRecoveryError);
+    }
+    if backup_material.mpc_context_id != expected_mpc_context_id {
+        tracing::error!(
+            "mpc_context_id mismatch in backup material: expected {} but got {}",
+            expected_mpc_context_id,
+            backup_material.mpc_context_id
         );
         return Err(BackupError::CustodianRecoveryError);
     }
@@ -426,10 +452,10 @@ pub enum BackupMaterialVersioned {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(BackupMaterialVersioned)]
 pub struct BackupMaterial {
-    /// The custodian context ID
-    pub backup_id: RequestId, // TODO should be contextID
-    /// MPC context ID
-    pub mpc_context_id: ContextId, // todo ensure validation
+    /// The custodian context this backup is associated with.
+    pub backup_id: RequestId,
+    /// The MPC context this backup was produced under.
+    pub mpc_context_id: ContextId,
     // receiver
     pub custodian_pk: PublicSigKey,
     pub custodian_role: Role,
@@ -666,6 +692,8 @@ impl Operator {
         ephm_dec_key: &UnifiedPrivateEncKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Vec<u8>, BackupError> {
+        let expected_backup_id = recovery_material.custodian_context().context_id;
+        let expected_mpc_context_id = recovery_material.mpc_context();
         // the output is ordered by custodian ID, from 0 to n-1
         // first check the signature and decrypt
         // decrypted_buf[j][i] where j = jth custodian, i = ith block
@@ -696,6 +724,8 @@ impl Operator {
                     &custodian_output.signcryption,
                     commitment,
                     custodian_output.custodian_role,
+                    expected_backup_id,
+                    expected_mpc_context_id,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -842,6 +872,7 @@ mod tests {
     use super::*;
     use crate::{
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{SigningSchemeType, gen_sig_keys},
@@ -907,9 +938,14 @@ mod tests {
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
-        let rvm =
-            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
-                .unwrap();
+        let rvm = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &sig_key,
+            *DEFAULT_MPC_CONTEXT,
+        )
+        .unwrap();
         assert!(rvm.validate(&verf_key));
     }
 

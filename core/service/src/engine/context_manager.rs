@@ -971,6 +971,7 @@ async fn gen_recovery_validation(
         commitments,
         custodian_context.to_owned(),
         sig_key,
+        mpc_context_id,
     )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
@@ -1785,8 +1786,6 @@ mod tests {
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
             recovery_material.payload.cts,
-            backup_id,
-            server_verf_key.clone(),
         )
         .unwrap();
         let custodian_id = custodian1.verification_key().verf_key_id();

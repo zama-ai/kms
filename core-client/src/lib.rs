@@ -2218,7 +2218,6 @@ pub async fn execute_cmd(
             }
             do_custodian_backup_recovery(
                 &core_endpoints_req,
-                &cc_conf,
                 *custodian_context_id,
                 custodian_outputs,
             )

@@ -13,7 +13,7 @@ use hashing::DomainSep;
 use kms_grpc::kms::v1::{
     CustodianContext, CustodianRecoveryOutput, CustodianSetupMessage, OperatorBackupOutput,
 };
-use kms_grpc::{ContextId, RequestId};
+use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -37,13 +37,16 @@ pub enum InternalCustodianRecoveryOutputVersioned {
 }
 
 /// This is the message that a custodian sends to an operator after starting recovery.
+///
+/// All operator-facing context — operator long-term verification key, custodian role binding, MPC
+/// context, custodian context — lives inside the signcrypted `BackupMaterial` payload carried by
+/// `signcryption`. The plaintext `custodian_role` here is a lookup hint only: the operator uses it
+/// to pick which custodian's verification key to plug into the unsigncryption.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(InternalCustodianRecoveryOutputVersioned)]
 pub struct InternalCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
-    pub operator_verification_key: PublicSigKey,
-    pub mpc_context_id: ContextId,
 }
 
 impl Named for InternalCustodianRecoveryOutput {
@@ -59,22 +62,9 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 "Invalid custodian role in CustodianRecoveryOutput"
             ));
         }
-        // TODO(zama-ai/kms-internal/issues/2836)
-        // we may change how the verification key is serialized
-        let verification_key: PublicSigKey =
-            bc2wrap::deserialize_safe(&value.operator_verification_key).map_err(|e| {
-                anyhow::anyhow!("Failed to deserialize operator verification key: {}", e)
-            })?;
         let backup_output = &value.backup_output.ok_or_else(|| {
             anyhow::anyhow!("backup output not part of the custodian recovery output")
         })?;
-        let mpc_context_id = value
-            .mpc_context_id
-            .ok_or_else(|| {
-                anyhow::anyhow!("MPC context ID not part of the custodian recovery output")
-            })?
-            .try_into()
-            .map_err(|e| anyhow::anyhow!("Failed to parse MPC context ID: {}", e))?;
         Ok(InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
@@ -82,8 +72,6 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 backup_output.signing_type().into(),
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
-            operator_verification_key: verification_key,
-            mpc_context_id,
         })
     }
 }
@@ -92,7 +80,6 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
-        let verification_key_buf = bc2wrap::serialize(&value.operator_verification_key)?;
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
@@ -100,8 +87,6 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
                 signing_type: value.signcryption.signing_type as i32,
             }),
             custodian_role: value.custodian_role.one_based() as u64,
-            operator_verification_key: verification_key_buf,
-            mpc_context_id: Some(value.mpc_context_id.into()),
         })
     }
 }
@@ -384,8 +369,6 @@ impl Custodian {
         Ok(InternalCustodianRecoveryOutput {
             signcryption,
             custodian_role: self.role,
-            operator_verification_key: operator_verification_key.clone(),
-            mpc_context_id: backup_material.mpc_context_id,
         })
     }
 
