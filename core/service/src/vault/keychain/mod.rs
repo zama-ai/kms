@@ -184,6 +184,11 @@ pub fn encrypt_under_data_key(
 ) -> anyhow::Result<Vec<u8>> {
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    if iv.len() != 12 {
+        return Err(anyhow_error_and_log(
+            "Invalid IV length: must be exactly 96 bits for AES GCM",
+        ));
+    }
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
@@ -202,6 +207,16 @@ pub fn decrypt_under_data_key(
     #[allow(deprecated)]
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    if iv.len() != 12 {
+        return Err(anyhow_error_and_log(
+            "Invalid IV length: must be exactly 96 bits for AES GCM",
+        ));
+    }
+    if auth_tag.len() != 16 {
+        return Err(anyhow_error_and_log(
+            "Invalid auth tag length: must be exactly 128 bits for AES GCM",
+        ));
+    }
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     cipher
@@ -215,10 +230,46 @@ pub mod tests {
     use super::{
         RootKeyMeasurements,
         awskms::{canonicalize_iam_policy, make_root_key_policy},
-        verify_root_key_measurements,
+        decrypt_under_data_key, encrypt_under_data_key, verify_root_key_measurements,
     };
     use iam_rs::{IAMPolicy, IAMVersion};
     use threshold_networking::tls::ReleasePCRValues;
+
+    /// Sunshine test: a plaintext encrypted with a valid 32-byte key and
+    /// 12-byte IV must decrypt back to the original bytes.
+    #[test]
+    fn test_encrypt_decrypt_under_data_key_roundtrip() {
+        let key = [0x42u8; 32];
+        let iv = [0xABu8; 12];
+        let plaintext = b"hello world, this is a secret payload".to_vec();
+
+        let mut buf = plaintext.clone();
+        let auth_tag = encrypt_under_data_key(&mut buf, &key, &iv)
+            .expect("encryption should succeed with a 32-byte key and 12-byte IV");
+        assert_ne!(buf, plaintext, "ciphertext must differ from plaintext");
+
+        decrypt_under_data_key(&mut buf, &key, &iv, &auth_tag)
+            .expect("decryption should succeed with the same key, IV and auth tag");
+        assert_eq!(buf, plaintext, "decrypted bytes must match the plaintext");
+    }
+
+    #[test]
+    fn test_encrypt_under_data_key_rejects_invalid_iv() {
+        let key = [0u8; 32];
+        let invalid_iv_lens = (0..12).chain([13usize, 16, 24, 32, 64]);
+        for iv_len in invalid_iv_lens {
+            let iv = vec![0u8; iv_len];
+            let mut buf = b"some payload".to_vec();
+            let err = encrypt_under_data_key(&mut buf, &key, &iv).expect_err(&format!(
+                "encryption should reject an IV of length {iv_len}"
+            ));
+            assert!(
+                err.to_string().contains("IV length"),
+                "error should mention IV length, got: {err}"
+            );
+        }
+    }
+
 
     #[test]
     fn test_verify_root_key_measurements() {
