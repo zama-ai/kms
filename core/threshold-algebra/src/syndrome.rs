@@ -182,15 +182,10 @@ pub fn syndrome_decoding_z2<F: Field + From<u8>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "extension_degree_3")]
     use crate::galois_fields::gf8::GF8;
-    #[cfg(feature = "extension_degree_5")]
     use crate::galois_fields::gf32::GF32;
-    #[cfg(feature = "extension_degree_6")]
     use crate::galois_fields::gf64::GF64;
-    #[cfg(feature = "extension_degree_7")]
     use crate::galois_fields::gf128::GF128;
-    #[cfg(feature = "extension_degree_8")]
     use crate::galois_fields::gf256::GF256;
     use crate::{
         galois_fields::gf16::GF16,
@@ -202,31 +197,26 @@ mod tests {
         test_compute_syndrome_field::<GF16>(10)
     }
 
-    #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_compute_syndrome_field_f3() {
         test_compute_syndrome_field::<GF8>(5)
     }
 
-    #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_compute_syndrome_field_f5() {
         test_compute_syndrome_field::<GF32>(10)
     }
 
-    #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_compute_syndrome_field_f6() {
         test_compute_syndrome_field::<GF64>(10)
     }
 
-    #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_compute_syndrome_field_f7() {
         test_compute_syndrome_field::<GF128>(10)
     }
 
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_compute_syndrome_field_f8() {
         test_compute_syndrome_field::<GF256>(10)
@@ -281,31 +271,26 @@ mod tests {
         test_syndrome_decode_field::<GF16>();
     }
 
-    #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_syndrome_decode_field_f3() {
         test_syndrome_decode_field::<GF8>();
     }
 
-    #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_syndrome_decode_field_f5() {
         test_syndrome_decode_field::<GF32>();
     }
 
-    #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_syndrome_decode_field_f6() {
         test_syndrome_decode_field::<GF64>();
     }
 
-    #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_syndrome_decode_field_f7() {
         test_syndrome_decode_field::<GF128>();
     }
 
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_syndrome_decode_field_f8() {
         test_syndrome_decode_field::<GF256>();

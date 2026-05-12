@@ -13,10 +13,9 @@ name = "kms_lib"
 path = "src/lib.rs"
 crate-type = ["lib", "cdylib"]
 
-[[bin]] # Bin to generate keys
+[[bin]] # Bin to generate signing keys and TLS material
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
-required-features = ["testing"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"
@@ -42,7 +41,7 @@ aes-gcm-siv.workspace = true
 aes-gcm.workspace = true
 aes-prng.workspace = true
 aes.workspace = true
-algebra = { workspace= true, features = ["extension_degree_4"] }
+algebra = { workspace= true }
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer-local.workspace = true
