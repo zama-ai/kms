@@ -958,6 +958,7 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
         threshold_networking::tls_certs::create_ca_cert_from_ca_keypair(
             subject.as_str(),
             tls_wildcard,
+            true,
             &ca_keypair,
         )?;
 
