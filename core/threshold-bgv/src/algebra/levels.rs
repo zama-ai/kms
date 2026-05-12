@@ -1574,7 +1574,6 @@ mod tests {
         assert_eq!(f_zero, secret);
     }
 
-    #[cfg(feature = "slow_tests")]
     mod slow_tests {
         use super::super::*;
         use algebra::sharing::shamir::{RevealOp, ShamirSharings};

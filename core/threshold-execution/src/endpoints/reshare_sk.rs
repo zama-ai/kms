@@ -817,91 +817,76 @@ mod tests {
         simulate_reshare_same_set::<4>(false, true).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_no_error_f3() -> anyhow::Result<()> {
         simulate_reshare_same_set::<3>(false, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_error_f3() -> anyhow::Result<()> {
         simulate_reshare_same_set::<3>(true, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_missing_f3() -> anyhow::Result<()> {
         simulate_reshare_same_set::<3>(false, true).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_no_error_f5() -> anyhow::Result<()> {
         simulate_reshare_same_set::<5>(false, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_error_f5() -> anyhow::Result<()> {
         simulate_reshare_same_set::<5>(true, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_missing_f5() -> anyhow::Result<()> {
         simulate_reshare_same_set::<5>(false, true).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_no_error_f6() -> anyhow::Result<()> {
         simulate_reshare_same_set::<6>(false, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_error_f6() -> anyhow::Result<()> {
         simulate_reshare_same_set::<6>(true, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_missing_f6() -> anyhow::Result<()> {
         simulate_reshare_same_set::<6>(false, true).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_no_error_f7() -> anyhow::Result<()> {
         simulate_reshare_same_set::<7>(false, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_error_f7() -> anyhow::Result<()> {
         simulate_reshare_same_set::<7>(true, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_missing_f7() -> anyhow::Result<()> {
         simulate_reshare_same_set::<7>(false, true).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_no_error_f8() -> anyhow::Result<()> {
         simulate_reshare_same_set::<8>(false, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_error_f8() -> anyhow::Result<()> {
         simulate_reshare_same_set::<8>(true, false).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn reshare_with_missing_f8() -> anyhow::Result<()> {
         simulate_reshare_same_set::<8>(false, true).await

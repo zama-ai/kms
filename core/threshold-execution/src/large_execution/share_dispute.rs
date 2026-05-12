@@ -635,7 +635,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
@@ -665,7 +664,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]

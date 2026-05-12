@@ -216,7 +216,7 @@ where
     lhs.iter().zip_eq(rhs).map(|(x, y)| y * x).collect_vec()
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use algebra::structure_traits::{Sample, Zero};
@@ -268,6 +268,7 @@ mod tests {
         assert_eq!(c, c_fft);
     }
 
+    #[cfg(feature = "slow_tests")]
     #[test]
     fn poly_qmul() {
         let mut rng = AesRng::seed_from_u64(0);

@@ -318,7 +318,6 @@ async fn test_threshold_shutdown() -> Result<()> {
 
 /// Validates that the rate limiter correctly rejects requests when the bucket is exhausted.
 #[tokio::test]
-#[cfg(feature = "slow_tests")]
 async fn test_ratelimiter() -> Result<()> {
     use crate::consts::TEST_PARAM;
     use crate::dummy_domain;

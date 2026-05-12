@@ -1,8 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::{TIME_TO_SLEEP_MS, assert_plaintext};
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
@@ -90,7 +88,6 @@ async fn test_decryption_central_precompute_sns() -> Result<()> {
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
 #[tokio::test(flavor = "multi_thread")]
@@ -113,7 +110,6 @@ async fn default_decryption_centralized(
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
 #[tokio::test(flavor = "multi_thread")]

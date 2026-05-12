@@ -1643,7 +1643,6 @@ pub(crate) mod tests {
     //Test behaviour if a party doesn't participate in the protocol
     //Expected behaviour is that we end up with trivial 0 sharing for this party
     //and all other vss are fine
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
@@ -1713,7 +1712,6 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
@@ -1745,7 +1743,6 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 1)]

@@ -182,15 +182,10 @@ mod tests {
             session_parameters::GenericParameterHandles, small_session::SmallSession,
         },
     };
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_3::{ResiduePolyF3Z64, ResiduePolyF3Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_5::{ResiduePolyF5Z64, ResiduePolyF5Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_6::{ResiduePolyF6Z64, ResiduePolyF6Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_7::{ResiduePolyF7Z64, ResiduePolyF7Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128};
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
@@ -361,33 +356,23 @@ mod tests {
     test_triples![ResiduePolyF4Z64, u64];
     test_triples![ResiduePolyF4Z128, u128];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF3Z64, u64];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF3Z128, u128];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF5Z64, u64];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF5Z128, u128];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF6Z64, u64];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF6Z128, u128];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF7Z64, u64];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF7Z128, u128];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF8Z64, u64];
 
-    #[cfg(feature = "slow_tests")]
     test_triples![ResiduePolyF8Z128, u128];
 }

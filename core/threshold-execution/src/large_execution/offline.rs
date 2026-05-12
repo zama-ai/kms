@@ -847,7 +847,6 @@ mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught_bis_9p<
@@ -920,7 +919,6 @@ mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_not_caught_9p<

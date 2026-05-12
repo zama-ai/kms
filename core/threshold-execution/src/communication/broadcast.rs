@@ -627,10 +627,8 @@ impl Broadcast for SyncReliableBroadcast {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "slow_tests")]
-    use crate::malicious_execution::communication::malicious_broadcast::MaliciousBroadcastSenderEcho;
     use crate::malicious_execution::communication::malicious_broadcast::{
-        MaliciousBroadcastDrop, MaliciousBroadcastSender,
+        MaliciousBroadcastDrop, MaliciousBroadcastSender, MaliciousBroadcastSenderEcho,
     };
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::small_session::SmallSession;
@@ -912,7 +910,6 @@ mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_malicious_sender_echo_broadcast() {
         let malicious_strategy = MaliciousBroadcastSenderEcho::default();

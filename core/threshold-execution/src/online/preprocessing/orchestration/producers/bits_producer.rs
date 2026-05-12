@@ -197,31 +197,26 @@ mod tests {
         test_bit_production_large::<4>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_large_f3() {
         test_bit_production_large::<3>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_large_f5() {
         test_bit_production_large::<5>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_large_f6() {
         test_bit_production_large::<6>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_large_f7() {
         test_bit_production_large::<7>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_large_f8() {
         test_bit_production_large::<8>()
@@ -259,31 +254,26 @@ mod tests {
         test_bit_production_small::<4>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_small_f3() {
         test_bit_production_small::<3>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_small_f5() {
         test_bit_production_small::<5>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_small_f6() {
         test_bit_production_small::<6>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_small_f7() {
         test_bit_production_small::<7>()
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bit_production_small_f8() {
         test_bit_production_small::<8>()
