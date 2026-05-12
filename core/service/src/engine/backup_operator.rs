@@ -139,18 +139,13 @@ where
     /// Validate the recovery request from the custodian and return the fully-validated, decrypted
     /// per-role `BackupMaterial`s.
     ///
-    /// Returns (custodian_context_id, mpc_context_id, validated_rec, operator).
+    /// Returns (validated_rec, operator).
     pub(crate) async fn validate_custodian_backup_recovery_request(
         &self,
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(
-        ContextId,
-        ContextId,
-        HashMap<Role, BackupMaterial>,
-        Operator,
-    )> {
+    ) -> anyhow::Result<(HashMap<Role, BackupMaterial>, Operator)> {
         let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -195,12 +190,7 @@ where
         .await?;
         // `filter_custodian_data` already enforces `len() >= threshold + 1`
 
-        Ok((
-            custodian_context_id,
-            mpc_context_id,
-            validated_rec,
-            operator,
-        ))
+        Ok((validated_rec, operator))
     }
 }
 
@@ -367,7 +357,7 @@ where
             }
         };
         let inner = request.into_inner();
-        let (custodian_context_id, mpc_context_id, parsed_custodian_rec, operator) = self
+        let (parsed_custodian_rec, operator) = self
             .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
@@ -382,52 +372,6 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
-        // Validate that the contexts are still valid
-        if !self
-            .crypto_storage
-            .custodian_context_exists(&custodian_context_id)
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_CUSTODIAN_BACKUP_RECOVERY,
-                    None,
-                    anyhow::anyhow!("Failed to check existence of custodian context: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?
-        {
-            return Err(MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!(
-                    "The custodian context associated with the provided context ID does not exist, thus is not valid"
-                ),
-                tonic::Code::InvalidArgument,
-            ));
-        }
-        if !self
-            .crypto_storage
-            .mpc_context_exists(&mpc_context_id)
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_CUSTODIAN_BACKUP_RECOVERY,
-                    None,
-                    anyhow::anyhow!("Failed to check existence of MPC context: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?
-        {
-            return Err(MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!(
-                    "The MPC context associated with the provided context ID does not exist, thus is not valid"
-                ),
-                tonic::Code::InvalidArgument,
-            ));
-        }
-
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -1128,9 +1072,7 @@ pub(crate) async fn keychain_initialized(
 mod tests {
     use super::*;
     use crate::backup::error::{BackupError, RecoverySkipReason};
-    use crate::backup::operator::{DSEP_BACKUP_COMMITMENT, DSEP_BACKUP_RECOVERY};
     use crate::consts::DEFAULT_MPC_CONTEXT;
-    use crate::engine::base::safe_serialize_hash_element_versioned;
     use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},

@@ -234,7 +234,7 @@ fn full_flow(
         custodian_threshold,
     );
     assert!(backups.len() == operator_count);
-    let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
+    let recovered_secrets = operator_recover(&backups, &operators);
     assert!(recovered_secrets.len() == operator_count);
 
     for op_addr in ops_addresses {
@@ -285,7 +285,7 @@ fn full_flow_drop_msg() {
         custodian_threshold,
     );
     assert!(backups.len() == operator_count);
-    let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
+    let recovered_secrets = operator_recover(&backups, &operators);
     assert!(recovered_secrets.len() == operator_count);
 
     for addr in op_addresses {
@@ -406,7 +406,7 @@ fn full_flow_malicious_custodian_second() {
         );
         // We should still be able to recover even though one custodian is malicious
         assert!(backups.len() == operator_count);
-        let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
+        let recovered_secrets = operator_recover(&backups, &operators);
         assert!(recovered_secrets.len() == operator_count);
 
         for op_addr in &op_addresses {
@@ -445,7 +445,7 @@ fn full_flow_malicious_custodian_second() {
             custodian_threshold,
         );
         assert!(backups.len() == operator_count);
-        let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
+        let recovered_secrets = operator_recover(&backups, &operators);
         assert!(recovered_secrets.len() == operator_count);
 
         for op_addr in &op_addresses {
@@ -508,7 +508,7 @@ fn full_flow_malicious_operator() {
         );
         // One missing and one malicious operator
         assert!(backups.len() == operator_count - 2);
-        let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
+        let recovered_secrets = operator_recover(&backups, &operators);
         assert!(recovered_secrets.len() == operator_count - 2);
 
         for (cur_role, cur_secret) in recovered_secrets {
@@ -664,7 +664,6 @@ fn custodian_recover(
 fn operator_recover(
     reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
     operators: &OperatorsMap,
-    _backup_id: &RequestId,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();
     for (cur_op_addr, (cur_op, cur_com, cur_emphemeral_dec, cur_ephemeral_enc)) in operators {
