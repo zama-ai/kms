@@ -318,12 +318,6 @@ mod kms_server_binary_test {
             .assert()
             .success();
     }
-
-    // The dev-centralized / dev-threshold smoke tests previously booted
-    // kms-server after running `kms-gen-keys` to generate FHE keys + CRS.
-    // kms-gen-keys no longer produces those — they are generated at runtime
-    // via the gRPC API or pre-baked by `generate-test-material`. End-to-end
-    // boot is covered by docker-compose smoke tests instead.
 }
 
 #[cfg(test)]

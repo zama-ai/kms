@@ -111,7 +111,7 @@ enum StorageCommand {
 
 #[derive(Clone, Subcommand)]
 enum Mode {
-    /// Generate the centralized server signing key and its verification material.
+    /// Generate the centralized server signing key.
     Centralized,
 
     /// Generate per-party signing keys and self-signed CA certificates for a threshold deployment.
@@ -209,18 +209,13 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
 /// Generate the server signing keys and TLS material for a KMS deployment.
 ///
 /// Two modes are supported:
-/// - `centralized` produces a single signing key plus its verification material.
+/// - `centralized` produces a single signing key.
 /// - `threshold` produces per-party signing keys and self-signed CA certificates for mTLS.
-///
-/// FHE keys and the CRS are not produced here — use the KMS gRPC API in production
-/// (`kms-core-client insecure-key-gen` / `insecure-crs-gen`) or `generate-test-material`
-/// in tests.
 ///
 /// Examples:
 /// ```
-/// ./kms-gen-keys centralized
 /// cargo run --bin kms-gen-keys -- centralized
-/// ./kms-gen-keys --help
+/// cargo run --bin kms-gen-keys -- --help
 /// ```
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
