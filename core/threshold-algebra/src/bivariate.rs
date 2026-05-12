@@ -195,7 +195,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "extension_degree_8")]
     use crate::galois_rings::degree_8::ResiduePolyF8Z128;
     use crate::{
         galois_rings::{
@@ -208,7 +207,6 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use rstest::rstest;
-    #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
     //Checks that we error on incompatible sizes and dimensions
@@ -300,7 +298,6 @@ mod tests {
     }
 
     //Setup up a hardcoded polynomial chosen at random with Sage
-    #[cfg(feature = "extension_degree_8")]
     fn poly_setup() -> (BivariatePoly<ResiduePolyF8Z128>, ResiduePolyF8Z128) {
         let coefs = vec![
             ResiduePoly {
@@ -629,7 +626,6 @@ mod tests {
     }
 
     //Checking partial eval x of the setup polynomial, checked against Sage
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_bivariate_partial_eval_x() {
         let (bpoly, point) = poly_setup();
@@ -702,7 +698,6 @@ mod tests {
     }
 
     //Checking partial eval y of the setup polynomial, checked against Sage
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_bivariate_partial_eval_y() {
         //Taking Sage as reference
@@ -774,7 +769,6 @@ mod tests {
         assert_eq!(res, expected_result);
     }
 
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_full_eval() {
         let (bpoly, point) = poly_setup();

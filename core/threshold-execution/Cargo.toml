@@ -31,6 +31,7 @@ rand.workspace = true
 rayon.workspace = true
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
+sha3 = { workspace = true, optional = true }
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 test-utils = { workspace = true, optional = true }
@@ -67,11 +68,10 @@ sha3.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
-algebra = { workspace = true, features = ["all_extension_degrees"] }
 
 
 [features]
-default = ["non-wasm", "algebra/extension_degree_4"]
+default = ["non-wasm"]
 non-wasm = [
     "dep:threshold-networking",
     "dep:tfhe-zk-pok",
@@ -80,6 +80,6 @@ non-wasm = [
     "dep:tokio",
     "dep:tonic",
 ]
-testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile"]
+testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile", "dep:sha3"]
 slow_tests = ["testing"]
-malicious_strategies = ["testing", "algebra/extension_degree_4"]
+malicious_strategies = ["testing"]

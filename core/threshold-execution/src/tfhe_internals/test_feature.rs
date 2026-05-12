@@ -80,6 +80,18 @@ impl KeySet {
         }
     }
 
+    /// Returns the dedicated OPRF private LWE secret key embedded in the
+    /// `ClientKey`, or `None` if the keyset was generated without one.
+    pub fn get_raw_oprf_client_key(&self) -> Option<LweSecretKey<Vec<u64>>> {
+        let (_, _, _, _, _, _, oprf_private_key, _) = self.client_key.clone().into_raw_parts();
+        oprf_private_key.map(|sk| match sk.into_raw_parts().into_raw_parts() {
+            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(lwe) => lwe,
+            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 OPRF private key not supported")
+            }
+        })
+    }
+
     pub fn get_raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
         // We should have this key even if the compact PKE parameters are empty
         // because we want to match the behaviour of a normal DKG.
@@ -153,6 +165,108 @@ impl KeySet {
                 anyhow::bail!("KS32 parameters unsupported")
             }
         }
+    }
+}
+
+/// Derives the seed used by tfhe-rs 1.6.1 to create the modulus-switched
+/// PRF input. This mirrors `create_random_from_seed_modulus_switched` in
+/// tfhe-rs so the expected plaintext is computed independently from the
+/// encrypted OPRF path.
+pub fn oprf_modulus_switched_seed(
+    seed: tfhe_csprng::seeders::Seed,
+    random_bits_count: u64,
+) -> Vec<u8> {
+    use sha3::{Digest, Sha3_256};
+
+    let mut hasher = Sha3_256::default();
+    hasher.update(b"TFHE_PRF");
+    hasher.update(seed.0.to_le_bytes());
+    hasher.update(1u64.to_le_bytes());
+    hasher.update(random_bits_count.to_le_bytes());
+    hasher.finalize().to_vec()
+}
+
+/// Plaintext reference for the shortint OPRF — mirrors
+/// `oprf_compare_plain_from_seed` in tfhe-rs (shortint/oprf.rs).
+/// Given the PRF's small LWE secret key, a seed, the shortint params, and
+/// the `random_bits_count`, returns the expected OPRF output in
+/// `[0, 2^random_bits_count)`.
+pub fn oprf_expected_plaintext(
+    prf_lwe_sk: &tfhe::core_crypto::prelude::LweSecretKeyView<u64>,
+    seed: tfhe_csprng::seeders::Seed,
+    params: tfhe::shortint::ShortintParameterSet,
+    random_bits_count: u64,
+) -> u64 {
+    use tfhe::core_crypto::commons::math::random::{RandomGenerator, Uniform};
+    use tfhe::core_crypto::prelude::{
+        CiphertextModulus, DefaultRandomGenerator, LweCiphertextOwned, decrypt_lwe_ciphertext,
+    };
+    use tfhe_csprng::seeders::XofSeed;
+
+    let lwe_size = params.lwe_dimension().to_lwe_size();
+    let polynomial_size = params.polynomial_size();
+    let input_p = 2 * polynomial_size.0 as u64;
+    let log_input_p = input_p.ilog2() as usize;
+    let log_modulus = polynomial_size.to_blind_rotation_input_modulus_log().0;
+
+    let seed = oprf_modulus_switched_seed(seed, random_bits_count);
+    let mut xof = RandomGenerator::<DefaultRandomGenerator>::new(XofSeed::new(seed, *b"PRF_INIT"));
+    let mask = (0..lwe_size.to_lwe_dimension().0)
+        .map(|_| {
+            xof.random_from_distribution_custom_mod::<u32, _>(
+                Uniform,
+                CiphertextModulus::new(input_p as u128),
+            ) as u64
+        })
+        .collect_vec();
+
+    let shift = u64::BITS as usize - log_modulus;
+    let container: Vec<u64> = mask
+        .into_iter()
+        .map(|sample| sample << shift)
+        .chain(std::iter::once(0))
+        .collect();
+    let ct = LweCiphertextOwned::from_container(container, CiphertextModulus::new_native());
+
+    let pt = decrypt_lwe_ciphertext(prf_lwe_sk, &ct).0;
+    let plain_prf_input = pt.wrapping_add(1u64 << (u64::BITS as usize - log_input_p - 1))
+        >> (u64::BITS as usize - log_input_p);
+
+    tfhe::shortint::oprf::test_utils::cleatext_prf(
+        plain_prf_input,
+        random_bits_count,
+        2 * params.carry_modulus().0 * params.message_modulus().0,
+        polynomial_size.0 as u64,
+    )
+}
+
+/// Verifies that an OPRF server key agrees with the cleartext PRF for a range
+/// of seeds.
+pub fn assert_oprf_matches_plaintext(
+    shortint_ck: &tfhe::shortint::ClientKey,
+    target_shortint_server_key: &tfhe::shortint::ServerKey,
+    oprf_server_key: &tfhe::shortint::oprf::OprfServerKey,
+    prf_lwe_sk: &LweSecretKey<Vec<u64>>,
+    num_seeds: u128,
+) {
+    let shortint_params = shortint_ck.parameters();
+    let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
+
+    for s in 0u128..num_seeds {
+        let seed = tfhe_csprng::seeders::Seed(s);
+        let img = oprf_server_key.generate_oblivious_pseudo_random(
+            seed,
+            random_bits_count,
+            target_shortint_server_key,
+        );
+        let actual = shortint_ck.decrypt_message_and_carry(&img);
+        let expected = oprf_expected_plaintext(
+            &prf_lwe_sk.as_view(),
+            seed,
+            shortint_params,
+            random_bits_count,
+        );
+        assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
     }
 }
 
@@ -234,6 +348,7 @@ struct RawKeyContainers {
     compression_sk_container64: Option<Vec<u64>>,
     sns_sk_container128: Option<Vec<u128>>,
     sns_compression_sk_container128: Option<Vec<u128>>,
+    oprf_sk_container64: Vec<u64>,
 }
 
 /// Extract raw key containers from a KeySet or create zero-filled placeholders.
@@ -340,6 +455,10 @@ fn extract_key_containers(
         }
     };
 
+    let oprf_sk_container64: Vec<u64> = keyset
+        .and_then(|s| s.get_raw_oprf_client_key().map(|k| k.into_container()))
+        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
+
     Ok(RawKeyContainers {
         lwe_sk_container64,
         lwe_encryption_sk_container64,
@@ -347,6 +466,7 @@ fn extract_key_containers(
         compression_sk_container64,
         sns_sk_container128,
         sns_compression_sk_container128,
+        oprf_sk_container64,
     })
 }
 
@@ -408,6 +528,25 @@ where
     };
     let lwe_encryption_key_shares64 =
         robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
+
+    // Share the dedicated OPRF LWE secret key
+    tracing::debug!(
+        "I'm {:?}, Sharing OPRF key64 to be sent: len {}",
+        session.my_role(),
+        raw_keys.oprf_sk_container64.len()
+    );
+    let secrets = if is_input_party {
+        Some(
+            raw_keys
+                .oprf_sk_container64
+                .iter()
+                .map(|cur| ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u64>(*cur)))
+                .collect_vec(),
+        )
+    } else {
+        None
+    };
+    let oprf_key_shares64 = robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
 
     // Share glwe_sk
     tracing::debug!(
@@ -543,6 +682,9 @@ where
         lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
             data: lwe_encryption_key_shares64,
         }),
+        oprf_secret_key_share: Some(LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
+            data: oprf_key_shares64,
+        })),
         glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
             data: glwe_key_shares128,
             polynomial_size: params_basic_handle.polynomial_size(),
@@ -827,6 +969,7 @@ pub fn to_hl_client_key(
     compression_key: Option<GlweSecretKey<Vec<u64>>>,
     sns_secret_key: Option<GlweSecretKey<Vec<u128>>>,
     sns_compression_secret_key: Option<NoiseSquashingCompressionPrivateKey>,
+    oprf_private_lwe_sk: Option<LweSecretKey<Vec<u64>>>,
 ) -> anyhow::Result<tfhe::ClientKey> {
     let regular_params = match params {
         DKGParams::WithSnS(p) => p.regular_params,
@@ -906,6 +1049,14 @@ pub fn to_hl_client_key(
     let sns_compression_key = sns_compression_secret_key
         .map(tfhe::integer::ciphertext::NoiseSquashingCompressionPrivateKey::from_raw_parts);
 
+    let oprf_private_key = oprf_private_lwe_sk.map(|lwe_sk| {
+        tfhe::integer::oprf::OprfPrivateKey::from_raw_parts(
+            tfhe::shortint::oprf::OprfPrivateKey::from_raw_parts(
+                tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(lwe_sk),
+            ),
+        )
+    });
+
     Ok(ClientKey::from_raw_parts(
         sck.into(),
         dedicated_compact_private_key,
@@ -913,7 +1064,7 @@ pub fn to_hl_client_key(
         noise_squashing_key,
         sns_compression_key,
         regular_params.get_rerand_params().map(Into::into),
-        None,
+        oprf_private_key,
         tag,
     ))
 }
@@ -975,12 +1126,14 @@ where
     let glwe_secret_key = keyset.get_raw_glwe_client_key();
     let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
     let glwe_secret_key_sns_compression_as_lwe = keyset.get_raw_sns_compression_client_key_as_lwe();
+    let oprf_secret_key = keyset.get_raw_oprf_client_key();
     keygen_all_party_shares(
         lwe_secret_key,
         lwe_encryption_secret_key,
         glwe_secret_key,
         glwe_secret_key_sns_as_lwe,
         glwe_secret_key_sns_compression_as_lwe,
+        oprf_secret_key,
         parameters,
         rng,
         num_parties,
@@ -995,6 +1148,7 @@ fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
     glwe_secret_key: GlweSecretKey<Vec<u64>>,
     glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
     glwe_secreet_key_sns_compression_as_lwe: Option<LweSecretKey<Vec<u128>>>,
+    oprf_secret_key: Option<LweSecretKey<Vec<u64>>>,
     parameters: ClassicPBSParameters,
     rng: &mut R,
     num_parties: usize,
@@ -1024,6 +1178,18 @@ where
             threshold,
             rng,
         )?;
+
+    // share the dedicated OPRF LWE key (if provided)
+    let vv128_oprf_key: Option<Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>> =
+        match oprf_secret_key {
+            Some(sk) => Some(secret_share_key_shares(
+                sk.into_container(),
+                num_parties,
+                threshold,
+                rng,
+            )?),
+            None => None,
+        };
 
     // do the same for 128 bit glwe key, this is how we generate it normally
     let glwe_poly_size = glwe_secret_key.polynomial_size();
@@ -1055,6 +1221,9 @@ where
             lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                 data: vv128_lwe_enc_key[p].clone(),
             }),
+            oprf_secret_key_share: vv128_oprf_key
+                .as_ref()
+                .map(|x| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data: x[p].clone() })),
             glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
                 data: vv128_glwe_key[p].clone(),
                 polynomial_size: glwe_poly_size,

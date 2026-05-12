@@ -290,6 +290,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             let PrivateKeySet {
                 lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share,
+                oprf_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
                 glwe_secret_key_share_compression,
@@ -300,6 +301,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             let PrivateKeySet {
                 lwe_encryption_secret_key_share: reshared_lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share: reshared_lwe_compute_secret_key_share,
+                oprf_secret_key_share: reshared_oprf_secret_key_share,
                 glwe_secret_key_share: reshared_glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe: reshared_glwe_secret_key_share_sns_as_lwe,
                 glwe_secret_key_share_compression: reshared_glwe_secret_key_share_compression,
@@ -318,6 +320,9 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_compute_secret_key_share,
                 reshared_lwe_compute_secret_key_share
             );
+            if oprf_secret_key_share.is_some() {
+                assert_ne!(oprf_secret_key_share, reshared_oprf_secret_key_share);
+            }
             assert_ne!(glwe_secret_key_share, reshared_glwe_secret_key_share);
             if glwe_secret_key_share_sns_as_lwe.is_some() {
                 assert_ne!(
@@ -356,7 +361,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             None,
             1,
             None,
-            false, // use the default compressed keyset
         )
         .await;
     }

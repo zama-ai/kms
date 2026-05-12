@@ -10,7 +10,6 @@ use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
@@ -30,7 +29,6 @@ use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 async fn test_decryption_threshold_no_decompression(
@@ -60,7 +58,6 @@ async fn test_decryption_threshold_no_decompression(
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 async fn test_decryption_threshold(
@@ -265,7 +262,6 @@ pub async fn decryption_threshold(
         party_ids_to_crash,
         parallelism,
         Some(&material_path),
-        false, // compressed_keys
     )
     .await;
 }
@@ -283,8 +279,6 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
-    // TODO(dp): this should have stayed "compressed" and not been renamed. Mea culpa.
-    uncompressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(
         amount_parties,
@@ -300,7 +294,6 @@ pub async fn run_decryption_threshold(
         parallelism,
         data_root_path,
         false,
-        uncompressed_keys,
     )
     .await
 }
@@ -322,7 +315,6 @@ pub async fn run_decryption_threshold_optionally_fail(
     parallelism: usize,
     data_root_path: Option<&Path>,
     expect_request_failure: bool,
-    uncompressed_keys: bool,
 ) {
     let encryption_key_id = encryption_key_id.unwrap_or(key_id);
     assert_eq!(kms_clients.len(), kms_servers.len());
@@ -336,7 +328,6 @@ pub async fn run_decryption_threshold_optionally_fail(
             encryption_key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
-            uncompressed_keys,
         )
         .await;
         let ctt = TypedCiphertext {

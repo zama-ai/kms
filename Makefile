@@ -63,15 +63,15 @@ generate-backward-compatibility-all: clean-backward-compatibility-data generate-
 
 # Test material generation targets
 generate-test-material-all:
-	cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
-	cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13
+	cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4
+	cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,13
 
 generate-test-material-testing:
 	@echo "Generating testing material..."
-	cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+	cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4
 
 generate-test-material-default:
-	cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13
+	cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,13
 
 validate-test-material:
 	cargo run -p generate-test-material -- --output ./test-material --verbose validate

@@ -104,57 +104,18 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  ############################################################################
-  # Start AMD64 Runner
-  # Waits for docker-build if required, then starts the test runner
-  ############################################################################
-  start-amd64-runner:
-    name: performance-testing/start-amd64-runner
-    needs: [docker-build]
-    if: |
-      always() &&
-      !cancelled() &&
-      (
-        needs.docker-build.result == 'success' ||
-        (github.event_name == 'workflow_dispatch' && inputs.build == false)
-      )
-    runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
-    steps:
-      - name: Start EC2 runner AMD64
-        id: start-ec2-runner-amd64
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: small-instance
 
   ############################################################################
   # Performance Testing Job
   # Runs performance tests for KMS in different deployment modes
   ############################################################################
   performance-testing:
-    needs: [docker-build, start-amd64-runner]
-    if: |
-      always() &&
-      !cancelled() &&
-      needs.start-amd64-runner.result == 'success' &&
-      (
-        needs.docker-build.result == 'success' ||
-        (github.event_name == 'workflow_dispatch' && inputs.build == false)
-      )
+    needs: [docker-build]
+    if: always() && !cancelled()
     name: performance-testing
-    runs-on: ${{ needs.start-amd64-runner.outputs.label }}
+    runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
     steps:
       - name: Setup Home
@@ -501,21 +462,3 @@ jobs:
           argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
 
           echo "✅ Cleanup completed successfully"
-
-  ############################################################################
-  # Stop AMD64 Runner
-  ############################################################################
-  stop-amd64-runner:
-    name: performance-testing/stop-amd64-runner
-    needs: [start-amd64-runner, performance-testing]
-    runs-on: ubuntu-latest
-    if: always() && needs.start-amd64-runner.result == 'success'
-    steps:
-      - name: Stop AMD64 runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-amd64-runner.outputs.label }}

@@ -522,25 +522,28 @@ impl DKGParamsBasics for DKGParamsRegular {
 
         match keyset_config {
             KeySetConfig::Standard(_) => {
-                //And additionally, need bits to process the TUniform noises
-                //(we need bound + 2 bits to sample a TUniform(bound))
-                //For pk
+                // And additionally, need bits to process the TUniform noises
+                // (we need bound + 2 bits to sample a TUniform(bound))
+                // For pk
                 num_bits_needed += self.num_needed_noise_pk().num_bits_needed();
 
-                //For ksk
+                // For ksk
                 num_bits_needed += self.num_needed_noise_ksk().num_bits_needed();
 
-                //For bk
+                // For bk
                 num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
 
-                //For pksk
+                // For the dedicated OPRF bk
+                num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
+
+                // For pksk
                 num_bits_needed += self.num_needed_noise_pksk().num_bits_needed();
 
-                //For (de)compression keys
-                //note that the bits are automatically 0
-                //if compression is not supported by the parameters
+                // For (de)compression keys
+                // note that the bits are automatically 0
+                // if compression is not supported by the parameters
 
-                //For compression keys
+                // For compression keys
                 num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
 
                 // for msnrk
@@ -567,7 +570,8 @@ impl DKGParamsBasics for DKGParamsRegular {
 
         match keyset_config {
             KeySetConfig::Standard(_) => {
-                num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits();
+                num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits(); // first is regular sk
+                num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits(); // second is the homPRF sk
 
                 //Required for the compression BK
                 if let Some(comp_params) = self.compression_decompression_parameters {
@@ -590,8 +594,8 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize {
-        //Need 1 more element to sample the seed
-        //as we always work in huge rings
+        // Need 1 more element to sample the seed
+        // as we always work in huge rings
         let num_randomness_needed = 1;
 
         self.total_bits_required(keyset_config) + num_randomness_needed
@@ -940,10 +944,14 @@ impl DKGParamsBasics for DKGParamsRegular {
                 KeyGenSecretKeyConfig::GenerateAll => {
                     self.lwe_sk_num_bits_to_sample()
                         + self.lwe_hat_sk_num_bits_to_sample()
+                        + self.lwe_sk_num_bits_to_sample() // second sk is for oprf
                         + self.glwe_sk_num_bits_to_sample()
                         + self.compression_sk_num_bits_to_sample()
                 }
-                KeyGenSecretKeyConfig::UseExisting => 0,
+                KeyGenSecretKeyConfig::UseExisting => {
+                    // need extra since we *might* be generating oprf sk shares
+                    self.lwe_sk_num_bits_to_sample()
+                }
             },
             KeySetConfig::DecompressionOnly => 0,
         }
@@ -998,7 +1006,8 @@ impl DKGParamsBasics for DKGParamsRegular {
         match keyset_config {
             KeySetConfig::Standard(_) => {
                 let noises = &[
-                    self.num_needed_noise_bk(),
+                    self.num_needed_noise_bk(), // first is for regular bk
+                    self.num_needed_noise_bk(), // second is for oprf bk
                     self.num_needed_noise_pksk(),
                     self.num_needed_noise_decompression_key(),
                     self.num_needed_noise_rerand_ksk(),
@@ -1264,8 +1273,8 @@ impl DKGParamsBasics for DKGParamsSnS {
         match keyset_config {
             KeySetConfig::Standard(_) => {
                 num_triples_needed +=
-                // Raw triples necessary for the 2 BK
-                self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
+                // Raw triples necessary for the regular BK, the OPRF BK and the SnS BK
+                self.lwe_dimension().0 * (2 * self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
 
                 // Required for the compression BK
                 if let Some(comp_params) = self.regular_params.compression_decompression_parameters
@@ -2133,7 +2142,7 @@ pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS
 #[cfg(test)]
 mod tests {
     use crate::{
-        keyset_config::KeySetConfig,
+        keyset_config::{KeySetConfig, StandardKeySetConfig},
         tfhe_internals::parameters::{
             BC_PARAMS_SNS, compute_min_trials, compute_prob_hw_within_range,
         },
@@ -2168,6 +2177,7 @@ mod tests {
         let h = param.get_params_basics_handle();
         let sk_total = h.lwe_dimension().0
             + h.lwe_hat_dimension().0
+            + h.lwe_dimension().0 // oprf sk
             + h.glwe_sk_num_bits()
             + h.compression_sk_num_bits();
         assert_eq!(sk_total, h.num_raw_bits(keyset_config));
@@ -2190,6 +2200,7 @@ mod tests {
         let h = param.get_params_basics_handle();
         let sk_total = h.lwe_dimension().0
             + h.lwe_hat_dimension().0
+            + h.lwe_dimension().0 // oprf sk
             + h.glwe_sk_num_bits()
             + h.compression_sk_num_bits()
             + sns_param.glwe_sk_num_bits_sns()
@@ -2222,6 +2233,54 @@ mod tests {
                 h.all_glwe_noise(keyset_config).num_bits_needed()
             );
         }
+    }
+
+    #[test]
+    fn test_required_preproc_use_existing_with_legacy_oprf_share() {
+        // `UseExisting` keygen reuses the LWE/LWE-hat/GLWE/compression secret
+        // key shares from a previous keyset. Legacy persisted keysets may not
+        // have the dedicated OPRF LWE secret-key share though, so preprocessing
+        // must still budget one fresh LWE secret key worth of raw bits for
+        // `ensure_oprf_secret_key_share_z128`.
+        //
+        // The public material is regenerated from the existing private shares
+        // and the OPRF share, so the usual noise, random seed and BK triples are
+        // still required even though the other secret key shares are reused.
+        let keyset_config = KeySetConfig::Standard(StandardKeySetConfig::use_existing_sk());
+        let param = BC_PARAMS_NO_SNS;
+        let h = param.get_params_basics_handle();
+
+        // BC_PARAMS_NO_SNS samples unconstrained binary secret keys, so one LWE
+        // secret key share is exactly `lwe_dimension` raw bits.
+        assert_eq!(h.lwe_dimension().0, h.num_raw_bits(keyset_config));
+
+        let noise_total = h.all_compression_ksk_noise(keyset_config).num_bits_needed()
+            + h.all_glwe_noise(keyset_config).num_bits_needed()
+            + h.all_lwe_hat_noise(keyset_config).num_bits_needed()
+            + h.all_lwe_noise(keyset_config).num_bits_needed();
+        assert_eq!(
+            h.num_raw_bits(keyset_config) + noise_total,
+            h.total_bits_required(keyset_config)
+        );
+        // Standard keygen needs triples for the regular BK, the dedicated OPRF
+        // BK and, when compression is enabled, the compression BK.
+        let compression_bk_triples = h
+            .get_compression_decompression_params()
+            .map_or(0, |params| {
+                h.glwe_sk_num_bits()
+                    * (params
+                        .raw_compression_parameters
+                        .packing_ks_glwe_dimension
+                        .0
+                        * params
+                            .raw_compression_parameters
+                            .packing_ks_polynomial_size
+                            .0)
+            });
+        assert_eq!(
+            2 * h.lwe_dimension().0 * h.glwe_sk_num_bits() + compression_bk_triples,
+            h.total_triples_required(keyset_config) - h.total_bits_required(keyset_config)
+        );
     }
 
     #[test]
