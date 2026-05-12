@@ -122,7 +122,7 @@ jobs:
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       - name: Checkout Project
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.2.2
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
@@ -293,14 +293,14 @@ jobs:
 
       - name: Checkout Project
         if: ${{ env.KMS_CHART_VERSION != 'repository' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.2.2
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Checkout Project KMS
         if: ${{ env.KMS_CHART_VERSION == 'repository' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.2.2
         with:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
