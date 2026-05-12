@@ -110,8 +110,8 @@ Background and authoring workflow: [docs/developer/backward_compatibility.md](..
 
 ```
 make generate-test-material-all       # insecure + secure profiles, all party counts
-make generate-test-material-default   # secure profile, parties 4,10,13
-make generate-test-material-testing   # insecure profile, parties 4,10
+make generate-test-material-default   # secure profile, parties 4,13
+make generate-test-material-testing   # insecure profile, parties 4
 make validate-test-material           # validate material on disk
 make clean-test-material              # remove ./test-material
 ```

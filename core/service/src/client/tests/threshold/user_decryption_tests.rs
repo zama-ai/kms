@@ -6,8 +6,6 @@ use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
-#[cfg(feature = "slow_tests")]
-use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
 use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
 use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
@@ -35,38 +33,6 @@ use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
-
-#[cfg(feature = "slow_tests")]
-#[rstest::rstest]
-#[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
-#[case(false, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
-#[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::BitDecSmall)]
-#[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_threshold_nightly(
-    #[case] secure: bool,
-    #[case] pt: TestingPlaintext,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-    #[case] decryption_mode: DecryptionMode,
-) {
-    user_decryption_threshold(
-        TEST_PARAM,
-        key_id,
-        false,
-        pt,
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: false,
-        },
-        1,
-        secure,
-        amount_parties,
-        None,
-        None,
-        Some(decryption_mode),
-    )
-    .await;
-}
 
 #[rstest::rstest]
 #[case(true, TestingPlaintext::Bool(true), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
@@ -428,7 +394,6 @@ pub(crate) async fn user_decryption_threshold(
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
         enc_config,
-        false, // compressed_keys
     )
     .await;
 
