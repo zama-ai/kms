@@ -7,7 +7,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use backward_compatibility::{
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, load::load_tests_metadata,
+};
+use serde::{Deserialize, de::DeserializeOwned};
 use syn::{Attribute, Item, Path as SynPath};
 
 #[derive(Deserialize)]
@@ -70,12 +73,6 @@ const ALLOW_UNCOVERED: &[&str] = &[
     "GlweSecretKeyShareEnum",
     "CompressionPrivateKeyShares",
     "CompressionPrivateKeySharesEnum",
-];
-
-const RON_FILES: &[&str] = &[
-    "backward-compatibility/data/kms.ron",
-    "backward-compatibility/data/kms-grpc.ron",
-    "backward-compatibility/data/threshold-fhe.ron",
 ];
 
 fn repo_root() -> PathBuf {
@@ -213,6 +210,20 @@ fn versioned_enums_have_contiguous_variants() {
     );
 }
 
+/// Loads a `.ron` fixture file and returns the lowercased `metadata` field of
+/// each testcase.
+fn load_covered_names<M>(path: &Path) -> Vec<String>
+where
+    M: DeserializeOwned + std::fmt::Display,
+{
+    let testcases: Vec<backward_compatibility::Testcase<M>> = load_tests_metadata(path)
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()));
+    testcases
+        .iter()
+        .map(|tc| tc.metadata.to_string().to_lowercase())
+        .collect()
+}
+
 #[test]
 fn versioned_enums_are_covered_by_ron_metadata() {
     let dispatches = collect_dispatches();
@@ -221,20 +232,20 @@ fn versioned_enums_are_covered_by_ron_metadata() {
     // Compare names case-insensitively: the `.ron` files store variant names
     // chosen by the test author (e.g. `PrssSetupCombined`) which sometimes
     // smooth the casing of the underlying Rust type (`PRSSSetupCombined`).
+    // `TestMetadata*` derive `strum::Display`, which renders an enum value as
+    // just its variant name — exactly what we need to match against
+    // `*Versioned` dispatch enums.
+    let data_dir = root.join("backward-compatibility/data");
     let mut covered: BTreeSet<String> = BTreeSet::new();
-    for f in RON_FILES {
-        let path = root.join(f);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
-        for line in text.lines() {
-            let t = line.trim();
-            if let Some(rest) = t.strip_prefix("metadata: ")
-                && let Some(name) = rest.split('(').next()
-            {
-                covered.insert(name.to_lowercase());
-            }
-        }
-    }
+    covered.extend(load_covered_names::<TestMetadataKMS>(
+        &data_dir.join("kms.ron"),
+    ));
+    covered.extend(load_covered_names::<TestMetadataKmsGrpc>(
+        &data_dir.join("kms-grpc.ron"),
+    ));
+    covered.extend(load_covered_names::<TestMetadataDD>(
+        &data_dir.join("threshold-fhe.ron"),
+    ));
 
     let mut missing: Vec<(String, PathBuf)> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
