@@ -12,6 +12,12 @@ pub enum SetupSkipReason {
 }
 
 /// Why a single custodian recovery output was skipped during filtering.
+///
+/// `InvalidSigncryption` covers both tampered ciphertexts and outputs addressed to a different
+/// operator
+///
+/// The `*InPayload` / `*Malformed` / `*Mismatch` / `CommitmentMismatch` variants fire only after a
+/// successful unsigncrypt has produced a `BackupMaterial`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoverySkipReason {
     InvalidRole,
@@ -20,6 +26,14 @@ pub enum RecoverySkipReason {
     InvalidSigncryption,
     ParseError,
     DuplicateRole,
+    BackupIdMalformed,
+    MpcContextIdMalformed,
+    BackupIdMismatch,
+    MpcContextIdMismatch,
+    CustodianRoleMismatchInPayload,
+    CustodianKeyMismatchInPayload,
+    OperatorMismatchInPayload,
+    CommitmentMismatch,
 }
 
 #[derive(Error, Debug)]

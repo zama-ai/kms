@@ -845,6 +845,7 @@ fn test_recovery_material(
         let (custodian_pk, _) = gen_sig_keys(&mut rng);
         let backup_material = BackupMaterial {
             backup_id,
+            mpc_context_id: kms_grpc::identifiers::ContextId::from_bytes([9u8; 32]),
             custodian_pk,
             custodian_role: cus_role,
             operator_pk: operator_pk.clone(),
@@ -910,7 +911,9 @@ fn test_internal_recovery_request(
         };
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
-    let new_versionized = InternalRecoveryRequest::new(enc_key, cts, backup_id, verf_key).unwrap();
+    let _ = backup_id;
+    let _ = verf_key;
+    let new_versionized = InternalRecoveryRequest::new(enc_key, cts).unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -989,11 +992,10 @@ fn test_internal_custodian_recovery_output(
         signing_type: SigningSchemeType::Ecdsa256k1,
     };
 
+    let _ = operator_verification_key;
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
         custodian_role: Role::indexed_from_one(2),
-        operator_verification_key,
-        mpc_context_id: kms_grpc::RequestId::from_bytes([7u8; 32]),
     };
 
     if original_versionized != new_versionized {
@@ -1213,6 +1215,7 @@ fn test_operator_backup_output(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),
+            kms_grpc::identifiers::ContextId::from_bytes([9u8; 32]),
         )
         .unwrap();
 

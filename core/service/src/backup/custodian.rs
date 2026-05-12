@@ -10,10 +10,10 @@ use crate::cryptography::{
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use hashing::DomainSep;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CustodianContext, CustodianRecoveryOutput, CustodianSetupMessage, OperatorBackupOutput,
 };
-use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -342,13 +342,13 @@ impl Custodian {
             return Err(BackupError::CustodianRecoveryError);
         }
         // check the decrypted result
-        if !backup_material.matches_expected_metadata(
+        if let Err(mismatch) = backup_material.check_expected_metadata(
             &self.signing_key.verf_key(),
             self.role,
             &operator_verification_key.verf_key_id(),
         ) {
             tracing::error!(
-                "Backup material did not match expected metadata for operator: {}",
+                "Backup material did not match expected metadata ({mismatch:?}) for operator: {}",
                 operator_verification_key.address()
             );
             return Err(BackupError::CustodianRecoveryError);
