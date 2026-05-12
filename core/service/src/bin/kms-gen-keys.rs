@@ -28,7 +28,7 @@ use strum::EnumIs;
 use url::Url;
 
 #[derive(Parser)]
-#[clap(name = "Zama KMS Key Material Generator")]
+#[clap(name = "Zama KMS Signing Key and Certificate Generator")]
 #[clap(
     about = "A CLI tool for generating server signing keys and TLS certificates. \
     In centralized mode it produces a single signing key plus its verification material. \

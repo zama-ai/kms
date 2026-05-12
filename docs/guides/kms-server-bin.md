@@ -7,8 +7,11 @@
 To generate the signing material before the KMS server is started, run one of:
 
 ```bash
+# for centralized:
 cargo run --bin kms-gen-keys -- centralized
-cargo run --bin kms-gen-keys -- threshold
+
+# for threshold:
+cargo run --bin kms-gen-keys -- threshold --signing-key-party-id <SIGNING_KEY_PARTY_ID> --num-parties <NUM_PARTIES>
 ```
 
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
