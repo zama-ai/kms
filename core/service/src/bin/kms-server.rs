@@ -1,4 +1,7 @@
-use algebra::galois_fields::lagrange::init_lagrange_stores;
+use algebra::{
+    galois_fields::lagrange::init_lagrange_stores, galois_rings::degree_4::ResiduePolyF4Z128,
+    structure_traits::Ring,
+};
 use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
@@ -369,7 +372,7 @@ async fn main_exec() -> anyhow::Result<()> {
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 
     // NOTE: Cache for GF16 (which we use here -- for now) is fully filled.
-    // The call below is effectively a no-op unless we work in bigger fields.
+    // So this call is essentially useless for ResiduePolyF4
     if let Some(threshold_config) = core_config.threshold.as_ref()
         && let Some(peers) = threshold_config.peers.as_ref()
         && !peers.is_empty()
@@ -378,6 +381,7 @@ async fn main_exec() -> anyhow::Result<()> {
             NonZero::new(peers.len())
                 .expect("peers.len() (i.e. number of parties) was just checked to be non-zero"),
             threshold_config.threshold as usize,
+            ResiduePolyF4Z128::EXTENSION_DEGREE, // This is the extension ring we use in core/service
         )?;
     }
 
