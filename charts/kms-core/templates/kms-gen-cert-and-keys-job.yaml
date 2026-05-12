@@ -1,4 +1,4 @@
-{{- if and .Values.kmsCore.thresholdMode.enabled .Values.kmsGenCertAndKeys.enabled -}}
+{{- if and .Values.kmsGenCertAndKeys.enabled (or .Values.kmsCore.thresholdMode.enabled .Values.kmsCore.nitroEnclave.enabled) -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
