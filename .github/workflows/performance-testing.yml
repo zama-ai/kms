@@ -108,14 +108,50 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
+  # Start AMD64 Runner
+  # Waits for docker-build if required, then starts the test runner
+  ############################################################################
+  start-amd64-runner:
+    name: performance-testing/start-amd64-runner
+    needs: [docker-build]
+    if: |
+      always() &&
+      !cancelled() &&
+      (
+        needs.docker-build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.build == false)
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
+    steps:
+      - name: Start EC2 runner AMD64
+        id: start-ec2-runner-amd64
+        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: small-instance
+
+  ############################################################################
   # Performance Testing Job
   # Runs performance tests for KMS in different deployment modes
   ############################################################################
   performance-testing:
-    needs: [docker-build]
-    if: always() && !cancelled()
     name: performance-testing
-    runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
+    needs: [docker-build, start-amd64-runner]
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.start-amd64-runner.result == 'success' &&
+      (
+        needs.docker-build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.build == false)
+      )
+    runs-on: ubuntu-latest
     timeout-minutes: 1800
     steps:
       - name: Setup Home
@@ -293,14 +329,14 @@ jobs:
 
       - name: Checkout Project
         if: ${{ env.KMS_CHART_VERSION != 'repository' }}
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Checkout Project KMS
         if: ${{ env.KMS_CHART_VERSION == 'repository' }}
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -462,3 +498,21 @@ jobs:
           argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
 
           echo "✅ Cleanup completed successfully"
+
+  ############################################################################
+  # Stop AMD64 Runner
+  ############################################################################
+  stop-amd64-runner:
+    name: performance-testing/stop-amd64-runner
+    needs: [start-amd64-runner, performance-testing]
+    runs-on: ubuntu-latest
+    if: always() && needs.start-amd64-runner.result == 'success'
+    steps:
+      - name: Stop AMD64 runner
+        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-amd64-runner.outputs.label }}
