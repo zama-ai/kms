@@ -1,330 +1,176 @@
-# 🚀 KMS Core CI/CD Workflows
+# KMS Core CI/CD Workflows
 
-> A comprehensive guide to our CI/CD pipeline structure and automation
+CI/CD for KMS Core. Built around path-based change detection (`dorny/paths-filter`), reusable composite workflows, and shared deployment scripts under `ci/scripts/`.
 
-## 📋 Overview
-
-This document describes the CI/CD workflow structure for the KMS Core project. Our pipeline is designed to ensure code quality, run comprehensive tests, and automate releases through intelligent change detection, parallel execution, and efficient Docker image reuse.
-
-## 🔄 Workflow Architecture
+## Workflow Architecture
 
 ```
 Pull Request
-    │
     ├─→ build-and-test.yml (Orchestrator)
-    │   ├─→ docker-build.yml (Build Once)
-    │   │   └─→ Outputs: image_tag, pcr0, pcr1, pcr2
-    │   │
-    │   ├─→ kind-testing.yml (Uses pre-built images)
-    │   │   └─→ Uses: deploy.sh script
-    │   │
-    │   └─→ pr-preview-deploy.yml (Uses pre-built images)
-    │       └─→ Uses: deploy.sh script
+    │   ├─→ docker-build.yml (build once → image_tag, pcr0, pcr1, pcr2)
+    │   ├─→ kind-testing.yml (uses pre-built images)
+    │   └─→ pr-preview-deploy.yml (uses pre-built images)
     │
-    └─→ main.yml (Change Detection & Testing)
-        └─→ Component-specific tests
+    └─→ main.yml (change detection → component-specific tests)
 
-Schedule (Nightly)
-    ├─→ main.yml (Full test suite)
-    ├─→ kind-testing.yml (Builds own images)
+Schedule (weekdays 00:00 UTC)
+    ├─→ main.yml (nightly suites)
+    ├─→ kind-testing.yml (builds own images)
     └─→ performance-testing.yml
-        ├─→ docker-build.yml (Fresh build)
-        └─→ AWS deployment (deploy.sh script)
 
 Release
-    └─→ docker-build.yml (Release build)
-        └─→ Publishes to registries
+    └─→ docker-build.yml (publishes to GHCR + CGR)
 ```
 
----
-
-## 📚 Quick Reference
+## Quick Reference
 
 ### Key Workflows
 
 | Workflow | Purpose | Triggers |
 |----------|---------|----------|
-| [`build-and-test.yml`](build-and-test.yml) | PR CI orchestrator | PRs (opened, labeled, synchronize) |
-| [`main.yml`](main.yml) | Component testing & change detection | PRs, pushes, nightly |
-| [`docker-build.yml`](docker-build.yml) | Reusable Docker build | Called by other workflows, releases |
-| [`kind-testing.yml`](kind-testing.yml) | Kind cluster integration tests | Called by build-and-test, nightly |
-| [`performance-testing.yml`](performance-testing.yml) | Performance benchmarks | Manual, nightly |
-| [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Enclave rolling upgrade (mixed-version) perf tests | Manual only |
-| [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Called by build-and-test |
-| [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, nightly |
+| [`build-and-test.yml`](build-and-test.yml) | PR CI orchestrator | PRs |
+| [`main.yml`](main.yml) | Component testing & change detection | PRs, pushes to main/release, scheduled |
+| [`docker-build.yml`](docker-build.yml) | Reusable Docker build | Workflow call, releases |
+| [`kind-testing.yml`](kind-testing.yml) | Kind cluster integration tests | Workflow call, scheduled |
+| [`performance-testing.yml`](performance-testing.yml) | Performance benchmarks | Manual, scheduled |
+| [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Mixed-version perf tests for `thresholdWithEnclave` | Manual |
+| [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Workflow call |
+| [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, scheduled |
+| [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `cargo dylint` | PRs |
+| [`common-testing.yml`](common-testing.yml) | Reusable test runner | Workflow call |
+| [`wasm-testing.yml`](wasm-testing.yml) | WASM test pipeline | Workflow call |
+| [`ci_lint.yml`](ci_lint.yml) | actionlint + zizmor on workflow files | PRs |
+| [`dependencies_analysis.yml`](dependencies_analysis.yml) | `cargo deny` + `cargo audit` + Cargo.lock check | PRs, pushes |
 
 ### Deployment Targets
 
 | Target | Purpose | Used By |
 |--------|---------|---------|
-| `kind-local` | Local development | Kind testing, manual testing |
-| `kind-ci` | CI testing | Kind testing workflow |
-| `aws-ci` | PR preview environments | PR preview workflow |
-| `aws-perf` | Performance testing | Performance testing workflow |
+| `kind-local` | Local development | Kind testing, manual |
+| `kind-ci` | CI testing | Kind testing |
+| `aws-ci` | PR preview environments | PR preview |
+| `aws-perf` | Performance testing | Performance testing, rolling upgrade |
 
 ### Deployment Scripts
 
-| Script | Purpose | Lines |
-|--------|---------|-------|
-| [`ci/scripts/deploy.sh`](../../ci/scripts/deploy.sh) | Main entry point | 146 |
-| [`ci/scripts/lib/common.sh`](../../ci/scripts/lib/common.sh) | Logging & utilities | 277 |
-| [`ci/scripts/lib/context.sh`](../../ci/scripts/lib/context.sh) | K8s context setup | 87 |
-| [`ci/scripts/lib/infrastructure.sh`](../../ci/scripts/lib/infrastructure.sh) | Infrastructure deployment | 316 |
-| [`ci/scripts/lib/kms_deployment.sh`](../../ci/scripts/lib/kms_deployment.sh) | KMS Core deployment | 546 |
-| [`ci/scripts/lib/utils.sh`](../../ci/scripts/lib/utils.sh) | Port forwarding & logs | 165 |
+| Script | Purpose |
+|--------|---------|
+| [`ci/scripts/deploy.sh`](../../ci/scripts/deploy.sh) | Main entry point |
+| [`ci/scripts/lib/common.sh`](../../ci/scripts/lib/common.sh) | Logging, argument parsing |
+| [`ci/scripts/lib/context.sh`](../../ci/scripts/lib/context.sh) | Kubernetes context setup |
+| [`ci/scripts/lib/infrastructure.sh`](../../ci/scripts/lib/infrastructure.sh) | LocalStack, TKMS, Crossplane |
+| [`ci/scripts/lib/kms_deployment.sh`](../../ci/scripts/lib/kms_deployment.sh) | KMS Core deployment |
+| [`ci/scripts/lib/utils.sh`](../../ci/scripts/lib/utils.sh) | Port forwarding, log collection |
+
+See [`ci/scripts/README.md`](../../ci/scripts/README.md) for script documentation.
 
 ---
 
-## 🏗️ PR CI Orchestrator
+## PR CI Orchestrator (`build-and-test.yml`)
 
-[`.github/workflows/build-and-test.yml`](build-and-test.yml)
+Builds Docker images **once per PR** and fans out to dependent workflows. Saves ~20-30 minutes by avoiding redundant builds.
 
-The main PR workflow that orchestrates Docker builds and testing for pull requests.
-
-### Key Benefits
-- ✅ **Single image build per PR** - Saves ~20-30 minutes per PR
-- ✅ **Consistent image tags** - Same images across all dependent workflows
-- ✅ **Parallel execution** - Tests run in parallel after build completes
-- ✅ **Smart orchestration** - Coordinates Kind testing and PR previews
-
-### Trigger Types
-
-| Trigger | Timing | Purpose |
-|---------|--------|---------|
-| 🔍 **Pull Requests** | opened, labeled, synchronize, reopened | Orchestrates builds and tests |
+### Trigger
+- Pull requests (opened, labeled, synchronize, reopened)
 
 ### Jobs
 
-| Job | Purpose | Dependencies |
-|-----|---------|--------------|
-| **docker-build** | Builds Docker images once for entire PR | None |
-| **kind-testing** | Runs Kind cluster tests with pre-built images | docker-build |
-| **check-pr-preview-labels** | Determines if PR preview should deploy | None |
-| **pr-preview** | Deploys ephemeral preview environment | docker-build, check-pr-preview-labels |
+| Job | Purpose | Depends on |
+|-----|---------|------------|
+| `docker-build` | Builds all KMS images for the PR | — |
+| `kind-testing` | Kind cluster tests with pre-built images | `docker-build` |
+| `check-pr-preview-labels` | Decides whether to deploy a PR preview | — |
+| `pr-preview` | Deploys ephemeral preview environment | `docker-build`, `check-pr-preview-labels` |
 
-### Concurrency Control
-- Groups by PR head ref
-- Cancels in-progress runs when new commits pushed
+Concurrency: groups by PR head ref, cancels in-progress runs.
 
 ---
 
-## 🔄 Main Workflow File
+## Main Workflow (`main.yml`)
 
-[`.github/workflows/main.yml`](main.yml)
+Triggers:
+- **Pull request** — runs jobs whose path filter matched the PR diff
+- **Push** to `main` or `release/*` — same filtering, plus a few jobs that always run on main
+- **Schedule** (weekdays 00:00 UTC) — comprehensive nightly suite
+- **PR labeled `docker`** — runs `docker-build` only
 
-### Trigger Types
+### Component jobs
 
-| Trigger | Timing | Purpose |
-|---------|--------|---------|
-| 🌙 **Scheduled (Nightly)** | Every weekday at 00:00 UTC | Comprehensive testing with nightly test suites |
-| 🔍 **Pull Requests** | On PR creation/update | Code validation & testing based on changes |
-| 🎯 **Main/Release** | On push to main/release/* | Testing & conditional Docker builds |
-| 🏷️ **Docker Label** | On PR with "docker" label | Triggers Docker image builds |
+All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for their environment setup.
 
----
+| Job | Crate(s) | Triggered by |
+|-----|----------|--------------|
+| `check-docs` | — | `docs/**` (and pushes to main) |
+| `test-helm-chart`, `lint-helm-chart`, `release-helm-chart` | — | `charts/**` |
+| `prepare-core-client-matrix`, `test-core-client` | `kms-core-client` | core-client / core-service / core-threshold / core-grpc / tools / CI changes |
+| `test-core-client-nightly` | `kms-core-client` | scheduled, or PR changes to `core-client/tests/kind-testing/**` |
+| `test-core-client-docker-tls` | `kms-core-client` | same as `test-core-client`; standalone job (does not use `common-testing.yml`) |
+| `test-core-client-unit` | `kms-core-client` | core-client changes |
+| `test-grpc` | `kms-grpc` | core-grpc changes |
+| `prepare-matrix`, `test-core-service`, `test-core-service-slow-threshold` | `kms` | core-service changes (filter includes `core/threshold-*/`, `backward-compatibility/`, observability, etc.) |
+| `test-core-threshold` | `experiments` | core-threshold / experiments / tools / CI changes |
+| `test-core-threshold-redis` | `experiments` | same; runs `integration_redis` against a Redis sidecar |
+| `test-workspace-crates` | matrix: `crates-normies`, `crates-heavy-1` (`threshold-execution`), `crates-heavy-2` (`threshold-bgv`, `threshold-networking`) | workspace-crates / CI changes |
+| `test-wasm` | `kms` | core-service / CI changes; calls `wasm-testing.yml` |
+| `test-reporter` | — | always; aggregates JUnit reports after PR test jobs complete |
+| `docker-build` | — | PR labeled `docker`; calls `docker-build.yml` |
 
-## 🏗️ Component-Specific Jobs
+### `test-core-service` matrix
 
-### 🔍 Change Detection System
-Our CI uses intelligent change detection to only run tests for modified components:
-- **Path-based filtering**: Only runs jobs when relevant files change
-- **Concurrent execution**: Jobs run in parallel when triggered
-- **Dependency awareness**: Core changes trigger dependent component tests
+Two parallel entries on PRs:
+1. `-F slow_tests -F s3_tests -F insecure --lib -- --skip nightly` — workspace lib tests
+2. `-E kind(test) -F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
 
-### 📦 Helm Chart Component
-<details>
-<summary><b>View Component Details</b></summary>
+Schedule entry: `--release -F slow_tests -F s3_tests -F insecure nightly` — nightly-suffixed tests in release mode.
 
-#### 🧪 Test Job [`test-helm-chart`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On charts/** changes |
-| 🎯 Main | ✅ | On charts/** changes |
+### Test material
 
-#### 🔍 Lint Job [`lint-helm-chart`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On charts/** changes |
-| 🎯 Main | ✅ | On charts/** changes |
-
-#### 📦 Release Job [`release-helm-chart`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🎯 Main | ✅ | On charts/** changes (non-scheduled) |
-</details>
-
-### 📚 Documentation Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🔍 Check Job [`check-docs`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On docs/** changes |
-| 🎯 Main | ✅ | Always runs |
-
-> Performs link checking and validation using Python's linkcheckmd
-</details>
-
-### 🔄 Backward Compatibility Testing
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 Test Job [`test-backward-compatibility`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core service/threshold/grpc/CI changes |
-| 🎯 Main | ✅ | Always runs |
-
-> Uses big instance for comprehensive backward compatibility validation
-</details>
-
-### 📱 Core Client Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 Integration Tests [`test-core-client`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core-client/service/threshold/grpc/CI changes |
-| 🎯 Main | ✅ | Always runs |
-
-**Test Matrix**: Runs threshold and centralized tests in parallel
-
-#### 🔬 Unit Tests [`test-core-client-unit`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core-client/** changes only |
-| 🎯 Main | ❌ | Skip integration tests |
-
-#### 🐳 Docker Build [`docker-core-client`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | When labeled with "docker" |
-| 🎯 Main | ❌ | Manual trigger only |
-</details>
-
-### 🌐 GRPC Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 Test Job [`test-grpc`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core/grpc/** changes |
-| 🎯 Main | ✅ | On core/grpc/** changes |
-
-> Tests all features using big instance infrastructure
-</details>
-
-### ⚙️ Core Service Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 Test Job [`test-core-service`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core/service/** changes |
-| 🎯 Main | ✅ | On core/service/** changes |
-
-##### Test Matrix Configuration
-- 🌙 **Nightly Tests**: `--release -F slow_tests -F s3_tests -F insecure nightly`
-- 🔍 **PR/Main Tests** (4 parallel jobs):
-  1. **Library Tests**: `-F testing --lib`
-  2. **Default User Decryption**: `-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold`
-  3. **Threshold Tests**: `-F slow_tests -F s3_tests -F insecure threshold` (excludes default_user_decryption)
-  4. **Base Tests**: `-F slow_tests -F s3_tests -F insecure` (excludes threshold tests)
-
-> **Infrastructure**: Uses big instance with MinIO and WASM support
-
-#### 🌐 WASM Tests [`test-wasm`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core/service/** changes |
-| 🎯 Main | ✅ | On core/service/** changes |
-
-#### 🐳 Docker Build [`docker-core-service`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | When labeled with "docker" |
-| 🎯 Main | ❌ | Manual trigger only |
-
-#### 🛡️ Nitro Enclave [`docker-nitro-enclave`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | When labeled with "docker" (after core service) |
-| 🎯 Main | ❌ | Manual trigger only |
-</details>
-
-### 🔐 Threshold Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 PR Tests [`test-core-threshold-pr`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On core/threshold/** changes |
-| 🎯 Main | ❌ | PR only |
-
-> **Config**: `-F slow_tests --lib` with 4 parallel test threads
-
-#### 🧪 Main Tests [`test-core-threshold-main`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ❌ | Never runs |
-| 🎯 Main | ✅ | On core/threshold/** changes |
-
-> **Config**: `-F slow_tests --lib` with Redis integration and 4 parallel test threads
-
-#### 🤖 Dependabot Build [`build-dependabot`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | Only for dependabot/** branches |
-| 🎯 Main | ❌ | Dependabot only |
-
-> **Simplified**: `--lib` tests only for dependency validation
-</details>
-
-### 🏗️ Infrastructure Components
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🐳 Golden Image [`docker-golden-image`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | When labeled with "docker" |
-| 🎯 Main | ❌ | Manual trigger only |
-
-> **Purpose**: Builds base Rust image with dependencies for KMS components
-
-#### 📊 Test Reporter [`test-reporter`](main.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | Always runs after all tests complete |
-| 🎯 Main | ❌ | PR only |
-
-> **Function**: Aggregates and reports test results from all components
-</details>
+Most test jobs depend on pre-generated FHE / signing material under `./test-material/`, produced by the `Generate Test Material` step in `common-testing.yml`. Jobs that don't need it pass `skip-test-material: true`. The `lfs:` input gates pulling Git-LFS-tracked `backward_compatibility_*.rs` fixtures — currently only `test-core-service` and `test-core-service-slow-threshold` set it. The btrfs CoW loopback (`/mnt/cow-scratch`) makes per-test material copies cheap (reflinks, not byte copies).
 
 ---
 
-## 🐳 Docker Build Infrastructure
+## Reusable Workflows
 
-### Reusable Docker Build Workflow
-[`.github/workflows/docker-build.yml`](docker-build.yml)
+### `common-testing.yml`
 
-A reusable workflow that builds all KMS Docker images in a coordinated pipeline.
+Steps (subset):
 
-#### Trigger Types
+| Step | Notes |
+|------|-------|
+| Checkout (optionally with LFS) | `lfs: ${{ inputs.lfs }}` |
+| GHCR + CGR registry login | OIDC + repo secrets |
+| Setup Rust + Protoc | Toolchain pinned via `rust-toolchain.toml` |
+| Swatinem rust-cache | Saves only on `main` |
+| Setup Redis / MinIO | Optional, gated by inputs |
+| Generate Test Material | Unless `skip-test-material: true` |
+| Build `kms-custodian` binary | Required by integration tests |
+| Run Tests | `cargo nextest --profile <ci\|ci-nightly> run …` |
+| Upload JUnit + integration logs | On PR runs |
+| Slack notification | Scheduled runs only |
 
-| Trigger | Purpose |
-|---------|---------|
-| 🏷️ **Release** | Builds images when GitHub release is published |
-| 🔄 **Workflow Call** | Called by other workflows (PR CI, performance testing, etc.) |
+Inputs of note:
+- `crate-names` — `-p <crate> [-p …]` forwarded to cargo
+- `args-tests` — extra cargo / nextest args
+- `nextest-test-threads` — parallelism cap (empty = nextest default ≈ num-CPUs)
+- `nextest-profile` — `ci` (default) or `ci-nightly`
+- `lfs` — pull Git-LFS objects on checkout
+- `skip-test-material` — skip material generation + custodian build
+- `run-redis`, `run-minio` — start the relevant sidecar
+- `runs-on`, `runner-volume` — runs-on slab selector
 
-#### Build Pipeline
+Lint/format/security live in [`rust-lint.yml`](rust-lint.yml) and [`ci_lint.yml`](ci_lint.yml), not here.
 
-Sequential build process with dependency management:
+### `wasm-testing.yml`
+
+Generates WASM test fixtures from Rust tests, builds `tkms` and `node-tkms` packages with `wasm-pack`, runs them under `node --test`, and dry-runs `npm publish`.
+
+### `rust-lint.yml`
+
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo dylint --all`. Runs on every PR.
+
+### `docker-build.yml`
+
+Coordinated build of all KMS images.
 
 ```mermaid
 graph LR
@@ -333,250 +179,112 @@ graph LR
     C --> D[enclave]
 ```
 
-| Job | Image | Dependencies | Runner |
-|-----|-------|--------------|--------|
-| **golden-image** | `kms/rust-golden-image` | None | 64cpu (x64/arm64) |
-| **core-client** | `kms/core-client` | golden-image | 64cpu (x64/arm64) |
-| **core-service** | `kms/core-service` | golden-image | 64cpu (x64/arm64) |
-| **enclave** | `kms/core-service-enclave` | core-service | AMD64 only |
+| Job | Image | Runner |
+|-----|-------|--------|
+| `golden-image` | `kms/rust-golden-image` | 64cpu (x64/arm64) |
+| `core-client` | `kms/core-client` | 64cpu (x64/arm64) |
+| `core-service` | `kms/core-service` | 64cpu (x64/arm64) |
+| `enclave` | `kms/core-service-enclave` | AMD64 only |
 
-#### Features
-- 🏗️ **Multi-architecture**: Builds for AMD64 and ARM64
-- 🔐 **Security**: OIDC authentication, build attestations
-- 📦 **Dual Publishing**: GHCR and CGR registries
-- ⚡ **Caching**: S3-backed cache with 200GB volumes
-- 📤 **Outputs**: Returns `image_tag` and enclave PCR values
+Multi-arch builds, OIDC auth, GHCR + CGR publishing, S3-backed cache. Outputs `image_tag` plus enclave PCR values.
 
 ---
 
-## 🚀 Release Workflows
+## Release Workflows
 
-### 1. 📦 NPM Release
-[`.github/workflows/npm-release.yml`](npm-release.yml)
+### NPM Release ([`npm-release.yml`](npm-release.yml))
 
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🏷️ Release | ✅ | When GitHub release is published |
+Builds `tkms` (web target) and `node-tkms` (Node.js target) WASM packages and publishes to npm via [trusted publishers](https://docs.npmjs.com/trusted-publishers). Runs when a GitHub release is published.
 
-#### Features
-- 🌐 **Dual Package Build**: Creates separate Node.js and web WASM packages
-- 📝 **Package Variants**:
-  - `node-tkms`: Node.js target with `--target nodejs`
-  - `tkms`: Web target with `--target web`
-- 🔄 **Version Tagging**: Automatic latest/prerelease tag assignment
-- 🔐 **Security**: Uses [NPM trusted publishers](https://docs.npmjs.com/trusted-publishers) for authentication
+### Docker Image Release ([`release.yml`](release.yml))
 
-### 2. 🐳 Release Docker Images
-[`.github/workflows/release.yml`](release.yml)
-
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🏷️ Release | ✅ | When GitHub release is published |
-| 🔄 Manual | ✅ | Via workflow_dispatch (configurable ref) |
-
-#### Features
-- Calls the reusable `docker-build.yml` workflow
-- Publishes images with release tags
-- Creates build attestations for supply chain security
+Calls `docker-build.yml` with release tags. Runs on GitHub release publish or `workflow_dispatch`.
 
 ---
 
-## 🔍 Quality Assurance Workflows
+## Quality Assurance
 
-### 1. 🧹 CI Lint and Security
-[`.github/workflows/ci_lint.yml`](ci_lint.yml)
+### CI Lint and Security ([`ci_lint.yml`](ci_lint.yml))
 
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | Always runs |
+`actionlint` + `zizmor` over all workflow files. Validates SHA-pinned actions and runs SAST.
 
-#### Features
-- 🔄 **Concurrency Control**: Auto-cancels for non-main branches
-- 🛠️ **Workflow Validation**: Uses `actionlint` v1.6.27
-- 🔒 **Security Enforcement**: SHA-pinned actions validation
-- 🔍 **SAST Analysis**: Static security scanning with Zizmor
+### Dependency Analysis ([`dependencies_analysis.yml`](dependencies_analysis.yml))
 
-### 2. 📦 Dependencies Analysis
-[`.github/workflows/dependencies_analysis.yml`](dependencies_analysis.yml)
-
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | All branches |
-| 🎯 Push | ✅ | main, test branches |
-
-#### Features
-- 🔄 **Concurrency Control**: Auto-cancels for non-main branches
-- 🦀 **Rust Toolchain**: Uses stable Rust with efficient tool installation
-- 📝 **Cargo.lock Validation**: Ensures lock file integrity
-- 🔐 **Security Scanning**:
-  - **License Compliance**: `cargo-deny` v0.18.9 for license whitelist
-  - **Vulnerability Detection**: `cargo-audit` v0.22.0 for security issues
-- 🚀 **Efficient Installation**: Uses `cargo-binstall` for faster tool setup
+`cargo deny` (license whitelist), `cargo audit` (vulnerabilities), Cargo.lock integrity check. `cargo-binstall` for fast tool install.
 
 ---
 
-## ☸️ Kubernetes Integration Testing
-[`.github/workflows/kind-testing.yml`](kind-testing.yml)
+## Kubernetes Integration Testing (`kind-testing.yml`)
 
-| Trigger | Timing | Purpose |
-|---------|--------|---------|
-| 🔄 **Workflow Call** | Called from build-and-test.yml | Runs integration tests with pre-built images |
-| 🌙 **Scheduled** | Mon-Fri 00:00 UTC | Nightly integration checks (builds own images) |
+| Trigger | Behavior |
+|---------|----------|
+| `workflow_call` (from `build-and-test.yml`) | Uses pre-built images via `image_tag` input |
+| Scheduled | Builds fresh images at workflow start |
 
-### Smart Image Handling
-- **PR Workflow**: Uses pre-built images from `docker-build` (via `image_tag` input)
-- **Scheduled**: Builds fresh images at workflow start
-- **Conditional Build**: Docker build job only runs when `image_tag` input is empty
+Matrix: `check` (lint/format), `threshold` (4-party), `centralized` (1-party).
 
-### Matrix Configuration
-- **Check**: Code linting and formatting
-- **Threshold**: 4-party deployment tests
-- **Centralized**: Single-party deployment tests
-
-### Deployment Script
-Uses modular `ci/scripts/deploy.sh` which handles:
-- ✅ Kubernetes context setup (Kind cluster creation)
-- ✅ Infrastructure deployment (LocalStack, TKMS, Crossplane)
-- ✅ Image building and loading (when `--build` flag used)
-- ✅ KMS deployment with automatic waiting
-- ✅ Port forwarding setup
+`ci/scripts/deploy.sh` handles Kind cluster creation, infra deployment (LocalStack, TKMS, Crossplane), image loading, KMS deployment, and port forwarding.
 
 ---
 
-## 👁️ PR Preview Environments
-The system allows deploying ephemeral Kubernetes environments for PRs.
+## PR Preview Environments
 
-### 🚀 Deploy Preview
-[`.github/workflows/pr-preview-deploy.yml`](pr-preview-deploy.yml)
+### `pr-preview-deploy.yml`
 
-**New Workflow**: Now called from `build-and-test.yml` orchestrator with pre-built images.
+Called by `build-and-test.yml` when a PR has both pre-built images and a `pr-preview-*` label.
 
-#### Trigger
-- Called by `build-and-test.yml` when PR has both:
-  1. Images built (from docker-build job)
-  2. Preview label (`pr-preview-*`)
+Deployment types:
+- `pr-preview-threshold` — 4-party threshold
+- `pr-preview-centralized` — single-party
+- `pr-preview-thresholdWithEnclave` — threshold + Nitro Enclave
+- `pr-preview-centralizedWithEnclave` — centralized + Nitro Enclave
 
-#### Deployment Types
-- `pr-preview-threshold`: Deploys 4-party threshold mode
-- `pr-preview-centralized`: Deploys single-party centralized mode
-- `pr-preview-thresholdWithEnclave`: Threshold mode with Nitro Enclave support
-- `pr-preview-centralizedWithEnclave`: Centralized mode with Nitro Enclave support
+Namespace: `kms-ci-{actor}-{pr_number}`.
 
-#### Features
-- Uses pre-built images from `build-and-test.yml`
-- Receives enclave PCR values as inputs
-- Deploys to `kms-ci-{actor}-{pr_number}` namespace
-- Uses modular deployment script (`ci/scripts/deploy.sh`)
+### `pr-preview-destroy.yml`
 
-### 🗑️ Destroy Preview
-[`.github/workflows/pr-preview-destroy.yml`](pr-preview-destroy.yml)
-
-Automatically cleans up resources when:
-1. PR is closed
-2. Preview label is removed
-3. 🌙 Nightly schedule (cleanup of stale namespaces)
+Cleans up on PR close, label removal, or scheduled sweep of stale namespaces.
 
 ---
 
-## 📊 Performance Testing
+## Performance Testing (`performance-testing.yml`)
 
-[`.github/workflows/performance-testing.yml`](performance-testing.yml)
+Triggers: scheduled (weekdays 00:00 UTC), or manual.
 
-Comprehensive performance testing workflow for KMS deployments.
+Parameters:
 
-### Trigger Types
+| Parameter | Notes |
+|-----------|-------|
+| `build` | Build fresh images (`true`) or use existing tags |
+| `deployment_type` | `threshold`, `thresholdWithEnclave`, `centralized`, `centralizedWithEnclave` |
+| `fhe_params` | `Default` or `Test` |
+| `tls` | Required for enclave deployments |
+| `kms_branch`, `kms_chart_version`, `tkms_infra_chart_version` | Source selectors |
 
-| Trigger | Timing | Purpose |
-|---------|--------|---------|
-| 🌙 **Scheduled** | Mon-Fri 00:00 UTC | Nightly performance benchmarks |
-| 🔄 **Manual Dispatch** | On demand | Ad-hoc performance testing with custom parameters |
-
-### Workflow Parameters
-
-| Parameter | Options | Purpose |
-|-----------|---------|---------|
-| **build** | true/false | Build fresh images or use existing tags |
-| **deployment_type** | threshold, thresholdWithEnclave, centralized, centralizedWithEnclave | Deployment mode |
-| **fhe_params** | Default, Test | FHE parameter set for testing |
-| **tls** | true/false | Enable TLS (for enclave deployments) |
-| **kms_branch** | branch name | Use specific KMS branch |
-| **kms_chart_version** | version or 'repository' | Helm chart version |
-| **tkms_infra_chart_version** | version | Infrastructure chart version |
-
-### Jobs
-
-#### 1. Docker Build (Conditional)
-- Only runs when `build=true` or on schedule
-- Calls reusable `docker-build.yml` workflow
-- Outputs image tags and PCR values for deployment
-
-#### 2. Performance Test Execution
-- Uses `aws-perf` target for production-like environment
-- Deploys 13-party threshold mode for stress testing
-- Uses modular `ci/scripts/deploy.sh` script
-
-### Deployment Script Benefits
-The workflow now uses `ci/scripts/deploy.sh` which:
-- ✅ **Handles all waiting internally** - No manual kubectl waits in workflow
-- ✅ **Waits for TKMS infrastructure** - Crossplane resources, KMS parties, enclave nodegroups
-- ✅ **Waits for KMS Core pods** - All parties ready before proceeding
-- ✅ **Waits for initialization jobs** - Threshold mode setup completion
-- ✅ **Single deployment command** - Simplified workflow with all logic in script
-
-#### What Changed
-**Before**: Workflow had ~70 lines of manual waiting logic
-```yaml
-- name: Wait tkms-infra to be ready
-- name: Wait for KMS Core pods to be ready
-- name: Wait for KMS Core initialization to complete
-```
-
-**After**: Single deployment command, script handles everything
-```yaml
-- name: Deploy KMS using unified script
-  run: ./ci/scripts/deploy.sh --target aws-perf ...
-  # Script handles all waiting internally!
-```
+Two jobs: optional `docker-build`, then performance test execution against `aws-perf` (13-party threshold for stress testing). All Kubernetes waiting is handled inside `ci/scripts/deploy.sh`.
 
 ---
 
-## 🔄 Rolling Upgrade Testing
+## Rolling Upgrade Testing (`rolling-upgrade-testing.yml`)
 
-[`.github/workflows/rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml)
+End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties on an old image, upgrade two configurable batches to a new image, run Argo perf workflows in mixed-version states. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
 
-End-to-end test of **partial rolling upgrades** for `thresholdWithEnclave`: deploy 13 parties on an **old** KMS Core image, upgrade two configurable batches to a **new** image, and run Argo performance workflows in **mixed-version** states (default progression: all old → 5/13 upgraded → 9/13 upgraded). Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
-
-### Trigger Types
-
-| Trigger | Timing | Purpose |
-|---------|--------|---------|
-| 🔄 **Manual Dispatch** | On demand | Rolling upgrade scenarios with chosen old/new tags and batches |
-
-### Workflow Parameters
+Manual dispatch only.
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| **old_image_tag** | (required) | Baseline KMS Core image tag for the initial full deploy |
-| **new_image_tag** | (required) | Target KMS Core image tag for upgraded parties (ignored when `build=true`) |
-| **build** | `false` | Build a new image with `docker-build.yml`; use build output as the new tag |
-| **kms_branch** | (optional) | Branch for `build=true` and/or chart checkout when `new_kms_chart_version` is `repository` |
-| **fhe_params** | `Test` | `Default` or `Test` — FHE parameters for Argo keygen/preprocessing |
-| **old_kms_chart_version** | `1.5.1` | KMS Helm chart version for the all-old deployment |
-| **new_kms_chart_version** | `repository` | KMS Helm chart for upgraded parties; version string or `repository` for repo charts |
-| **tkms_infra_chart_version** | `0.3.2` | TKMS Infra Helm chart version |
-| **first_batch_parties** | `1,2,3,4,5` | Comma-separated party IDs for the first upgrade wave |
-| **second_batch_parties** | `6,7,8,9` | Comma-separated party IDs for the second upgrade wave |
+| `old_image_tag` | (required) | Baseline KMS Core image |
+| `new_image_tag` | (required) | Upgrade target (ignored when `build=true`) |
+| `build` | `false` | Build a new image and use as `new_image_tag` |
+| `kms_branch` | (optional) | Branch for `build=true` and chart checkout |
+| `fhe_params` | `Test` | Argo keygen/preprocessing params |
+| `old_kms_chart_version` | `1.5.1` | Initial deploy chart |
+| `new_kms_chart_version` | `repository` | Upgrade chart (or repo charts) |
+| `tkms_infra_chart_version` | `0.3.2` | TKMS Infra chart |
+| `first_batch_parties` | `1,2,3,4,5` | First upgrade wave |
+| `second_batch_parties` | `6,7,8,9` | Second upgrade wave |
 
-### Jobs
-
-| Job | Purpose | Notes |
-|-----|---------|--------|
-| **docker-build** | Optional image build | Runs only when `build=true`; calls reusable `docker-build.yml` |
-| **start-runner** | EC2 runner (SLAB) | `small-instance` profile for the long test job |
-| **rolling-upgrade-testing** | Deploy, baseline perf, two upgrade batches, mixed perf, cleanup | Uses `aws-perf`, namespace `kms-ci`, Argo workflows under `ci/perf-testing/argo-workflow/` |
-| **stop-runner** | Tear down EC2 runner | Runs `always()` after the main job |
-
-### Job and step flow
+Jobs: optional `docker-build`, `start-runner` (EC2 SLAB), `rolling-upgrade-testing` (deploy → baseline perf → upgrade-1 → mixed perf → upgrade-2 → mixed perf → cleanup), `stop-runner` (always runs).
 
 ```mermaid
 graph TD
@@ -597,211 +305,41 @@ graph TD
 
 ---
 
-## 🛠️ Reusable Workflow Infrastructure
+## Best Practices
 
-### 1. 🖥️ Big Instance Testing
-[`.github/workflows/common-testing-big-instance.yml`](common-testing-big-instance.yml)
+To trigger a PR preview, add a `pr-preview-{type}` label. Choose `threshold` (4-party, fastest, most common) or `centralized` (1-party, fast smoke); `*WithEnclave` variants are slower (Nitro provisioning).
 
-#### Architecture
-- 🚀 **EC2 Runner Management**: Uses Zama SLAB for dynamic runner provisioning
-- 🔄 **Workflow Delegation**: Proxies to `common-testing.yml` with enhanced resources
-- 🛑 **Guaranteed Cleanup**: Always stops runners even on failure
+To run a deployment locally:
 
-#### Supported Services
-- **MinIO**: Object storage testing (`run-minio: true`)
-- **Redis**: Caching and state testing (`run-redis: true`)
-- **WASM Runtime**: WebAssembly execution testing (`run-wasm: true`)
-
-### 2. 🏗️ Common Testing Pipeline
-[`.github/workflows/common-testing.yml`](common-testing.yml)
-
-#### Pipeline Stages
-| Stage | Actions | Key Features |
-|-------|---------|--------------|
-| 🔧 **Setup** | Checkout, Git LFS, Registry login | Multi-registry support (GHCR, CGR) |
-| 🌍 **Environment** | Rust toolchain, Protoc, Dependencies | Version-pinned from `rust-toolchain.toml` |
-| 🗄️ **Caching** | Cargo cache, Build artifacts | S3-backed caching with runs-on/cache |
-| ✨ **Quality** | Formatting, Clippy, Dylint | Multiple lint passes (default + all features) |
-| 🧪 **Testing** | Nextest execution, Artifact collection | Configurable parallelism and retries |
-| 📚 **Documentation** | Doc building and deployment | Optional GitHub Pages publication |
-
-#### Advanced Testing Features
-- **Nextest Integration**: Modern test runner with better output
-- **Test Parallelism**: Configurable via `nextest-test-threads`
-- **Retry Logic**: `NEXTEST_RETRIES: 3` for flaky test handling
-- **Artifact Collection**: JUnit XML and log preservation
-- **Slack Integration**: Nightly test result notifications
-
-### 3. 🌐 WASM Testing Pipeline
-[`.github/workflows/wasm-testing.yml`](wasm-testing.yml)
-
-#### Specialized WASM Workflow
-- **Test Generation**: Runs Rust tests to create WASM test fixtures
-- **WASM Pack Build**: Creates Node.js WASM packages
-- **Node.js Testing**: Validates WASM functionality with `node --test`
-- **Dry-run Publishing**: Tests NPM package creation without actual publish
-
-### 4. 🐳 Specialized Docker Workflows
-- **Nitro Enclave**: [`common-nitro-enclave.yml`](common-nitro-enclave.yml) - AWS secure execution
-- **ArgoCD Updates**: [`common-update-argocd.yml`](common-update-argocd.yml) - Staging deployments
-- **Docker Check Build**: [`docker-check-build.yml`](docker-check-build.yml) - Validate Docker builds without publishing
-- **Docker Scan**: [`docker-scan.yml`](docker-scan.yml) - Security scanning for container images
-
----
-
-## 🔧 Deployment Scripts
-
-### Modular Deployment Infrastructure
-[`ci/scripts/`](../../ci/scripts/)
-
-The deployment scripts have been refactored into a modular structure for better maintainability.
-
-#### Main Entry Point
-[`ci/scripts/deploy.sh`](../../ci/scripts/deploy.sh) - Orchestrates entire deployment
-
-#### Library Modules
-- [`lib/common.sh`](../../ci/scripts/lib/common.sh) - Logging, argument parsing, utilities
-- [`lib/context.sh`](../../ci/scripts/lib/context.sh) - Kubernetes context setup
-- [`lib/infrastructure.sh`](../../ci/scripts/lib/infrastructure.sh) - LocalStack, TKMS, Crossplane
-- [`lib/kms_deployment.sh`](../../ci/scripts/lib/kms_deployment.sh) - KMS Core deployment
-- [`lib/utils.sh`](../../ci/scripts/lib/utils.sh) - Port forwarding, log collection
-
-#### Key Features
-- ✅ **Modular design** - 143-line entry point vs 1,400+ monolithic
-- ✅ **Automatic waiting** - Handles all Kubernetes resource readiness
-- ✅ **Smart context management** - Kind, AWS-CI, AWS-Perf targets
-- ✅ **Build support** - Local image building with Kind
-- ✅ **Infrastructure automation** - S3, TKMS, Crossplane deployment
-
-#### Usage in Workflows
-
-**Kind Testing**:
 ```bash
 ./ci/scripts/deploy.sh --target kind-local --build
 ```
 
-**Performance Testing**:
-```bash
-./ci/scripts/deploy.sh \
-  --target aws-perf \
-  --namespace "${NAMESPACE}" \
-  --deployment-type "${DEPLOYMENT_TYPE}" \
-  --core-tag "${KMS_CORE_IMAGE_TAG}" \
-  --client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
-  --num-parties 13
-```
+---
 
-**PR Preview**:
-```bash
-./ci/scripts/deploy.sh \
-  --target aws-ci \
-  --namespace "kms-ci-${ACTOR}-${PR_NUMBER}" \
-  --deployment-type "${DEPLOYMENT_TYPE}"
-```
+## Troubleshooting
 
-See [`ci/scripts/README.md`](../../ci/scripts/README.md) for complete documentation.
+**Docker build fails with cache errors** — check AWS credentials and S3 bucket access.
+
+**PR preview won't deploy** — confirm a `pr-preview-*` label is set and `build-and-test` finished the `docker-build` job.
+
+**Kind tests fail with `ImagePullBackOff`** — verify `docker-build` finished and `image_tag` was forwarded; for local runs use `--build`.
+
+**Deployment script hangs** — usually Crossplane or TKMS chart not ready, or insufficient cluster resources. Inspect with `kubectl get all -n ${NAMESPACE}` and `kubectl describe pod <name>`.
+
+**Enclave deployment fails / PCR mismatch** — confirm PCR values were forwarded from `docker-build`, the enclave nodegroup is up (~20 min provisioning), and TLS is enabled.
+
+**More verbose CI logs** — set `ACTIONS_STEP_DEBUG: true` and `ACTIONS_RUNNER_DEBUG: true` on the run.
+
+**Local script debug** — `bash -x ci/scripts/deploy.sh --target kind-local 2>&1 | tee debug.log`.
+
+**Access PR preview env** — connect via Tailscale (instructions in PR comment), then `kubectl … -n kms-ci-{actor}-{pr_number}`.
 
 ---
 
-## 💡 Best Practices
+## Resources
 
-### Working with PR Workflows
-
-#### To Test Your Changes
-1. **Open a PR** - Workflows run automatically
-2. **For PR preview** - Add:
-   - `pr-preview-{type}` label (deploys environment)
-
-#### Choosing Deployment Type
-- `pr-preview-threshold`: 4-party threshold (fastest, most common)
-- `pr-preview-centralized`: Single-party (quick testing)
-- `pr-preview-thresholdWithEnclave`: Enclave security (slower, AWS Nitro)
-- `pr-preview-centralizedWithEnclave`: Centralized with enclave
-
-### Deployment Scripts
-
-```bash
-./ci/scripts/deploy.sh --target aws-perf --deployment-type threshold
-# Script handles everything: setup, deploy, wait, verify
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### Docker Build Fails with Cache Errors
-**Symptom**: Build fails with S3 cache errors
-**Solution**: Check AWS credentials and S3 bucket access
-
-#### PR Preview Won't Deploy
-**Check**:
-1. Does PR have `pr-preview-*` label? (triggers deploy)
-2. Check `build-and-test` workflow logs
-
-#### Kind Tests Fail to Load Images
-**Symptom**: Pods stuck in `ImagePullBackOff`
-**Solution**:
-- Check if `docker-build` job completed successfully
-- Verify image tag is passed correctly to Kind testing
-- For local testing, use `--build` flag to build images
-
-#### Deployment Script Hangs
-**Symptom**: Script appears stuck waiting for resources
-**Common causes**:
-1. **Crossplane not ready**: Wait for crossplane-system pods
-2. **TKMS chart issues**: Check helm releases
-3. **Resource limits**: Insufficient cluster resources
-
-**Debug**:
-```bash
-# Check what's happening
-kubectl get all -n ${NAMESPACE}
-kubectl describe pod <pod-name> -n ${NAMESPACE}
-
-# Check logs
-kubectl logs <pod-name> -n ${NAMESPACE}
-```
-
-#### Enclave Deployment Fails
-**Symptom**: PCR validation fails or enclave won't start
-**Check**:
-1. PCR values passed correctly from docker-build
-2. Enclave nodegroup created (takes ~20 minutes)
-3. TLS enabled for enclave deployments
-
-### Debugging Workflows
-
-#### Enable Debug Logging
-Add to workflow run:
-```yaml
-env:
-  ACTIONS_STEP_DEBUG: true
-  ACTIONS_RUNNER_DEBUG: true
-```
-
-#### Check Deployment Script Output
-```bash
-# Enable verbose mode
-bash -x ci/scripts/deploy.sh --target kind-local 2>&1 | tee debug.log
-```
-
-#### Access PR Preview Environment
-1. Check PR comment for Tailscale instructions
-2. Connect via Tailscale
-3. Use `kubectl` with provided namespace:
-```bash
-kubectl get all -n kms-ci-{actor}-{pr_number}
-```
-
----
-
-## 📖 Additional Resources
-
-- [Deployment Scripts README](../../ci/scripts/README.md) - Detailed script documentation
-- [Performance Testing Build README](README-performance-testing-build.md) - Performance testing deep dive
-- [Helm Charts](../../charts/) - KMS Helm chart documentation
-- [Docker Files](../../docker/) - Dockerfile documentation
-
----
+- [Deployment Scripts README](../../ci/scripts/README.md)
+- [Performance Testing Build README](README-performance-testing-build.md)
+- [Helm Charts](../../charts/)
+- [Dockerfiles](../../docker/)

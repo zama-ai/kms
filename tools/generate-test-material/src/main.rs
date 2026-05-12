@@ -1,28 +1,38 @@
 //! Pre-generation tool for KMS test material
 //!
-//! This tool generates all necessary cryptographic material for KMS tests
-//! in advance, eliminating the need for Docker and runtime key generation.
-//!
-//! The generated material serves as a read-only source that tests copy from
-//! into isolated temporary directories, preventing tests from interfering
-//! with each other.
+//! This tool generates cryptographic material for KMS tests ahead of time so
+//! test runs can copy read-only fixtures into isolated temporary directories.
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand, ValueEnum};
+use kms_lib::testing::material::{MaterialType, material_subdir};
+use kms_lib::testing::utils::setup::generate_material_to_path;
 use kms_lib::vault::storage::StorageType;
 use path_absolutize::Absolutize;
 use tracing::{info, warn};
-
-use kms_lib::testing::material::{MaterialType, TestMaterialSpec};
-#[cfg(feature = "slow_tests")]
-use kms_lib::testing::utils::setup::ensure_default_material_exists_to_path;
-use kms_lib::testing::utils::setup::ensure_testing_material_exists;
 
 /// Storage types that are required for test material.
 /// Note: BACKUP is excluded as it's not used in test material generation.
 const REQUIRED_STORAGE_TYPES: [StorageType; 3] =
     [StorageType::PUB, StorageType::PRIV, StorageType::CLIENT];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum Profile {
+    /// Testing parameters (fast, small keys)
+    Insecure,
+    /// Default parameters (production-like, slower)
+    Secure,
+}
+
+impl From<Profile> for MaterialType {
+    fn from(profile: Profile) -> Self {
+        match profile {
+            Profile::Insecure => MaterialType::Testing,
+            Profile::Secure => MaterialType::Default,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "generate-test-material")]
@@ -30,35 +40,32 @@ const REQUIRED_STORAGE_TYPES: [StorageType; 3] =
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Output directory for generated material
     #[arg(short, long, default_value = "./test-material")]
     output: PathBuf,
 
+    /// Cryptographic profile(s) to generate.
+    /// Use `insecure,secure` to generate all test material.
+    #[arg(long, value_enum, value_delimiter = ',', default_values_t = [Profile::Insecure, Profile::Secure])]
+    profile: Vec<Profile>,
+
+    /// Threshold party counts to generate in addition to centralized material
+    #[arg(long, value_delimiter = ',')]
+    parties: Vec<usize>,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
 
-    /// Force regeneration even if material exists, replacing any existing material
+    /// Remove any existing profile directory before regenerating it
     #[arg(short, long)]
     force: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate all test material (testing + default parameters)
-    All,
-    /// Generate only testing material (fast, small keys)
-    Testing,
-    /// Generate only default material (production-like, slower)
-    Default,
-    /// Generate material for specific test specifications
-    Custom {
-        /// JSON file containing test material specifications
-        #[arg(short, long)]
-        spec_file: PathBuf,
-    },
     /// Validate existing test material
     Validate,
     /// Clean existing test material
@@ -69,14 +76,13 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
-    let log_level = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt()
-        .with_env_filter(format!(
-            "generate_test_material={},kms={}",
-            log_level, log_level
+    let default_level = if cli.verbose { "debug" } else { "info" };
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(format!(
+            "generate_test_material={default_level},kms={default_level}"
         ))
-        .init();
+    });
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     // Ensure output directory is absolute
     let output_dir = cli
@@ -99,23 +105,14 @@ async fn main() -> Result<()> {
         })?;
 
     match cli.command {
-        Commands::All => {
-            generate_all_material(&output_dir, cli.force).await?;
-        }
-        Commands::Testing => {
-            generate_testing_material(&output_dir, cli.force).await?;
-        }
-        Commands::Default => {
-            generate_default_material(&output_dir, cli.force).await?;
-        }
-        Commands::Custom { spec_file } => {
-            generate_custom_material(&output_dir, &spec_file, cli.force).await?;
-        }
-        Commands::Validate => {
+        Some(Commands::Validate) => {
             validate_material(&output_dir).await?;
         }
-        Commands::Clean => {
+        Some(Commands::Clean) => {
             clean_material(&output_dir).await?;
+        }
+        None => {
+            generate_requested_material(&output_dir, &cli.profile, &cli.parties, cli.force).await?;
         }
     }
 
@@ -123,156 +120,59 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Generate all test material (testing + default)
-async fn generate_all_material(output_dir: &Path, force: bool) -> Result<()> {
-    info!("Generating all test material...");
-
-    if !force && material_exists(output_dir).await? {
-        warn!("Test material already exists. Use --force to regenerate.");
-        return Ok(());
+async fn generate_requested_material(
+    output_dir: &Path,
+    profiles: &[Profile],
+    parties: &[usize],
+    force: bool,
+) -> Result<()> {
+    if profiles.is_empty() {
+        bail!("At least one --profile must be provided");
     }
 
-    // Generate testing material first (faster)
-    generate_testing_material(output_dir, force).await?;
+    for profile in profiles {
+        generate_profile_material(output_dir, *profile, parties, force).await?;
+    }
 
-    // Generate default material (slower)
-    generate_default_material(output_dir, force).await?;
-
-    info!("All test material generated successfully");
     Ok(())
 }
 
-/// Generate testing material (fast, small keys)
-async fn generate_testing_material(output_dir: &Path, force: bool) -> Result<()> {
+async fn generate_profile_material(
+    output_dir: &Path,
+    profile: Profile,
+    parties: &[usize],
+    force: bool,
+) -> Result<()> {
     use tokio::fs;
 
-    info!("Generating testing material...");
-
-    let testing_dir = output_dir.join("testing");
-
-    if !force && testing_material_exists(output_dir).await? {
-        info!("Testing material already exists, skipping generation");
-        return Ok(());
-    }
-
-    // Create testing subdirectory
-    fs::create_dir_all(&testing_dir).await?;
-
-    // Generate testing material using existing KMS functions
-    ensure_testing_material_exists(Some(&testing_dir)).await;
+    let material_type: MaterialType = profile.into();
+    let profile_dir = output_dir.join(material_subdir(material_type));
 
     info!(
-        "Testing material generated successfully at: {}",
-        testing_dir.display()
+        "Generating {:?} material with centralized fixtures and threshold parties {:?}",
+        profile, parties
+    );
+
+    if force && profile_dir.exists() {
+        fs::remove_dir_all(&profile_dir).await.with_context(|| {
+            format!(
+                "Failed to remove existing material directory: {}",
+                profile_dir.display()
+            )
+        })?;
+    }
+
+    fs::create_dir_all(&profile_dir).await?;
+    generate_material_to_path(material_type, Some(&profile_dir), parties).await?;
+
+    info!(
+        "{:?} material generated successfully at: {}",
+        profile,
+        profile_dir.display()
     );
     Ok(())
 }
 
-/// Generate default material (production-like, slower)
-async fn generate_default_material(output_dir: &Path, force: bool) -> Result<()> {
-    info!("Generating default material (this may take several minutes)...");
-
-    if !force && default_material_exists(output_dir).await? {
-        info!("Default material already exists, skipping generation");
-        return Ok(());
-    }
-
-    // Generate default material using existing KMS functions
-    #[cfg(feature = "slow_tests")]
-    {
-        use tokio::fs;
-
-        let default_dir = output_dir.join("default");
-
-        // Create default subdirectory
-        fs::create_dir_all(&default_dir).await?;
-
-        // Generate default material directly to the default subdirectory
-        // This matches the pattern used for testing material
-        ensure_default_material_exists_to_path(Some(&default_dir)).await;
-
-        info!(
-            "Default material generated successfully at: {}",
-            default_dir.display()
-        );
-    }
-
-    #[cfg(not(feature = "slow_tests"))]
-    {
-        warn!("Default material generation requires 'slow_tests' feature");
-        warn!("Run with: cargo run --features slow_tests");
-    }
-
-    Ok(())
-}
-
-/// Generate material based on custom specifications
-async fn generate_custom_material(output_dir: &Path, spec_file: &Path, _force: bool) -> Result<()> {
-    info!("Generating custom material from: {}", spec_file.display());
-
-    // Read specification file
-    let spec_content = tokio::fs::read_to_string(spec_file)
-        .await
-        .with_context(|| format!("Failed to read spec file: {}", spec_file.display()))?;
-
-    let specs: Vec<TestMaterialSpec> = serde_json::from_str(&spec_content)
-        .with_context(|| format!("Failed to parse spec file: {}", spec_file.display()))?;
-
-    info!("Found {} test material specifications", specs.len());
-
-    for (i, spec) in specs.iter().enumerate() {
-        info!(
-            "Generating material for specification {} of {}",
-            i + 1,
-            specs.len()
-        );
-        generate_material_for_spec(output_dir, spec).await?;
-    }
-
-    info!("Custom material generated successfully");
-    Ok(())
-}
-
-/// Generate material for a specific specification
-async fn generate_material_for_spec(output_dir: &Path, spec: &TestMaterialSpec) -> Result<()> {
-    info!("Generating material for spec: {:?}", spec);
-
-    // Create subdirectory for this specification
-    let spec_dir = output_dir.join(format!(
-        "{:?}_{}_parties",
-        spec.material_type,
-        spec.party_count()
-    ));
-    tokio::fs::create_dir_all(&spec_dir).await?;
-
-    // Generate based on material type
-    match spec.material_type {
-        MaterialType::Testing => {
-            ensure_testing_material_exists(Some(&spec_dir)).await;
-        }
-        MaterialType::Default => {
-            #[cfg(feature = "slow_tests")]
-            {
-                ensure_default_material_exists_to_path(Some(&spec_dir)).await;
-            }
-            #[cfg(not(feature = "slow_tests"))]
-            {
-                warn!("Default material requires 'slow_tests' feature");
-            }
-        }
-    }
-
-    // Note: We intentionally generate ALL material for the given material_type,
-    // not just the keys specified in spec.required_keys. This is because:
-    // 1. Generation is a one-time operation (pre-generation phase)
-    // 2. TestMaterialManager::copy_material() handles selective copying based on
-    //    spec.required_keys when setting up individual test environments
-    // 3. Generating everything once is simpler and avoids partial state issues
-
-    Ok(())
-}
-
-/// Validate existing test material
 async fn validate_material(output_dir: &Path) -> Result<()> {
     info!("Validating test material in: {}", output_dir.display());
 
@@ -283,21 +183,18 @@ async fn validate_material(output_dir: &Path) -> Result<()> {
 
     let mut validation_errors = Vec::new();
 
-    // Check for testing material
     if testing_material_exists(output_dir).await? {
-        info!("✓ Testing material found");
+        info!("✓ Insecure material found");
     } else {
-        validation_errors.push("Testing material missing");
+        validation_errors.push("Insecure material missing");
     }
 
-    // Check for default material
     if default_material_exists(output_dir).await? {
-        info!("✓ Default material found");
+        info!("✓ Secure material found");
     } else {
-        validation_errors.push("Default material missing");
+        validation_errors.push("Secure material missing");
     }
 
-    // Check directory structure
     validate_directory_structure(output_dir, &mut validation_errors).await?;
 
     if validation_errors.is_empty() {
@@ -312,7 +209,6 @@ async fn validate_material(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Clean existing test material
 async fn clean_material(output_dir: &Path) -> Result<()> {
     info!("Cleaning test material in: {}", output_dir.display());
 
@@ -321,7 +217,6 @@ async fn clean_material(output_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Remove all contents of the output directory
     let mut entries = tokio::fs::read_dir(output_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -337,43 +232,23 @@ async fn clean_material(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Check if any test material exists
-async fn material_exists(output_dir: &Path) -> Result<bool> {
-    Ok(testing_material_exists(output_dir).await? || default_material_exists(output_dir).await?)
-}
-
-/// Check if testing material exists
 async fn testing_material_exists(output_dir: &Path) -> Result<bool> {
-    // Check for testing subdirectory with key indicators
-    let testing_dir = output_dir.join("testing");
-
-    if !testing_dir.exists() {
-        return Ok(false);
-    }
-
-    // Check for key indicators of testing material in subdirectory using StorageType
-    for storage_type in &REQUIRED_STORAGE_TYPES {
-        let path = testing_dir.join(storage_type.to_string());
-        if path.exists() {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    profile_material_exists(output_dir, MaterialType::Testing).await
 }
 
-/// Check if default material exists
 async fn default_material_exists(output_dir: &Path) -> Result<bool> {
-    // Check for default subdirectory with key indicators
-    let default_dir = output_dir.join("default");
+    profile_material_exists(output_dir, MaterialType::Default).await
+}
 
-    if !default_dir.exists() {
+async fn profile_material_exists(output_dir: &Path, material_type: MaterialType) -> Result<bool> {
+    let profile_dir = output_dir.join(material_subdir(material_type));
+
+    if !profile_dir.exists() {
         return Ok(false);
     }
 
-    // Check for key indicators of default material in subdirectory using StorageType
     for storage_type in &REQUIRED_STORAGE_TYPES {
-        let path = default_dir.join(storage_type.to_string());
+        let path = profile_dir.join(storage_type.to_string());
         if path.exists() {
             return Ok(true);
         }
@@ -382,32 +257,28 @@ async fn default_material_exists(output_dir: &Path) -> Result<bool> {
     Ok(false)
 }
 
-/// Validate directory structure
 async fn validate_directory_structure(
     output_dir: &Path,
     errors: &mut Vec<&'static str>,
 ) -> Result<()> {
-    // Check that testing and/or default directories have proper subdirectories
-    let testing_dir = output_dir.join("testing");
-    let default_dir = output_dir.join("default");
+    let testing_dir = output_dir.join(material_subdir(MaterialType::Testing));
+    let default_dir = output_dir.join(material_subdir(MaterialType::Default));
 
-    // Validate testing directory if it exists
     if testing_dir.exists() {
         for storage_type in &REQUIRED_STORAGE_TYPES {
             let path = testing_dir.join(storage_type.to_string());
             if !path.exists() {
-                errors.push("Testing material missing required subdirectories");
+                errors.push("Insecure material missing required subdirectories");
                 break;
             }
         }
     }
 
-    // Validate default directory if it exists
     if default_dir.exists() {
         for storage_type in &REQUIRED_STORAGE_TYPES {
             let path = default_dir.join(storage_type.to_string());
             if !path.exists() {
-                errors.push("Default material missing required subdirectories");
+                errors.push("Secure material missing required subdirectories");
                 break;
             }
         }

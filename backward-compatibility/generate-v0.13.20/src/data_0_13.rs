@@ -39,18 +39,20 @@ use kms_0_13_20::vault::keychain::AppKeyBlob;
 use kms_grpc_0_13_20::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    solidity_types::{CrsgenVerification, KeygenVerification},
+    solidity_types::{
+        CrsgenVerification, CrsgenVerificationQ126, KeygenVerification, KeygenVerificationQ126,
+    },
     RequestId,
 };
 use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_5_4::safe_serialization::safe_serialize;
-use tfhe_1_5_4::shortint::parameters::{
+use tfhe_1_6_1::safe_serialization::safe_serialize;
+use tfhe_1_6_1::shortint::parameters::{
     LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
 };
-use tfhe_1_5_4::{
+use tfhe_1_6_1::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -87,9 +89,10 @@ use backward_compatibility::parameters::{
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
+    CrsGenMetadataWithExtraDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
+    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
@@ -172,7 +175,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_5_4::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_6_1::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -185,7 +188,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_5_4::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_6_1::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -350,6 +353,22 @@ const CRS_GEN_METADATA_TEST: CrsGenMetadataTest = CrsGenMetadataTest {
     state: 100,
     max_num_bits: 2048,
 };
+
+// KMS test — for key generation metadata with the 13.20 format (including extra data).
+const KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST: KeyGenMetadataWithExtraDataTest =
+    KeyGenMetadataWithExtraDataTest {
+        test_filename: Cow::Borrowed("key_gen_metadata_with_extra_data"),
+        state: 101,
+        extra_data: Cow::Borrowed(&[0x02, 0xAA, 0xBB, 0xCC]),
+    };
+
+const CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST: CrsGenMetadataWithExtraDataTest =
+    CrsGenMetadataWithExtraDataTest {
+        test_filename: Cow::Borrowed("crs_gen_metadata_with_extra_data"),
+        state: 101,
+        max_num_bits: 2048,
+        extra_data: Cow::Borrowed(&[0x02, 0xDD, 0xEE, 0xFF]),
+    };
 
 // KMS test
 const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
@@ -590,7 +609,7 @@ impl KmsV0_13_20 {
             safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
         let pub_key_digest =
             safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-        let sol_type = KeygenVerification::new_standard(
+        let sol_type = KeygenVerificationQ126::new_standard(
             &preprocessing_id,
             &key_id,
             server_key_digest.clone(),
@@ -623,6 +642,7 @@ impl KmsV0_13_20 {
             preprocessing_id,
             key_digest_map,
             external_signature,
+            extra_data: None,
         };
         store_versioned_auxiliary!(
             &legacy,
@@ -641,11 +661,16 @@ impl KmsV0_13_20 {
         let crs_id: RequestId = RequestId::new_random(&mut rng);
         let digest = [12u8; 32].to_vec();
         let max_num_bits = CRS_GEN_METADATA_TEST.max_num_bits;
-        let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone());
+        let sol_type = CrsgenVerificationQ126::new(&crs_id, max_num_bits as usize, digest.clone());
         let external_signature =
             compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
-        let current_crs_meta_data =
-            CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
+        let current_crs_meta_data = CrsGenMetadata::new(
+            crs_id,
+            digest,
+            max_num_bits,
+            external_signature.clone(),
+            vec![], // Empty extra data to signal legacy
+        );
 
         let legacy_crs_meta_data = SignedPubDataHandleInternal::new(
             crs_id.to_string(),
@@ -666,6 +691,81 @@ impl KmsV0_13_20 {
         );
 
         TestMetadataKMS::CrsGenMetadata(CRS_GEN_METADATA_TEST)
+    }
+
+    /// Twin of `gen_key_gen_metadata` for version 13.20 (with extra_data).
+    fn gen_key_gen_metadata_with_extra_data(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.state);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let (pretend_server_key, pretend_public_key) = gen_sig_keys(&mut rng);
+        let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
+        let key_id: RequestId = RequestId::new_random(&mut rng);
+
+        let extra_data = KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.extra_data.to_vec();
+        let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+        let server_key_digest =
+            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+        let pub_key_digest =
+            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+        let sol_type = KeygenVerification::new_uncompressed(
+            &preprocessing_id,
+            &key_id,
+            server_key_digest.clone(),
+            pub_key_digest.clone(),
+            extra_data.clone(),
+        );
+        key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
+        key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+        let external_signature =
+            compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+
+        let current = KeyGenMetadataInner {
+            key_id,
+            preprocessing_id,
+            key_digest_map,
+            external_signature,
+            extra_data: Some(extra_data),
+        };
+        store_versioned_test!(
+            &current,
+            dir,
+            &KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.test_filename,
+        );
+
+        TestMetadataKMS::KeyGenMetadataWithExtraData(KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST)
+    }
+
+    /// Twin of `gen_crs_metadata` for version 13.20 (with extra_data).
+    fn gen_crs_metadata_with_extra_data(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST.state);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let crs_id: RequestId = RequestId::new_random(&mut rng);
+        let digest = [12u8; 32].to_vec();
+        let max_num_bits = CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST.max_num_bits;
+        let extra_data = CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST.extra_data.to_vec();
+        let sol_type = CrsgenVerification::new(
+            &crs_id,
+            max_num_bits as usize,
+            digest.clone(),
+            extra_data.clone(),
+        );
+        let external_signature =
+            compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+        let current_crs_meta_data = CrsGenMetadata::new(
+            crs_id,
+            digest,
+            max_num_bits,
+            external_signature.clone(),
+            extra_data,
+        );
+
+        store_versioned_test!(
+            &current_crs_meta_data,
+            dir,
+            &CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST.test_filename
+        );
+
+        TestMetadataKMS::CrsGenMetadataWithExtraData(CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST)
     }
 
     #[allow(clippy::ptr_arg)]
@@ -1128,6 +1228,7 @@ impl KmsV0_13_20 {
             server_key.4,
             server_key.5,
             server_key.6,
+            server_key.7,
             Tag::default(),
         );
 
@@ -1200,7 +1301,7 @@ impl KmsV0_13_20 {
             &THRESHOLD_FHE_KEYS_TEST.private_key_set_filename,
         );
 
-        let (integer_server_key, _, _, _, sns_key, _, _, _) =
+        let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
             fhe_pub_key_set.server_key.clone().into_raw_parts();
         store_versioned_auxiliary!(
             &sns_key,
@@ -1238,11 +1339,11 @@ impl KmsV0_13_20 {
             sns_key: sns_key.map(std::sync::Arc::new),
             decompression_key: decompression_key.map(std::sync::Arc::new),
         };
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: std::sync::Arc::new(private_key_set),
+        let threshold_fhe_keys = ThresholdFheKeys::new(
+            std::sync::Arc::new(private_key_set),
             public_material,
-            meta_data: kms_0_13_20::engine::base::KeyGenMetadata::LegacyV0(info),
-        };
+            kms_0_13_20::engine::base::KeyGenMetadata::LegacyV0(info),
+        );
 
         store_versioned_test!(
             &threshold_fhe_keys,
@@ -1571,6 +1672,8 @@ impl KMSCoreVersion for V0_13_20 {
             KmsV0_13_20::gen_app_key_blob(&dir),
             KmsV0_13_20::gen_key_gen_metadata(&dir),
             KmsV0_13_20::gen_crs_metadata(&dir),
+            KmsV0_13_20::gen_key_gen_metadata_with_extra_data(&dir),
+            KmsV0_13_20::gen_crs_metadata_with_extra_data(&dir),
             KmsV0_13_20::gen_typed_plaintext(&dir),
             KmsV0_13_20::gen_signcryption_payload(&dir),
             KmsV0_13_20::gen_signcryption_key(&dir),

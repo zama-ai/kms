@@ -1,3 +1,7 @@
+use algebra::{
+    galois_fields::lagrange::init_lagrange_stores, galois_rings::degree_4::ResiduePolyF4Z128,
+    structure_traits::Ring,
+};
 use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
@@ -32,7 +36,7 @@ use kms_lib::{
         },
     },
 };
-use std::{net::ToSocketAddrs, sync::Arc, thread};
+use std::{net::ToSocketAddrs, num::NonZero, sync::Arc, thread};
 use thread_handles::init_rayon_thread_pool;
 use threshold_networking::tls::AttestedVerifier;
 use tokio::net::TcpListener;
@@ -366,6 +370,20 @@ async fn main_exec() -> anyhow::Result<()> {
     .await?;
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
+
+    // NOTE: Cache for GF16 (which we use here -- for now) is fully filled.
+    // So this call is essentially useless for ResiduePolyF4
+    if let Some(threshold_config) = core_config.threshold.as_ref()
+        && let Some(peers) = threshold_config.peers.as_ref()
+        && !peers.is_empty()
+    {
+        init_lagrange_stores(
+            NonZero::new(peers.len())
+                .expect("peers.len() (i.e. number of parties) was just checked to be non-zero"),
+            threshold_config.threshold as usize,
+            ResiduePolyF4Z128::EXTENSION_DEGREE, // This is the extension ring we use in core/service
+        )?;
+    }
 
     tracing::info!(
         "Multi-threading values: tokio::num_workers: {}, rayon_num_threads: {}, total_num_cpus: {}",

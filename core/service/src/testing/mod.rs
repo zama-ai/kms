@@ -1,26 +1,6 @@
 //! Consolidated testing infrastructure for KMS
 //!
 //! This module provides a unified API for writing isolated tests in the KMS codebase.
-//! It eliminates Docker dependencies and provides clean, reusable test utilities.
-//!
-//! # Quick Start
-//!
-//! ```no_run
-//! use kms_lib::testing::prelude::*;
-//!
-//! #[tokio::test]
-//! async fn my_centralized_test() -> Result<()> {
-//!     // Setup isolated test environment
-//!     let env = CentralizedTestEnv::builder()
-//!         .with_test_name("my_test")
-//!         .build()
-//!         .await?;
-//!
-//!     // Use env.server, env.client, env.material_dir
-//!     // Automatic cleanup on drop
-//!     Ok(())
-//! }
-//! ```
 //!
 //! # Module Organization
 //!
@@ -39,9 +19,8 @@
 //!
 //! ## Test Material
 //!
-//! Test material is pre-generated using `make generate-test-material-testing` and stored
-//! in the workspace `test-material/` directory. Tests copy only the required material
-//! into isolated temporary directories.
+//! Test material is pre-generated using `generate-test-material` and stored in the workspace `test-material/`
+//! directory. Tests copy only the required material into isolated temporary directories.
 //!
 //! ## Test Environments
 //!
@@ -57,31 +36,18 @@ pub mod types;
 pub mod utils;
 
 /// Convenient re-exports for test files
-///
-/// Import this in your test files with:
-/// ```
-/// use kms_lib::testing::prelude::*;
-/// ```
-///
-/// ## Additional Helpers
-///
-/// For threshold-specific helpers, import directly:
-/// ```
-/// use crate::client::tests::threshold::common::{
-///     threshold_key_gen_isolated,
-///     threshold_key_gen_secure_isolated,
-/// };
-/// ```
 pub mod prelude {
     // Material management
-    pub use super::material::{
-        KeyType, MaterialType, TestMaterialHandle, TestMaterialManager, TestMaterialSpec,
-    };
+    pub use super::material::{KeyType, MaterialType, TestMaterialManager, TestMaterialSpec};
 
     // Setup utilities
     pub use super::setup::{
-        centralized::{CentralizedTestEnv, CentralizedTestEnvBuilder},
-        threshold::{ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder},
+        centralized::{
+            CentralizedTestEnv, CentralizedTestEnvBuilder, CentralizedTestMaterialGuard,
+        },
+        threshold::{
+            TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
+        },
     };
 
     // Helper functions

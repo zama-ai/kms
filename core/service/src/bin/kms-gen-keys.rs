@@ -4,21 +4,15 @@ use futures_util::future::OptionFuture;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use kms_lib::consts::DEFAULT_EPOCH_ID;
-use kms_lib::vault::storage::StorageExt;
 use kms_lib::{
     conf::{
         AwsKmsKeySpec, AwsKmsKeychain, FileStorage, Keychain, S3Storage, Storage as StorageConf,
     },
-    consts::{
-        DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, SIGNING_KEY_ID, TEST_PARAM,
-    },
+    consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        ThresholdSigningKeyConfig, ensure_central_crs_exists, ensure_central_keys_exist,
-        ensure_central_server_signing_keys_exist, ensure_threshold_crs_exists,
-        ensure_threshold_keys_exist, ensure_threshold_server_signing_keys_exist,
+        ThresholdSigningKeyConfig, ensure_central_server_signing_keys_exist,
+        ensure_threshold_server_signing_keys_exist,
     },
     vault::{
         Vault,
@@ -29,30 +23,23 @@ use kms_lib::{
 };
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
-use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use strum::EnumIs;
 use url::Url;
 
 #[derive(Parser)]
-#[clap(name = "Zama KMS Key Material Generator")]
-#[clap(about = "A CLI tool for generating key materials. \
-    In the centralized mode, it will generate FHE keys, signing keys and the CRS. \
-    In the threshold mode, it will generate FHE key shares and the signing keys, \
-    the FHE key shares should be used for testing only. \
-    Use the threshold protocols to generate FHE key shares. \
-    But observe that threshold mode should only be used for testing since keys will get generated centrally. \n
-    For example, to generate centralized keys with the default parameters \
-    run: \n
-    ./kms-gen-keys centralized \n
+#[clap(name = "Zama KMS Signing Key and Certificate Generator")]
+#[clap(
+    about = "A CLI tool for generating server signing keys and TLS certificates. \
+    In centralized mode it produces a single signing key plus its verification material. \
+    In threshold mode it produces per-party signing keys and the self-signed CA certificates \
+    used for mTLS between parties. \
     Multiple options are supported which can be explored with \
-    kms-key-gen --help")]
+    kms-gen-keys --help"
+)]
 struct Args {
     #[clap(subcommand)]
     mode: Mode,
-    /// What to construct, options are "all", "signing-keys", "fhe-keys" or "crs".
-    #[clap(short, long, default_value_t = ConstructCommand::All, value_enum)]
-    cmd: ConstructCommand,
 
     /// AWS region to use for S3 storage
     #[clap(long, default_value = "eu-west-3")]
@@ -75,6 +62,9 @@ struct Args {
     /// Optional AWS KMS key spec that encrypts the private storage
     #[clap(long, default_value = None, value_enum)]
     root_key_spec: Option<AwsKmsKeySpec>,
+    /// Use a software-emulated AWS Nitro security module instead of the real
+    /// NSM device. Only available with the `insecure` Cargo feature. See
+    /// `kms-server-bin.md` for more information.
     #[cfg(feature = "insecure")]
     #[clap(long, default_value_t = false)]
     mock_enclave: bool,
@@ -99,9 +89,6 @@ struct Args {
     public_s3_bucket: Option<String>,
     #[clap(long, default_value = None)]
     public_s3_prefix: Option<String>,
-    /// Specify whether to use test parameters or not.
-    #[clap(long, default_value_t = false)]
-    param_test: bool,
     /// Whether to generate keys deterministically,
     /// only use this option for testing.
     /// The determinism is not guaranteed to be the same between releases.
@@ -122,33 +109,17 @@ enum StorageCommand {
     S3,
 }
 
-#[derive(Clone, Subcommand, Default, Debug, Serialize, Deserialize, ValueEnum, PartialEq)]
-enum ConstructCommand {
-    #[default]
-    All,
-    SigningKeys,
-    FheKeys,
-    Crs,
-}
-
 #[derive(Clone, Subcommand)]
 enum Mode {
-    /// Generate centralized FHE keys, signing keys and the CRS.
-    Centralized {
-        /// Whether to output the private FHE key separately,
-        #[clap(long, default_value_t = false)]
-        write_privkey: bool,
-    },
+    /// Generate the centralized server signing key.
+    Centralized,
 
-    /// Generate shares of FHE key shares and signing keys.
-    /// The FHE key shares should only be used for testing.
+    /// Generate per-party signing keys and self-signed CA certificates for a threshold deployment.
     Threshold {
-        /// When using `--cmd signing-keys`, this option can be set
-        /// to generate the signing key for a specific party.
-        /// If it's not used, then the signing keys are generated for all parties.
+        /// Generate the signing key for a specific party only.
+        /// If unset, signing keys are generated for all parties.
         ///
-        /// If this option is used, the party ID cannot be higher than
-        /// what is given in `num_parties`.
+        /// If set, the party ID cannot be higher than `num_parties`.
         #[clap(long, default_value = None)]
         signing_key_party_id: Option<usize>,
 
@@ -176,7 +147,6 @@ struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     priv_storage: &'a mut PrivS,
     deterministic: bool,
     overwrite: bool,
-    write_privkey: bool,
     show_existing: bool,
 }
 
@@ -236,22 +206,16 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
     }
 }
 
-/// Execute the KMS key generation
-/// Key generation is supported for 2 different modes; centralized and threshold.
-/// However, the threshold mode should only be used for testing since keys will get generated centrally.
+/// Generate the server signing keys and TLS material for a KMS deployment.
 ///
-/// For example, to generate centralized keys with the default blockchain parameters
-///  run:
+/// Two modes are supported:
+/// - `centralized` produces a single signing key.
+/// - `threshold` produces per-party signing keys and self-signed CA certificates for mTLS.
+///
+/// Examples:
 /// ```
-/// ./kms-gen-keys centralized
-/// ```
-/// Or from cargo:
-/// ```
-/// cargo run -F testing --bin kms-gen-keys centralized
-/// ```
-/// Multiple options are supported which can be explored with
-/// ```
-/// ./kms-key-gen --help
+/// cargo run --bin kms-gen-keys -- centralized
+/// cargo run --bin kms-gen-keys -- --help
 /// ```
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -295,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // create storages
     let amount_storages = match args.mode {
-        Mode::Centralized { write_privkey: _ } => 1,
+        Mode::Centralized => 1,
         Mode::Threshold {
             signing_key_party_id: _,
             num_parties: n,
@@ -378,24 +342,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // generate keys
     match args.mode {
-        Mode::Centralized { write_privkey } => {
+        Mode::Centralized => {
             let mut cmdargs = CentralCmdArgs {
                 pub_storage: &mut pub_storages[0],
                 priv_storage: &mut priv_vaults[0],
                 deterministic: args.deterministic,
                 overwrite: args.overwrite,
-                write_privkey,
                 show_existing: args.show_existing,
             };
-
-            if args.cmd == ConstructCommand::All {
-                handle_central_cmd(args.param_test, &mut cmdargs, ConstructCommand::SigningKeys)
-                    .await;
-                handle_central_cmd(args.param_test, &mut cmdargs, ConstructCommand::FheKeys).await;
-                handle_central_cmd(args.param_test, &mut cmdargs, ConstructCommand::Crs).await;
-            } else {
-                handle_central_cmd(args.param_test, &mut cmdargs, args.cmd).await;
-            }
+            handle_central_cmd(&mut cmdargs).await;
         }
         Mode::Threshold {
             signing_key_party_id,
@@ -409,291 +364,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.deterministic,
                 args.overwrite,
                 args.show_existing,
-                // the `signing_party_id` is only used when the cmd is signing-keys
-                match args.cmd {
-                    ConstructCommand::SigningKeys => signing_key_party_id,
-                    _ => None,
-                },
+                signing_key_party_id,
                 num_parties,
                 tls_subject,
                 tls_wildcard,
             )?;
-
-            if args.cmd == ConstructCommand::All {
-                handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::SigningKeys)
-                    .await;
-                handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::FheKeys)
-                    .await;
-                handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::Crs).await;
-            } else {
-                handle_threshold_cmd(args.param_test, &mut cmdargs, args.cmd).await;
-            }
+            handle_threshold_cmd(&mut cmdargs).await;
         }
     }
     tracing::info!("Keygen finished successfully.");
     Ok(())
 }
 
-async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
-    param_test: bool,
+async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
-    cmd: ConstructCommand,
 ) {
-    let params = if param_test {
-        TEST_PARAM
-    } else {
-        DEFAULT_PARAM
-    };
-
-    let epoch_id = *DEFAULT_EPOCH_ID;
-    match cmd {
-        ConstructCommand::All => {
-            panic!("\"All\" command must be handled in an outer call");
-        }
-        ConstructCommand::SigningKeys => {
-            process_signing_key_cmds(
-                args.pub_storage,
-                args.priv_storage,
-                &SIGNING_KEY_ID,
-                args.show_existing,
-                args.overwrite,
-            )
-            .await;
-            if !ensure_central_server_signing_keys_exist(
-                args.pub_storage,
-                args.priv_storage,
-                &SIGNING_KEY_ID,
-                args.deterministic,
-            )
-            .await
-            {
-                tracing::warn!("Signing keys already exist, skipping generation");
-            }
-        }
-        ConstructCommand::FheKeys => {
-            process_fhe_cmds(
-                args.pub_storage,
-                args.priv_storage,
-                &DEFAULT_CENTRAL_KEY_ID,
-                args.show_existing,
-                args.overwrite,
-            )
-            .await;
-            if !ensure_central_keys_exist(
-                args.pub_storage,
-                args.priv_storage,
-                params,
-                &DEFAULT_CENTRAL_KEY_ID,
-                &OTHER_CENTRAL_DEFAULT_ID,
-                &epoch_id,
-                args.deterministic,
-                args.write_privkey,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "FHE keys with default ID {} already exist, skipping generation",
-                    DEFAULT_CENTRAL_KEY_ID.to_string()
-                );
-            }
-        }
-        ConstructCommand::Crs => {
-            process_crs_cmds(
-                args.pub_storage,
-                args.priv_storage,
-                &DEFAULT_CENTRAL_CRS_ID,
-                args.show_existing,
-                args.overwrite,
-            )
-            .await;
-            if !ensure_central_crs_exists(
-                args.pub_storage,
-                args.priv_storage,
-                params,
-                &DEFAULT_CENTRAL_CRS_ID,
-                &epoch_id,
-                args.deterministic,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "CRS with default ID {} already exist, skipping generation",
-                    DEFAULT_CENTRAL_CRS_ID.to_string()
-                );
-            }
-        }
+    process_signing_key_cmds(
+        args.pub_storage,
+        args.priv_storage,
+        &SIGNING_KEY_ID,
+        args.show_existing,
+        args.overwrite,
+    )
+    .await;
+    if !ensure_central_server_signing_keys_exist(
+        args.pub_storage,
+        args.priv_storage,
+        &SIGNING_KEY_ID,
+        args.deterministic,
+    )
+    .await
+    {
+        tracing::warn!("Signing keys already exist, skipping generation");
     }
 }
 
-async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
-    param_test: bool,
+async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
-    cmd: ConstructCommand,
 ) {
-    let params = if param_test {
-        TEST_PARAM
-    } else {
-        DEFAULT_PARAM
-    };
-
-    let epoch_id = *DEFAULT_EPOCH_ID;
-
-    match cmd {
-        ConstructCommand::All => panic!("\"All\" command must be handled in an outer call"),
-        ConstructCommand::SigningKeys => {
-            // Will panic if the number of public and private storages is not equal
-            for (pub_storage, priv_storage) in args
-                .pub_storages
-                .iter_mut()
-                .zip_eq(args.priv_storages.iter_mut())
-            {
-                process_signing_key_cmds(
-                    pub_storage,
-                    priv_storage,
-                    &SIGNING_KEY_ID,
-                    args.show_existing,
-                    args.overwrite,
-                )
-                .await;
-            }
-            if !ensure_threshold_server_signing_keys_exist(
-                args.pub_storages,
-                args.priv_storages,
-                &SIGNING_KEY_ID,
-                args.deterministic,
-                match args.signing_key_party_id {
-                    Some(i) => ThresholdSigningKeyConfig::OneParty(i, args.tls_subject.clone()),
-                    None => ThresholdSigningKeyConfig::AllParties(
-                        (1..=args.num_parties)
-                            .map(|i| format!("{}-{}", args.tls_subject, i))
-                            .collect(),
-                    ),
-                },
-                args.tls_wildcard,
-            )
-            .await
-            .expect("Could not access storage")
-            {
-                tracing::warn!(
-                    "Threshold signing keys with ID {} already exist, skipping generation",
-                    DEFAULT_THRESHOLD_KEY_ID_4P.to_string()
-                );
-            }
-        }
-        ConstructCommand::FheKeys => {
-            // Will panic if the number of public and private storages is not equal
-            for (pub_storage, priv_storage) in args
-                .pub_storages
-                .iter_mut()
-                .zip_eq(args.priv_storages.iter_mut())
-            {
-                process_fhe_cmds(
-                    pub_storage,
-                    priv_storage,
-                    &DEFAULT_THRESHOLD_KEY_ID_4P,
-                    args.show_existing,
-                    args.overwrite,
-                )
-                .await;
-            }
-            if !ensure_threshold_keys_exist(
-                args.pub_storages,
-                args.priv_storages,
-                params,
-                &DEFAULT_THRESHOLD_KEY_ID_4P,
-                &epoch_id,
-                args.deterministic,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Threshold FHE keys with ID {} already exist, skipping generation",
-                    DEFAULT_THRESHOLD_KEY_ID_4P.to_string()
-                );
-            }
-        }
-        ConstructCommand::Crs => {
-            // Will panic if the number of public and private storages is not equal
-            for (pub_storage, priv_storage) in args
-                .pub_storages
-                .iter_mut()
-                .zip_eq(args.priv_storages.iter_mut())
-            {
-                process_crs_cmds(
-                    pub_storage,
-                    priv_storage,
-                    &DEFAULT_THRESHOLD_CRS_ID_4P,
-                    args.show_existing,
-                    args.overwrite,
-                )
-                .await;
-            }
-            if !ensure_threshold_crs_exists(
-                args.pub_storages,
-                args.priv_storages,
-                params,
-                &DEFAULT_THRESHOLD_CRS_ID_4P,
-                &epoch_id,
-                args.deterministic,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Threshold CRS for 4 parties with default ID {} already exist, skipping generation",
-                    DEFAULT_THRESHOLD_CRS_ID_4P.to_string()
-                );
-            }
-        }
+    // Will panic if the number of public and private storages is not equal
+    for (pub_storage, priv_storage) in args
+        .pub_storages
+        .iter_mut()
+        .zip_eq(args.priv_storages.iter_mut())
+    {
+        process_signing_key_cmds(
+            pub_storage,
+            priv_storage,
+            &SIGNING_KEY_ID,
+            args.show_existing,
+            args.overwrite,
+        )
+        .await;
     }
-}
-async fn process_crs_cmds<PubS: Storage, PrivS: Storage>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    req_id: &RequestId,
-    show_existing: bool,
-    overwrite: bool,
-) {
-    process_cmd(
-        pub_storage,
-        vec![&PubDataType::CRS],
-        req_id,
-        show_existing,
-        overwrite,
+    if !ensure_threshold_server_signing_keys_exist(
+        args.pub_storages,
+        args.priv_storages,
+        &SIGNING_KEY_ID,
+        args.deterministic,
+        match args.signing_key_party_id {
+            Some(i) => ThresholdSigningKeyConfig::OneParty(i, args.tls_subject.clone()),
+            None => ThresholdSigningKeyConfig::AllParties(
+                (1..=args.num_parties)
+                    .map(|i| format!("{}-{}", args.tls_subject, i))
+                    .collect(),
+            ),
+        },
+        args.tls_wildcard,
     )
-    .await;
-    process_cmd(
-        priv_storage,
-        vec![&PrivDataType::CrsInfo],
-        req_id,
-        show_existing,
-        overwrite,
-    )
-    .await;
-}
-
-async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    req_id: &RequestId,
-    show_existing: bool,
-    overwrite: bool,
-) {
-    process_cmd(
-        pub_storage,
-        vec![&PubDataType::PublicKey, &PubDataType::ServerKey],
-        req_id,
-        show_existing,
-        overwrite,
-    )
-    .await;
-    process_cmd(
-        priv_storage,
-        vec![&PrivDataType::FheKeyInfo, &PrivDataType::SigningKey],
-        req_id,
-        show_existing,
-        overwrite,
-    )
-    .await;
+    .await
+    .expect("Could not access storage")
+    {
+        tracing::warn!("Threshold signing keys already exist, skipping generation");
+    }
 }
 
 async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(

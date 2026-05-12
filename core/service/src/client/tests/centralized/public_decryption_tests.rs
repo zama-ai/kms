@@ -1,5 +1,4 @@
 use crate::client::client_wasm::Client;
-use crate::client::test_tools::centralized_handles;
 use crate::client::tests::common::{TIME_TO_SLEEP_MS, assert_plaintext};
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
@@ -9,25 +8,28 @@ use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::testing::material::{MaterialType, TestMaterialSpec};
+use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
+use anyhow::Result;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use serial_test::serial;
 use std::path::Path;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 #[tokio::test]
-#[serial]
-async fn test_decryption_central() {
+async fn test_decryption_central() -> Result<()> {
     decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
+        "test_decryption_central",
+        MaterialType::Testing,
         vec![
             TestingPlaintext::U8(42),
             TestingPlaintext::U32(9876),
@@ -40,15 +42,16 @@ async fn test_decryption_central() {
         },
         3, // 3 parallel requests
     )
-    .await;
+    .await
 }
 
 #[tokio::test]
-#[serial]
-async fn test_decryption_central_no_decompression() {
+async fn test_decryption_central_no_decompression() -> Result<()> {
     decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
+        "test_decryption_central_no_decompression",
+        MaterialType::Testing,
         vec![
             TestingPlaintext::U8(42),
             TestingPlaintext::U32(9876),
@@ -61,15 +64,16 @@ async fn test_decryption_central_no_decompression() {
         },
         3, // 3 parallel requests
     )
-    .await;
+    .await
 }
 
 #[tokio::test]
-#[serial]
-async fn test_decryption_central_precompute_sns() {
+async fn test_decryption_central_precompute_sns() -> Result<()> {
     decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
+        "test_decryption_central_precompute_sns",
+        MaterialType::Testing,
         vec![
             TestingPlaintext::U8(42),
             TestingPlaintext::U32(9876),
@@ -83,21 +87,22 @@ async fn test_decryption_central_precompute_sns() {
         },
         3, // 3 parallel requests
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_centralized(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
-) {
+) -> Result<()> {
     decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "default_decryption_centralized",
+        MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression: true,
@@ -105,21 +110,22 @@ async fn default_decryption_centralized(
         },
         parallelism,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_centralized_precompute_sns(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
-) {
+) -> Result<()> {
     decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "default_decryption_centralized_precompute_sns",
+        MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression: false,
@@ -127,19 +133,33 @@ async fn default_decryption_centralized_precompute_sns(
         },
         parallelism,
     )
-    .await;
+    .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn decryption_centralized(
     dkg_params: &DKGParams,
     key_id: &RequestId,
+    test_name: &str,
+    material_type: MaterialType,
     msgs: Vec<TestingPlaintext>,
     encryption_config: EncryptionConfig,
     parallelism: usize,
-) {
+) -> Result<()> {
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (kms_server, kms_client, mut internal_client) = centralized_handles(dkg_params, None).await;
+    let spec = match material_type {
+        MaterialType::Testing => TestMaterialSpec::centralized_basic(),
+        MaterialType::Default => TestMaterialSpec::centralized_default(),
+    };
+    let env = CentralizedTestEnv::builder()
+        .with_test_name(test_name)
+        .with_backup_vault()
+        .with_material_spec(spec)
+        .build()
+        .await?;
+    let mut internal_client = env.create_internal_client(dkg_params).await?;
+    let (kms_server, kms_client, material_path, _guard) = env.into_parts();
     run_decryption_centralized(
         &kms_client,
         &mut internal_client,
@@ -148,10 +168,11 @@ pub(crate) async fn decryption_centralized(
         msgs,
         encryption_config,
         parallelism,
-        None,
+        Some(material_path.as_path()),
     )
     .await;
     kms_server.assert_shutdown().await;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -168,8 +189,7 @@ pub(crate) async fn run_decryption_centralized(
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(test_path, msg, key_id, None, encryption_config, false)
-                .await;
+            compute_cipher_from_stored_key(test_path, msg, key_id, None, encryption_config).await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,

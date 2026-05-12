@@ -20,12 +20,6 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      SLAB_ACTION_TOKEN:
-        required: true
-      SLAB_BASE_URL:
-        required: true
-      JOB_SECRET:
-        required: true
       AWS_ACCESS_KEY_S3_USER:
         required: true
       AWS_SECRET_KEY_S3_USER:
@@ -64,76 +58,8 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  ############################################################################
-  # Start EC2 Runner Jobs
-  # Initializes self-hosted runners for running tests in parallel
-  # Only starts if we have images available (from input or docker-build)
-  ############################################################################
-  start-runner-cargo:
-    name: kind-testing/start-runner (cargo)
-    runs-on: ubuntu-latest
-    needs:
-      - docker-build
-    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: 'big-instance'
-
-  start-runner-threshold:
-    name: kind-testing/start-runner (threshold)
-    runs-on: ubuntu-latest
-    needs:
-      - docker-build
-    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: 'big-instance-kind'
-
-  start-runner-centralized:
-    name: kind-testing/start-runner (centralized)
-    runs-on: ubuntu-latest
-    needs:
-      - docker-build
-    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: 'big-instance-service'
 
   ############################################################################
   # Kind Testing Job
@@ -147,33 +73,29 @@ jobs:
         include:
           - name: cargo-check
             cargo-check: true
-            # runner-label: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-            runner-label: ${{ needs.start-runner-cargo.outputs.label }}
+            runner-label: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
           - name: threshold
             deployment-type: threshold
             num-parties: 4
-            # runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-            runner-label: ${{ needs.start-runner-threshold.outputs.label }}
+            runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
             enable-tls: true
           - name: centralized
             deployment-type: centralized
             num-parties: 1
-            # runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-            runner-label: ${{ needs.start-runner-centralized.outputs.label }}
+            runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
     needs:
-      - start-runner-cargo
-      - start-runner-threshold
-      - start-runner-centralized
       - docker-build
     if: |
       always() && !cancelled() &&
-      needs.start-runner-cargo.result == 'success' &&
-      needs.start-runner-threshold.result == 'success' &&
-      needs.start-runner-centralized.result == 'success' &&
       (inputs.image_tag != '' || needs.docker-build.result == 'success')
     runs-on: ${{ matrix.runner-label }}
 
     steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -188,9 +110,6 @@ jobs:
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Setup HOME
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       # ==========================================================================
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
@@ -201,8 +120,7 @@ jobs:
         run: |
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
-          # Pull LFS files after installation
+          sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
           git lfs pull
 
       # ==========================================================================
@@ -226,11 +144,10 @@ jobs:
             echo "kubectl checksum does not match"
             exit 1
           fi
-          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-          chmod +x kubectl
-          mkdir -p ~/.local/bin
-          mv ./kubectl ~/.local/bin/kubectl
-          export PATH=$PATH:~/.local/bin
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 kubectl "$HOME/.local/bin/kubectl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           kubectl version --client
 
       - name: Install KIND
@@ -303,13 +220,10 @@ jobs:
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup cargo nextest and grcov
+      - name: Setup cargo nextest
         if: matrix.cargo-check == false
         run: |
-          # Force reinstall nextest to ensure we have the required version (0.9.124+)
-          # The cache may contain an older version that doesn't support test-groups
-          cargo install cargo-nextest@0.9.124 --locked --force
-          cargo install grcov --locked --force
+          cargo install cargo-nextest@0.9.133 --locked --force
           # Verify the installed version
           cargo nextest --version
 
@@ -545,59 +459,3 @@ jobs:
       contents: read # Required to checkout repository code
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
-  ############################################################################
-  ############################################################################
-  # Stop EC2 Runner Jobs
-  # Cleans up the EC2 runners after tests complete or fail
-  ############################################################################
-  stop-runner-cargo:
-    name: kind-testing/stop-runner (cargo)
-    needs:
-      - start-runner-cargo
-      - kind-testing
-    runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner-cargo.result == 'success' }}
-    steps:
-      - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner-cargo.outputs.label }}
-
-  stop-runner-threshold:
-    name: kind-testing/stop-runner (threshold)
-    needs:
-      - start-runner-threshold
-      - kind-testing
-    runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner-threshold.result == 'success' }}
-    steps:
-      - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner-threshold.outputs.label }}
-
-  stop-runner-centralized:
-    name: kind-testing/stop-runner (centralized)
-    needs:
-      - start-runner-centralized
-      - kind-testing
-    runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner-centralized.result == 'success' }}
-    steps:
-      - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner-centralized.outputs.label }}

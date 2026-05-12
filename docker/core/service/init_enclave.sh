@@ -146,30 +146,28 @@ has_value "keygen" && \
 
 	KMS_GEN_KEYS_CMD="kms-gen-keys $AWS_ARGS $VAULT_ARGS"
 
-	# ensure that all keys exist if running in centralized mode
-	has_value "threshold" || \
-	    {
-		log "generating keys for centralized KMS"
-		eval "$KMS_GEN_KEYS_CMD centralized --write-privkey" \
-		    |& logger || fail "cannot generate keys"
-	    }
-
-	# Ensure that signing keys exist if running in threshold mode. Note that
-	# the [threshold] section used for kms-gen-keys is not the same as one
-	# used for kms-server. It has three fields only: my_id, num_parties, and
-	# tls_subject. The latter two are not accepted by kms-server.
-	has_value "threshold" && \
-	    {
-		log "generating signing keys for threshold KMS"
-		PARTY_ID_ARG=""
-		has_value "threshold.my_id" && \
-		    PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
-		eval "$KMS_GEN_KEYS_CMD \
-                       --cmd signing-keys threshold $PARTY_ID_ARG \
-                       --num-parties $(get_value "threshold.num_parties") \
-                       --tls-subject $(get_value "threshold.tls_subject")" \
-		    |& logger || fail "cannot generate keys"
-	    }
+	# Ensure that signing keys exist. FHE keys and CRS are generated at
+	# runtime by kms-server (in centralized mode) or by the threshold
+	# protocol (in threshold mode), so this script only handles signing
+	# keys. Note that in threshold mode, the [threshold] section used for
+	# kms-gen-keys is not the same as one used for kms-server. It has three
+	# fields only: my_id, num_parties, and tls_subject. The latter two are
+	# not accepted by kms-server.
+	if has_value "threshold"; then
+	    log "generating signing keys for threshold KMS"
+	    PARTY_ID_ARG=""
+	    has_value "threshold.my_id" && \
+		PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
+	    eval "$KMS_GEN_KEYS_CMD \
+                   threshold $PARTY_ID_ARG \
+                   --num-parties $(get_value "threshold.num_parties") \
+                   --tls-subject $(get_value "threshold.tls_subject")" \
+		|& logger || fail "cannot generate keys"
+	else
+	    log "generating signing keys for centralized KMS"
+	    eval "$KMS_GEN_KEYS_CMD centralized" \
+		|& logger || fail "cannot generate keys"
+	fi
     }
 has_value "keygen" || \
     log "[keygen] configuration section not present, skipping key generation"

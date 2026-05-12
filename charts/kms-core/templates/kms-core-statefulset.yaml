@@ -315,7 +315,7 @@ spec:
             - |
               env
               echo "generating keys"
-              kms-gen-keys --cmd signing-keys \
+              kms-gen-keys \
             {{- if .Values.minio.enabled }}
               --aws-s3-endpoint {{ .Values.minio.endpoint }} \
             {{- end }}
@@ -357,8 +357,6 @@ spec:
             {{- else }}
               --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
             {{- end }}
-            {{- else }}
-              --write-privkey
             {{- end }}
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}

@@ -330,16 +330,22 @@ pub async fn load_pk_from_pub_storage(
 }
 
 /// This function should be used for testing only and it can panic.
+///
+/// Probes the local public storage for the key id and loads whichever layout
+/// is present: the default `CompressedXofKeySet`, or the legacy `PublicKey` +
+/// `ServerKey` pair. Panics if neither is present.
 pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TestingPlaintext,
     key_id: &RequestId,
     storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
-    compressed_keys: bool,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let (pk, server_key) = if compressed_keys {
-        // Load compressed keys and decompress them
+    let probe = FileStorage::new(pub_path, StorageType::PUB, storage_prefix).unwrap();
+    let compressed_type = PubDataType::CompressedXofKeySet.to_string();
+    let public_key_type = PubDataType::PublicKey.to_string();
+
+    let (pk, server_key) = if probe.data_exists(key_id, &compressed_type).await.unwrap() {
         let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
             pub_path,
             key_id,
@@ -347,8 +353,11 @@ pub async fn compute_cipher_from_stored_key(
             storage_prefix,
         )
         .await;
-        xof_keyset.decompress().unwrap().into_raw_parts()
-    } else {
+        xof_keyset
+            .decompress()
+            .expect("decompress of CompressedXofKeySet is infallible")
+            .into_raw_parts()
+    } else if probe.data_exists(key_id, &public_key_type).await.unwrap() {
         let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(
             pub_path,
@@ -358,6 +367,8 @@ pub async fn compute_cipher_from_stored_key(
         )
         .await;
         (pk, server_key)
+    } else {
+        panic!("no compressed or uncompressed key material for key_id {key_id}");
     };
 
     // compute_cipher can take a long time since it may do SnS
@@ -591,8 +602,8 @@ pub(crate) mod setup {
     use crate::{
         consts::{
             KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
-            TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_KEY_ID_4P,
+            TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -649,16 +660,6 @@ pub(crate) mod setup {
             path,
         )
         .await;
-        threshold_material(
-            &TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID_10P,
-            &TEST_THRESHOLD_CRS_ID_10P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &epoch_id,
-            path,
-        )
-        .await;
         #[cfg(feature = "slow_tests")]
         threshold_material(
             &TEST_PARAM,
@@ -676,13 +677,12 @@ pub(crate) mod setup {
         testing_material(path).await;
     }
 
-    #[cfg(feature = "slow_tests")]
+    #[allow(dead_code)]
     async fn default_material() {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
-            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_10P,
-            DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
-            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
+            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
+            DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist(None).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -702,16 +702,6 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            &epoch_id,
-            None,
-        )
-        .await;
-        threshold_material(
-            &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_10P,
-            &DEFAULT_THRESHOLD_CRS_ID_10P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &epoch_id,
             None,
         )
@@ -754,7 +744,6 @@ pub(crate) mod setup {
             other_fhe_key_id,
             epoch_id,
             true,
-            false,
         )
         .await;
         ensure_central_crs_exists(
@@ -825,7 +814,7 @@ pub(crate) mod setup {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
+    #[allow(dead_code)]
     pub(crate) async fn ensure_default_material_exists() {
         default_material().await;
     }

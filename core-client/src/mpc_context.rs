@@ -126,7 +126,7 @@ pub async fn create_test_context_info_from_core_config(
 
         let mpc_identity = identity.mpc_identity();
         let (_ca_cert_ki, ca_cert, _ca_cert_params) =
-            threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
+            threshold_networking::tls_certs::create_ca_cert_from_ca_keypair(
                 mpc_identity.as_ref(),
                 true,
                 &ca_keypair,
@@ -243,7 +243,7 @@ pub(crate) async fn do_new_mpc_context(
     let context_id = new_context.context_id;
 
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
         req_tasks.spawn(async move {
@@ -270,7 +270,7 @@ pub(crate) async fn do_destroy_mpc_context(
     context_id: &ContextId,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let context_cloned = (*context_id).into();
         req_tasks.spawn(async move {

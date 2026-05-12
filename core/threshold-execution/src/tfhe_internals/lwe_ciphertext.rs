@@ -1,7 +1,6 @@
 use itertools::{EitherOrBoth, Itertools};
 use rayon::prelude::*;
 use tfhe::{
-    Seed,
     boolean::prelude::LweDimension,
     core_crypto::{
         commons::{
@@ -114,7 +113,7 @@ pub(crate) async fn open_to_tfhers_seeded_type<
     S: BaseSessionHandles,
 >(
     ciphertext_share_list: Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>,
-    seed: u128,
+    compression_seed: CompressionSeed,
     session: &S,
 ) -> anyhow::Result<SeededLweCiphertextList<Vec<u64>>>
 where
@@ -145,7 +144,7 @@ where
     let mut output = SeededLweCiphertextList::from_container(
         container,
         lwe_dim.to_lwe_size(),
-        CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+        compression_seed,
         CiphertextModulus::new_native(),
     );
     opened_lwe_bodies_to_seeded_tfhers_u64(opened_bodies, &mut output.as_mut_view())?;

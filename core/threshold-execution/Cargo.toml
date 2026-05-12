@@ -31,6 +31,7 @@ rand.workspace = true
 rayon.workspace = true
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
+sha3 = { workspace = true, optional = true }
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 test-utils = { workspace = true, optional = true }
@@ -55,6 +56,7 @@ tokio = { workspace = true, features = [
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tracing.workspace = true
 zeroize.workspace = true
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-std.workspace = true
@@ -62,21 +64,14 @@ futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
 rstest.workspace = true
-serial_test.workspace = true
+sha3.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 
 
 [features]
-default = ["non-wasm", "extension_degree_4"]
-extension_degree_3 = ["algebra/extension_degree_3"]
-extension_degree_4 = ["algebra/extension_degree_4"]
-extension_degree_5 = ["algebra/extension_degree_5"]
-extension_degree_6 = ["algebra/extension_degree_6"]
-extension_degree_7 = ["algebra/extension_degree_7"]
-extension_degree_8 = ["algebra/extension_degree_8"]
-
+default = ["non-wasm"]
 non-wasm = [
     "dep:threshold-networking",
     "dep:tfhe-zk-pok",
@@ -85,7 +80,6 @@ non-wasm = [
     "dep:tokio",
     "dep:tonic",
 ]
-
-testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils"]
-slow_tests = ["testing", "algebra/all_extension_degrees"]
+testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile", "dep:sha3"]
+slow_tests = ["testing"]
 malicious_strategies = ["testing"]

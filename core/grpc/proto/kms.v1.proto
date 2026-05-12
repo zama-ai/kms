@@ -54,16 +54,22 @@ message KeySetAddedInfo {
   // Must be set if KeyGenSecretKeyConfig::UseExisting is used
   RequestId existing_keyset_id = 3;
 
-  // Can be set if KeyGenSecretKeyConfig::UseExisting is used,
-  // if it's not set then the epoch ID from the KeyGenRequest is used.
-  RequestId existing_epoch_id = 4;
-
   // If true, use the tag from the existing keyset's PublicKeyMaterial
   // instead of deriving the tag from the new request ID.
   //
   // This option is only used when KeyGenSecretKeyConfig::UseExisting is used.
   // Otherwise it is ignored.
-  bool use_existing_key_tag = 5;
+  bool use_existing_key_tag = 4;
+
+  // If true, after a compressed keygen from existing shares
+  // (UseExisting + CompressedKeyConfig::All), copy the resulting
+  // CompressedXofKeySet to the original key ID and replace the original
+  // ThresholdFheKeys with the migrated one. The CompactPublicKey is
+  // preserved at both the original and the new key ID.
+  //
+  // Only used when KeyGenSecretKeyConfig::UseExisting is used with
+  // CompressedKeyConfig::All. Otherwise it is ignored.
+  bool copy_compressed_key_to_original = 5;
 }
 
 // The keyset configuration message.
@@ -98,6 +104,9 @@ message KeyGenPreprocRequest {
 
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   RequestId epoch_id = 6;
+
+  // Extra data used in the EIP712 signature - external_signature
+  bytes extra_data = 7;
 }
 
 message PartialKeyGenPreprocParams {
@@ -129,11 +138,13 @@ enum KeyGenSecretKeyConfig {
 // Configuration for whether to generate compressed or uncompressed keys.
 // Compressed keys use XOF-seeded compression and are smaller but need
 // decompression before use.
+// TODO: @reviewers This is breaking!
+// The enum discriminants changed so the proto default maps to compressed keys.
 enum CompressedKeyConfig {
-  // Do not generate compressed keys (default).
-  CompressedNone = 0;
-  // Generate compressed keys for the full keyset.
-  CompressedAll = 1;
+  // Generate compressed keys for the full keyset (default).
+  CompressedAll = 0;
+  // Do not generate compressed keys.
+  CompressedNone = 1;
 }
 
 // This message is returned if keygen has completed.
@@ -191,7 +202,7 @@ message KeyGenRequest {
   // under this keygen will be stored and registered under this epoch.
   RequestId epoch_id = 8;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 9;
 }
 
@@ -275,7 +286,7 @@ message CrsGenRequest {
   // In particular this is used to store the CRS at the correct location in the private storage
   RequestId epoch_id = 6;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 7;
 }
 
@@ -349,7 +360,7 @@ message PublicDecryptionRequest {
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 5;
 
   // MPC context ID which is used to identify the context to use for this request.
@@ -429,7 +440,7 @@ message UserDecryptionRequest {
   // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 7;
 
   // MPC context ID which is used to identify the context to use for this request.
@@ -813,6 +824,8 @@ message NewMpcEpochRequest {
   // The EIP712 domain used for signing the reshared key results.
   // Should be set when previous_epoch is set (resharing produces signed results).
   Eip712DomainMsg domain = 4;
+  // Extra data used in the EIP712 signature - external_signature - for the newly signed key and CRS info
+  bytes extra_data = 5;
 }
 
 message EpochResultResponse {

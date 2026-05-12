@@ -22,8 +22,10 @@ pub struct TestMaterialSpec {
 /// Type of test material parameters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MaterialType {
+    // TODO(dp): This should really be named `Insecure`, but that's potentially disruptive to production.
     /// Testing parameters (fast, small keys)
     Testing,
+    // TODO(dp): This should really be named `Secure`.
     /// Default parameters (production-like, slower)
     Default,
 }
@@ -70,7 +72,6 @@ impl TestMaterialSpec {
         required_keys.insert(KeyType::SigningKeys);
         required_keys.insert(KeyType::ServerSigningKeys);
         required_keys.insert(KeyType::FheKeys);
-        required_keys.insert(KeyType::PrssSetup);
 
         Self {
             material_type: MaterialType::Testing,
@@ -123,7 +124,8 @@ impl TestMaterialSpec {
     /// Create specification for centralized test with Default parameters
     ///
     /// Uses production-like key sizes (MaterialType::Default).
-    /// **Requires:** Pre-generated default material via `make generate-test-material-all`
+    /// **Requires:** Pre-generated secure material, e.g.
+    /// `generate-test-material --profile secure --parties 4`
     pub fn centralized_default() -> Self {
         let mut spec = Self::centralized_basic();
         spec.material_type = MaterialType::Default;
@@ -133,10 +135,12 @@ impl TestMaterialSpec {
     /// Create specification for threshold test with Default parameters
     ///
     /// Uses production-like key sizes (MaterialType::Default).
-    /// **Requires:** Pre-generated default material via `make generate-test-material-all`
+    /// **Requires:** Pre-generated secure material, e.g.
+    /// `generate-test-material --profile secure --parties 4`
     pub fn threshold_default(party_count: usize) -> Self {
         let mut spec = Self::threshold_basic(party_count);
         spec.material_type = MaterialType::Default;
+        spec.required_keys.insert(KeyType::PrssSetup);
         spec
     }
 
@@ -148,21 +152,6 @@ impl TestMaterialSpec {
     pub fn threshold_default_no_prss(party_count: usize) -> Self {
         let mut spec = Self::threshold_default(party_count);
         spec.required_keys.remove(&KeyType::PrssSetup);
-        spec
-    }
-
-    /// Create specification for production-like testing
-    ///
-    /// **Deprecated:** Use `centralized_default()` or `threshold_default()` instead.
-    pub fn production_like(party_count: Option<usize>) -> Self {
-        let mut spec = if let Some(count) = party_count {
-            Self::threshold_basic(count)
-        } else {
-            Self::centralized_basic()
-        };
-
-        spec.material_type = MaterialType::Default;
-        spec.include_slow_material = true;
         spec
     }
 
@@ -278,8 +267,9 @@ mod tests {
         assert!(spec.is_threshold());
         assert_eq!(spec.party_count(), 4);
         assert!(spec.requires_key_type(KeyType::ClientKeys));
+        assert!(spec.requires_key_type(KeyType::SigningKeys));
         assert!(spec.requires_key_type(KeyType::ServerSigningKeys));
-        assert!(spec.requires_key_type(KeyType::PrssSetup));
+        assert!(!spec.requires_key_type(KeyType::PrssSetup));
     }
 
     #[test]

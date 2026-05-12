@@ -4,27 +4,25 @@
 //! used in the centralized KMS variant.
 
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType, PubDataType},
+    rpc_types::{PrivDataType, PubDataType},
 };
-use tfhe::{
-    integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs,
-};
-use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
-    engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
-    util::meta_store::MetaStore,
+    engine::base::{KeyGenMetadata, KmsFheKeyHandles},
+    util::meta_store::{MetaStore, ensure_meta_store_request_pending},
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id,
+            Storage, StorageExt,
+            crypto_material::{
+                PublicKeySet,
+                base::{StorageError, update_meta_store},
+            },
         },
     },
 };
@@ -61,180 +59,73 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
+    /// Check if the centralized FHE keys exist for a given key and epoch ID.
+    /// The check is agnostic to whether the keys are compressed or not.
+    pub(crate) async fn fhe_keys_exists(
         &self,
-        crs_id: &RequestId,
+        key_id: &RequestId,
         epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+    ) -> Result<bool, StorageError> {
+        self.inner.fhe_keys_exists(key_id, epoch_id, false).await
+    }
+
+    pub(crate) async fn write_fhe_keys(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        central_fhe_keys: KmsFheKeyHandles,
+        fhe_key_set: PublicKeySet,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
+    ) -> Result<(), StorageError> {
+        // First ensure that the meta store request is pending
+        ensure_meta_store_request_pending(&meta_store, key_id)
             .await
-    }
-
-    pub async fn write_decompression_key_with_meta_store(
-        &self,
-        req_id: &RequestId,
-        decompression_key: DecompressionKey,
-        info: KeyGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
-        self.inner
-            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
-            .await
-    }
-
-    /// Write the key materials (result of a keygen) to storage and cache
-    /// for the centralized KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_centralized_keys_with_meta_store(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        key_info: KmsFheKeyHandles,
-        fhe_key_set: FhePubKeySet,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) -> anyhow::Result<()> {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let mut guarded_meta_store = meta_store.write().await;
-
-        // Try to store the new data
-        tracing::info!(
-            "Attempting to store centralized keygen material for key ID {}",
-            key_id
-        );
-
-        let f1 = async {
-            let mut priv_storage = self.inner.private_storage.lock().await;
-            let store_result = store_versioned_at_request_and_epoch_id(
-                &mut (*priv_storage),
+            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
+        let meta_res = central_fhe_keys.public_key_info.clone();
+        let res = self
+            .inner
+            .handle_fhe_keys(
                 key_id,
                 epoch_id,
-                &key_info,
-                &PrivDataType::FhePrivateKey.to_string(),
-            )
-            .await;
-            if let Err(e) = &store_result {
-                tracing::error!(
-                    "Failed to store FHE key info to private storage for request {}: {}",
-                    key_id,
-                    e
-                );
-            }
-            store_result.is_ok()
-        };
-
-        let f2 = async {
-            tracing::info!("Storing public key");
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                &fhe_key_set.public_key,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await;
-            if let Err(e) = &result {
-                tracing::error!("Failed to store public key for request {}: {}", key_id, e);
-            }
-            result.is_ok()
-        };
-
-        let f3 = async {
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                &fhe_key_set.server_key,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await;
-            if let Err(e) = &result {
-                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-            }
-            result.is_ok()
-        };
-
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-        if r1 && r2 && r3 {
-            let meta_update =
-                guarded_meta_store.update(key_id, Ok(key_info.public_key_info.clone()));
-            if meta_update.is_ok() {
-                let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
-                if previous.is_some() {
-                    tracing::warn!(
-                        "FHE keys already exist in cache for {}, overwriting",
-                        key_id
-                    );
-                }
-                tracing::info!(
-                    "Successfully stored centralized keygen material for request {}",
-                    key_id
-                );
-                Ok(())
-            } else {
-                // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something since
-                // it might be because the data did not get created
-                // In any case, we can't do much.
-                self.inner
-                    .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
-                    .await;
-                meta_update.map_err(|e| {
-                    anyhow::anyhow!("Error while updating PK meta store for {key_id}: {e}")
-                })
-            }
-        } else {
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since
-            // it might be because the data did not get created
-            // In any case, we can't do much.
-            self.inner
-                .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
-                .await;
-            anyhow::bail!("Storage write failed for key {key_id}");
-        }
-    }
-
-    /// Write the compressed key materials (result of a compressed keygen) to storage and cache
-    /// for the centralized KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// This is similar to [write_centralized_keys_with_meta_store] but for compressed keys.
-    /// Instead of storing separate public_key and server_key, we store the compressed keyset.
-    pub async fn write_centralized_compressed_keys_with_meta_store(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        key_info: KmsFheKeyHandles,
-        compressed_keyset: &CompressedXofKeySet,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .write_compressed_keys_with_dkg_meta_store(
-                key_id,
-                epoch_id,
-                key_info,
+                central_fhe_keys,
                 PrivDataType::FhePrivateKey,
-                compressed_keyset,
-                meta_store,
+                fhe_key_set,
                 Arc::clone(&self.fhe_keys),
+                true,
+                op_metric_tag,
             )
-            .await
+            .await;
+        let mut guarded_meta_store = meta_store.write().await;
+        update_meta_store(
+            res,
+            key_id,
+            meta_res,
+            &mut guarded_meta_store,
+            op_metric_tag,
+        )
+        .await
+    }
+
+    /// Purge centralized FHE key material from disk **and** from the in-memory
+    /// cache.
+    pub(crate) async fn purge_fhe_keys(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
+        let storage_ok = self
+            .inner
+            .purge_material(
+                req_id,
+                Some(epoch_id),
+                &[
+                    PubDataType::PublicKey,
+                    PubDataType::ServerKey,
+                    PubDataType::CompressedXofKeySet,
+                ],
+                &[PrivDataType::FhePrivateKey],
+            )
+            .await;
+        // Lock-order: cache is acquired after pub/priv have been released.
+        self.fhe_keys.write().await.remove(&(*req_id, *epoch_id));
+        storage_ok
     }
 
     /// Read the key materials for decryption in the centralized case.
@@ -245,49 +136,21 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
-    ) -> anyhow::Result<KmsFheKeyHandles> {
-        match CryptoMaterialStorage::<PubS, PrivS>::read_cloned_private_fhe_material_from_cache(
-            self.fhe_keys.clone(),
+    ) -> anyhow::Result<
+        OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), KmsFheKeyHandles>, KmsFheKeyHandles>,
+    > {
+        // First refresh. If the key is already in the cache then this is cheap
+        self.inner
+            .refresh_fhe_private_material::<KmsFheKeyHandles>(
+                Arc::clone(&self.fhe_keys),
+                req_id,
+                epoch_id,
+            )
+            .await?;
+        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
             epoch_id,
-        )
-        .await
-        {
-            Ok(k) => Ok(k),
-            Err(e) => {
-                tracing::warn!("First attempt to read centralized fhe keys failed: {e}");
-                // No keys in cache -- try to refresh from storage
-                self.refresh_centralized_fhe_keys(req_id, epoch_id).await?;
-                CryptoMaterialStorage::<PubS, PrivS>::read_cloned_private_fhe_material_from_cache(
-                    self.fhe_keys.clone(),
-                    req_id,
-                    epoch_id,
-                )
-                .await
-            }
-        }
-    }
-
-    /// Refresh the key materials for decryption in the centralized case.
-    /// That is, if the key material is not in the cache,
-    /// an attempt is made to read from the storage to update the cache.
-    ///
-    /// The `epoch_id` identifies the epoch that the secret FHE key belongs to.
-    ///
-    /// Developers: try not to interleave calls to [refresh_centralized_fhe_keys]
-    /// with calls to [read_centralized_fhe_keys] on the same tokio task
-    /// since it's easy to deadlock, it's a consequence of RwLocks.
-    /// see https://docs.rs/tokio/latest/tokio/sync/struct.RwLock.html#method.read_owned
-    pub async fn refresh_centralized_fhe_keys(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-    ) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_fhe_private_material::<KmsFheKeyHandles, _>(
-            self.fhe_keys.clone(),
-            req_id,
-            epoch_id,
-            self.inner.private_storage.clone(),
+            Arc::clone(&self.fhe_keys),
         )
         .await
     }

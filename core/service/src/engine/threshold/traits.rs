@@ -1,6 +1,6 @@
 use crate::engine::utils::MetricedError;
 use kms_grpc::kms::v1::*;
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
 pub trait UserDecryptor {
@@ -36,6 +36,9 @@ pub trait KeyGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError>;
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`KeyGenPreprocessor`]
+    async fn abort_key_gen(&self, preproc_id: kms_grpc::RequestId) -> Status;
 }
 
 #[cfg(feature = "insecure")]
@@ -49,6 +52,9 @@ pub trait InsecureKeyGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError>;
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`KeyGenPreprocessor`]
+    async fn abort_key_gen(&self, preproc_id: kms_grpc::RequestId) -> Status;
 }
 
 #[tonic::async_trait]
@@ -68,7 +74,14 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, MetricedError>;
+
     async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError>;
+
+    async fn abort_key_gen_preproc(
+        &self,
+        preproc_id: kms_grpc::RequestId,
+        key_gen_cancel_res: Status,
+    ) -> Result<Response<Empty>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -81,6 +94,10 @@ pub trait CrsGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError>;
+    async fn abort_crs_gen(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<Empty>, MetricedError>;
 }
 
 #[cfg(feature = "insecure")]
@@ -94,4 +111,8 @@ pub trait InsecureCrsGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError>;
+    async fn abort_crs_gen(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<Empty>, MetricedError>;
 }

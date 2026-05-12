@@ -7,8 +7,8 @@
 //! - `ThresholdTestEnv` - builder for threshold KMS test environments
 //!
 //! For examples of how to write isolated tests, see:
-//! - Centralized: `centralized/misc_tests_isolated.rs`
-//! - Threshold: `threshold/misc_tests_isolated.rs`
+//! - Centralized: `centralized/misc_tests.rs`
+//! - Threshold: `threshold/misc_tests.rs`
 
 use crate::testing::prelude::*;
 
@@ -88,7 +88,6 @@ mod tests {
             KeyType::SigningKeys,
             KeyType::ServerSigningKeys,
             KeyType::FheKeys,
-            KeyType::PrssSetup,
         ];
 
         // Test centralized spec
@@ -131,16 +130,5 @@ mod tests {
                 key_type
             );
         }
-    }
-
-    #[test]
-    fn test_material_spec_serialization() {
-        let spec = TestMaterialSpec::threshold_basic(4);
-
-        // Test JSON serialization
-        let json = serde_json::to_string(&spec).unwrap();
-        let deserialized: TestMaterialSpec = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(spec, deserialized);
     }
 }

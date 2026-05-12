@@ -4,10 +4,10 @@
 
 | Test Type | Command |
 |-----------|---------|
-| **Native (fast)** | `cargo test --test integration_test_isolated --features testing` |
-| **Native (threshold preprocessing tests)** | `cargo nextest run --test integration_test_isolated --features threshold_tests` |
-| **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold_isolated --features kind_tests` |
-| **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized_isolated --features kind_tests` |
+| **Native (fast)** | `cargo test --test integration_test --features testing` |
+| **Native (threshold preprocessing tests)** | `cargo nextest run --test integration_test --features threshold_tests` |
+| **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
+| **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
 ## Folder Layout
 
@@ -20,7 +20,7 @@
   - Enables test helper code used by integration tests.
 - `threshold_tests`
   - Implies `testing`.
-  - Enables threshold preprocessing and keygen tests in `tests/integration/integration_test_isolated.rs`.
+  - Enables threshold preprocessing and keygen tests in `tests/integration/integration_test.rs`.
   - Compiles setup helpers that run threshold servers with `ensure_default_prss=true`
     (`setup_isolated_threshold_cli_test_with_prss*`).
   - Enables preprocessing-heavy flows/tests (preproc+keygen, MPC context init/switch,
@@ -36,15 +36,16 @@
 
 - `threshold_tests` enables tests that require pre-generated material: **PRSS** (generated at server startup via `ensure_default_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`).
 - For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
-- Some tests generate PRSS live during the test (via `new_prss_isolated`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
-- Generate all required Default material with `make generate-test-material-default` (or `make generate-test-material-all`).
+- Some tests generate PRSS live during the test (via `new_prss`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
+- Generate the production-like required secure material (aka "default") with:
+  `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13`.
 
 ### Test gating patterns
 
 Two patterns are used — which one to pick depends on whether the test body calls feature-gated helpers:
 
-- **`#[cfg(feature = "threshold_tests")]` on the fn** — use when the test body calls helpers that only exist with the feature (e.g. `setup_*_with_prss`, `real_preproc_and_keygen_isolated`). The test is invisible to `cargo test` without the feature.
-- **`#[cfg_attr(not(feature = "threshold_tests"), ignore)]` on the fn** — use when the test body compiles without the feature (e.g. tests using `setup_isolated_threshold_cli_test_signing_only` + `new_prss_isolated`). The test is visible but skipped without the feature.
+- **`#[cfg(feature = "threshold_tests")]` on the fn** — use when the test body calls helpers that only exist with the feature (e.g. `setup_*_with_prss`, `real_preproc_and_keygen`). The test is invisible to `cargo test` without the feature.
+- **`#[cfg_attr(not(feature = "threshold_tests"), ignore)]` on the fn** — use when the test body compiles without the feature (e.g. tests using `setup_isolated_threshold_cli_test_signing_only` + `new_prss`). The test is visible but skipped without the feature.
 
 ### Test naming conventions (CI skip rules)
 
@@ -81,7 +82,7 @@ The client binary accepts these commands (passed as `CCCommand` in tests via `ex
 
 ## Writing Native Isolated Tests
 
-Native tests spawn KMS servers in-process. See `integration/integration_test_isolated.rs` for full documentation.
+Native tests spawn KMS servers in-process. See `integration/integration_test.rs` for full documentation.
 
 ```rust
 #[tokio::test]
@@ -126,12 +127,12 @@ K8s tests connect to a real kind cluster.
 ```
 
 **Which file to use:**
-- **Threshold tests** → `core-client/tests/kind-testing/kubernetes_test_threshold_isolated.rs`
-- **Centralized tests** → `core-client/tests/kind-testing/kubernetes_test_centralized_isolated.rs`
+- **Threshold tests** → `core-client/tests/kind-testing/kubernetes_test_threshold.rs`
+- **Centralized tests** → `core-client/tests/kind-testing/kubernetes_test_centralized.rs`
 
 ### Writing a K8s test
 
-K8s tests use `K8sTestContext`, a lightweight struct defined at the top of each `kubernetes_test_*_isolated.rs` file. There is no server setup code — the cluster must already be running before the tests start. The current threshold tests cover: basic keygen+CRS, keygen uniqueness, CRS uniqueness, a full end-to-end keygen→encrypt→decrypt round-trip, and a multi-type scenario (encrypt `Ebool` and `Euint8` with the same key).
+K8s tests use `K8sTestContext`, a lightweight struct defined at the top of each `kubernetes_test_*.rs` file. There is no server setup code — the cluster must already be running before the tests start. The current threshold tests cover: basic keygen+CRS, keygen uniqueness, CRS uniqueness, a full end-to-end keygen→encrypt→decrypt round-trip, and a multi-type scenario (encrypt `Ebool` and `Euint8` with the same key).
 
 Test names must start with `k8s_` so that CI can skip them in non-Kind environments via `--skip k8s_`.
 
@@ -170,5 +171,5 @@ async fn k8s_test_keygen_and_crs() {
 
 ## See Also
 
-- `integration/integration_test_isolated.rs` - Native test examples and full documentation
+- `integration/integration_test.rs` - Native test examples and full documentation
 - `.github/workflows/kind-testing.yml` - K8s CI workflow

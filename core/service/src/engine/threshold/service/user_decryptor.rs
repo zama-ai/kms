@@ -229,7 +229,7 @@ impl<
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let decomp_key = keys.get_decompression_key();
+            let decomp_key = keys.decompression_key();
             let low_level_ct = spawn_compute_bound(move || {
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
             })
@@ -249,9 +249,8 @@ impl<
 
                     let pdec = Dec::partial_decrypt(
                         &mut noiseflood_session,
-                        keys.get_integer_server_key(),
-                        keys.get_sns_key()
-                            .ok_or(anyhow::anyhow!("Missing sns key"))?,
+                        keys.integer_server_key(),
+                        keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
                     )
@@ -294,7 +293,7 @@ impl<
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
-                        &keys.get_key_switching_key()?,
+                        &keys.key_switching_key()?,
                     )
                     .await;
 
@@ -535,7 +534,7 @@ impl<
         // but this should be ok since write locks
         // happen rarely as keygen is a rare event.
         let fhe_keys_rlock = crypto_storage
-            .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -672,7 +671,7 @@ mod tests {
         },
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
-        vault::storage::ram,
+        vault::storage::{crypto_material::PublicKeySet, ram},
     };
 
     use super::*;
@@ -777,12 +776,13 @@ mod tests {
 
         user_decryptor
             .crypto_storage
-            .write_threshold_keys_with_dkg_meta_store(
+            .write_fhe_keys(
                 &key_id,
                 &epoch_id,
                 threshold_fhe_keys,
-                fhe_key_set,
+                PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                "",
             )
             .await
             .unwrap_or_else(|_| {
@@ -793,7 +793,7 @@ mod tests {
             // check existence
             let _guard = user_decryptor
                 .crypto_storage
-                .read_guarded_threshold_fhe_keys(&key_id, &epoch_id)
+                .read_guarded_fhe_keys(&key_id, &epoch_id)
                 .await
                 .unwrap();
         }

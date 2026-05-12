@@ -24,7 +24,6 @@ pub struct BitwisePoly {
     coefs: Vec<u8>,
 }
 
-#[cfg(feature = "extension_degree_3")]
 impl From<Poly<super::galois_fields::gf8::GF8>> for BitwisePoly {
     fn from(poly: Poly<super::galois_fields::gf8::GF8>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
@@ -32,7 +31,6 @@ impl From<Poly<super::galois_fields::gf8::GF8>> for BitwisePoly {
     }
 }
 
-#[cfg(feature = "extension_degree_4")]
 impl From<Poly<super::galois_fields::gf16::GF16>> for BitwisePoly {
     fn from(poly: Poly<super::galois_fields::gf16::GF16>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
@@ -40,7 +38,6 @@ impl From<Poly<super::galois_fields::gf16::GF16>> for BitwisePoly {
     }
 }
 
-#[cfg(feature = "extension_degree_5")]
 impl From<Poly<super::galois_fields::gf32::GF32>> for BitwisePoly {
     fn from(poly: Poly<super::galois_fields::gf32::GF32>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
@@ -48,7 +45,6 @@ impl From<Poly<super::galois_fields::gf32::GF32>> for BitwisePoly {
     }
 }
 
-#[cfg(feature = "extension_degree_6")]
 impl From<Poly<super::galois_fields::gf64::GF64>> for BitwisePoly {
     fn from(poly: Poly<super::galois_fields::gf64::GF64>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
@@ -56,7 +52,6 @@ impl From<Poly<super::galois_fields::gf64::GF64>> for BitwisePoly {
     }
 }
 
-#[cfg(feature = "extension_degree_7")]
 impl From<Poly<super::galois_fields::gf128::GF128>> for BitwisePoly {
     fn from(poly: Poly<super::galois_fields::gf128::GF128>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
@@ -64,7 +59,6 @@ impl From<Poly<super::galois_fields::gf128::GF128>> for BitwisePoly {
     }
 }
 
-#[cfg(feature = "extension_degree_8")]
 impl From<Poly<super::galois_fields::gf256::GF256>> for BitwisePoly {
     fn from(poly: Poly<super::galois_fields::gf256::GF256>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
@@ -600,15 +594,27 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
 
 /// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
-    let ls = F::memoize_lagrange(points)?;
-    if ls.len() != values.len() {
+    if let Some(cached) = F::cached_lagrange_polys(points) {
+        lagrange_interpolation_with_polys(cached, values)
+    } else {
+        lagrange_interpolation_with_polys(lagrange_polynomials(points), values)
+    }
+}
+
+/// interpolate a polynomial using pre-computed Lagrange basis polynomials and y-coordinates
+pub fn lagrange_interpolation_with_polys<F: Field>(
+    lagrange_polys: impl AsRef<[Poly<F>]>,
+    values: &[F],
+) -> anyhow::Result<Poly<F>> {
+    let lagrange_polys = lagrange_polys.as_ref();
+    if lagrange_polys.len() != values.len() {
         return Err(anyhow_error_and_log(
             "Lagrange interpolation failure: mismatch between number of points and values"
                 .to_string(),
         ));
     }
     let mut res = Poly::zero();
-    for (li, vi) in ls.into_iter().zip_eq(values.iter()) {
+    for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
         let term = li * vi;
         res = res + term;
     }

@@ -360,17 +360,6 @@ pub(crate) async fn ensure_meta_store_request_pending<T: Clone>(
     Ok(())
 }
 
-#[cfg(feature = "non-wasm")]
-pub(crate) fn should_purge_after_meta_update_failure<T: Clone>(
-    meta_store: &MetaStore<T>,
-    req_id: &RequestId,
-) -> bool {
-    match meta_store.get_cell(req_id) {
-        Some(cell) => !cell.is_set(),
-        None => true,
-    }
-}
-
 /// Helper method for updating the meta store with an error result
 /// The method gracefully handles potential update failures by logging and updating metrics
 /// [req_id] is the request ID to update
@@ -513,11 +502,16 @@ async fn handle_res_metriced_with_timeout<T: Clone>(
                             "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
                         );
                         tracing::warn!(msg);
+                        let code = if e.to_ascii_lowercase().contains("abort") {
+                            tonic::Code::Aborted
+                        } else {
+                            tonic::Code::Internal
+                        };
                         Err(MetricedError::new(
                             metric_scope,
                             Some(*req_id),
                             anyhow!(msg),
-                            tonic::Code::Internal,
+                            code,
                         ))
                     }
                 }

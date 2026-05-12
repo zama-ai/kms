@@ -48,6 +48,20 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
     }
 }
 
+impl VerifiedPublicMaterial {
+    // TODO: is there no better way to find if a particular key exists? we want to avoid the cloning
+    pub(crate) fn has_oprf_key(&self) -> bool {
+        let server_key = match self {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => fhe_pubkeys.server_key.clone(),
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                compressed_keyset.clone().into_raw_parts().2.decompress()
+            }
+        };
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        oprf_key.is_some()
+    }
+}
+
 async fn fetch_context_from_storage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -606,6 +620,7 @@ mod tests {
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
+    use observability::metrics_names::OP_NEW_MPC_CONTEXT;
     use rand::SeedableRng;
     use tfhe::CompactPublicKey;
     use tfhe::ServerKey;
@@ -765,7 +780,7 @@ mod tests {
 
         crypto_storage
             .inner
-            .write_context_info(&context_id, &context_info)
+            .write_context_info(&context_id, &context_info, OP_NEW_MPC_CONTEXT)
             .await
             .unwrap();
 
@@ -1100,7 +1115,7 @@ mod tests {
 
         crypto_storage
             .inner
-            .write_context_info(&context_id, &context_info)
+            .write_context_info(&context_id, &context_info, OP_NEW_MPC_CONTEXT)
             .await
             .unwrap();
 

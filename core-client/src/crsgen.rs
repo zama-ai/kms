@@ -16,6 +16,7 @@ use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::task::JoinSet;
+use tonic::Code;
 use tonic::transport::Channel;
 
 #[allow(clippy::too_many_arguments)]
@@ -33,7 +34,6 @@ pub(crate) async fn do_crsgen(
     destination_prefix: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
-    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -46,12 +46,13 @@ pub(crate) async fn do_crsgen(
 
     let crs_req = internal_client.crs_gen_request(
         &req_id,
-        context_id,
-        epoch_id,
+        context_id.as_ref(),
+        epoch_id.as_ref(),
         max_num_bits,
         Some(param),
         &dummy_domain(),
     )?;
+    let extra_data = crs_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
@@ -64,7 +65,7 @@ pub(crate) async fn do_crsgen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let req_cloned = crs_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -218,13 +219,12 @@ pub(crate) async fn get_crsgen_responses(
 ) -> anyhow::Result<Vec<CrsGenResult>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
+            // Sleep to give the server some time to complete crs generation
             tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
 
             let mut response = if insecure {
@@ -309,7 +309,7 @@ fn check_crsgen_ext_signature(
     crs_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
@@ -321,11 +321,7 @@ fn check_crsgen_ext_signature(
     );
 
     let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(
-        crs_id,
-        max_num_bits,
-        crs_digest, /* TODO: reenable for RFC005 extra_data */
-    );
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest, extra_data);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -338,12 +334,86 @@ fn check_crsgen_ext_signature(
     }
 }
 
+pub(crate) async fn do_abort_crs_gen(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    request_id: RequestId,
+    max_iter: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<Vec<String>> {
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    for ce in core_endpoints.values() {
+        let mut cur_client = ce.clone();
+
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete CRS generation
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = cur_client
+                .abort_crs_gen(tonic::Request::new(request_id.into()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries
+                if ctr >= max_iter {
+                    return Err(Code::Unavailable);
+                }
+                ctr += 1;
+                response = cur_client
+                    .abort_crs_gen(tonic::Request::new(request_id.into()))
+                    .await;
+                tracing::info!("Got response for abort_crs_gen: {:?}", response);
+            }
+            response.map_err(|e| e.code())
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        match resp {
+            Ok(Ok(_)) => {
+                resp_response_vec.push(Code::Ok.description().to_string());
+            }
+            Ok(Err(code)) => {
+                resp_response_vec.push(code.description().to_string());
+            }
+            Err(e) => {
+                tracing::warn!("Join error in abort CRS gen response: {e}");
+            }
+        }
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} abort CRS gen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
+    }
+    Ok(resp_response_vec)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
-        consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
+        consts::{
+            DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM, default_extra_data,
+        },
         cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
@@ -407,19 +477,30 @@ mod tests {
         let max_num_bits = max_num_bits_from_crs(&crs);
         let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs)
             .expect("serialization should succeed");
-        let crs_sol_struct = CrsgenVerification::new(
-            crs_id,
-            max_num_bits,
-            crs_digest, /* TODO: reenable for RFC005 vec![] */
-        );
+        let crs_sol_struct =
+            CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), vec![]);
+        let crs_sol_struct_extra_data =
+            CrsgenVerification::new(crs_id, max_num_bits, crs_digest, default_extra_data());
 
         // sign with EIP712
         let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain)
             .expect("signature computation should succeed");
+        let external_sig_extra_data =
+            compute_eip712_signature(&sk, &crs_sol_struct_extra_data, &domain)
+                .expect("signature computation should succeed");
 
         // check that the signature verifies and unwraps without error
         check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, vec![], &[addr])
             .expect("signature should be valid");
+        check_crsgen_ext_signature(
+            &crs,
+            crs_id,
+            &external_sig_extra_data,
+            &domain,
+            default_extra_data(),
+            &[addr],
+        )
+        .expect("signature should be valid");
 
         // check that verification fails for a wrong address
         let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");

@@ -8,11 +8,9 @@ license.workspace = true
 description = "Types used across crates in 'threshold'"
 
 [dependencies]
-aes-prng.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
 hashing.workspace = true
-rand.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 tfhe-versionable.workspace = true
 zeroize.workspace = true

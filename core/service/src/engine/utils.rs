@@ -1,10 +1,10 @@
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata};
 use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
 use hashing::hash_element;
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
+use kms_grpc::{ContextId, EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
@@ -18,6 +18,53 @@ pub(crate) const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest misma
 pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
     "Compressed xof keyset digest mismatch";
 pub(crate) const ERR_CRS_DIGEST_MISMATCH: &str = "CRS digest mismatch";
+const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
+const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
+
+#[derive(Clone, Copy)]
+enum CurrentPublicMaterialLayout {
+    Standard,
+    Compressed,
+}
+
+fn classify_current_public_material(
+    pub_data_types: &HashSet<PubDataType>,
+) -> anyhow::Result<CurrentPublicMaterialLayout> {
+    let has_public_key = pub_data_types.contains(&PubDataType::PublicKey);
+    let has_server_key = pub_data_types.contains(&PubDataType::ServerKey);
+    let has_compressed_keyset = pub_data_types.contains(&PubDataType::CompressedXofKeySet);
+
+    match (
+        has_public_key,
+        has_server_key,
+        has_compressed_keyset,
+        pub_data_types.len(),
+    ) {
+        (true, true, false, 2) => Ok(CurrentPublicMaterialLayout::Standard),
+        (true, false, true, 2) => Ok(CurrentPublicMaterialLayout::Compressed),
+        _ => anyhow::bail!(
+            "{ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE}: expected either \
+             {{PublicKey, ServerKey}} or {{PublicKey, CompressedXofKeySet}}, got {:?}",
+            pub_data_types
+        ),
+    }
+}
+
+fn validate_legacy_public_material_shape(
+    pub_data_types: &HashSet<PubDataType>,
+) -> anyhow::Result<()> {
+    let has_public_key = pub_data_types.contains(&PubDataType::PublicKey);
+    let has_server_key = pub_data_types.contains(&PubDataType::ServerKey);
+
+    if has_public_key && has_server_key && pub_data_types.len() == 2 {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "{ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE}: expected exactly {{PublicKey, ServerKey}}, got {:?}",
+        pub_data_types
+    );
+}
 
 /// Verify key digests using raw bytes from storage.
 /// This avoids re-serializing the keys, which would produce different bytes
@@ -38,6 +85,20 @@ pub(crate) fn verify_key_digest_from_bytes(
         anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
     }
 
+    Ok(())
+}
+
+/// Verify a standalone public key digest using raw bytes from storage.
+/// This avoids re-serializing the key, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+pub(crate) fn verify_public_key_digest_from_bytes(
+    public_key_bytes: &[u8],
+    expected_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
+    if actual_digest != expected_digest {
+        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
+    }
     Ok(())
 }
 
@@ -76,43 +137,55 @@ async fn verify_digests<S: StorageReader + Sync>(
     id: &RequestId,
     key_digest_map: &HashMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<()> {
-    if key_digest_map.contains_key(&PubDataType::PublicKey) {
-        let public_key_bytes = storage
-            .load_bytes(id, &PubDataType::PublicKey.to_string())
-            .await?;
-        let server_key_bytes = storage
-            .load_bytes(id, &PubDataType::ServerKey.to_string())
-            .await?;
+    let pub_data_types: HashSet<_> = key_digest_map.keys().cloned().collect();
+    match classify_current_public_material(&pub_data_types)? {
+        CurrentPublicMaterialLayout::Standard => {
+            let public_key_bytes = storage
+                .load_bytes(id, &PubDataType::PublicKey.to_string())
+                .await?;
+            // TODO(dp): this is potentially enormous. Figure out why we're doing this and if we can stop. Is `verify_digests` called from production code? Loading gigabytes of data
+            // and then hashing it is silly for tests. Let the tests fail instead.
+            let server_key_bytes = storage
+                .load_bytes(id, &PubDataType::ServerKey.to_string())
+                .await?;
 
-        let expected_server_key_digest = key_digest_map
-            .get(&PubDataType::ServerKey)
-            .ok_or_else(|| anyhow::anyhow!("missing digest for server key, id={id}"))?;
-        let expected_public_key_digest = key_digest_map
-            .get(&PubDataType::PublicKey)
-            .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
+            let expected_server_key_digest = key_digest_map
+                .get(&PubDataType::ServerKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for server key, id={id}"))?;
+            let expected_public_key_digest = key_digest_map
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
 
-        verify_key_digest_from_bytes(
-            &server_key_bytes,
-            &public_key_bytes,
-            expected_server_key_digest,
-            expected_public_key_digest,
-        )
-    } else if key_digest_map.contains_key(&PubDataType::CompressedXofKeySet) {
-        let compressed_keyset_bytes = storage
-            .load_bytes(id, &PubDataType::CompressedXofKeySet.to_string())
-            .await?;
+            verify_key_digest_from_bytes(
+                &server_key_bytes,
+                &public_key_bytes,
+                expected_server_key_digest,
+                expected_public_key_digest,
+            )
+        }
+        CurrentPublicMaterialLayout::Compressed => {
+            let public_key_bytes = storage
+                .load_bytes(id, &PubDataType::PublicKey.to_string())
+                .await?;
+            let compressed_keyset_bytes = storage
+                .load_bytes(id, &PubDataType::CompressedXofKeySet.to_string())
+                .await?;
 
-        let expected_digest = key_digest_map
-            .get(&PubDataType::CompressedXofKeySet)
-            .ok_or_else(|| anyhow::anyhow!("missing digest for compressed xof keyset, id={id}"))?;
+            let expected_public_key_digest = key_digest_map
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
+            let expected_compressed_keyset_digest = key_digest_map
+                .get(&PubDataType::CompressedXofKeySet)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("missing digest for compressed xof keyset, id={id}")
+                })?;
 
-        verify_compressed_key_digest_from_bytes(&compressed_keyset_bytes, expected_digest)
-    } else {
-        anyhow::bail!(
-            "Inconsistent storage state for id={id}: pub data types {:?} \
-             contains neither PublicKey nor CompressedXofKeySet",
-            key_digest_map.keys().collect::<Vec<_>>()
-        );
+            verify_public_key_digest_from_bytes(&public_key_bytes, expected_public_key_digest)?;
+            verify_compressed_key_digest_from_bytes(
+                &compressed_keyset_bytes,
+                expected_compressed_keyset_digest,
+            )
+        }
     }
 }
 
@@ -123,33 +196,21 @@ async fn check_readability<S: StorageReader + Sync>(
     id: &RequestId,
     pub_data_types: &HashSet<PubDataType>,
 ) -> anyhow::Result<()> {
-    if pub_data_types.contains(&PubDataType::PublicKey) {
-        read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
-            storage,
-            id,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await?;
-        read_versioned_at_request_id::<_, tfhe::ServerKey>(
-            storage,
-            id,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await?;
-    } else if pub_data_types.contains(&PubDataType::CompressedXofKeySet) {
-        read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-            storage,
-            id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await?;
-    } else {
-        anyhow::bail!(
-            "Inconsistent storage state for id={id}: pub data types {:?} \
-             contains neither PublicKey nor CompressedXofKeySet",
-            pub_data_types
-        );
-    }
+    validate_legacy_public_material_shape(pub_data_types)?;
+
+    read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
+        storage,
+        id,
+        &PubDataType::PublicKey.to_string(),
+    )
+    .await?;
+    read_versioned_at_request_id::<_, tfhe::ServerKey>(
+        storage,
+        id,
+        &PubDataType::ServerKey.to_string(),
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -294,6 +355,140 @@ where
         preprocessing_ids,
         storage_info,
     })
+}
+
+/// Highest `extra_data` version understood by [`make_extra_data`].
+/// Must stay in sync with `sanity_check_extra_data` in `engine::utils`.
+pub const MAX_EXTRA_DATA_VERSION: u8 = 2;
+
+/// Build an `extra_data` payload for a gRPC request, matching the format the KMS core expects
+/// (see `sanity_check_extra_data` in `engine::utils`). Layout:
+/// - byte 0: version
+/// - v0: no extra bytes
+/// - v1: 32 bytes of context_id
+/// - v2: 32 bytes of context_id followed by 32 bytes of epoch_id
+///
+/// Errors when `version` is above [`MAX_EXTRA_DATA_VERSION`], when v1 is requested without a
+/// `context_id`, or when v2 is requested without both a `context_id` and an `epoch_id`.
+///
+/// NOTE: This method should only be used in testing and CLIs. The KMS should always read `extra_data` verbatim from a request
+/// in order to ensure forward compatibility with the contracts. This method is only for convenience to construct `extra_data`
+/// in the expected format for tests and CLIs.
+pub fn make_extra_data(
+    version: u8,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
+) -> anyhow::Result<Vec<u8>> {
+    let mut extra_data = vec![version];
+    match version {
+        0 => {
+            // no extra data
+        }
+        1 => {
+            let ctx = context_id.ok_or_else(|| {
+                anyhow::anyhow!("make_extra_data: version 1 requires a context_id")
+            })?;
+            extra_data.extend_from_slice(ctx.as_bytes());
+        }
+        2 => {
+            let ctx = context_id.ok_or_else(|| {
+                anyhow::anyhow!("make_extra_data: version 2 requires a context_id")
+            })?;
+            let ep = epoch_id.ok_or_else(|| {
+                anyhow::anyhow!("make_extra_data: version 2 requires an epoch_id")
+            })?;
+            extra_data.extend_from_slice(ctx.as_bytes());
+            extra_data.extend_from_slice(ep.as_bytes());
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "make_extra_data: unknown version {version}, highest supported is {MAX_EXTRA_DATA_VERSION}"
+            ));
+        }
+    }
+    Ok(extra_data)
+}
+
+/// Helper method to sanity check the content of the extra data field.
+///
+/// This method will never fail, but only print a warning if the content is not as expected.
+/// This is to ensure forward compatibility in case of the structure change on the sdk side.
+pub fn sanity_check_extra_data(extra_data: &[u8], epoch_id: &EpochId, context_id: &ContextId) {
+    if let Some(warning) = sanity_check_extra_data_helper(extra_data, epoch_id, context_id) {
+        tracing::warn!("{}", warning);
+    }
+}
+
+/// Helper method to return an Option<String> containing a warning message if the extra data is not in the expected format.
+/// WARNING: As per design the KMS is supposed to be agnostic to the extra_data content for forward
+/// compatibility reasons. Hence malformed extra_data will not cause a failure but only a warning logs.
+fn sanity_check_extra_data_helper(
+    extra_data: &[u8],
+    epoch_id: &EpochId,
+    context_id: &ContextId,
+) -> Option<String> {
+    if extra_data.is_empty() {
+        // Empty input is allowed and treated as version 0 (no extra data)
+        return None;
+    }
+    let version = extra_data[0];
+    match version {
+        0 => {
+            if extra_data.len() != 1 {
+                return Some(format!(
+                    "Unexpected extra data length for version 0: {}, expected 1 byte for version",
+                    extra_data.len()
+                ));
+            }
+        }
+        1 => {
+            if extra_data.len() != 1 + 32 {
+                return Some(format!(
+                    "Unexpected extra data length for version 1: {}, expected 33 bytes (1 byte for version and 32 bytes for context ID)",
+                    extra_data.len()
+                ));
+            }
+            if &extra_data[1..33] != context_id.as_bytes() {
+                return Some(format!(
+                    "Context ID in extra data does not match expected context ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[1..33]),
+                    context_id
+                ));
+            }
+        }
+        2 => {
+            if extra_data.len() != 1 + 32 + 32 {
+                return Some(format!(
+                    "Unexpected extra data length for version 2: {}, expected 65 bytes (1 byte for version and 32 bytes for context ID and 32 bytes for epoch ID)",
+                    extra_data.len()
+                ));
+            }
+            if &extra_data[1..33] != context_id.as_bytes() {
+                return Some(format!(
+                    "Context ID in extra data does not match expected context ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[1..33]),
+                    context_id
+                ));
+            }
+            if &extra_data[33..65] != epoch_id.as_bytes() {
+                return Some(format!(
+                    "Epoch ID in extra data does not match expected epoch ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[33..65]),
+                    epoch_id
+                ));
+            }
+        }
+        _ => {
+            return Some(format!(
+                "Unknown extra data version: {}. Highest version understood is {MAX_EXTRA_DATA_VERSION}",
+                version
+            ));
+        }
+    }
+    None
 }
 
 /// MetricedError wraps an internal error with additional context for metrics and logging.
@@ -454,9 +649,9 @@ mod tests {
     use crate::engine::base::{KeyGenMetadataInner, safe_serialize_hash_element_versioned};
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::store_versioned_at_request_id;
+    use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
     use rand::SeedableRng;
     use std::collections::HashMap;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
@@ -513,23 +708,63 @@ mod tests {
         assert!(status.message().contains("test_no_drop"));
     }
 
+    #[derive(Clone)]
+    struct TestStoredMaterial {
+        key_id: RequestId,
+        preproc_id: RequestId,
+        key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    }
+
+    impl TestStoredMaterial {
+        fn current_metadata(&self) -> KeyGenMetadata {
+            KeyGenMetadata::Current(KeyGenMetadataInner {
+                key_id: self.key_id,
+                preprocessing_id: self.preproc_id,
+                key_digest_map: self.key_digest_map.clone(),
+                external_signature: vec![],
+                extra_data: None,
+            })
+        }
+
+        fn legacy_standard_metadata(&self) -> KeyGenMetadata {
+            KeyGenMetadata::LegacyV0(HashMap::from_iter([
+                (
+                    PubDataType::PublicKey,
+                    SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+                ),
+                (
+                    PubDataType::ServerKey,
+                    SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+                ),
+            ]))
+        }
+
+        fn current_metadata_with_types(&self, pub_data_types: &[PubDataType]) -> KeyGenMetadata {
+            let key_digest_map = pub_data_types
+                .iter()
+                .filter_map(|data_type| {
+                    self.key_digest_map
+                        .get(data_type)
+                        .cloned()
+                        .map(|digest| (*data_type, digest))
+                })
+                .collect();
+            KeyGenMetadata::Current(KeyGenMetadataInner {
+                key_id: self.key_id,
+                preprocessing_id: self.preproc_id,
+                key_digest_map,
+                external_signature: vec![],
+                extra_data: None,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn sanity_check_current_standard_keys_valid_digests() {
-        let mut rng = AesRng::seed_from_u64(69);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 69).await;
 
-        let digests = setup_standard_keys(&mut storage, &key_id).await;
-
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
-
-        let entries = vec![(key_id, metadata)];
+        let entries = vec![(material.key_id, material.current_metadata())];
         sanity_check_public_materials(&storage, &entries)
             .await
             .expect("valid digests should pass");
@@ -537,25 +772,13 @@ mod tests {
 
     #[tokio::test]
     async fn sanity_check_current_standard_keys_invalid_digest() {
-        let mut rng = AesRng::seed_from_u64(69);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-
-        let mut digests = setup_standard_keys(&mut storage, &key_id).await;
-        // Corrupt the server key digest
-        if let Some(digest) = digests.get_mut(&PubDataType::ServerKey) {
+        let mut material = setup_standard_keys(&mut storage, 70).await;
+        if let Some(digest) = material.key_digest_map.get_mut(&PubDataType::ServerKey) {
             digest[0] ^= 0xFF;
         }
 
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
-
-        let entries = vec![(key_id, metadata)];
+        let entries = vec![(material.key_id, material.current_metadata())];
         let err = sanity_check_public_materials(&storage, &entries)
             .await
             .unwrap_err();
@@ -567,47 +790,45 @@ mod tests {
 
     #[tokio::test]
     async fn sanity_check_current_compressed_keys_valid_digests() {
-        let mut rng = AesRng::seed_from_u64(44);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 44).await;
 
-        let digests = setup_compressed_keys(&mut storage, &key_id).await;
-
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
-
-        let entries = vec![(key_id, metadata)];
+        let entries = vec![(material.key_id, material.current_metadata())];
         sanity_check_public_materials(&storage, &entries)
             .await
             .expect("valid digests should pass");
     }
 
     #[tokio::test]
-    async fn sanity_check_current_compressed_keys_invalid_digest() {
-        let mut rng = AesRng::seed_from_u64(45);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
+    async fn sanity_check_current_compressed_keys_invalid_public_key_digest() {
         let mut storage = RamStorage::new();
-
-        let mut digests = setup_compressed_keys(&mut storage, &key_id).await;
-        // Corrupt the digest
-        if let Some(digest) = digests.get_mut(&PubDataType::CompressedXofKeySet) {
+        let mut material = setup_compressed_keys(&mut storage, 45).await;
+        if let Some(digest) = material.key_digest_map.get_mut(&PubDataType::PublicKey) {
             digest[0] ^= 0xFF;
         }
 
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
+        let entries = vec![(material.key_id, material.current_metadata())];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH),
+            "expected public key digest mismatch, got: {err}"
+        );
+    }
 
-        let entries = vec![(key_id, metadata)];
+    #[tokio::test]
+    async fn sanity_check_current_compressed_keys_invalid_compressed_keyset_digest() {
+        let mut storage = RamStorage::new();
+        let mut material = setup_compressed_keys(&mut storage, 46).await;
+        if let Some(digest) = material
+            .key_digest_map
+            .get_mut(&PubDataType::CompressedXofKeySet)
+        {
+            digest[0] ^= 0xFF;
+        }
+
+        let entries = vec![(material.key_id, material.current_metadata())];
         let err = sanity_check_public_materials(&storage, &entries)
             .await
             .unwrap_err();
@@ -619,32 +840,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sanity_check_legacy_metadata_readability_only() {
-        let mut rng = AesRng::seed_from_u64(46);
-        let key_id = RequestId::new_random(&mut rng);
+    async fn sanity_check_current_compressed_keys_missing_public_key_fails() {
         let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 47).await;
+        delete_data(&mut storage, &material.key_id, PubDataType::PublicKey).await;
 
-        // Set up standard keys (we won't use the digests — legacy has no digest info)
-        let _digests = setup_standard_keys(&mut storage, &key_id).await;
+        let entries = vec![(material.key_id, material.current_metadata())];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&PubDataType::PublicKey.to_string()),
+            "expected missing public key error, got: {err}"
+        );
+    }
 
-        // Create legacy metadata with empty handles — we just need the keys present
-        use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-        let legacy_map: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::from_iter([
+    #[tokio::test]
+    async fn sanity_check_current_compressed_keyset_without_public_key_fails_as_inconsistent() {
+        let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 48).await;
+        let metadata = material.current_metadata_with_types(&[PubDataType::CompressedXofKeySet]);
+
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE),
+            "expected invalid current shape error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_standard_metadata_readability_only() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 49).await;
+
+        let entries = vec![(material.key_id, material.legacy_standard_metadata())];
+        sanity_check_public_materials(&storage, &entries)
+            .await
+            .expect("legacy readability check should pass");
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_metadata_with_compressed_keyset_fails() {
+        let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 50).await;
+        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([
             (
                 PubDataType::PublicKey,
                 SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
             ),
             (
-                PubDataType::ServerKey,
+                PubDataType::CompressedXofKeySet,
                 SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
             ),
-        ]);
-        let metadata = KeyGenMetadata::LegacyV0(legacy_map);
+        ]));
 
-        let entries = vec![(key_id, metadata)];
-        sanity_check_public_materials(&storage, &entries)
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
             .await
-            .expect("legacy readability check should pass");
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+            "expected invalid legacy shape error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_metadata_with_only_public_key_fails() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 51).await;
+        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([(
+            PubDataType::PublicKey,
+            SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+        )]));
+
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+            "expected invalid legacy shape error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_metadata_with_only_server_key_fails() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 52).await;
+        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([(
+            PubDataType::ServerKey,
+            SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+        )]));
+
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+            "expected invalid legacy shape error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -659,6 +962,7 @@ mod tests {
             crs_id,
             crs_digest: digest,
             max_num_bits: 64,
+            extra_data: None,
             external_signature: vec![],
         });
 
@@ -682,6 +986,7 @@ mod tests {
             crs_id,
             crs_digest: digest,
             max_num_bits: 64,
+            extra_data: None,
             external_signature: vec![],
         });
 
@@ -714,10 +1019,228 @@ mod tests {
             .expect("legacy CRS readability check should pass");
     }
 
-    async fn setup_standard_keys(
-        storage: &mut RamStorage,
-        key_id: &RequestId,
-    ) -> HashMap<PubDataType, Vec<u8>> {
+    #[test]
+    fn sanity_check_extra_data_version_0_valid() {
+        let epoch_id = EpochId::from_bytes([0x11; 32]);
+        let context_id = ContextId::from_bytes([0x22; 32]);
+
+        let extra_data = [0u8; 1];
+
+        assert!(
+            sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
+            "well-formed version 0 payload should not produce a warning"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_0_wrong_length() {
+        let epoch_id = EpochId::from_bytes([0x11; 32]);
+        let context_id = ContextId::from_bytes([0x22; 32]);
+
+        let extra_data = vec![0u8, 0xAB];
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("long v0 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 0: 2"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_1_valid() {
+        let epoch_id = EpochId::from_bytes([0x11; 32]);
+        let context_id = ContextId::from_bytes([0x22; 32]);
+
+        let mut extra_data = [0u8; 33];
+        extra_data[0] = 1;
+        extra_data[1..33].copy_from_slice(context_id.as_bytes());
+
+        assert!(
+            sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
+            "well-formed version 1 payload should not produce a warning"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_valid() {
+        let epoch_id = EpochId::from_bytes([0x33; 32]);
+        let context_id = ContextId::from_bytes([0x44; 32]);
+
+        let mut extra_data = [0u8; 65];
+        extra_data[0] = 2;
+        extra_data[1..33].copy_from_slice(context_id.as_bytes());
+        extra_data[33..65].copy_from_slice(epoch_id.as_bytes());
+
+        assert!(
+            sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
+            "well-formed version 2 payload should not produce a warning"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_empty() {
+        let epoch_id = EpochId::from_bytes([0x00; 32]);
+        let context_id = ContextId::from_bytes([0x00; 32]);
+
+        assert!(sanity_check_extra_data_helper(&[], &epoch_id, &context_id).is_none());
+    }
+
+    #[test]
+    fn sanity_check_extra_data_unknown_version() {
+        let epoch_id = EpochId::from_bytes([0x55; 32]);
+        let context_id = ContextId::from_bytes([0x66; 32]);
+
+        let extra_data = vec![99u8, 0, 0, 0];
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("unknown version should produce a warning");
+        assert!(
+            warning.contains("Unknown extra data version: 99"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_1_wrong_length() {
+        let epoch_id = EpochId::from_bytes([0x77; 32]);
+        let context_id = ContextId::from_bytes([0x88; 32]);
+
+        // Too short — guard prevents an out-of-bounds slice.
+        let short = vec![1u8, 0, 0, 0];
+        let warning = sanity_check_extra_data_helper(&short, &epoch_id, &context_id)
+            .expect("short v1 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 1: 4"),
+            "unexpected warning: {warning}"
+        );
+
+        // Too long for version 1.
+        let mut long = [0u8; 34];
+        long[0] = 1;
+        long[1..33].copy_from_slice(context_id.as_bytes());
+        long[33] = 0xAB;
+        let warning = sanity_check_extra_data_helper(&long, &epoch_id, &context_id)
+            .expect("long v1 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 1: 34"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_1_context_mismatch() {
+        let epoch_id = EpochId::from_bytes([0x01; 32]);
+        let context_id = ContextId::from_bytes([0x02; 32]);
+        let other_context = ContextId::from_bytes([0xAA; 32]);
+
+        let mut extra_data = [0u8; 33];
+        extra_data[0] = 1;
+        extra_data[1..33].copy_from_slice(other_context.as_bytes());
+
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("mismatched context should produce a warning");
+        assert!(
+            warning.contains("Context ID in extra data does not match expected context ID"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            warning.contains(&hex::encode(other_context.as_bytes())),
+            "warning should include the received (other) context hex: {warning}"
+        );
+        assert!(
+            warning.contains(&context_id.to_string()),
+            "warning should include the expected context id: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_wrong_length() {
+        let epoch_id = EpochId::from_bytes([0x03; 32]);
+        let context_id = ContextId::from_bytes([0x04; 32]);
+
+        // Length 33 (valid for v1) is not valid for v2.
+        let mut short = [0u8; 33];
+        short[0] = 2;
+        short[1..33].copy_from_slice(context_id.as_bytes());
+        let warning = sanity_check_extra_data_helper(&short, &epoch_id, &context_id)
+            .expect("short v2 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 2: 33"),
+            "unexpected warning: {warning}"
+        );
+
+        // Too long for version 2.
+        let mut long = [0u8; 66];
+        long[0] = 2;
+        long[1..33].copy_from_slice(context_id.as_bytes());
+        long[33..65].copy_from_slice(epoch_id.as_bytes());
+        long[65] = 0xAB;
+
+        let warning = sanity_check_extra_data_helper(&long, &epoch_id, &context_id)
+            .expect("long v2 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 2: 66"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_epoch_mismatch() {
+        let epoch_id = EpochId::from_bytes([0x05; 32]);
+        let context_id = ContextId::from_bytes([0x06; 32]);
+        let other_epoch = EpochId::from_bytes([0xBB; 32]);
+
+        let mut extra_data = [0u8; 65];
+        extra_data[0] = 2;
+        extra_data[1..33].copy_from_slice(context_id.as_bytes());
+        extra_data[33..65].copy_from_slice(other_epoch.as_bytes());
+
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("mismatched epoch should produce a warning");
+        assert!(
+            warning.contains("Epoch ID in extra data does not match expected epoch ID"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            warning.contains(&hex::encode(other_epoch.as_bytes())),
+            "warning should include the received (other) epoch hex: {warning}"
+        );
+        assert!(
+            warning.contains(&epoch_id.to_string()),
+            "warning should include the expected epoch id: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_context_mismatch() {
+        let epoch_id = EpochId::from_bytes([0x07; 32]);
+        let context_id = ContextId::from_bytes([0x08; 32]);
+        let other_context = ContextId::from_bytes([0xCC; 32]);
+
+        let mut extra_data = [0u8; 65];
+        extra_data[0] = 2;
+        extra_data[1..33].copy_from_slice(other_context.as_bytes());
+        extra_data[33..65].copy_from_slice(epoch_id.as_bytes());
+
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("mismatched context should produce a warning");
+        assert!(
+            warning.contains("Context ID in extra data does not match expected context ID"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            warning.contains(&hex::encode(other_context.as_bytes())),
+            "warning should include the received (other) context hex: {warning}"
+        );
+        assert!(
+            warning.contains(&context_id.to_string()),
+            "warning should include the expected context id: {warning}"
+        );
+    }
+
+    async fn setup_standard_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
         let pbs_params: ClassicPBSParameters = params
             .get_params_basics_handle()
@@ -740,7 +1263,7 @@ mod tests {
 
         store_versioned_at_request_id(
             storage,
-            key_id,
+            &key_id,
             &public_key,
             &PubDataType::PublicKey.to_string(),
         )
@@ -749,23 +1272,27 @@ mod tests {
 
         store_versioned_at_request_id(
             storage,
-            key_id,
+            &key_id,
             &server_key,
             &PubDataType::ServerKey.to_string(),
         )
         .await
         .unwrap();
 
-        HashMap::from_iter([
-            (PubDataType::ServerKey, server_key_digest),
-            (PubDataType::PublicKey, public_key_digest),
-        ])
+        TestStoredMaterial {
+            key_id,
+            preproc_id,
+            key_digest_map: HashMap::from_iter([
+                (PubDataType::ServerKey, server_key_digest),
+                (PubDataType::PublicKey, public_key_digest),
+            ]),
+        }
     }
 
-    async fn setup_compressed_keys(
-        storage: &mut RamStorage,
-        key_id: &RequestId,
-    ) -> HashMap<PubDataType, Vec<u8>> {
+    async fn setup_compressed_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
         let max_norm_hwt = params
@@ -784,23 +1311,56 @@ mod tests {
             tag,
         )
         .unwrap();
+        let compact_public_key = compressed_keyset
+            .clone()
+            .decompress()
+            .unwrap()
+            .into_raw_parts()
+            .0;
 
-        let digest = safe_serialize_hash_element_versioned(
+        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
             &crate::engine::base::DSEP_PUBDATA_KEY,
             &compressed_keyset,
+        )
+        .unwrap();
+        let public_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &compact_public_key,
         )
         .unwrap();
 
         store_versioned_at_request_id(
             storage,
-            key_id,
+            &key_id,
             &compressed_keyset,
             &PubDataType::CompressedXofKeySet.to_string(),
         )
         .await
         .unwrap();
 
-        HashMap::from_iter([(PubDataType::CompressedXofKeySet, digest)])
+        store_versioned_at_request_id(
+            storage,
+            &key_id,
+            &compact_public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        TestStoredMaterial {
+            key_id,
+            preproc_id,
+            key_digest_map: HashMap::from_iter([
+                (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+                (PubDataType::PublicKey, public_key_digest),
+            ]),
+        }
+    }
+
+    async fn delete_data(storage: &mut RamStorage, key_id: &RequestId, data_type: PubDataType) {
+        delete_at_request_id(storage, key_id, &data_type.to_string())
+            .await
+            .unwrap();
     }
 
     async fn setup_crs(
@@ -826,7 +1386,7 @@ mod tests {
 
         let digest = match &metadata {
             CrsGenMetadata::Current(inner) => inner.crs_digest.clone(),
-            _ => panic!("expected Current metadata"),
+            _ => panic!("expected Current metadata, instead got {:?}", metadata),
         };
 
         store_versioned_at_request_id(storage, crs_id, &crs, &PubDataType::CRS.to_string())
