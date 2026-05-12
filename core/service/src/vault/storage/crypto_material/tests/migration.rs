@@ -642,7 +642,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     let bad_fhe_keys = ThresholdFheKeys::new(
         old_fhe_keys.private_keys.clone(),
         PublicKeyMaterial::new(compressed_keyset.clone()),
-        KeyGenMetadata::new(new_key_id, prep_id, HashMap::new(), vec![], vec![]),
+        KeyGenMetadata::new(new_key_id, prep_id, BTreeMap::new(), vec![], vec![]),
     );
     store_migrated_compressed_material(
         &crypto_storage,
