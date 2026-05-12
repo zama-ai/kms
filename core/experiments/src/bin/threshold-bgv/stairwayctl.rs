@@ -132,11 +132,11 @@ struct ThresholdDecryptFromFileArgs {
     #[clap(long = "sid")]
     session_id: Option<u128>,
 
-    /// Number of Ciphertexts to decrypt per session (Note the provided ctxt will be copied this many times on server side)
+    /// Number of Ciphertexts to decrypt per session (Note the provided ctxt will be copied this many times on the server side)
     #[clap(long = "num-ctxt-per-session")]
     num_ctxt_per_session: u128,
 
-    /// Number of session to spawn in parallel (Note the provided ctxt will be copied for each session on client side)
+    /// Number of sessions to spawn in parallel (Note the provided ctxt will be copied for each session on the client side)
     #[clap(long = "num-parallel-sessions")]
     num_parallel_sessions: u128,
 
@@ -157,7 +157,7 @@ struct ThresholdDecryptArgs {
     #[clap(long = "num-ctxt-per-session")]
     num_ctxt_per_session: u128,
 
-    /// Number of session to spawn in parallel
+    /// Number of sessions to spawn in parallel
     #[clap(long = "num-parallel-sessions")]
     num_parallel_sessions: u128,
 

@@ -18,7 +18,7 @@ set of `core/threshold-*` crates:
 The protocols are designed to be both secure and robust when a fraction of the
 parties are malicious.
 
-The crate at `core/experiments` (previously `core/threshold`) is **not** a
+The crate at `core/experiments` is **not** a
 production crate: it is the testing/benchmarking harness that wires the
 `threshold-*` crates together, ships the MPC party and choreographer binaries
 used to drive end-to-end runs, and contains the benchmark suite. This page
@@ -105,15 +105,12 @@ Two helper binaries also live next to them:
 
 ### Feature flags
 
-Unlike the old `threshold` crate, building `experiments` does not require
-selecting between BGV and TFHE through a feature flag — both `moby` and
-`stairway` are always produced. The relevant features now are:
+The relevant features re:
 
 - `extension_degree_3` … `extension_degree_8`: pick the algebraic extension
   degree used by the threshold computation. Default is `extension_degree_4`.
 - `measure_memory`: enables the `peak_alloc` global allocator inside the
   parties, used by the memory benchmarks. Pair this with the
-  `tfhe-docker-image-degree-N-mem` images when running memory benches.
 - `templating`: only needed when running `gen-experiment` (and reused for
   `threshold-gen-tls-certs` so the binary doesn't get rebuilt with a
   different feature set).
@@ -148,7 +145,7 @@ The BGV image is built with:
 cargo make bgv-docker-image
 ```
 
-`BFV` is very similar to `BGV` as it is possible to convert between the two, so we do not provide a separate build.
+`BFV` is very similar to `BGV` and it is possible to convert between the two, so we do not provide a separate build.
 
 ### Choreographer
 
@@ -251,9 +248,9 @@ cluster using the generated `.toml`:
 ./mobygo -c temp/tfhe-bench-run-4p.toml my-command
 ```
 
-Once done, shut the cluster down. The Makefile no longer provides a generic
-`stop-parties` target — use the `shutdown` task (which also archives logs and
-telemetry under `temp/`):
+Once done, shut down the cluster. The Makefile provides a
+`shutdown` task to stop all relevant containers
+(and also archives logs and telemetry under `temp/`):
 
 ```sh
 cargo make --env EXPERIMENT_NAME=tfhe-bench-run-4p shutdown
@@ -329,30 +326,6 @@ running experiments, all telemetry data are exported to
 [jaeger](http://localhost:16686) as well as locally exported in an
 opentelemetry json file in `temp/telemetry`.
 
-
-### Simulating Docker Network Setting
-
-To simulate a certain network connection on all containers run the following (replace `wan.sh` with the desired network below):
-
-```sh
-# configure network on all running containers
-./docker/scripts/runinallcontainers.sh ./scripts/wan.sh
-# verify that ping latency has changed as desired
-docker exec temp-p1-1 ping temp-p2-1
-```
-
-The following networks are simulated using `tc`:
-
-| Network Config  | Script | Latency | Bandwidth |
-| --- | --- | --- | --- |
-| None  | `off.sh`  | none  | no limit  |
-| WAN  | `wan.sh`  | 50 ms  | 100 Mbit/s  |
-| 1 Gbps LAN  | `lan1.sh`  | 0.5 ms  | 1 Gbit/s  |
-| 10 Gbps LAN  | `lan10.sh`  | 0.5 ms  | 10 Gbit/s  |
-
-Note that ping RTT will be 2x the latency from the table, when the network config is set on all nodes.
-Additionally, the docker image uses a non-root user,
-for tc to work, root user must be used and this must be manually changed in the `local.dockerfile`.
 
 ## Profiling
 
