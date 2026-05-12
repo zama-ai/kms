@@ -296,20 +296,6 @@ tracing:
   endpoint: "http://otel-deployment-opentelemetry-collector.observability.svc.cluster.local:4317"
   otlp_timeout_ms: 10000
 
-
-# Minio: If we want to use local s3 storage, we can use Minio
-# i.e: by deploying Minio operator: https://docs.min.io/community/minio-object-store/operations/deployments/k8s-deploy-operator-helm-on-kubernetes.html?ref=github
-# or Minio chart community maintained: https://github.com/minio/minio/tree/master/helm/minio
-#
-minio:
-  enabled: false
-  # If enabled, the minio endpoint will be used to store the keys. Example: http://minio:9000
-  endpoint:
-  # If enabled, the minio username will be used to store the keys
-  username:
-  # If enabled, the minio password will be used to store the keys
-  password:
-
 rustLog: info
 
 # Add pod annotations to the kms-core

@@ -15,14 +15,3 @@ To pull and install the OCI Helm chart from hub.zama.ai:
 
     helm registry login hub.zama.ai
     helm install kms oci://hub.zama.ai/zama-protocol/zama-ai/kms/charts/kms-core
-
-## Local testing
-
-When `minio.enabled=true`, connect to minio UI on http://localhost:9001:
-
-    kubectl port-forward svc/minio 9001
-
-Interact with the bucket using the `aws` CLI:
-
-    kubectl port-forward svc/minio 9000
-    AWS_ACCESS_KEY_ID=kms-access-key-id AWS_SECRET_ACCESS_KEY=kms-secret-access-key aws --endpoint-url http://localhost:9000 --region eu-west-1 s3 ls s3://kms-public

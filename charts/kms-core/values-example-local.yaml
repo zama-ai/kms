@@ -69,27 +69,6 @@ environment: dev
 
 rustLog: info
 
-minio:
-  enabled: true
-  commonAnnotations:
-    "helm.sh/hook-weight": "-1"
-  fullnameOverride: minio
-  auth:
-    rootUser: minio-admin
-    rootPassword: minio-admin
-  provisioning:
-    enabled: true
-    buckets:
-      - name: kms-public
-        region: eu-west-1
-    users:
-      - username: kms-access-key-id
-        password: kms-secret-access-key
-        policies:
-          - readwrite
-    extraCommands:
-      - "mc anonymous set public provisioning/kms-public"
-
 kyverno:
   enabled: false
 
