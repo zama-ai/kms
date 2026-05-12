@@ -1163,9 +1163,9 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::malicious_execution::large_execution::malicious_vss::{
-        WrongDegreeSharingVss, WrongSecretLenVss,
-    };
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::large_execution::malicious_vss::WrongDegreeSharingVss;
+    use crate::malicious_execution::large_execution::malicious_vss::WrongSecretLenVss;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::large_session::LargeSession;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -1614,6 +1614,7 @@ pub(crate) mod tests {
 
     // Test that when the sender sends a polynomial that has too
     // high degree it's caught
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[3],&[],&[],true,None), 4)]

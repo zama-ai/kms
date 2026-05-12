@@ -154,7 +154,7 @@ pub fn keygen_shares<R: Rng + CryptoRng>(
     all_shares
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use std::sync::Arc;
 

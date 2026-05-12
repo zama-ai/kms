@@ -273,6 +273,12 @@ pub(crate) async fn next_random_batch<Z: Ring, S: SingleSharing<Z>, L: LargeSess
 mod tests {
     use super::SecureLargePreprocessing;
     use crate::config::BatchParams;
+    #[cfg(feature = "slow_tests")]
+    use crate::large_execution::vss::SecureVss;
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::large_execution::malicious_vss::{
+        DroppingVssAfterR1, DroppingVssFromStart,
+    };
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
         malicious_local_double_share::{
@@ -284,9 +290,7 @@ mod tests {
         malicious_share_dispute::{
             DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
         },
-        malicious_vss::{
-            DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
-        },
+        malicious_vss::{DroppingVssAfterR2, MaliciousVssR1},
     };
     use crate::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
@@ -304,7 +308,7 @@ mod tests {
             offline::RealLargePreprocessing,
             share_dispute::{RealShareDispute, ShareDispute},
             single_sharing::RealSingleSharing,
-            vss::{RealVss, SecureVss, Vss},
+            vss::{RealVss, Vss},
         },
         online::triple::Triple,
         runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
@@ -486,6 +490,7 @@ mod tests {
         .await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught<
@@ -563,6 +568,7 @@ mod tests {
         .await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught_bis<

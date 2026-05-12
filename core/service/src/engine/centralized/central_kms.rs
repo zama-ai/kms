@@ -1119,16 +1119,15 @@ fn update_central_kms_system_metrics(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(feature = "slow_tests")]
+    use super::generate_fhe_keys;
     use super::{
-        CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys,
-        generate_uncompressed_fhe_keys,
+        CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_uncompressed_fhe_keys,
     };
     use crate::conf::{CoreConfig, init_conf};
     #[cfg(feature = "slow_tests")]
-    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID};
-    use crate::consts::{
-        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
-    };
+    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID};
+    use crate::consts::{DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
     use crate::cryptography::error::CryptographyError;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signcryption::{
@@ -1340,6 +1339,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_gen_keys() {
         let mut rng = AesRng::seed_from_u64(100);

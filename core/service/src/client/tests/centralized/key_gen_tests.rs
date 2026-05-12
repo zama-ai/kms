@@ -37,6 +37,7 @@ async fn test_key_gen_centralized() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_decompression_key_gen_centralized() -> anyhow::Result<()> {
     decompression_key_gen_centralized(
@@ -74,6 +75,7 @@ async fn default_decompression_key_gen_centralized() -> anyhow::Result<()> {
 
 /// Generate two keysets and a decompression-only keyset linking them, all inside a single
 /// isolated tempdir so the third `run_key_gen_centralized` call can read the first two.
+#[cfg(feature = "slow_tests")]
 async fn decompression_key_gen_centralized(
     params: FheParameter,
     test_name: &str,
