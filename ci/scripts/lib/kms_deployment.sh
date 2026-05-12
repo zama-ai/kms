@@ -432,13 +432,18 @@ generate_helm_overrides() {
 
     #=========================================================================
     # Enable certificate & key generation for AWS threshold deployments with TLS
-    # This applies to both enclave and non-enclave threshold deployments
-    # For Kind deployments, certificates are generated locally via scripts
-    # For AWS deployments, the kms-gen-cert-and-keys Helm job handles it
+    # This applies to both enclave and non-enclave threshold deployments.
+    # For Kind deployments, certificates are generated locally via scripts.
+    # For AWS deployments, the kms-gen-cert-and-keys Helm job handles it.
     #=========================================================================
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" && "${TARGET}" != *"kind"* ]]; then
         GEN_KEYS="true"
         TLS_ENABLED="true"
+    fi
+
+    # centralizedWithEnclave needs signing key generation as part of deployment.
+    if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+        GEN_KEYS="true"
     fi
 
     #=========================================================================
