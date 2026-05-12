@@ -660,9 +660,6 @@ message CustodianRecoveryInitRequest {
 }
 
 // The data constructed by a single custodian to help a single operator recover their private master decryption key.
-//
-// `custodian_role` is kept in the clear here purely as a lookup hint — the custodian role is also part of the `BackupMaterial` 
-// payload which is what is validated. 
 message CustodianRecoveryOutput {
   OperatorBackupOutput backup_output = 1;
   // The 1-indexed role of the custodian (lookup hint; authenticated copy lives in the signcrypted BackupMaterial)

@@ -270,7 +270,6 @@ pub mod tests {
         }
     }
 
-
     #[test]
     fn test_verify_root_key_measurements() {
         let good_pcr_values = ReleasePCRValues {

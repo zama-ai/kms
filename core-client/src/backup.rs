@@ -129,12 +129,6 @@ pub(crate) async fn do_custodian_recovery_init(
 }
 
 /// Send every custodian recovery output to every operator.
-///
-/// We no longer carry an `operator_verification_key` hint on the wire or in the on-disk
-/// `InternalCustodianRecoveryOutput`. Each operator's `filter_custodian_data` will skip outputs not
-/// addressed to it: they fail `validate_signcryption` because the signcryption's `receiver_id` was
-/// bound to a specific operator at backup time. Bandwidth is `N × M` outputs (operators × custodians),
-/// which is sub-megabyte even at the upper end of typical KMS sizes.
 pub(crate) async fn do_custodian_backup_recovery(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     custodian_context_id: RequestId,

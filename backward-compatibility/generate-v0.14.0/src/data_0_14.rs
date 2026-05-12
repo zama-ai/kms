@@ -1110,10 +1110,8 @@ impl KmsV0_14_0 {
 
     fn gen_internal_recovery_request(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
-        let backup_id: RequestId = RequestId::new_random(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut cts = BTreeMap::new();
         for role_j in 1..=INTERNAL_RECOVERY_REQUEST_TEST.amount {
             let cur_role = Role::indexed_from_one(role_j as usize);
@@ -1126,8 +1124,6 @@ impl KmsV0_14_0 {
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
         }
-        let _ = backup_id;
-        let _ = verf_key;
         let recovery_material = InternalRecoveryRequest::new(enc_key, cts).unwrap();
         store_versioned_test!(
             &recovery_material,
@@ -1382,7 +1378,6 @@ impl KmsV0_14_0 {
 
     fn gen_internal_cus_rec_out(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_REC_OUT_TEST.state);
-        let (operator_verification_key, _) = gen_sig_keys(&mut rng);
         let mut buf = [0u8; 100];
         rng.fill_bytes(&mut buf);
         let signcryption = UnifiedSigncryption {
@@ -1390,7 +1385,6 @@ impl KmsV0_14_0 {
             pke_type: PkeSchemeType::MlKem512,
             signing_type: SigningSchemeType::Ecdsa256k1,
         };
-        let _ = operator_verification_key;
         let icro = InternalCustodianRecoveryOutput {
             signcryption,
             custodian_role: Role::indexed_from_one(2),

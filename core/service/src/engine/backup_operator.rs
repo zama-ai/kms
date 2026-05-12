@@ -188,8 +188,6 @@ where
             ephemeral_enc_key,
         )
         .await?;
-        // `filter_custodian_data` already enforces `len() >= threshold + 1`
-
         Ok((validated_rec, operator))
     }
 }
@@ -1198,8 +1196,7 @@ mod tests {
     }
 
     /// Build the recovering `Operator` from a `RecoveryValidationMaterial` for tests that call
-    /// `filter_custodian_data` directly. Mirrors what
-    /// `validate_custodian_backup_recovery_request` does in production.
+    /// `filter_custodian_data` directly.
     fn build_operator_from_recovery_material(
         recovery_material: &RecoveryValidationMaterial,
         verf_key: &PublicSigKey,

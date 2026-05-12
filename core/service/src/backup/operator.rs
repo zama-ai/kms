@@ -681,16 +681,16 @@ impl Operator {
             );
             return Err(RecoverySkipReason::MpcContextIdMismatch);
         }
-        if let Err(mismatch) = backup_material.check_expected_metadata(
+        if let Err(e) = backup_material.check_expected_metadata(
             custodian_verf_key,
             output.custodian_role,
             &operator_id,
         ) {
             tracing::warn!(
-                "Metadata check ({mismatch:?}) failed for custodian role {}",
+                "Metadata check ({e:?}) failed for custodian role {}",
                 output.custodian_role
             );
-            return Err(mismatch);
+            return Err(e);
         }
         let actual_commitment =
             safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)

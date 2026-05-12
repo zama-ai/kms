@@ -38,10 +38,7 @@ pub enum InternalCustodianRecoveryOutputVersioned {
 
 /// This is the message that a custodian sends to an operator after starting recovery.
 ///
-/// All operator-facing context — operator long-term verification key, custodian role binding, MPC
-/// context, custodian context — lives inside the signcrypted `BackupMaterial` payload carried by
-/// `signcryption`. The plaintext `custodian_role` here is a lookup hint only: the operator uses it
-/// to pick which custodian's verification key to plug into the unsigncryption.
+/// The payload of the signcryption is a `BackupMaterial` that contains the decrypted backup share for an operator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(InternalCustodianRecoveryOutputVersioned)]
 pub struct InternalCustodianRecoveryOutput {
@@ -342,13 +339,13 @@ impl Custodian {
             return Err(BackupError::CustodianRecoveryError);
         }
         // check the decrypted result
-        if let Err(mismatch) = backup_material.check_expected_metadata(
+        if let Err(e) = backup_material.check_expected_metadata(
             &self.signing_key.verf_key(),
             self.role,
             &operator_verification_key.verf_key_id(),
         ) {
             tracing::error!(
-                "Backup material did not match expected metadata ({mismatch:?}) for operator: {}",
+                "Backup material did not match expected metadata ({e:?}) for operator: {}",
                 operator_verification_key.address()
             );
             return Err(BackupError::CustodianRecoveryError);

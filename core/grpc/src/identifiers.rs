@@ -383,14 +383,6 @@ macro_rules! impl_identifiers {
                     }
                 }
 
-                impl<'a> From<&'a $type> for v1::RequestId {
-                    fn from(id: &'a $type) -> Self {
-                        v1::RequestId {
-                            request_id: id.to_string(),
-                        }
-                    }
-                }
-
                 // Additional reverse conversion implementations
                 impl From<$type> for String {
                     fn from(id: $type) -> Self {
