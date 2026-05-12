@@ -376,14 +376,22 @@ impl Custodian {
         })
     }
 
-    // We allow the following lints because we are fine with mutating the rng even if
-    // we end up returning an error when signing the encrypted share.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
     pub fn generate_setup_message<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         custodian_name: String, // This is the human readable name of the custodian to be used in the setup message
+    ) -> Result<InternalCustodianSetupMessage, BackupError> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        self.generate_setup_message_with_timestamp(rng, custodian_name, timestamp)
+    }
+
+    // The timestamp is taken as an explicit argument so that callers needing deterministic
+    // output (e.g. backward-compatibility data generators) can pass a fixed value.
+    pub fn generate_setup_message_with_timestamp<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        custodian_name: String,
+        timestamp: u64,
     ) -> Result<InternalCustodianSetupMessage, BackupError> {
         let mut random_value = [0u8; 32];
         rng.fill_bytes(&mut random_value);
@@ -392,7 +400,7 @@ impl Custodian {
             header: HEADER.to_string(),
             custodian_role: self.role,
             random_value,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            timestamp,
             public_enc_key: self.enc_key.clone(),
             public_verf_key: self.verification_key().clone(),
             name: custodian_name,

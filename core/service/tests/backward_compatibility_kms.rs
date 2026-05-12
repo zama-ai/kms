@@ -195,7 +195,7 @@ fn test_key_gen_metadata(
     let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
     let key_id: RequestId = RequestId::new_random(&mut rng);
 
-    let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+    let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
     let mut new_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
     let server_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
@@ -354,7 +354,7 @@ fn test_key_gen_metadata_with_extra_data(
     let key_id: RequestId = RequestId::new_random(&mut rng);
 
     let extra_data = test.extra_data.to_vec();
-    let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+    let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
     let server_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
     let pub_key_digest =
