@@ -1,8 +1,8 @@
 {
+  "sandbox": {
+    "enabled": true
+  },
   "permissions": {
-    "allow": [
-      "Read(//Users/jot2re/Code/tech-spec/architecture/completed_intercomponent_flows/**)"
-    ],
     "deny": [
       "Read(**/target/**)",
       "Read(./.env)",
@@ -50,12 +50,6 @@
       "Read(~/Library/Application Support/**/exodus*/**)",
       "Read(~/Library/Application Support/**/phantom*/**)",
       "Read(~/Library/Application Support/**/solflare*/**)"
-    ],
-    "additionalDirectories": [
-      "/Users/jot2re/Code/tech-spec/architecture/completed_intercomponent_flows"
     ]
-  },
-  "sandbox": {
-    "enabled": true
   }
 }
