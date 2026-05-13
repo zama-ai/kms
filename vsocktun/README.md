@@ -64,7 +64,8 @@ vsocktun parent \
   --tun-name vsocktun \
   --tun-address 10.118.0.1/24 \
   --vsock-port 2100 \
-  --queues 32
+  --queues 32 \
+  --tokio-worker-threads 8
 ```
 
 ### Enclave mode
@@ -78,7 +79,8 @@ vsocktun enclave \
   --tun-name vsocktun \
   --tun-address 10.118.0.2/24 \
   --vsock-port 2100 \
-  --queues 32
+  --queues 32 \
+  --tokio-worker-threads 8
 ```
 
 ## Key flags
@@ -87,6 +89,8 @@ vsocktun enclave \
 - `--tun-address`: local IPv4 address and prefix for the tunnel interface
 - `--vsock-port`: parent-side VSOCK port used for the tunnel session
 - `--queues`: number of shards / TUN queues / VSOCK streams in the session
+- `--tokio-worker-threads`: number of Tokio runtime worker threads used to
+  drive all shard tasks in the process
 - `--mtu`: optional TUN MTU override
 
 Parent-only:
