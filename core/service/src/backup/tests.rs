@@ -1,4 +1,8 @@
-use super::{custodian, error::BackupError, operator::Operator};
+use super::{
+    custodian,
+    error::{BackupError, RecoverySkipReason},
+    operator::Operator,
+};
 use crate::{
     backup::{
         custodian::{
@@ -19,7 +23,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::{RequestId, kms::v1::CustodianContext};
+use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use proptest::prelude::*;
 use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
@@ -514,6 +518,80 @@ fn full_flow_malicious_operator() {
         for (cur_role, cur_secret) in recovered_secrets {
             let cur_priv_key = operators.get(&cur_role).unwrap().2.clone();
             assert_eq!(cur_secret, bc2wrap::serialize(&cur_priv_key).unwrap());
+        }
+    }
+}
+
+/// Negative test for the `mpc_context_id` binding added to `BackupMaterial`.
+#[test]
+fn verify_and_recover_rejects_mpc_context_mismatch() {
+    let mut rng = AesRng::seed_from_u64(1338);
+    let backup_id = derive_request_id(std::stringify!(
+        verify_and_recover_rejects_mpc_context_mismatch
+    ))
+    .unwrap();
+    let operator_count = 4usize;
+    let custodian_count = 3usize;
+    let custodian_threshold = 1usize;
+
+    let (setup_msgs, mnemonics) = generate_setup_messages(&mut rng, custodian_count);
+    let (mut operators, payload_for_custodians) = operator_handle_init(
+        &mut rng,
+        &setup_msgs,
+        &backup_id,
+        operator_count,
+        custodian_threshold,
+        custodian_count,
+    );
+
+    // An MPC context ID different from the default one
+    let wrong_mpc_context = ContextId::from_bytes([0x99u8; crate::consts::ID_LENGTH]);
+    for op_state in operators.values_mut() {
+        let original_payload = op_state.1.payload.clone();
+        let (_, sk) = gen_sig_keys(&mut rng);
+        // Change the validation material to contain the wrong context id
+        op_state.1 = RecoveryValidationMaterial::new(
+            original_payload.cts,
+            original_payload.commitments,
+            original_payload.custodian_context,
+            &sk,
+            wrong_mpc_context,
+        )
+        .unwrap();
+    }
+
+    let backups = custodian_recover(
+        &mut rng,
+        &mnemonics,
+        &payload_for_custodians,
+        custodian_threshold,
+    );
+    assert_eq!(backups.len(), operator_count);
+
+    for (op_addr, (operator, validation_material, dec_key, enc_key)) in &operators {
+        let reencs: Vec<_> = backups
+            .get(op_addr)
+            .expect("custodian recovery outputs for each operator")
+            .values()
+            .cloned()
+            .collect();
+        let err = operator
+            .verify_and_recover(&reencs, validation_material, dec_key, enc_key)
+            .expect_err("expected RecoveryThresholdNotMet due to mpc_context_id mismatch");
+        match err {
+            BackupError::RecoveryThresholdNotMet {
+                received, skipped, ..
+            } => {
+                assert_eq!(received, 0, "no share should validate");
+                assert!(
+                    !skipped.is_empty()
+                        && skipped
+                            .iter()
+                            .all(|r| *r == RecoverySkipReason::MpcContextIdMismatch),
+                    "expected every skip reason to be MpcContextIdMismatch, got: {skipped:?}"
+                );
+            }
+            other => panic!("unexpected BackupError variant: {other}"),
         }
     }
 }

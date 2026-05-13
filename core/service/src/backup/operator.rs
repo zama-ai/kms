@@ -1249,6 +1249,66 @@ mod tests {
     }
 
     #[test]
+    fn check_expected_metadata_sunshine_and_mismatches() {
+        let mut rng = AesRng::seed_from_u64(101);
+        let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let (operator_verf_key, _) = gen_sig_keys(&mut rng);
+        let (other_custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let (other_operator_verf_key, _) = gen_sig_keys(&mut rng);
+
+        let custodian_role = Role::indexed_from_one(2);
+        let backup_id = derive_request_id("check_expected_metadata").unwrap();
+
+        let material = BackupMaterial {
+            backup_id,
+            mpc_context_id: *DEFAULT_MPC_CONTEXT,
+            custodian_pk: custodian_verf_key.clone(),
+            custodian_role,
+            operator_pk: operator_verf_key.clone(),
+            shares: Vec::new(),
+        };
+
+        // Sunshine: every metadata field matches the expected routing parameters.
+        material
+            .check_expected_metadata(
+                &custodian_verf_key,
+                custodian_role,
+                &operator_verf_key.verf_key_id(),
+            )
+            .expect("metadata that matches the routing parameters should validate");
+
+        // Custodian role mismatch.
+        assert_eq!(
+            material.check_expected_metadata(
+                &custodian_verf_key,
+                Role::indexed_from_one(3),
+                &operator_verf_key.verf_key_id(),
+            ),
+            Err(RecoverySkipReason::CustodianRoleMismatchInPayload),
+        );
+
+        // Custodian verification key mismatch.
+        assert_eq!(
+            material.check_expected_metadata(
+                &other_custodian_verf_key,
+                custodian_role,
+                &operator_verf_key.verf_key_id(),
+            ),
+            Err(RecoverySkipReason::CustodianKeyMismatchInPayload),
+        );
+
+        // Operator (recipient) id mismatch — defends against a share routed to the wrong operator.
+        assert_eq!(
+            material.check_expected_metadata(
+                &custodian_verf_key,
+                custodian_role,
+                &other_operator_verf_key.verf_key_id(),
+            ),
+            Err(RecoverySkipReason::OperatorMismatchInPayload),
+        );
+    }
+
+    #[test]
     fn operator_new_fails_with_not_enough() {
         let mut rng = AesRng::seed_from_u64(8);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
