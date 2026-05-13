@@ -91,7 +91,7 @@ spec:
               {{- else -}}
               {{ range $peerID := $peersIDList }} {{ printf "http://%s-%d:%d" $kmsCoreName $peerID (int $.Values.kmsCore.ports.client) }}{{ end }}
               {{- end }}
-              exit 0
+              exit $?
           volumeMounts:
             - name: kms-core-health
               mountPath: /mnt
