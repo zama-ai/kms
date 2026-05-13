@@ -1,25 +1,21 @@
 mod protocol;
-mod sys;
 mod tun;
 mod vsock;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use protocol::{FrameReader, OutgoingBuffer};
-use std::fs::File;
-use std::io::{self, Read};
-use std::os::fd::AsRawFd;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::thread;
-use std::time::Duration;
+use std::io;
+use std::sync::Arc;
+use tokio::sync::watch;
+use tokio::task::JoinSet;
+use tokio::time::{Duration, sleep};
+use tokio_vsock::{OwnedReadHalf, OwnedWriteHalf, VsockStream};
 use tun::{Ipv4Cidr, TunDevice};
+use tun_rs::{AsyncDevice, SyncDevice};
 use vsock::{ParentSessionAcceptor, SessionSockets, connect_session};
 
-const POLL_TIMEOUT_MS: i32 = 200;
-const MAX_TUN_PACKET_BYTES: usize = u16::MAX as usize;
+const MAX_TUN_FRAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Parser, Debug)]
 #[command(name = "vsocktun")]
@@ -73,19 +69,25 @@ struct WorkerOutcome {
     result: Result<()>,
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    run(cli)
+enum DirectionTask {
+    SocketToTun,
+    TunToSocket,
 }
 
-fn run(cli: Cli) -> Result<()> {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    run(cli).await
+}
+
+async fn run(cli: Cli) -> Result<()> {
     match cli.mode {
-        Mode::Parent(args) => run_parent(args),
-        Mode::Enclave(args) => run_enclave(args),
+        Mode::Parent(args) => run_parent(args).await,
+        Mode::Enclave(args) => run_enclave(args).await,
     }
 }
 
-fn run_parent(args: ParentArgs) -> Result<()> {
+async fn run_parent(args: ParentArgs) -> Result<()> {
     let common = ParsedCommon::parse(args.common)?;
     let tun = TunDevice::create(
         &common.tun_name,
@@ -108,14 +110,14 @@ fn run_parent(args: ParentArgs) -> Result<()> {
     );
 
     loop {
-        match acceptor.accept_session() {
+        match acceptor.accept_session().await {
             Ok(session) => {
                 eprintln!(
                     "vsocktun(parent): established session {} with {} shard connection(s)",
                     session.session_id,
                     session.shards.len(),
                 );
-                if let Err(err) = run_session("parent", &tun, session) {
+                if let Err(err) = run_session(&tun, session).await {
                     eprintln!("vsocktun(parent): session ended with error: {err:#}");
                 }
             }
@@ -126,7 +128,7 @@ fn run_parent(args: ParentArgs) -> Result<()> {
     }
 }
 
-fn run_enclave(args: EnclaveArgs) -> Result<()> {
+async fn run_enclave(args: EnclaveArgs) -> Result<()> {
     let common = ParsedCommon::parse(args.common)?;
     let tun = TunDevice::create(
         &common.tun_name,
@@ -146,14 +148,14 @@ fn run_enclave(args: EnclaveArgs) -> Result<()> {
     );
 
     loop {
-        match connect_session(args.parent_cid, common.vsock_port, tun.queue_count()) {
+        match connect_session(args.parent_cid, common.vsock_port, tun.queue_count()).await {
             Ok(session) => {
                 eprintln!(
                     "vsocktun(enclave): established session {} with {} shard connection(s)",
                     session.session_id,
                     session.shards.len(),
                 );
-                if let Err(err) = run_session("enclave", &tun, session) {
+                if let Err(err) = run_session(&tun, session).await {
                     eprintln!("vsocktun(enclave): session ended with error: {err:#}");
                 }
             }
@@ -166,11 +168,12 @@ fn run_enclave(args: EnclaveArgs) -> Result<()> {
             "vsocktun(enclave): reconnecting in {} ms",
             reconnect_delay.as_millis(),
         );
-        thread::sleep(reconnect_delay);
+        sleep(reconnect_delay).await;
     }
 }
 
-fn run_session(role: &str, tun: &TunDevice, session: SessionSockets) -> Result<()> {
+async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
+    let max_tun_frame_bytes = tun.max_frame_bytes();
     let tun_queues = tun
         .clone_queues()
         .context("failed to clone TUN queues for session")?;
@@ -183,31 +186,36 @@ fn run_session(role: &str, tun: &TunDevice, session: SessionSockets) -> Result<(
         );
     }
 
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let mut handles = Vec::with_capacity(session.shards.len());
+    let (cancel_tx, _) = watch::channel(false);
+    let mut tasks = JoinSet::new();
 
     for (shard, (tun_queue, socket)) in tun_queues.into_iter().zip(session.shards).enumerate() {
-        let cancelled = Arc::clone(&cancelled);
-        let role = role.to_owned();
-        let builder = thread::Builder::new().name(format!("vsocktun-{role}-shard-{shard}"));
-        let handle = builder
-            .spawn(move || WorkerOutcome {
+        let cancel_rx = cancel_tx.subscribe();
+        tasks.spawn(async move {
+            WorkerOutcome {
                 shard,
-                result: pump_shard(shard, tun_queue, socket, cancelled),
-            })
-            .with_context(|| format!("failed to spawn worker thread for shard {shard}"))?;
-        handles.push(handle);
+                result: pump_shard(shard, tun_queue, socket, max_tun_frame_bytes, cancel_rx).await,
+            }
+        });
     }
 
     let mut first_error = None;
-    for handle in handles {
-        let outcome = handle
-            .join()
-            .map_err(|_| anyhow!("vsocktun worker thread panicked"))?;
-        if let Err(err) = outcome.result
-            && first_error.is_none()
-        {
-            first_error = Some(anyhow!("shard {} failed: {err:#}", outcome.shard));
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok(outcome) => {
+                if let Err(err) = outcome.result
+                    && first_error.is_none()
+                {
+                    let _ = cancel_tx.send(true);
+                    first_error = Some(anyhow!("shard {} failed: {err:#}", outcome.shard));
+                }
+            }
+            Err(err) => {
+                if first_error.is_none() {
+                    let _ = cancel_tx.send(true);
+                    first_error = Some(anyhow!("vsocktun worker task failed: {err}"));
+                }
+            }
         }
     }
 
@@ -218,131 +226,204 @@ fn run_session(role: &str, tun: &TunDevice, session: SessionSockets) -> Result<(
     Ok(())
 }
 
-fn pump_shard(
+async fn pump_shard(
     shard: usize,
-    mut tun_queue: File,
-    mut socket: File,
-    cancelled: Arc<AtomicBool>,
+    tun_queue: SyncDevice,
+    socket: VsockStream,
+    max_tun_frame_bytes: usize,
+    mut session_cancelled: watch::Receiver<bool>,
 ) -> Result<()> {
-    let result = pump_shard_inner(shard, &mut tun_queue, &mut socket, &cancelled);
-    if result.is_err() {
-        cancelled.store(true, Ordering::Relaxed);
+    if *session_cancelled.borrow() {
+        return Ok(());
     }
-    result
+
+    let tun_queue = Arc::new(
+        AsyncDevice::new(tun_queue)
+            .with_context(|| format!("failed to make TUN queue {shard} asynchronous"))?,
+    );
+    let socket_frame_bytes = MAX_TUN_FRAME_BYTES.max(max_tun_frame_bytes);
+    let (socket_reader, socket_writer) = socket.into_split();
+    let (local_cancel_tx, _) = watch::channel(false);
+
+    let socket_to_tun = forward_socket_to_tun(
+        shard,
+        socket_reader,
+        Arc::clone(&tun_queue),
+        socket_frame_bytes,
+        local_cancel_tx.subscribe(),
+    );
+    let tun_to_socket = forward_tun_to_socket(
+        shard,
+        Arc::clone(&tun_queue),
+        socket_writer,
+        socket_frame_bytes,
+        local_cancel_tx.subscribe(),
+    );
+    tokio::pin!(socket_to_tun);
+    tokio::pin!(tun_to_socket);
+
+    let first = tokio::select! {
+        changed = session_cancelled.changed() => {
+            match changed {
+                Ok(()) if *session_cancelled.borrow() => {
+                    let _ = local_cancel_tx.send(true);
+                    let _ = (&mut socket_to_tun).await;
+                    let _ = (&mut tun_to_socket).await;
+                    return Ok(());
+                }
+                Ok(()) | Err(_) => {
+                    let _ = local_cancel_tx.send(true);
+                    let _ = (&mut socket_to_tun).await;
+                    let _ = (&mut tun_to_socket).await;
+                    return Ok(());
+                }
+            }
+        }
+        result = &mut socket_to_tun => (DirectionTask::SocketToTun, result),
+        result = &mut tun_to_socket => (DirectionTask::TunToSocket, result),
+    };
+
+    let _ = local_cancel_tx.send(true);
+    let second = match first.0 {
+        DirectionTask::SocketToTun => (&mut tun_to_socket).await,
+        DirectionTask::TunToSocket => (&mut socket_to_tun).await,
+    };
+
+    match (first.1, second) {
+        (Err(err), _) => Err(err),
+        (Ok(()), Err(err)) => Err(err),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }
 
-fn pump_shard_inner(
+async fn forward_socket_to_tun(
     shard: usize,
-    tun_queue: &mut File,
-    socket: &mut File,
-    cancelled: &Arc<AtomicBool>,
+    mut socket_reader: OwnedReadHalf,
+    tun_queue: Arc<AsyncDevice>,
+    max_tun_frame_bytes: usize,
+    mut cancelled: watch::Receiver<bool>,
 ) -> Result<()> {
-    sys::set_nonblocking(tun_queue)
-        .with_context(|| format!("failed to make TUN queue {shard} nonblocking"))?;
-    sys::set_nonblocking(socket)
-        .with_context(|| format!("failed to make VSOCK shard {shard} nonblocking"))?;
-
-    let tun_fd = tun_queue.as_raw_fd();
-    let socket_fd = socket.as_raw_fd();
-    let mut tun_buf = vec![0_u8; MAX_TUN_PACKET_BYTES];
-    let mut socket_reader = FrameReader::new();
-    let mut pending_tun_write: Option<OutgoingBuffer> = None;
-    let mut pending_socket_write: Option<OutgoingBuffer> = None;
+    let mut frame_reader = FrameReader::new(max_tun_frame_bytes);
 
     loop {
-        if cancelled.load(Ordering::Relaxed) {
+        if *cancelled.borrow() {
             return Ok(());
         }
 
-        let mut made_progress = false;
-
-        if pending_tun_write.is_none()
-            && let Some(packet) = socket_reader
-                .read_packet(socket)
-                .with_context(|| format!("failed to read framed packet on shard {shard}"))?
-        {
-            pending_tun_write = Some(OutgoingBuffer::raw(packet));
-            made_progress = true;
-        }
-
-        if let Some(buffer) = pending_tun_write.as_mut() {
-            let finished = buffer
-                .write_to(tun_queue)
-                .with_context(|| format!("failed to inject packet into TUN queue {shard}"))?;
-            made_progress |= finished;
-            if finished {
-                pending_tun_write = None;
-            }
-        }
-
-        if pending_socket_write.is_none() {
-            match tun_queue.read(&mut tun_buf) {
-                Ok(0) => {
-                    bail!("TUN queue {shard} closed unexpectedly");
-                }
-                Ok(read) => {
-                    pending_socket_write =
-                        Some(OutgoingBuffer::framed(&tun_buf[..read]).with_context(|| {
-                            format!("failed to frame TUN packet from queue {shard}")
-                        })?);
-                    made_progress = true;
-                }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
-                Err(err) => {
-                    return Err(err)
-                        .with_context(|| format!("failed to read packet from TUN queue {shard}"));
+        let packet = tokio::select! {
+            changed = cancelled.changed() => {
+                match changed {
+                    Ok(()) if *cancelled.borrow() => return Ok(()),
+                    Ok(()) => continue,
+                    Err(_) => return Ok(()),
                 }
             }
-        }
-
-        if let Some(buffer) = pending_socket_write.as_mut() {
-            let finished = buffer
-                .write_to(socket)
-                .with_context(|| format!("failed to forward packet on VSOCK shard {shard}"))?;
-            made_progress |= finished;
-            if finished {
-                pending_socket_write = None;
+            result = frame_reader.read_packet_async(&mut socket_reader) => {
+                result.with_context(|| format!("failed to read framed packet on shard {shard}"))?
             }
-        }
+        };
 
-        if made_progress {
+        let Some(packet) = packet else {
             continue;
-        }
+        };
 
-        let mut fds = [
-            sys::PollFd {
-                fd: tun_fd,
-                events: poll_events(pending_socket_write.is_none(), pending_tun_write.is_some()),
-                revents: 0,
-            },
-            sys::PollFd {
-                fd: socket_fd,
-                events: poll_events(pending_tun_write.is_none(), pending_socket_write.is_some()),
-                revents: 0,
-            },
-        ];
+        let mut pending_tun_write = OutgoingBuffer::raw(packet);
+        loop {
+            if *cancelled.borrow() {
+                return Ok(());
+            }
 
-        sys::poll_once(&mut fds, POLL_TIMEOUT_MS)
-            .with_context(|| format!("failed to poll shard {shard}"))?;
+            let finished = tokio::select! {
+                changed = cancelled.changed() => {
+                    match changed {
+                        Ok(()) if *cancelled.borrow() => return Ok(()),
+                        Ok(()) => continue,
+                        Err(_) => return Ok(()),
+                    }
+                }
+                result = write_to_tun(&mut pending_tun_write, tun_queue.as_ref()) => {
+                    result.with_context(|| format!("failed to inject packet into TUN queue {shard}"))?
+                }
+            };
 
-        if fds
-            .iter()
-            .any(|fd| fd.revents & (sys::POLLERR | sys::POLLHUP) != 0)
-        {
-            bail!("detected hangup on shard {shard}");
+            if finished {
+                break;
+            }
         }
     }
 }
 
-fn poll_events(readable: bool, writable: bool) -> i16 {
-    let mut events = 0;
-    if readable {
-        events |= sys::POLLIN;
+async fn forward_tun_to_socket(
+    shard: usize,
+    tun_queue: Arc<AsyncDevice>,
+    mut socket_writer: OwnedWriteHalf,
+    max_tun_frame_bytes: usize,
+    mut cancelled: watch::Receiver<bool>,
+) -> Result<()> {
+    let mut tun_buf = vec![0_u8; max_tun_frame_bytes];
+
+    loop {
+        if *cancelled.borrow() {
+            return Ok(());
+        }
+
+        let read = tokio::select! {
+            changed = cancelled.changed() => {
+                match changed {
+                    Ok(()) if *cancelled.borrow() => return Ok(()),
+                    Ok(()) => continue,
+                    Err(_) => return Ok(()),
+                }
+            }
+            result = tun_queue.recv(&mut tun_buf) => {
+                result.with_context(|| format!("failed to read packet from TUN queue {shard}"))?
+            }
+        };
+
+        if read == 0 {
+            bail!("TUN queue {shard} closed unexpectedly");
+        }
+
+        let mut pending_socket_write = OutgoingBuffer::framed(&tun_buf[..read])
+            .with_context(|| format!("failed to frame TUN packet from queue {shard}"))?;
+        loop {
+            if *cancelled.borrow() {
+                return Ok(());
+            }
+
+            let finished = tokio::select! {
+                changed = cancelled.changed() => {
+                    match changed {
+                        Ok(()) if *cancelled.borrow() => return Ok(()),
+                        Ok(()) => continue,
+                        Err(_) => return Ok(()),
+                    }
+                }
+                result = pending_socket_write.write_to_async(&mut socket_writer) => {
+                    result.with_context(|| format!("failed to forward packet on VSOCK shard {shard}"))?
+                }
+            };
+
+            if finished {
+                break;
+            }
+        }
     }
-    if writable {
-        events |= sys::POLLOUT;
+}
+
+async fn write_to_tun(buffer: &mut OutgoingBuffer, tun_queue: &AsyncDevice) -> io::Result<bool> {
+    let bytes = &buffer.bytes[buffer.written..];
+    match tun_queue.send(bytes).await {
+        Ok(0) => Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "failed to make forward progress while writing packet to TUN",
+        )),
+        Ok(written) => {
+            buffer.written += written;
+            Ok(buffer.written == buffer.bytes.len())
+        }
+        Err(err) => Err(err),
     }
-    events
 }
 
 #[derive(Debug)]
