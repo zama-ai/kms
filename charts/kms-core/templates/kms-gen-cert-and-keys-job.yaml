@@ -122,7 +122,8 @@ spec:
                      "to" "OPEN:/etc/resolv.conf,rdonly"
                    ) | indent 10 | trim }}
         {{- if .Values.kmsCore.nitroEnclave.networkTunnel.enabled }}
-        - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" (list)) | indent 10 | trim }}
+        {{- $queueCount := include "kmsNetworkTunnelQueueCount" . | int }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" (list) "queueCount" $queueCount) | indent 10 | trim }}
           volumeMounts:
             - name: tun-device
               mountPath: /dev/net/tun
