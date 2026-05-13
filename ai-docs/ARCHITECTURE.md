@@ -57,6 +57,7 @@ The repository is a Cargo workspace. The members are declared in
 | `kms-grpc` | [core/grpc/](core/grpc/) | Protobuf definitions + generated types and client stubs |
 | `core-client` | [core-client/](core-client/) | CLI client that drives the gRPC API |
 | `observability` | [observability/](observability/) | OpenTelemetry / Prometheus wiring |
+| `vsocktun` | [vsocktun/](vsocktun/) | Multi-queue TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent |
 | `bc2wrap` | [bc2wrap/](bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
 | `error-utils` | [core/error-utils/](core/error-utils/) | Shared error types and helpers |
 | `thread-handles` | [core/thread-handles/](core/thread-handles/) | Rayon thread-pool management |

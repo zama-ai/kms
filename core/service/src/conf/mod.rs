@@ -118,6 +118,14 @@ pub struct EnclaveBootstrapNetworkTunnelConfig {
     // virtual TUN devices on both ends talk through this vsock
     #[validate(range(min = 1, max = 65535))]
     pub vsock_port: u16,
+    // packet-forwarding queues used by the TUN/VSOCK relay
+    #[serde(default = "default_network_tunnel_queue_count")]
+    #[validate(range(min = 1, max = 256))]
+    pub queue_count: u16,
+}
+
+const fn default_network_tunnel_queue_count() -> u16 {
+    1
 }
 
 impl ConfigTracing for CoreConfig {
@@ -473,6 +481,7 @@ mod tests {
         assert_eq!(network_tunnel.parent_address, "10.118.0.1/24");
         assert_eq!(network_tunnel.enclave_address, "10.118.0.2");
         assert_eq!(network_tunnel.vsock_port, 2100);
+        assert_eq!(network_tunnel.queue_count, 1);
     }
 
     // -----------------------------------------------------------------------

@@ -128,6 +128,7 @@ kmsCore:
       # and vsockPort are propagated to the enclave through the generated
       # config file.
       vsockPort: 2100
+      queueCount: 8
       interfaceName: vsocktun
       subnet: 10.118.0.0/24
       parentAddress: 10.118.0.1/24
