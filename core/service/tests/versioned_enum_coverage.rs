@@ -1,4 +1,6 @@
-//! Backward-compatibility coverage gate for `VersionsDispatch` enums.
+//! Backward-compatibility coverage gate for `VersionsDispatch` enums. This is a
+//! best-effort solution, not a guarantee there are no coverage gaps if the
+//! tests here pass!
 //!
 //! Adding a new versionable type requires (a) a `*Versioned` dispatch enum
 //! with contiguous `V0..Vn` variants, and (b) at least one `.ron` fixture
@@ -10,18 +12,9 @@ use std::path::{Path, PathBuf};
 use backward_compatibility::{
     TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, load::load_tests_metadata,
 };
-use serde::{Deserialize, de::DeserializeOwned};
+use cargo_metadata::{Metadata, MetadataCommand};
+use serde::de::DeserializeOwned;
 use syn::{Attribute, Item, Path as SynPath};
-
-#[derive(Deserialize)]
-struct WorkspaceManifest {
-    workspace: Workspace,
-}
-
-#[derive(Deserialize)]
-struct Workspace {
-    members: Vec<String>,
-}
 
 /// One `#[derive(VersionsDispatch)]` enum discovered during the workspace scan.
 ///
@@ -123,30 +116,27 @@ const ALLOW_UNCOVERED: &[&str] = &[
     "CompressionPrivateKeySharesEnum",
 ];
 
-fn repo_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR is core/service; go up two levels to the workspace root.
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("CARGO_MANIFEST_DIR has fewer than 2 ancestors")
-        .to_path_buf()
+fn cargo_metadata() -> Metadata {
+    MetadataCommand::new()
+        .exec()
+        .expect("failed to run `cargo metadata`")
 }
 
-// The repo currently uses plain paths (no globs), so direct TOML parsing is
-// sufficient; if globs are introduced later, switch to
-// `cargo metadata --format-version 1`.
-fn workspace_members() -> Vec<PathBuf> {
-    let root = repo_root();
-    let text = std::fs::read_to_string(root.join("Cargo.toml"))
-        .expect("failed to read workspace Cargo.toml");
-    let manifest: WorkspaceManifest =
-        toml::from_str(&text).expect("failed to parse workspace Cargo.toml");
-    manifest
-        .workspace
-        .members
+fn repo_root(metadata: &Metadata) -> PathBuf {
+    metadata.workspace_root.clone().into_std_path_buf()
+}
+
+fn workspace_members(metadata: &Metadata) -> Vec<PathBuf> {
+    metadata
+        .workspace_packages()
         .into_iter()
-        .map(|m| root.join(m))
-        .filter(|p| p.is_dir())
+        .map(|pkg| {
+            pkg.manifest_path
+                .parent()
+                .expect("package manifest has a parent directory")
+                .as_std_path()
+                .to_path_buf()
+        })
         .collect()
 }
 
@@ -186,9 +176,9 @@ fn derives_versions_dispatch(attrs: &[Attribute]) -> bool {
 /// Files that fail to read or parse are logged and skipped rather than
 /// failing the test, so a single malformed file doesn't mask real coverage
 /// gaps in the rest of the workspace.
-fn collect_dispatches() -> Vec<Dispatch> {
+fn collect_dispatches(metadata: &Metadata) -> Vec<Dispatch> {
     let mut out = Vec::new();
-    for crate_dir in workspace_members() {
+    for crate_dir in workspace_members(metadata) {
         for entry in walkdir::WalkDir::new(&crate_dir)
             .into_iter()
             .filter_entry(|e| {
@@ -230,9 +220,36 @@ fn collect_dispatches() -> Vec<Dispatch> {
     out
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct VariantViolation {
+    index: usize,
+    actual: String,
+    expected: String,
+}
+
+/// Reports each variant whose name does not match its positional expectation
+/// `V{i}`. An empty result means the variants form a contiguous `V0..Vn`
+/// sequence.
+fn check_variant_contiguity<S: AsRef<str>>(variants: &[S]) -> Vec<VariantViolation> {
+    variants
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| {
+            let expected = format!("V{i}");
+            let actual = v.as_ref();
+            (actual != expected).then(|| VariantViolation {
+                index: i,
+                actual: actual.to_string(),
+                expected,
+            })
+        })
+        .collect()
+}
+
 #[test]
 fn versioned_enums_have_contiguous_variants() {
-    let dispatches = collect_dispatches();
+    let metadata = cargo_metadata();
+    let dispatches = collect_dispatches(&metadata);
     assert!(
         !dispatches.is_empty(),
         "found no VersionsDispatch enums — scan paths likely wrong"
@@ -240,15 +257,15 @@ fn versioned_enums_have_contiguous_variants() {
 
     let mut violations = Vec::new();
     for d in &dispatches {
-        for (i, v) in d.variants.iter().enumerate() {
-            let expected = format!("V{i}");
-            if v != &expected {
-                violations.push(format!(
-                    "{}::{}: variant #{i} is `{v}`, expected `{expected}`",
-                    d.file.display(),
-                    d.enum_name,
-                ));
-            }
+        for v in check_variant_contiguity(&d.variants) {
+            violations.push(format!(
+                "{}::{}: variant #{} is `{}`, expected `{}`",
+                d.file.display(),
+                d.enum_name,
+                v.index,
+                v.actual,
+                v.expected,
+            ));
         }
     }
     assert!(
@@ -274,8 +291,9 @@ where
 
 #[test]
 fn versioned_enums_are_covered_by_ron_metadata() {
-    let dispatches = collect_dispatches();
-    let root = repo_root();
+    let metadata = cargo_metadata();
+    let dispatches = collect_dispatches(&metadata);
+    let root = repo_root(&metadata);
 
     // Compare names case-insensitively: the `.ron` files store variant names
     // chosen by the test author (e.g. `PrssSetupCombined`) which sometimes
@@ -322,4 +340,113 @@ fn versioned_enums_are_covered_by_ron_metadata() {
         }
         panic!("{msg}");
     }
+}
+
+#[test]
+fn check_variant_contiguity_corner_cases() {
+    // Canonical V0..Vn sequence — no violations.
+    assert!(check_variant_contiguity(&["V0", "V1", "V2"]).is_empty());
+
+    // Single V0 variant — valid.
+    assert!(check_variant_contiguity(&["V0"]).is_empty());
+
+    // Empty variant list — locks in current behaviour (no violations).
+    assert!(check_variant_contiguity::<&str>(&[]).is_empty());
+
+    // Gap with a high number: V11 at index 2 should have been V2.
+    assert_eq!(
+        check_variant_contiguity(&["V0", "V1", "V11"]),
+        vec![VariantViolation {
+            index: 2,
+            actual: "V11".into(),
+            expected: "V2".into(),
+        }],
+    );
+
+    // Internal gap: index 1 expected V1 but got V2.
+    assert_eq!(
+        check_variant_contiguity(&["V0", "V2"]),
+        vec![VariantViolation {
+            index: 1,
+            actual: "V2".into(),
+            expected: "V1".into(),
+        }],
+    );
+
+    // Out of order: both positions wrong, both reported.
+    assert_eq!(
+        check_variant_contiguity(&["V1", "V0"]),
+        vec![
+            VariantViolation {
+                index: 0,
+                actual: "V1".into(),
+                expected: "V0".into(),
+            },
+            VariantViolation {
+                index: 1,
+                actual: "V0".into(),
+                expected: "V1".into(),
+            },
+        ],
+    );
+
+    // Non-numeric suffix: Vfoo at index 0 — flagged because it isn't `V0`.
+    assert_eq!(
+        check_variant_contiguity(&["Vfoo"]),
+        vec![VariantViolation {
+            index: 0,
+            actual: "Vfoo".into(),
+            expected: "V0".into(),
+        }],
+    );
+
+    // Leading zero: V01 is not V0 — comparison is string equality, not
+    // numeric normalization.
+    assert_eq!(
+        check_variant_contiguity(&["V01"]),
+        vec![VariantViolation {
+            index: 0,
+            actual: "V01".into(),
+            expected: "V0".into(),
+        }],
+    );
+
+    // Duplicate V0 at index 1 — second occurrence is wrong because index 1
+    // should be V1.
+    assert_eq!(
+        check_variant_contiguity(&["V0", "V0"]),
+        vec![VariantViolation {
+            index: 1,
+            actual: "V0".into(),
+            expected: "V1".into(),
+        }],
+    );
+}
+
+#[test]
+fn derives_versions_dispatch_corner_cases() {
+    // Bare ident matches.
+    let attr: Attribute = syn::parse_quote!(#[derive(VersionsDispatch)]);
+    assert!(derives_versions_dispatch(&[attr]));
+
+    // Fully-qualified path also matches — only the trailing segment is
+    // compared.
+    let attr: Attribute = syn::parse_quote!(#[derive(tfhe_versionable::VersionsDispatch)]);
+    assert!(derives_versions_dispatch(&[attr]));
+
+    // Matched when mixed in with other derives.
+    let attr: Attribute = syn::parse_quote!(#[derive(Clone, Debug, VersionsDispatch, Serialize)]);
+    assert!(derives_versions_dispatch(&[attr]));
+
+    // Different ident that merely starts with "VersionsDispatch" must not
+    // match (guards against accidental substring/prefix matching).
+    let attr: Attribute = syn::parse_quote!(#[derive(VersionsDispatchOther)]);
+    assert!(!derives_versions_dispatch(&[attr]));
+
+    // Non-derive attributes are ignored entirely.
+    let attr: Attribute = syn::parse_quote!(#[versionize(FooVersioned)]);
+    assert!(!derives_versions_dispatch(&[attr]));
+
+    // No attributes at all.
+    assert!(!derives_versions_dispatch(&[]));
 }
