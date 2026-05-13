@@ -44,34 +44,82 @@ struct Dispatch {
 /// TODO(zama-ai/kms-internal#3028): this explicit list should go away after
 /// we have a proper way to identify which structs need to be tested.
 const ALLOW_UNCOVERED: &[&str] = &[
-    // Encryption: enc keys and scheme tags are embedded in
-    // UnifiedSigncryption{,Key,UnsigncryptionKey}OwnedTest / UnifiedCipherTest.
+    // Field of UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
+    // CustodianSetupMessagePayload, InternalCustodianSetupMessage, and
+    // InternalCustodianContext. Covered via UnifiedSigncryptionKeyTest,
+    // UnifiedUnsigncryptionKeyTest, InternalCustodianSetupMessageTest, and
+    // InternalCustodianContextTest.
     "UnifiedPublicEncKey",
+    // Field of UnifiedUnsigncryptionKeyOwned.
+    // Covered via UnifiedUnsigncryptionKeyTest.
     "UnifiedPrivateEncKey",
+    // Field of UnifiedCipher and UnifiedSigncryption.
+    // Covered via UnifiedCipherTest and UnifiedSigncryptionTest.
     "PkeSchemeType",
-    // Signing scheme tag is embedded in Private/PublicSigKeyTest.
+    // Field of UnifiedSigncryption. (PrivateSigKey / PublicSigKey expose it
+    // only via the HasSigningScheme trait method, not as a struct field.)
+    // Covered via UnifiedSigncryptionTest.
     "SigningSchemeType",
-    // Backup: Inner / Material / Payload types are fields of OperatorBackupOutputTest,
-    // RecoveryValidationMaterialTest, and InternalCustodianSetupMessageTest.
+    // Map value in RecoveryValidationMaterialPayload.cts and the actual
+    // serialized fixture body produced by the OperatorBackupOutputTest
+    // generator. Covered via OperatorBackupOutputTest and
+    // RecoveryValidationMaterialTest.
     "InnerOperatorBackupOutput",
+    // Plaintext that Operator::secret_share_and_signcrypt signcrypts into the
+    // UnifiedSigncryption inside InnerOperatorBackupOutput; not a struct
+    // field. Covered (in serialized-and-signcrypted form) via
+    // OperatorBackupOutputTest.
     "BackupMaterial",
+    // Field of RecoveryValidationMaterial.payload.
+    // Covered via RecoveryValidationMaterialTest.
     "RecoveryValidationMaterialPayload",
+    // safe_serialize'd into the protobuf CustodianSetupMessage.payload (then
+    // unpacked into InternalCustodianSetupMessage on load).
+    // Covered via InternalCustodianSetupMessageTest.
     "CustodianSetupMessagePayload",
-    // *Inner metadata structs are fields of CrsGenMetadataTest / KeyGenMetadataTest.
+    // Variant payload of KeyGenMetadata::Current.
+    // Covered via KeyGenMetadataTest and KeyGenMetadataWithExtraDataTest.
     "KeyGenMetadataInner",
+    // Variant payload of CrsGenMetadata::Current.
+    // Covered via CrsGenMetadataTest and CrsGenMetadataWithExtraDataTest.
     "CrsGenMetadataInner",
-    // Role is serialized inside root fixtures such as PRSSSetup, Share,
-    // ContextInfo, and custodian/operator backup types.
+    // Field of Share, BackupMaterial, InternalCustodianSetupMessage, and
+    // InternalCustodianRecoveryOutput; map key in
+    // RecoveryValidationMaterialPayload.{cts,commitments} and
+    // InternalCustodianContext.custodian_nodes; transitively inside PRSSSetup
+    // via PrssSet.parties. Covered via ShareTest, PRSSSetupTest, PrssSetTest,
+    // PrssSetupCombinedTest, OperatorBackupOutputTest,
+    // RecoveryValidationMaterialTest, InternalCustodianSetupMessageTest,
+    // InternalCustodianContextTest, and InternalCustodianRecoveryOutputTest.
     "Role",
-    // Threshold-FHE inner key shares: covered transitively through
-    // ThresholdFheKeysTest / PrivateKeySetTest.
+    // Field of ThresholdFheKeys.public_material.
+    // Covered via ThresholdFheKeysTest.
     "PublicKeyMaterial",
+    // Element type inside the Share<ResiduePoly<...>> collections used by all
+    // secret-key shares (PrivateKeySet) and inside LweCiphertextShare.body.
+    // Covered via ShareTest, PrivateKeySetTest, and ThresholdFheKeysTest.
     "ResiduePoly",
+    // Variant payload of LweSecretKeyShareEnum, and direct field of
+    // PrivateKeySet.{glwe_secret_key_share_sns_as_lwe,
+    // glwe_sns_compression_key_as_lwe} (plus older PrivateKeySetV{1,2}
+    // fields). Covered via PrivateKeySetTest and ThresholdFheKeysTest.
     "LweSecretKeyShare",
+    // Field of PrivateKeySet.{lwe_encryption,lwe_compute,oprf}_secret_key_share.
+    // Covered via PrivateKeySetTest and ThresholdFheKeysTest.
     "LweSecretKeyShareEnum",
+    // Field of CompressionPrivateKeyShares.post_packing_ks_key and
+    // SnsCompressionPrivateKeyShares.post_packing_ks_key, plus variant
+    // payload of GlweSecretKeyShareEnum. Covered via PrivateKeySetTest and
+    // ThresholdFheKeysTest.
     "GlweSecretKeyShare",
+    // Field of PrivateKeySet.glwe_secret_key_share.
+    // Covered via PrivateKeySetTest and ThresholdFheKeysTest.
     "GlweSecretKeyShareEnum",
+    // Variant payload of CompressionPrivateKeySharesEnum.
+    // Covered via PrivateKeySetTest and ThresholdFheKeysTest.
     "CompressionPrivateKeyShares",
+    // Field of PrivateKeySet.glwe_secret_key_share_compression.
+    // Covered via PrivateKeySetTest and ThresholdFheKeysTest.
     "CompressionPrivateKeySharesEnum",
 ];
 
