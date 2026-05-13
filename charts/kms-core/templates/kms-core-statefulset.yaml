@@ -216,10 +216,6 @@ spec:
           volumeMounts:
             - name: tun-device
               mountPath: /dev/net/tun
-          {{- with .Values.kmsCore.nitroEnclave.networkTunnel.resources }}
-          resources:
-          {{- toYaml . | nindent 12 }}
-          {{- end }}
         {{- end }}
         {{- else }}
         {{- /* Generate init keys for non-enclave kms-core service */}}
