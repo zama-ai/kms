@@ -133,13 +133,13 @@ kmsCore:
       parentAddress: 10.118.0.1/24
       # Must match the host portion of init_enclave.sh TUN_ADDR.
       enclaveAddress: 10.118.0.2
-      resources: {}
-        # requests:
-        #   memory: 256Mi
-        #   cpu: 250m
-        # limits:
-        #   memory: 512Mi
-        #   cpu: 500m
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 2
+        limits:
+          memory: 1024Mi
+          cpu: 2
     cid: 20
     eifPath: /app/kms/core/service/enclave.eif
     eifSignKey: 00000000-0000-0000-0000-000000000000
