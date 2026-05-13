@@ -57,7 +57,12 @@ ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" |
 if yq -e -p toml -oy '.enclave_bootstrap.network_tunnel.queue_count' "$KMS_SERVER_CONFIG_FILE" &>/dev/null; then
     TUN_QUEUE_COUNT="$(get_value "enclave_bootstrap.network_tunnel.queue_count")"
 else
-    TUN_QUEUE_COUNT="1"
+    TUN_QUEUE_COUNT="8"
+fi
+if yq -e -p toml -oy '.enclave_bootstrap.network_tunnel.tokio_worker_threads' "$KMS_SERVER_CONFIG_FILE" &>/dev/null; then
+    TUN_TOKIO_WORKER_THREADS="$(get_value "enclave_bootstrap.network_tunnel.tokio_worker_threads")"
+else
+    TUN_TOKIO_WORKER_THREADS="$(default_tun_tokio_worker_threads "$TUN_QUEUE_COUNT")"
 fi
 
 if [ "${KMS_SERVER_TUN_ADDR%/*}" = "$KMS_SERVER_TUN_ADDR" ]; then
@@ -131,7 +136,8 @@ sudo "$VSOCKTUN_BIN" parent \
     --tun-name "$KMS_SERVER_TUN_IF" \
     --tun-address "$KMS_SERVER_TUN_ADDR" \
     --vsock-port "$ENCLAVE_NET_PORT" \
-    --queues "$TUN_QUEUE_COUNT" &
+    --queues "$TUN_QUEUE_COUNT" \
+    --tokio-worker-threads "$TUN_TOKIO_WORKER_THREADS" &
 sudo sysctl -w net.ipv4.ip_forward=1
 
 for _ in $(seq 1 30);

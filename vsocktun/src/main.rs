@@ -16,6 +16,7 @@ use clap::{Args, Parser, Subcommand};
 use protocol::{FrameReader, OutgoingBuffer};
 use std::io;
 use std::sync::Arc;
+use tokio::runtime::Builder;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, sleep};
@@ -57,6 +58,8 @@ struct CommonArgs {
     queues: u16,
     #[arg(long)]
     mtu: Option<u32>,
+    #[arg(long, default_value_t = 4)]
+    tokio_worker_threads: usize,
 }
 
 #[derive(Args, Debug)]
@@ -90,10 +93,30 @@ enum DirectionTask {
     TunToSocket,
 }
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<()> {
+impl Cli {
+    fn tokio_worker_threads(&self) -> usize {
+        match &self.mode {
+            Mode::Parent(args) => args.common.tokio_worker_threads,
+            Mode::Enclave(args) => args.common.tokio_worker_threads,
+        }
+    }
+}
+
+fn main() -> Result<()> {
     let cli = Cli::parse();
-    run(cli).await
+    let worker_threads = cli.tokio_worker_threads();
+    if worker_threads == 0 {
+        bail!("--tokio-worker-threads must be at least one");
+    }
+
+    let runtime = Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .thread_name("vsocktun")
+        .enable_all()
+        .build()
+        .context("failed to build Tokio runtime for vsocktun")?;
+
+    runtime.block_on(run(cli))
 }
 
 async fn run(cli: Cli) -> Result<()> {
