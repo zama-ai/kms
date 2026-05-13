@@ -164,9 +164,8 @@ impl SessionMaker {
 
     #[cfg(test)]
     pub(crate) fn empty_dummy_session(rng: AesRng) -> Self {
-        let networking_manager = Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(None, None, false).unwrap(),
-        ));
+        let networking_manager =
+            Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
         Self {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
@@ -191,9 +190,8 @@ impl SessionMaker {
                 )
             })),
         };
-        let networking_manager = Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(None, None, false).unwrap(),
-        ));
+        let networking_manager =
+            Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
 
         let default_context_id = *crate::consts::DEFAULT_MPC_CONTEXT;
         let default_context = Context {

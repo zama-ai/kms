@@ -19,17 +19,7 @@ data:
     s3_endpoint = "{{ .Values.minio.endpoint }}"
     {{- else }}
     role_arn = "${AWS_ROLE_ARN}"
-      {{- if .Values.kmsCore.nitroEnclave.enabled }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
-    imds_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.imds }}"
-        {{- end }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
-    sts_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.sts }}"
-        {{- end }}
-    s3_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.s3 }}"
-    awskms_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.awskms }}"
-      {{- end }}
-    {{- end }}
+    {{ end }}
   vaults.toml: |
     {{- if .Values.kmsCore.publicVault.s3.enabled }}
     [public_vault.storage.s3]
@@ -91,12 +81,37 @@ data:
     tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
       {{- end }}
     {{- end }}
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    [enclave_bootstrap]
+    web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
+    resolv_conf_port = {{ int .Values.kmsCore.nitroEnclave.resolvConfPort }}
+    [enclave_bootstrap.network_tunnel]
+    subnet = {{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
+    parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
+    enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
+    vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
+    queue_count = {{ include "kmsNetworkTunnelQueueCount" . | int }}
+    tokio_worker_threads = {{ include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
+    {{- end }}
   kms-server.toml: |
     [service]
     listen_address = "0.0.0.0"
     listen_port = {{ int .Values.kmsCore.ports.client }}
     timeout_secs = {{ int .Values.kmsCore.resources.limits.grpcTimeout }}
     grpc_max_message_size = {{ int .Values.kmsCore.resources.limits.grpcMaxMessageSize }}
+
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    [enclave_bootstrap]
+    web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
+    resolv_conf_port = {{ int .Values.kmsCore.nitroEnclave.resolvConfPort }}
+    [enclave_bootstrap.network_tunnel]
+    subnet = {{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
+    parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
+    enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
+    vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
+    queue_count = {{ include "kmsNetworkTunnelQueueCount" . | int }}
+    tokio_worker_threads = {{ include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
+    {{- end }}
 
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
@@ -170,11 +185,8 @@ data:
     party_id = {{ int .id }}
     mpc_identity = {{ .host | quote }}
     address = {{ .host | quote }}
-          {{- if $.Values.kmsCore.nitroEnclave.enabled }}
-    port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer .id }}
-          {{- else }}
     port = {{ int .port }}
-          {{- end }}
+
           {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
             {{- if (default dict $.Values.kmsCore.thresholdMode.tls.ca_certificate).path }}
     tls_cert.path = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
@@ -189,11 +201,7 @@ data:
     party_id = {{ int $i }}
     mpc_identity = {{ .host | quote }}
     address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
-          {{- if $.Values.kmsCore.nitroEnclave.enabled }}
-    port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer $i }}
-            {{- else }}
     port = {{ int $.Values.kmsCore.ports.peer }}
-          {{- end }}
         {{- end }}
       {{- end }}
 
@@ -206,11 +214,7 @@ data:
     [telemetry]
     tracing_service_name = {{ include "kmsCoreName" . | quote }}
     {{- if .Values.tracing.enabled }}
-      {{- if .Values.kmsCore.nitroEnclave.enabled }}
-    tracing_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.tracing }}"
-      {{- else }}
     tracing_endpoint = {{ .Values.tracing.endpoint | quote }}
-      {{- end }}
     {{- end }}
 
     tracing_otlp_timeout_ms = 10000

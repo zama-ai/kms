@@ -21,8 +21,6 @@ use aws_sdk_kms::{
         RecipientInfo as KMSRecipientInfo,
     },
 };
-use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
-use hyper_rustls::HttpsConnectorBuilder;
 use iam_rs::{
     ConditionValue, IAMAction, IAMEffect, IAMOperator, IAMPolicy, IAMResource, IAMStatement,
     IAMVersion,
@@ -431,29 +429,15 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
     }
 }
 
-/// Given the address of a vsock-to-TCP proxy, constructs an AWS KMS client for use inside of a
-/// Nitro enclave.
+/// Constructs an AWS KMS client for use inside of a Nitro enclave.
 pub async fn build_aws_kms_client(
     aws_sdk_config: &SdkConfig,
     aws_kms_endpoint: Option<Url>,
 ) -> AWSKMSClient {
-    let region = aws_sdk_config.region().expect("AWS region must be set");
     let awskms_config = match aws_kms_endpoint {
-        Some(p) => {
-            let https_connector = HttpsConnectorBuilder::new()
-                .with_native_roots()
-                .https_only()
-                // Overrides the hostname checked during the TLS handshake
-                .with_server_name(format!("kms.{region}.amazonaws.com"))
-                .enable_http1()
-                .build();
-            let http_client = HyperClientBuilder::new().build(https_connector);
-            aws_sdk_kms::config::Builder::from(aws_sdk_config)
-                // Overrides the hostname used for the TCP connection
-                .endpoint_url(p)
-                .http_client(http_client)
-                .build()
-        }
+        Some(p) => aws_sdk_kms::config::Builder::from(aws_sdk_config)
+            .endpoint_url(p)
+            .build(),
         None => aws_sdk_kms::config::Builder::from(aws_sdk_config).build(),
     };
     AWSKMSClient::from_conf(awskms_config)

@@ -464,7 +464,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    peer_tcp_proxy: bool,
     ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
@@ -536,7 +535,6 @@ where
             .as_ref()
             .map(|(_, client_config, _)| client_config.clone()),
         threshold_config.core_to_core_net,
-        peer_tcp_proxy,
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context

@@ -22,6 +22,8 @@ pub struct CoreConfig {
     #[validate(nested)]
     pub service: ServiceEndpoint,
     #[validate(nested)]
+    pub enclave_bootstrap: Option<EnclaveBootstrapConfig>,
+    #[validate(nested)]
     pub telemetry: Option<TelemetryConfig>,
     #[validate(nested)]
     pub aws: Option<AWSConfig>,
@@ -80,6 +82,58 @@ pub struct ServiceEndpoint {
     // maximum gRPC message size in bytes
     #[validate(range(min = 1, max = 2147483647))]
     pub grpc_max_message_size: usize,
+}
+
+/// The enclave init script extracts networking configuration from the
+/// kms-server config before kms-server even starts. We add these fields to the
+/// config schema so serde validation wouldn't be thrown off by unknown
+/// fields. Kms-server doesn't actually use them.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct EnclaveBootstrapConfig {
+    // vsock to read fresh k8s web identity tokens from
+    #[validate(range(min = 1, max = 65535))]
+    pub web_identity_token_port: u16,
+    #[validate(range(min = 1, max = 65535))]
+    // vsock to read the parent k8s pod DNS configuration from
+    pub resolv_conf_port: u16,
+    // enclave networking configuration
+    #[validate(nested)]
+    pub network_tunnel: EnclaveBootstrapNetworkTunnelConfig,
+}
+
+/// Enclaves now get their own routable IP addresses.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct EnclaveBootstrapNetworkTunnelConfig {
+    // gateway and enclave are on this subnet
+    #[validate(length(min = 1))]
+    pub subnet: String,
+    // gateway address
+    #[validate(length(min = 1))]
+    pub parent_address: String,
+    // unsurprisingly, enclave address
+    #[validate(length(min = 1))]
+    pub enclave_address: String,
+    // virtual TUN devices on both ends talk through this vsock
+    #[validate(range(min = 1, max = 65535))]
+    pub vsock_port: u16,
+    // packet-forwarding queues used by the TUN/VSOCK relay
+    #[serde(default = "default_network_tunnel_queue_count")]
+    #[validate(range(min = 1, max = 256))]
+    pub queue_count: u16,
+    // Tokio runtime worker threads used by the relay
+    #[serde(default = "default_network_tunnel_tokio_worker_threads")]
+    #[validate(range(min = 1, max = 256))]
+    pub tokio_worker_threads: u16,
+}
+
+const fn default_network_tunnel_queue_count() -> u16 {
+    8
+}
+
+const fn default_network_tunnel_tokio_worker_threads() -> u16 {
+    4
 }
 
 impl ConfigTracing for CoreConfig {
@@ -415,6 +469,28 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_centralized_enclave_config() {
+        let core_config: CoreConfig = init_conf("config/default_centralized_enclave").unwrap();
+        core_config
+            .validate()
+            .expect("centralized enclave config must validate");
+
+        let enclave_bootstrap = core_config
+            .enclave_bootstrap
+            .as_ref()
+            .expect("enclave_bootstrap section required for enclave config");
+        let network_tunnel = &enclave_bootstrap.network_tunnel;
+        assert_eq!(enclave_bootstrap.web_identity_token_port, 4100);
+        assert_eq!(enclave_bootstrap.resolv_conf_port, 4200);
+        assert_eq!(network_tunnel.subnet, "10.118.0.0/24");
+        assert_eq!(network_tunnel.parent_address, "10.118.0.1/24");
+        assert_eq!(network_tunnel.enclave_address, "10.118.0.2");
+        assert_eq!(network_tunnel.vsock_port, 2100);
+        assert_eq!(network_tunnel.queue_count, 8);
+        assert_eq!(network_tunnel.tokio_worker_threads, 4);
     }
 
     // -----------------------------------------------------------------------

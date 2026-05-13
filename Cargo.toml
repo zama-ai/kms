@@ -19,6 +19,7 @@ members = [
     "observability",
     "tools/kms-health-check",
     "tools/generate-test-material",
+    "vsocktun",
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
@@ -112,11 +113,8 @@ attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation va
 aws-config = { version = "=1.8.12" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
 aws-lc-rs = { version = "=1.16.2" } # AWS-LC dependency pinned because of an earlier version vulnerability - LOW RISK: Official AWS SDK
 aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
-aws-sdk-kms = { version = "=1.98.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
-aws-sdk-s3 = { version = "=1.120.0" }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-smithy-runtime = { version = "=1.10.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
-aws-smithy-runtime-api = { version = "=1.11.6" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
-aws-smithy-types = { version = "=1.4.6" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
+aws-sdk-kms = { version = "=1.98.0", default-features = false, features = ["default-https-client", "rt-tokio"] }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
+aws-sdk-s3 = { version = "=1.120.0", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
 axum = { version = "=0.8.8", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
@@ -142,8 +140,6 @@ g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for th
 getrandom = { version = "=0.2.17", features = ["js"] }  # Random number generation for WASM - LOW RISK: rust-random team
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
-http-legacy = { package = "http", version = "=0.2.12" }  # HTTP types (older version for compatibility) - LOW RISK: hyperium team
-hyper-rustls = { version = "=0.24.2" }  # TLS for hyper HTTP client - LOW RISK: rustls team, memory-safe TLS
 hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }  # TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
 iam-rs = { version = "=0.0.23" } # AWS IAM policy parser/generator - HIGH RISK: individual maintainer, 10K downloads
 itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
@@ -203,6 +199,7 @@ thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual 
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.18", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
+tokio-vsock = "=0.7.2"  # Async virtio socket support - MEDIUM RISK: same rust-vsock org/owners as vsock, 5M+ downloads, documented, and purpose-built to replace the remaining bespoke poll-based relay loop in vsocktun
 toml = "=0.9.11"  # TOML serialization for tests and tooling - LOW RISK: rust-lang maintained, widely used
 tonic = "=0.14.5"  # gRPC framework - LOW RISK: hyperium team
 tonic-health = "=0.14.5"  # gRPC health checking - LOW RISK: hyperium team
@@ -216,6 +213,7 @@ tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
 tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
 tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
+tun-rs = "=2.8.3"  # Cross-platform TUN/TAP library - MEDIUM RISK: tun-rs team, purpose-built and production-oriented; used by vsocktun to replace bespoke Linux TUN/offload configuration code
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team

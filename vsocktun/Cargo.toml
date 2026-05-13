@@ -1,0 +1,21 @@
+[package]
+name = "vsocktun"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Multi-queue TUN to VSOCK relay for Nitro enclaves."
+readme = "README.md"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tokio-vsock.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tun-rs = { workspace = true, features = ["async_tokio"] }
+
+[dev-dependencies]
+tempfile.workspace = true

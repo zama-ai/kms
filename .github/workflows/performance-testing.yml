@@ -112,17 +112,14 @@ jobs:
   # Runs performance tests for KMS in different deployment modes
   ############################################################################
   performance-testing:
+    name: performance-testing
     needs: [docker-build]
     if: always() && !cancelled()
-    name: performance-testing
     runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
     steps:
-      - name: Setup Home
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.2.2
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
@@ -293,14 +290,14 @@ jobs:
 
       - name: Checkout Project
         if: ${{ env.KMS_CHART_VERSION != 'repository' }}
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Checkout Project KMS
         if: ${{ env.KMS_CHART_VERSION == 'repository' }}
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
