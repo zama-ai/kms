@@ -86,6 +86,10 @@ securityContext:
   allowPrivilegeEscalation: true
   privileged: true
   runAsUser: 0
+{{- with .networkTunnel.resources }}
+resources:
+{{- toYaml . | nindent 2 }}
+{{- end }}
 restartPolicy: Always
 command:
   - /bin/sh
