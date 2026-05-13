@@ -1,7 +1,15 @@
+//! TUN device ownership for `vsocktun`.
+//!
+//! This module is intentionally narrow: it turns the CLI-facing tunnel
+//! configuration into a multiqueue `tun-rs` device and hands queue handles back
+//! to the session runner. Route setup, NAT, and DNS stay outside this crate in
+//! the surrounding shell scripts.
+
 use anyhow::{Context, Result, bail};
 use std::net::Ipv4Addr;
 use tun_rs::{DeviceBuilder, Layer, SyncDevice, VIRTIO_NET_HDR_LEN};
 
+/// Parsed IPv4 interface address for one end of the point-to-point tunnel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Ipv4Cidr {
     address: Ipv4Addr,
@@ -38,11 +46,16 @@ impl Ipv4Cidr {
     }
 }
 
+/// The long-lived local TUN interface together with its queue handles.
+///
+/// `vsocktun` keeps the device for the lifetime of the process and clones new
+/// queue handles for each accepted tunnel session.
 pub(crate) struct TunDevice {
     queues: Vec<SyncDevice>,
 }
 
 impl TunDevice {
+    /// Creates the multiqueue TUN device that backs one side of the tunnel.
     pub(crate) fn create(
         name: &str,
         cidr: &Ipv4Cidr,
@@ -90,6 +103,7 @@ impl TunDevice {
         self.queues.len()
     }
 
+    /// Produces independent queue handles for a single tunnel session.
     pub(crate) fn clone_queues(&self) -> Result<Vec<SyncDevice>> {
         self.queues
             .iter()
