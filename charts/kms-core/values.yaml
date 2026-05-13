@@ -132,6 +132,9 @@ kmsCore:
       # party topology: 8 queues minimum, or the next power of two above the
       # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
       queueCount:
+      # If unset, tokioWorkerThreads defaults to a smaller scheduler pool than
+      # queueCount: 4 workers for up to 16 queues, otherwise 8 workers.
+      tokioWorkerThreads:
       interfaceName: vsocktun
       subnet: 10.118.0.0/24
       parentAddress: 10.118.0.1/24

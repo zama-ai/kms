@@ -122,10 +122,18 @@ pub struct EnclaveBootstrapNetworkTunnelConfig {
     #[serde(default = "default_network_tunnel_queue_count")]
     #[validate(range(min = 1, max = 256))]
     pub queue_count: u16,
+    // Tokio runtime worker threads used by the relay
+    #[serde(default = "default_network_tunnel_tokio_worker_threads")]
+    #[validate(range(min = 1, max = 256))]
+    pub tokio_worker_threads: u16,
 }
 
 const fn default_network_tunnel_queue_count() -> u16 {
     8
+}
+
+const fn default_network_tunnel_tokio_worker_threads() -> u16 {
+    4
 }
 
 impl ConfigTracing for CoreConfig {
@@ -482,6 +490,7 @@ mod tests {
         assert_eq!(network_tunnel.enclave_address, "10.118.0.2");
         assert_eq!(network_tunnel.vsock_port, 2100);
         assert_eq!(network_tunnel.queue_count, 8);
+        assert_eq!(network_tunnel.tokio_worker_threads, 4);
     }
 
     // -----------------------------------------------------------------------

@@ -62,9 +62,12 @@ TUN_NET="$(get_value "enclave_bootstrap.network_tunnel.subnet" | tr -d '"')"
 PARENT_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
 ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
 NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
-TUN_QUEUE_COUNT="1"
+TUN_QUEUE_COUNT="8"
 has_value "enclave_bootstrap.network_tunnel.queue_count" && \
     TUN_QUEUE_COUNT="$(get_value "enclave_bootstrap.network_tunnel.queue_count")"
+TUN_TOKIO_WORKER_THREADS="4"
+has_value "enclave_bootstrap.network_tunnel.tokio_worker_threads" && \
+    TUN_TOKIO_WORKER_THREADS="$(get_value "enclave_bootstrap.network_tunnel.tokio_worker_threads")"
 GW_ADDR="${PARENT_TUN_ADDR%/*}"
 CIDR_PREFIX="${PARENT_TUN_ADDR#*/}"
 [ "$GW_ADDR" != "$PARENT_TUN_ADDR" ] || fail "parent tunnel address missing CIDR prefix: $PARENT_TUN_ADDR"
@@ -95,7 +98,8 @@ vsocktun enclave \
     --tun-name "$TUN_IF" \
     --tun-address "$TUN_ADDR" \
     --vsock-port "$NET_PORT" \
-    --queues "$TUN_QUEUE_COUNT" |& logger &
+    --queues "$TUN_QUEUE_COUNT" \
+    --tokio-worker-threads "$TUN_TOKIO_WORKER_THREADS" |& logger &
 for _ in $(seq 1 30);
 do
     if ifconfig "$TUN_IF" &>/dev/null; then

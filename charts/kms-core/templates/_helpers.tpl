@@ -59,6 +59,18 @@ centralized
 {{- end -}}
 {{- end -}}
 
+{{- define "kmsNetworkTunnelTokioWorkerThreads" -}}
+{{- $configured := .Values.kmsCore.nitroEnclave.networkTunnel.tokioWorkerThreads -}}
+{{- if and $configured (gt (int $configured) 0) -}}
+{{- int $configured -}}
+{{- else -}}
+{{- $queueCount := include "kmsNetworkTunnelQueueCount" . | int -}}
+{{- if le $queueCount 16 -}}4
+{{- else -}}8
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
      	     	   "from" string
@@ -89,9 +101,11 @@ args:
 {{- end -}}
 
 {{/* takes a (dict "image" kms-core-image-values
-                   "networkTunnel" nitro-network-tunnel-values
-                   "ingressPorts" list-of-tcp-ports)
-      and renders the pod-local parent-side TUN bridge and DNS proxy used for
+                    "networkTunnel" nitro-network-tunnel-values
+                    "ingressPorts" list-of-tcp-ports
+                    "queueCount" int
+                    "workerThreads" int)
+       and renders the pod-local parent-side TUN bridge and DNS proxy used for
       enclave egress as a native Kubernetes sidecar. When ingressPorts is not
       empty, TCP ingress is DNATed into the enclave over the TUN. The vsock port
       must match init_enclave.sh. */}}
@@ -124,6 +138,7 @@ args:
     TUN_SUBNET={{ .networkTunnel.subnet | quote }}
     VSOCK_PORT={{ .networkTunnel.vsockPort | quote }}
     QUEUE_COUNT={{ .queueCount | quote }}
+    TOKIO_WORKER_THREADS={{ .workerThreads | quote }}
     UPSTREAM_DNS=""
     TUNNEL_PID=""
     DNSPROXY_PID=""
@@ -171,7 +186,8 @@ args:
       --tun-name "$TUN_IF" \
       --tun-address "$TUN_ADDR" \
       --vsock-port "$VSOCK_PORT" \
-      --queues "$QUEUE_COUNT" &
+      --queues "$QUEUE_COUNT" \
+      --tokio-worker-threads "$TOKIO_WORKER_THREADS" &
     TUNNEL_PID=$!
 
     for _ in $(seq 1 30); do
