@@ -19,6 +19,12 @@ WEB_IDENTITY_TOKEN_FILE="$4"
 UPSTREAM_DNS=""
 PARENT_IF=""
 PARENT_IP=""
+VSOCKTUN_BIN="$(command -v vsocktun)"
+
+if [ -z "$VSOCKTUN_BIN" ]; then
+    echo "start_proxies: could not resolve vsocktun in PATH"
+    exit 1
+fi
 
 while read -r key value _; do
     if [ "$key" = "nameserver" ]; then
@@ -48,6 +54,11 @@ RESOLVCONF_PORT="$(get_value "enclave_bootstrap.resolv_conf_port")"
 ENCLAVE_NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
 KMS_SERVER_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
 ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
+if yq -e -p toml -oy '.enclave_bootstrap.network_tunnel.queue_count' "$KMS_SERVER_CONFIG_FILE" &>/dev/null; then
+    TUN_QUEUE_COUNT="$(get_value "enclave_bootstrap.network_tunnel.queue_count")"
+else
+    TUN_QUEUE_COUNT="1"
+fi
 
 if [ "${KMS_SERVER_TUN_ADDR%/*}" = "$KMS_SERVER_TUN_ADDR" ]; then
     echo "start_proxies: parent tunnel address missing CIDR prefix: $KMS_SERVER_TUN_ADDR"
@@ -116,7 +127,11 @@ socat -T180 VSOCK-LISTEN:"$RESOLVCONF_PORT",fork,reuseaddr OPEN:/etc/resolv.conf
 
 # enable NAT for enclave outgoing connections
 echo "start_proxies: starting enclave network tunnel interface"
-sudo socat VSOCK-LISTEN:"$ENCLAVE_NET_PORT",fork,reuseaddr TUN:"$KMS_SERVER_TUN_ADDR",tun-name=$KMS_SERVER_TUN_IF,iff-up &
+sudo "$VSOCKTUN_BIN" parent \
+    --tun-name "$KMS_SERVER_TUN_IF" \
+    --tun-address "$KMS_SERVER_TUN_ADDR" \
+    --vsock-port "$ENCLAVE_NET_PORT" \
+    --queues "$TUN_QUEUE_COUNT" &
 sudo sysctl -w net.ipv4.ip_forward=1
 
 for _ in $(seq 1 30);

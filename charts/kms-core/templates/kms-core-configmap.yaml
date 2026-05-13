@@ -90,6 +90,7 @@ data:
     parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
     enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
     vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
+    queue_count = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.queueCount }}
     {{- end }}
   kms-server.toml: |
     [service]
@@ -107,6 +108,7 @@ data:
     parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
     enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
     vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
+    queue_count = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.queueCount }}
     {{- end }}
 
     {{ if .Values.kmsCore.thresholdMode.enabled }}

@@ -62,6 +62,9 @@ TUN_NET="$(get_value "enclave_bootstrap.network_tunnel.subnet" | tr -d '"')"
 PARENT_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
 ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
 NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
+TUN_QUEUE_COUNT="1"
+has_value "enclave_bootstrap.network_tunnel.queue_count" && \
+    TUN_QUEUE_COUNT="$(get_value "enclave_bootstrap.network_tunnel.queue_count")"
 GW_ADDR="${PARENT_TUN_ADDR%/*}"
 CIDR_PREFIX="${PARENT_TUN_ADDR#*/}"
 [ "$GW_ADDR" != "$PARENT_TUN_ADDR" ] || fail "parent tunnel address missing CIDR prefix: $PARENT_TUN_ADDR"
@@ -86,16 +89,13 @@ cat /etc/resolv.conf |& logger
 # the parent
 ifconfig lo 127.0.0.1 |& logger || fail "cannot setup loopback interface"
 route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loopback route"
-socat_tun() {
-    while true;
-    do
-	log "starting enclave-side network tunnel"
-	socat TUN:"$TUN_ADDR",tun-name=$TUN_IF,iff-up VSOCK-CONNECT:$PARENT_CID:"$NET_PORT" |& logger
-	log "enclave-side network tunnel disconnected, retrying in 1s"
-	sleep 1
-    done
-}
-socat_tun &
+log "starting enclave-side network tunnel"
+vsocktun enclave \
+    --parent-cid "$PARENT_CID" \
+    --tun-name "$TUN_IF" \
+    --tun-address "$TUN_ADDR" \
+    --vsock-port "$NET_PORT" \
+    --queues "$TUN_QUEUE_COUNT" |& logger &
 for _ in $(seq 1 30);
 do
     if ifconfig "$TUN_IF" &>/dev/null; then
