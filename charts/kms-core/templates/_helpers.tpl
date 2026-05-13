@@ -182,7 +182,7 @@ args:
       iptables -A FORWARD -o "$TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
     echo "enclave-network-tunnel: starting parent-side TUN bridge on $TUN_HOST via $UPSTREAM_DNS"
-    vsocktun parent \
+    vsocktun -vv parent \
       --tun-name "$TUN_IF" \
       --tun-address "$TUN_ADDR" \
       --vsock-port "$VSOCK_PORT" \

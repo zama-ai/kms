@@ -93,7 +93,7 @@ cat /etc/resolv.conf |& logger
 ifconfig lo 127.0.0.1 |& logger || fail "cannot setup loopback interface"
 route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loopback route"
 log "starting enclave-side network tunnel"
-vsocktun enclave \
+vsocktun -vv enclave \
     --parent-cid "$PARENT_CID" \
     --tun-name "$TUN_IF" \
     --tun-address "$TUN_ADDR" \

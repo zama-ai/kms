@@ -19,7 +19,7 @@ WEB_IDENTITY_TOKEN_FILE="$4"
 UPSTREAM_DNS=""
 PARENT_IF=""
 PARENT_IP=""
-VSOCKTUN_BIN="$(command -v vsocktun)"
+VSOCKTUN_BIN="$(command -vv vsocktun)"
 
 if [ -z "$VSOCKTUN_BIN" ]; then
     echo "start_proxies: could not resolve vsocktun in PATH"
@@ -132,7 +132,7 @@ socat -T180 VSOCK-LISTEN:"$RESOLVCONF_PORT",fork,reuseaddr OPEN:/etc/resolv.conf
 
 # enable NAT for enclave outgoing connections
 echo "start_proxies: starting enclave network tunnel interface"
-sudo "$VSOCKTUN_BIN" parent \
+sudo "$VSOCKTUN_BIN" -vv parent \
     --tun-name "$KMS_SERVER_TUN_IF" \
     --tun-address "$KMS_SERVER_TUN_ADDR" \
     --vsock-port "$ENCLAVE_NET_PORT" \
