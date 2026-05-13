@@ -92,6 +92,8 @@ vsocktun enclave \
 - `--tokio-worker-threads`: number of Tokio runtime worker threads used to
   drive all shard tasks in the process
 - `--mtu`: optional TUN MTU override
+- `-v, --verbose`: raise log level from `info` to `debug`
+- `-vv`: raise log level to `trace` and include per-packet forwarding summaries
 
 Parent-only:
 - `--session-timeout-secs`: how long the parent waits for all shards of a new
@@ -110,6 +112,15 @@ Enclave-only:
   `vsocktun`.
 - The enclave-side runtime still needs routes and DNS wiring configured outside
   `vsocktun`.
+
+## Debugging
+
+When traffic does not appear to flow through the tunnel:
+
+- default output uses `info` for lifecycle and `error` for failures
+- use `-v` to enable `debug` logs for session assembly, shard startup, and cancellation decisions
+- use `-vv` to enable `trace` logs for packet direction and byte counts per shard
+- packet logs intentionally omit payload contents and only report metadata
 
 In this repository, those surrounding concerns are handled by:
 - `docker/core/service/start_parent_proxies.sh`

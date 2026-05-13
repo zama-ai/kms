@@ -14,6 +14,7 @@ mod vsock;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use protocol::{FrameReader, OutgoingBuffer};
+use std::fmt::Arguments;
 use std::io;
 use std::sync::Arc;
 use tokio::runtime::Builder;
@@ -21,16 +22,29 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, sleep};
 use tokio_vsock::{OwnedReadHalf, OwnedWriteHalf, VsockStream};
+use tracing::Level;
 use tun::{Ipv4Cidr, TunDevice};
 use tun_rs::{AsyncDevice, SyncDevice};
 use vsock::{ParentSessionAcceptor, SessionSockets, connect_session};
 
 const MAX_TUN_FRAME_BYTES: usize = 1024 * 1024;
 
+fn log_level_from_count(count: u8) -> Level {
+    match count {
+        0 => Level::INFO,
+        1 => Level::DEBUG,
+        _ => Level::TRACE,
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "vsocktun")]
 #[command(about = "Multi-queue TUN to VSOCK relay")]
 struct Cli {
+    /// Verbosity level (-v for shard/session logs, -vv for packet flow logs)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
     #[command(subcommand)]
     mode: Mode,
 }
@@ -93,6 +107,33 @@ enum DirectionTask {
     TunToSocket,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ShardLogContext {
+    role: &'static str,
+    session_id: u64,
+    shard: usize,
+}
+
+impl ShardLogContext {
+    fn debug(self, args: Arguments<'_>) {
+        tracing::debug!(
+            role = self.role,
+            session_id = self.session_id,
+            shard = self.shard,
+            "{args}"
+        );
+    }
+
+    fn trace(self, args: Arguments<'_>) {
+        tracing::trace!(
+            role = self.role,
+            session_id = self.session_id,
+            shard = self.shard,
+            "{args}"
+        );
+    }
+}
+
 impl Cli {
     fn tokio_worker_threads(&self) -> usize {
         match &self.mode {
@@ -108,6 +149,12 @@ fn main() -> Result<()> {
     if worker_threads == 0 {
         bail!("--tokio-worker-threads must be at least one");
     }
+
+    tracing_subscriber::fmt()
+        .with_max_level(log_level_from_count(cli.verbose))
+        .with_target(false)
+        .without_time()
+        .init();
 
     let runtime = Builder::new_multi_thread()
         .worker_threads(worker_threads)
@@ -140,33 +187,42 @@ async fn run_parent(args: ParentArgs) -> Result<()> {
         common.mtu,
     )
     .with_context(|| format!("failed to create TUN interface '{}'", common.tun_name))?;
+    tracing::debug!(
+        tun_name = %common.tun_name,
+        tun_address = %common.tun_address.address(),
+        prefix_len = common.tun_address.prefix_len(),
+        queues = common.queues,
+        mtu = ?common.mtu,
+        tokio_worker_threads = common.tokio_worker_threads,
+        "vsocktun(parent): configured tunnel"
+    );
     let acceptor = ParentSessionAcceptor::bind(
         common.vsock_port,
         tun.queue_count(),
         Duration::from_secs(args.session_timeout_secs),
     )?;
 
-    eprintln!(
-        "vsocktun(parent): listening on VSOCK port {} with {} queue(s) on {}",
-        common.vsock_port,
-        tun.queue_count(),
-        common.tun_name,
+    tracing::info!(
+        vsock_port = common.vsock_port,
+        queues = tun.queue_count(),
+        tun_name = %common.tun_name,
+        "vsocktun(parent): listening for tunnel sessions"
     );
 
     loop {
         match acceptor.accept_session().await {
             Ok(session) => {
-                eprintln!(
-                    "vsocktun(parent): established session {} with {} shard connection(s)",
-                    session.session_id,
-                    session.shards.len(),
+                tracing::info!(
+                    session_id = session.session_id,
+                    shards = session.shards.len(),
+                    "vsocktun(parent): established session"
                 );
-                if let Err(err) = run_session(&tun, session).await {
-                    eprintln!("vsocktun(parent): session ended with error: {err:#}");
+                if let Err(err) = run_session("parent", &tun, session).await {
+                    tracing::error!(error = %err, "vsocktun(parent): session ended with error");
                 }
             }
             Err(err) => {
-                eprintln!("vsocktun(parent): failed to accept session: {err:#}");
+                tracing::error!(error = %err, "vsocktun(parent): failed to accept session");
             }
         }
     }
@@ -187,35 +243,44 @@ async fn run_enclave(args: EnclaveArgs) -> Result<()> {
     )
     .with_context(|| format!("failed to create TUN interface '{}'", common.tun_name))?;
     let reconnect_delay = Duration::from_millis(args.reconnect_delay_ms);
+    tracing::debug!(
+        tun_name = %common.tun_name,
+        tun_address = %common.tun_address.address(),
+        prefix_len = common.tun_address.prefix_len(),
+        queues = common.queues,
+        mtu = ?common.mtu,
+        tokio_worker_threads = common.tokio_worker_threads,
+        "vsocktun(enclave): configured tunnel"
+    );
 
-    eprintln!(
-        "vsocktun(enclave): dialing parent CID {} on VSOCK port {} with {} queue(s) on {}",
-        args.parent_cid,
-        common.vsock_port,
-        tun.queue_count(),
-        common.tun_name,
+    tracing::info!(
+        parent_cid = args.parent_cid,
+        vsock_port = common.vsock_port,
+        queues = tun.queue_count(),
+        tun_name = %common.tun_name,
+        "vsocktun(enclave): dialing parent"
     );
 
     loop {
         match connect_session(args.parent_cid, common.vsock_port, tun.queue_count()).await {
             Ok(session) => {
-                eprintln!(
-                    "vsocktun(enclave): established session {} with {} shard connection(s)",
-                    session.session_id,
-                    session.shards.len(),
+                tracing::info!(
+                    session_id = session.session_id,
+                    shards = session.shards.len(),
+                    "vsocktun(enclave): established session"
                 );
-                if let Err(err) = run_session(&tun, session).await {
-                    eprintln!("vsocktun(enclave): session ended with error: {err:#}");
+                if let Err(err) = run_session("enclave", &tun, session).await {
+                    tracing::error!(error = %err, "vsocktun(enclave): session ended with error");
                 }
             }
             Err(err) => {
-                eprintln!("vsocktun(enclave): failed to connect session: {err:#}");
+                tracing::error!(error = %err, "vsocktun(enclave): failed to connect session");
             }
         }
 
-        eprintln!(
-            "vsocktun(enclave): reconnecting in {} ms",
-            reconnect_delay.as_millis(),
+        tracing::info!(
+            reconnect_delay_ms = reconnect_delay.as_millis(),
+            "vsocktun(enclave): reconnecting"
         );
         sleep(reconnect_delay).await;
     }
@@ -225,7 +290,8 @@ async fn run_enclave(args: EnclaveArgs) -> Result<()> {
 ///
 /// A session supervisor fans out one worker per shard, waits for the first
 /// failure, and then broadcasts cancellation so no shard outlives the session.
-async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
+async fn run_session(role: &'static str, tun: &TunDevice, session: SessionSockets) -> Result<()> {
+    let session_id = session.session_id;
     let max_tun_frame_bytes = tun.max_frame_bytes();
     let tun_queues = tun
         .clone_queues()
@@ -238,16 +304,29 @@ async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
             tun_queues.len(),
         );
     }
+    tracing::debug!(
+        role,
+        session_id,
+        shards = tun_queues.len(),
+        "vsocktun: starting session"
+    );
 
     let (cancel_tx, _) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
     for (shard, (tun_queue, socket)) in tun_queues.into_iter().zip(session.shards).enumerate() {
+        tracing::debug!(role, session_id, shard, "vsocktun: spawning shard worker");
+        let shard_log = ShardLogContext {
+            role,
+            session_id,
+            shard,
+        };
         let cancel_rx = cancel_tx.subscribe();
         tasks.spawn(async move {
             WorkerOutcome {
                 shard,
-                result: pump_shard(shard, tun_queue, socket, max_tun_frame_bytes, cancel_rx).await,
+                result: pump_shard(shard_log, tun_queue, socket, max_tun_frame_bytes, cancel_rx)
+                    .await,
             }
         });
     }
@@ -259,12 +338,23 @@ async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
                 if let Err(err) = outcome.result
                     && first_error.is_none()
                 {
+                    tracing::debug!(
+                        role,
+                        session_id,
+                        shard = outcome.shard,
+                        "vsocktun: cancelling session after shard failure"
+                    );
                     let _ = cancel_tx.send(true);
                     first_error = Some(anyhow!("shard {} failed: {err:#}", outcome.shard));
                 }
             }
             Err(err) => {
                 if first_error.is_none() {
+                    tracing::debug!(
+                        role,
+                        session_id,
+                        "vsocktun: cancelling session after worker task failure"
+                    );
                     let _ = cancel_tx.send(true);
                     first_error = Some(anyhow!("vsocktun worker task failed: {err}"));
                 }
@@ -276,6 +366,8 @@ async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
         return Err(err);
     }
 
+    tracing::debug!(role, session_id, "vsocktun: session completed cleanly");
+
     Ok(())
 }
 
@@ -285,7 +377,7 @@ async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
 /// single TUN queue with a single VSOCK stream and treats both directions as a
 /// unit for lifecycle and error handling.
 async fn pump_shard(
-    shard: usize,
+    shard_log: ShardLogContext,
     tun_queue: SyncDevice,
     socket: VsockStream,
     max_tun_frame_bytes: usize,
@@ -295,23 +387,25 @@ async fn pump_shard(
         return Ok(());
     }
 
-    let tun_queue = Arc::new(
-        AsyncDevice::new(tun_queue)
-            .with_context(|| format!("failed to make TUN queue {shard} asynchronous"))?,
-    );
+    shard_log.debug(format_args!("starting"));
+
+    let tun_queue =
+        Arc::new(AsyncDevice::new(tun_queue).with_context(|| {
+            format!("failed to make TUN queue {} asynchronous", shard_log.shard)
+        })?);
     let socket_frame_bytes = MAX_TUN_FRAME_BYTES.max(max_tun_frame_bytes);
     let (socket_reader, socket_writer) = socket.into_split();
     let (local_cancel_tx, _) = watch::channel(false);
 
     let socket_to_tun = forward_socket_to_tun(
-        shard,
+        shard_log,
         socket_reader,
         Arc::clone(&tun_queue),
         socket_frame_bytes,
         local_cancel_tx.subscribe(),
     );
     let tun_to_socket = forward_tun_to_socket(
-        shard,
+        shard_log,
         Arc::clone(&tun_queue),
         socket_writer,
         socket_frame_bytes,
@@ -324,6 +418,7 @@ async fn pump_shard(
         changed = session_cancelled.changed() => {
             match changed {
                 Ok(()) if *session_cancelled.borrow() => {
+                    shard_log.debug(format_args!("received session cancellation"));
                     let _ = local_cancel_tx.send(true);
                     let _ = (&mut socket_to_tun).await;
                     let _ = (&mut tun_to_socket).await;
@@ -347,6 +442,8 @@ async fn pump_shard(
         DirectionTask::TunToSocket => (&mut socket_to_tun).await,
     };
 
+    shard_log.debug(format_args!("stopping"));
+
     match (first.1, second) {
         (Err(err), _) => Err(err),
         (Ok(()), Err(err)) => Err(err),
@@ -360,7 +457,7 @@ async fn pump_shard(
 /// This direction is intentionally agnostic to the inner TCP or gRPC protocol;
 /// it only restores packet boundaries established by the tunnel framing.
 async fn forward_socket_to_tun(
-    shard: usize,
+    shard_log: ShardLogContext,
     mut socket_reader: OwnedReadHalf,
     tun_queue: Arc<AsyncDevice>,
     max_tun_frame_bytes: usize,
@@ -382,13 +479,14 @@ async fn forward_socket_to_tun(
                 }
             }
             result = frame_reader.read_packet_async(&mut socket_reader) => {
-                result.with_context(|| format!("failed to read framed packet on shard {shard}"))?
+                result.with_context(|| format!("failed to read framed packet on shard {}", shard_log.shard))?
             }
         };
 
         let Some(packet) = packet else {
             continue;
         };
+        let packet_len = packet.len();
 
         let mut pending_tun_write = OutgoingBuffer::raw(packet);
         loop {
@@ -405,11 +503,12 @@ async fn forward_socket_to_tun(
                     }
                 }
                 result = write_to_tun(&mut pending_tun_write, tun_queue.as_ref()) => {
-                    result.with_context(|| format!("failed to inject packet into TUN queue {shard}"))?
+                    result.with_context(|| format!("failed to inject packet into TUN queue {}", shard_log.shard))?
                 }
             };
 
             if finished {
+                shard_log.trace(format_args!("forwarded {packet_len} bytes vsock->tun"));
                 break;
             }
         }
@@ -422,7 +521,7 @@ async fn forward_socket_to_tun(
 /// responsible for preserving whatever packet representation the local kernel
 /// exposes rather than normalizing it back to one frame per inner segment.
 async fn forward_tun_to_socket(
-    shard: usize,
+    shard_log: ShardLogContext,
     tun_queue: Arc<AsyncDevice>,
     mut socket_writer: OwnedWriteHalf,
     max_tun_frame_bytes: usize,
@@ -444,16 +543,18 @@ async fn forward_tun_to_socket(
                 }
             }
             result = tun_queue.recv(&mut tun_buf) => {
-                result.with_context(|| format!("failed to read packet from TUN queue {shard}"))?
+                result.with_context(|| format!("failed to read packet from TUN queue {}", shard_log.shard))?
             }
         };
 
         if read == 0 {
-            bail!("TUN queue {shard} closed unexpectedly");
+            bail!("TUN queue {} closed unexpectedly", shard_log.shard);
         }
 
-        let mut pending_socket_write = OutgoingBuffer::framed(&tun_buf[..read])
-            .with_context(|| format!("failed to frame TUN packet from queue {shard}"))?;
+        let mut pending_socket_write =
+            OutgoingBuffer::framed(&tun_buf[..read]).with_context(|| {
+                format!("failed to frame TUN packet from queue {}", shard_log.shard)
+            })?;
         loop {
             if *cancelled.borrow() {
                 return Ok(());
@@ -468,11 +569,12 @@ async fn forward_tun_to_socket(
                     }
                 }
                 result = pending_socket_write.write_to_async(&mut socket_writer) => {
-                    result.with_context(|| format!("failed to forward packet on VSOCK shard {shard}"))?
+                    result.with_context(|| format!("failed to forward packet on VSOCK shard {}", shard_log.shard))?
                 }
             };
 
             if finished {
+                shard_log.trace(format_args!("forwarded {read} bytes tun->vsock"));
                 break;
             }
         }
@@ -505,6 +607,7 @@ struct ParsedCommon {
     vsock_port: u32,
     queues: usize,
     mtu: Option<u32>,
+    tokio_worker_threads: usize,
 }
 
 impl ParsedCommon {
@@ -522,6 +625,62 @@ impl ParsedCommon {
             vsock_port: args.vsock_port,
             queues: usize::from(args.queues),
             mtu: args.mtu,
+            tokio_worker_threads: args.tokio_worker_threads,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Mode, log_level_from_count};
+    use clap::Parser;
+    use tracing::Level;
+
+    #[test]
+    fn parses_single_verbose_flag() {
+        let cli = Cli::try_parse_from([
+            "vsocktun",
+            "-v",
+            "parent",
+            "--tun-name",
+            "vsocktun",
+            "--tun-address",
+            "10.118.0.1/24",
+            "--vsock-port",
+            "2100",
+        ])
+        .expect("CLI should parse with one verbose flag");
+
+        assert_eq!(cli.verbose, 1);
+        assert!(matches!(cli.mode, Mode::Parent(_)));
+    }
+
+    #[test]
+    fn parses_double_verbose_flag() {
+        let cli = Cli::try_parse_from([
+            "vsocktun",
+            "-vv",
+            "enclave",
+            "--parent-cid",
+            "3",
+            "--tun-name",
+            "vsocktun",
+            "--tun-address",
+            "10.118.0.2/24",
+            "--vsock-port",
+            "2100",
+        ])
+        .expect("CLI should parse with two verbose flags");
+
+        assert_eq!(cli.verbose, 2);
+        assert!(matches!(cli.mode, Mode::Enclave(_)));
+    }
+
+    #[test]
+    fn maps_verbose_levels_to_expected_outputs() {
+        assert_eq!(log_level_from_count(0), Level::INFO);
+        assert_eq!(log_level_from_count(1), Level::DEBUG);
+        assert_eq!(log_level_from_count(2), Level::TRACE);
+        assert_eq!(log_level_from_count(7), Level::TRACE);
     }
 }
