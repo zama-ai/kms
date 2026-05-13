@@ -35,6 +35,30 @@ centralized
 {{ default 1 .Values.kmsPeers.id }}
 {{- end -}}
 
+{{- define "kmsNetworkTunnelQueueCount" -}}
+{{- $configured := .Values.kmsCore.nitroEnclave.networkTunnel.queueCount -}}
+{{- if and $configured (gt (int $configured) 0) -}}
+{{- int $configured -}}
+{{- else if .Values.kmsCore.thresholdMode.enabled -}}
+{{- $partyCount := int .Values.kmsPeers.count -}}
+{{- if .Values.kmsCore.thresholdMode.peersList -}}
+{{- $partyCount = len .Values.kmsCore.thresholdMode.peersList -}}
+{{- end -}}
+{{- $hotFlows := 0 -}}
+{{- if gt $partyCount 1 -}}
+{{- $hotFlows = mul 2 (sub $partyCount 1) -}}
+{{- end -}}
+{{- if le $hotFlows 8 -}}8
+{{- else if le $hotFlows 16 -}}16
+{{- else if le $hotFlows 32 -}}32
+{{- else if le $hotFlows 64 -}}64
+{{- else if le $hotFlows 128 -}}128
+{{- else -}}256
+{{- end -}}
+{{- else -}}8
+{{- end -}}
+{{- end -}}
+
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
      	     	   "from" string
@@ -86,10 +110,6 @@ securityContext:
   allowPrivilegeEscalation: true
   privileged: true
   runAsUser: 0
-{{- with .networkTunnel.resources }}
-resources:
-{{- toYaml . | nindent 2 }}
-{{- end }}
 restartPolicy: Always
 command:
   - /bin/sh
@@ -103,7 +123,7 @@ args:
     ENCLAVE_TUN_IP={{ .networkTunnel.enclaveAddress | quote }}
     TUN_SUBNET={{ .networkTunnel.subnet | quote }}
     VSOCK_PORT={{ .networkTunnel.vsockPort | quote }}
-    QUEUE_COUNT={{ .networkTunnel.queueCount | quote }}
+    QUEUE_COUNT={{ .queueCount | quote }}
     UPSTREAM_DNS=""
     TUNNEL_PID=""
     DNSPROXY_PID=""

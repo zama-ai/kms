@@ -43,7 +43,7 @@ struct CommonArgs {
     tun_address: String,
     #[arg(long)]
     vsock_port: u32,
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 8)]
     queues: u16,
     #[arg(long)]
     mtu: Option<u32>,
