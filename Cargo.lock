@@ -8512,6 +8512,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-vsock",
+ "tracing",
+ "tracing-subscriber",
  "tun-rs",
 ]
 

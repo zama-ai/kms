@@ -13,6 +13,8 @@ anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
 tokio-vsock.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 tun-rs = { workspace = true, features = ["async_tokio"] }
 
 [dev-dependencies]
