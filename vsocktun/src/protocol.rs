@@ -1,3 +1,12 @@
+//! Session handshake and packet framing used by `vsocktun`.
+//!
+//! The tunnel transport itself is stream-oriented, so this module provides the
+//! two pieces of structure the relay needs on top of raw bytes:
+//! - a small session header that lets both sides assemble shard streams into
+//!   one logical tunnel session
+//! - length-prefixed packet framing so TUN packets can be forwarded without
+//!   depending on any stream-level message boundaries
+
 use std::io;
 #[cfg(test)]
 use std::io::{Read, Write};
@@ -82,6 +91,10 @@ impl Hello {
     }
 }
 
+/// Incremental decoder for framed TUN packets read from a VSOCK byte stream.
+///
+/// It keeps enough state to resume a partially read frame without assuming that
+/// every socket read returns a whole packet.
 #[derive(Debug)]
 pub(crate) struct FrameReader {
     header: [u8; 4],
@@ -239,6 +252,11 @@ impl FrameReader {
     }
 }
 
+/// Incremental encoder for framed packets waiting to be written to either side
+/// of the tunnel.
+///
+/// This keeps partial-write bookkeeping separate from the higher-level shard
+/// control flow so the same helper can be reused for TUN and VSOCK writes.
 #[derive(Debug)]
 pub(crate) struct OutgoingBuffer {
     pub(crate) bytes: Vec<u8>,

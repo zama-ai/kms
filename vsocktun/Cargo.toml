@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Multi-queue TUN to VSOCK relay for Nitro enclaves."
+readme = "README.md"
 publish = false
 
 [dependencies]

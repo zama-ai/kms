@@ -1,3 +1,12 @@
+//! `vsocktun` is a point-to-point packet relay between a Linux TUN device and
+//! a set of VSOCK connections.
+//!
+//! The relay is organized around two concepts:
+//! - a *session*, which is one logical tunnel between enclave and parent
+//! - a set of *shards*, where each shard pairs one TUN queue with one VSOCK
+//!   stream so independent inner flows do not all contend on one ordered outer
+//!   transport
+
 mod protocol;
 mod tun;
 mod vsock;
@@ -31,6 +40,11 @@ enum Mode {
     Enclave(EnclaveArgs),
 }
 
+/// Common tunnel parameters shared by both ends of the relay.
+///
+/// The surrounding shell scripts still own addressing, routing, NAT, and DNS.
+/// `vsocktun` only needs enough information to create the local TUN queues and
+/// connect them to the matching VSOCK session.
 #[derive(Args, Debug, Clone)]
 struct CommonArgs {
     #[arg(long)]
@@ -69,6 +83,8 @@ struct WorkerOutcome {
     result: Result<()>,
 }
 
+/// Identifies which half of a shard finished first so the other half can be
+/// cancelled and drained cleanly.
 enum DirectionTask {
     SocketToTun,
     TunToSocket,
@@ -87,6 +103,11 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Parent-side entry point.
+///
+/// The parent creates the local TUN device once, then repeatedly accepts new
+/// tunnel sessions from enclaves over VSOCK. Each accepted session reuses that
+/// same TUN interface but gets a fresh set of queue handles.
 async fn run_parent(args: ParentArgs) -> Result<()> {
     let common = ParsedCommon::parse(args.common)?;
     let tun = TunDevice::create(
@@ -128,6 +149,11 @@ async fn run_parent(args: ParentArgs) -> Result<()> {
     }
 }
 
+/// Enclave-side entry point.
+///
+/// The enclave creates its local TUN device once and then repeatedly attempts
+/// to establish a complete multi-shard session to the parent. Reconnect policy
+/// lives here so shard workers can stay focused on packet forwarding.
 async fn run_enclave(args: EnclaveArgs) -> Result<()> {
     let common = ParsedCommon::parse(args.common)?;
     let tun = TunDevice::create(
@@ -172,6 +198,10 @@ async fn run_enclave(args: EnclaveArgs) -> Result<()> {
     }
 }
 
+/// Runs one logical tunnel session across all configured shards.
+///
+/// A session supervisor fans out one worker per shard, waits for the first
+/// failure, and then broadcasts cancellation so no shard outlives the session.
 async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
     let max_tun_frame_bytes = tun.max_frame_bytes();
     let tun_queues = tun
@@ -226,6 +256,11 @@ async fn run_session(tun: &TunDevice, session: SessionSockets) -> Result<()> {
     Ok(())
 }
 
+/// Runs both packet directions for one shard.
+///
+/// Each shard is one independently scheduled lane in the tunnel. It combines a
+/// single TUN queue with a single VSOCK stream and treats both directions as a
+/// unit for lifecycle and error handling.
 async fn pump_shard(
     shard: usize,
     tun_queue: SyncDevice,
@@ -296,6 +331,11 @@ async fn pump_shard(
     }
 }
 
+/// Moves framed packets from the shard's VSOCK stream into the matching TUN
+/// queue.
+///
+/// This direction is intentionally agnostic to the inner TCP or gRPC protocol;
+/// it only restores packet boundaries established by the tunnel framing.
 async fn forward_socket_to_tun(
     shard: usize,
     mut socket_reader: OwnedReadHalf,
@@ -353,6 +393,11 @@ async fn forward_socket_to_tun(
     }
 }
 
+/// Moves packets from the shard's TUN queue into the matching VSOCK stream.
+///
+/// The TUN device may surface offloaded or coalesced traffic, so this path is
+/// responsible for preserving whatever packet representation the local kernel
+/// exposes rather than normalizing it back to one frame per inner segment.
 async fn forward_tun_to_socket(
     shard: usize,
     tun_queue: Arc<AsyncDevice>,
@@ -411,6 +456,10 @@ async fn forward_tun_to_socket(
     }
 }
 
+/// Best-effort write helper for the TUN side of a shard.
+///
+/// The caller retains ownership of the pending packet buffer so partial writes
+/// can resume without rebuilding framing state.
 async fn write_to_tun(buffer: &mut OutgoingBuffer, tun_queue: &AsyncDevice) -> io::Result<bool> {
     let bytes = &buffer.bytes[buffer.written..];
     match tun_queue.send(bytes).await {
@@ -436,6 +485,8 @@ struct ParsedCommon {
 }
 
 impl ParsedCommon {
+    /// Parses CLI parameters into the validated runtime configuration used by
+    /// both parent and enclave session setup.
     fn parse(args: CommonArgs) -> Result<Self> {
         if args.queues == 0 {
             bail!("--queues must be at least one");

@@ -1,14 +1,23 @@
+//! VSOCK-side session management for `vsocktun`.
+//!
+//! This module owns the parent/enclave control plane for the outer transport:
+//! creating the shard streams, grouping them into one logical session, and
+//! validating that both sides agree on the shard layout.
+
 use crate::protocol::Hello;
 use anyhow::{Context, Result, anyhow, bail};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{Instant, timeout};
 use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
 
+/// The set of VSOCK streams that make up one logical tunnel session.
 pub(crate) struct SessionSockets {
     pub(crate) session_id: u64,
     pub(crate) shards: Vec<VsockStream>,
 }
 
+/// Parent-side acceptor that assembles individually accepted VSOCK streams into
+/// one complete multi-shard tunnel session.
 pub(crate) struct ParentSessionAcceptor {
     listener: VsockListener,
     queue_count: usize,
@@ -16,6 +25,7 @@ pub(crate) struct ParentSessionAcceptor {
 }
 
 impl ParentSessionAcceptor {
+    /// Binds the parent-side listener used by enclaves to open tunnel shards.
     pub(crate) fn bind(
         vsock_port: u32,
         queue_count: usize,
@@ -31,6 +41,7 @@ impl ParentSessionAcceptor {
         })
     }
 
+    /// Accepts a full tunnel session by collecting one stream per shard.
     pub(crate) async fn accept_session(&self) -> Result<SessionSockets> {
         let mut first_socket = self
             .listener
@@ -90,6 +101,8 @@ impl ParentSessionAcceptor {
     }
 }
 
+/// Enclave-side connector that opens all shard streams for one logical tunnel
+/// session.
 pub(crate) async fn connect_session(
     parent_cid: u32,
     vsock_port: u32,
