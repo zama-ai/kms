@@ -210,10 +210,11 @@ spec:
         {{- if .Values.kmsCore.nitroEnclave.networkTunnel.enabled }}
         {{- $ingressPorts := list .Values.kmsCore.ports.metrics .Values.kmsCore.ports.client }}
         {{- $queueCount := include "kmsNetworkTunnelQueueCount" . | int }}
+        {{- $workerThreads := include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
         {{- if .Values.kmsCore.thresholdMode.enabled }}
         {{- $ingressPorts = append $ingressPorts .Values.kmsCore.ports.peer }}
         {{- end }}
-        - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" $ingressPorts "queueCount" $queueCount) | indent 10 | trim }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" $ingressPorts "queueCount" $queueCount "workerThreads" $workerThreads) | indent 10 | trim }}
           volumeMounts:
             - name: tun-device
               mountPath: /dev/net/tun
