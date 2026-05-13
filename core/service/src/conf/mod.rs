@@ -125,7 +125,7 @@ pub struct EnclaveBootstrapNetworkTunnelConfig {
 }
 
 const fn default_network_tunnel_queue_count() -> u16 {
-    1
+    8
 }
 
 impl ConfigTracing for CoreConfig {
@@ -481,7 +481,7 @@ mod tests {
         assert_eq!(network_tunnel.parent_address, "10.118.0.1/24");
         assert_eq!(network_tunnel.enclave_address, "10.118.0.2");
         assert_eq!(network_tunnel.vsock_port, 2100);
-        assert_eq!(network_tunnel.queue_count, 1);
+        assert_eq!(network_tunnel.queue_count, 8);
     }
 
     // -----------------------------------------------------------------------

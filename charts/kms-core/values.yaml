@@ -128,7 +128,10 @@ kmsCore:
       # and vsockPort are propagated to the enclave through the generated
       # config file.
       vsockPort: 2100
-      queueCount: 8
+      # If unset, queueCount defaults to a heuristic based on the threshold
+      # party topology: 8 queues minimum, or the next power of two above the
+      # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
+      queueCount:
       interfaceName: vsocktun
       subnet: 10.118.0.0/24
       parentAddress: 10.118.0.1/24
