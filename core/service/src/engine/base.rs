@@ -34,6 +34,7 @@ use kms_grpc::solidity_types::{
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -345,7 +346,7 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
     Ok(KeyGenMetadata::new(
         *key_id,
         *prep_id,
-        HashMap::from([
+        BTreeMap::from([
             (PubDataType::ServerKey, server_key_digest),
             (PubDataType::PublicKey, public_key_digest),
         ]),
@@ -374,7 +375,7 @@ pub(crate) fn compute_info_decompression_keygen(
     Ok(KeyGenMetadata::new(
         *key_id,
         *prep_id,
-        HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
+        BTreeMap::from([(PubDataType::DecompressionKey, key_digest)]),
         external_signature,
         extra_data,
     ))
@@ -436,7 +437,7 @@ pub(crate) fn compute_info_compressed_keygen_from_digests(
     Ok(KeyGenMetadata::new(
         *key_id,
         *prep_id,
-        HashMap::from([
+        BTreeMap::from([
             (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
             (PubDataType::PublicKey, public_key_digest),
         ]),
@@ -940,7 +941,8 @@ pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParam
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KeyGenMetadataInnerVersioned {
     V0(KeyGenMetadataInnerQ126),
-    V1(KeyGenMetadataInner),
+    V1(KeyGenMetadataInnerV1),
+    V2(KeyGenMetadataInner),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
@@ -948,16 +950,28 @@ pub enum KeyGenMetadataInnerVersioned {
 pub struct KeyGenMetadataInner {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
+    // BTreeMap gives a canonical iteration order so the serialized output is
+    // deterministic across processes. The previous HashMap field is preserved
+    // in KeyGenMetadataInnerV1 below for backward compatibility.
+    pub key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
+    pub extra_data: Option<Vec<u8>>,
+    pub external_signature: Vec<u8>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct KeyGenMetadataInnerV1 {
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
     pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
     pub extra_data: Option<Vec<u8>>,
     pub external_signature: Vec<u8>,
 }
 
-impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
+impl Upgrade<KeyGenMetadataInnerV1> for KeyGenMetadataInnerQ126 {
     type Error = std::convert::Infallible;
 
-    fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
-        Ok(KeyGenMetadataInner {
+    fn upgrade(self) -> Result<KeyGenMetadataInnerV1, Self::Error> {
+        Ok(KeyGenMetadataInnerV1 {
             key_id: self.key_id,
             preprocessing_id: self.preprocessing_id,
             key_digest_map: self.key_digest_map,
@@ -966,6 +980,21 @@ impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
         })
     }
 }
+
+impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV1 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
+        Ok(KeyGenMetadataInner {
+            key_id: self.key_id,
+            preprocessing_id: self.preprocessing_id,
+            key_digest_map: self.key_digest_map.into_iter().collect(),
+            extra_data: self.extra_data,
+            external_signature: self.external_signature,
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct KeyGenMetadataInnerQ126 {
     pub key_id: RequestId,
@@ -996,7 +1025,7 @@ impl KeyGenMetadata {
     pub fn new(
         key_id: RequestId,
         preprocessing_id: RequestId,
-        key_digest_map: HashMap<PubDataType, Vec<u8>>,
+        key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
         external_signature: Vec<u8>,
         extra_data: Vec<u8>,
     ) -> Self {
@@ -1151,6 +1180,7 @@ pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8
 pub(crate) mod tests {
     use super::{
         CrsGenMetadataInner, CrsGenMetadataInnerQ126, KeyGenMetadataInner, KeyGenMetadataInnerQ126,
+        KeyGenMetadataInnerV1,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
@@ -1180,6 +1210,7 @@ pub(crate) mod tests {
         solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
     };
     use rand::{RngCore, SeedableRng};
+    use std::collections::BTreeMap;
     use std::collections::HashMap;
     use tfhe::{
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
@@ -2096,12 +2127,12 @@ pub(crate) mod tests {
         };
 
         // Verify upgrade sets extra_data as None
-        let upgraded: KeyGenMetadataInner = q126.clone().upgrade().unwrap();
+        let upgraded: KeyGenMetadataInnerV1 = q126.clone().upgrade().unwrap();
         assert_eq!(upgraded.extra_data, None);
         // Upgraded serialization
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
-        let deserialized_upgraded: KeyGenMetadataInner =
+        let deserialized_upgraded: KeyGenMetadataInnerV1 =
             bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
         assert_eq!(deserialized_upgraded.extra_data, None);
         assert_eq!(deserialized_upgraded.key_id, q126.key_id);
@@ -2114,6 +2145,21 @@ pub(crate) mod tests {
             deserialized_upgraded.external_signature,
             q126.external_signature
         );
+
+        // V1 -> V2: the HashMap is converted to a BTreeMap. Field-by-field structural
+        // equality remains, modulo container type.
+        let upgraded_v2: KeyGenMetadataInner = upgraded.upgrade().unwrap();
+        assert_eq!(upgraded_v2.extra_data, None);
+        assert_eq!(upgraded_v2.key_id, q126.key_id);
+        assert_eq!(upgraded_v2.preprocessing_id, q126.preprocessing_id);
+        assert_eq!(
+            upgraded_v2.key_digest_map,
+            q126.key_digest_map
+                .iter()
+                .map(|(k, v)| (*k, v.clone()))
+                .collect::<BTreeMap<_, _>>(),
+        );
+        assert_eq!(upgraded_v2.external_signature, q126.external_signature);
     }
 
     #[test]

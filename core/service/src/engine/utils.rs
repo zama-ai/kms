@@ -9,7 +9,7 @@ use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Display;
 use tonic::Status;
 
@@ -135,7 +135,7 @@ pub(crate) fn verify_crs_digest_from_bytes(
 async fn verify_digests<S: StorageReader + Sync>(
     storage: &S,
     id: &RequestId,
-    key_digest_map: &HashMap<PubDataType, Vec<u8>>,
+    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<()> {
     let pub_data_types: HashSet<_> = key_digest_map.keys().cloned().collect();
     match classify_current_public_material(&pub_data_types)? {
@@ -653,7 +653,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
     use rand::SeedableRng;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::shortint::ClassicPBSParameters;
     use tfhe::xof_key_set::CompressedXofKeySet;
@@ -712,7 +712,7 @@ mod tests {
     struct TestStoredMaterial {
         key_id: RequestId,
         preproc_id: RequestId,
-        key_digest_map: HashMap<PubDataType, Vec<u8>>,
+        key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
     }
 
     impl TestStoredMaterial {
@@ -1282,7 +1282,7 @@ mod tests {
         TestStoredMaterial {
             key_id,
             preproc_id,
-            key_digest_map: HashMap::from_iter([
+            key_digest_map: BTreeMap::from_iter([
                 (PubDataType::ServerKey, server_key_digest),
                 (PubDataType::PublicKey, public_key_digest),
             ]),
@@ -1350,7 +1350,7 @@ mod tests {
         TestStoredMaterial {
             key_id,
             preproc_id,
-            key_digest_map: HashMap::from_iter([
+            key_digest_map: BTreeMap::from_iter([
                 (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
                 (PubDataType::PublicKey, public_key_digest),
             ]),
