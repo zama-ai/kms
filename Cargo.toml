@@ -199,6 +199,7 @@ thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual 
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.18", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
+tokio-vsock = "=0.7.2"  # Async virtio socket support - MEDIUM RISK: same rust-vsock org/owners as vsock, 5M+ downloads, documented, and purpose-built to replace the remaining bespoke poll-based relay loop in vsocktun
 toml = "=0.9.11"  # TOML serialization for tests and tooling - LOW RISK: rust-lang maintained, widely used
 tonic = "=0.14.5"  # gRPC framework - LOW RISK: hyperium team
 tonic-health = "=0.14.5"  # gRPC health checking - LOW RISK: hyperium team
@@ -212,6 +213,7 @@ tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
 tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
 tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
+tun-rs = "=2.8.3"  # Cross-platform TUN/TAP library - MEDIUM RISK: tun-rs team, purpose-built and production-oriented; used by vsocktun to replace bespoke Linux TUN/offload configuration code
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
