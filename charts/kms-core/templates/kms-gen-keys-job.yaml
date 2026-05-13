@@ -77,7 +77,7 @@ spec:
               name: keygen
       containers:
         - name: write-gen-keys-to-configmap
-          image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          image: {{ .Values.kubectl.image.name }}:{{ .Values.kubectl.image.tag }}
           command:
             - /app/write-gen-keys-to-configmap.sh
           env:
