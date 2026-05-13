@@ -1,12 +1,11 @@
 use crate::conf::party::PartyConf;
 use algebra::{
     base_ring::{Z64, Z128},
-    galois_fields::lagrange::init_lagrange_stores,
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
 use observability::telemetry::make_span;
-use std::{num::NonZero, sync::Arc};
+use std::sync::Arc;
 use threshold_execution::online::preprocessing::{
     PreprocessorFactory, create_memory_factory, create_redis_factory,
 };
@@ -35,15 +34,6 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
 {
     let my_role: Role = settings.protocol().host().into();
-    if let Some(peers) = settings.protocol().peers() {
-        let num_parties = peers.len() + 1;
-        // The threshold-fhe config currently assumes n = 3t + 1.
-        let threshold = (num_parties - 1) / 3;
-        init_lagrange_stores(
-            NonZero::new(num_parties).expect("num_parties must be non-zero"),
-            threshold,
-        )?;
-    }
 
     let tls_conf = settings
         .certpaths

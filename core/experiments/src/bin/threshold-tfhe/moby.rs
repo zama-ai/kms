@@ -91,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         algebra::galois_fields::lagrange::init_lagrange_stores(
             NonZero::new(num_parties).expect("Number of parties must be non-zero"),
             threshold,
+            EXTENSION_DEGREE,
         )?;
     } else {
         println!(
