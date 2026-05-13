@@ -52,6 +52,12 @@ impl ParentSessionAcceptor {
         let first_hello = Hello::read_from_async(&mut first_socket)
             .await
             .context("failed to read first shard session header")?;
+        tracing::debug!(
+            session_id = first_hello.session_id,
+            shard = first_hello.shard,
+            expected_shards = self.queue_count,
+            "vsocktun(parent): accepted first shard"
+        );
 
         validate_hello(first_hello, self.queue_count)?;
 
@@ -79,6 +85,12 @@ impl ParentSessionAcceptor {
                 .context("failed to read shard session header")?;
 
             if hello.session_id != first_hello.session_id {
+                tracing::debug!(
+                    assembling_session_id = first_hello.session_id,
+                    ignored_session_id = hello.session_id,
+                    shard = hello.shard,
+                    "vsocktun(parent): ignoring shard from unrelated session"
+                );
                 continue;
             }
 
@@ -92,7 +104,21 @@ impl ParentSessionAcceptor {
                 );
             }
             *slot = Some(socket);
+            let assembled = shards.iter().filter(|socket| socket.is_some()).count();
+            tracing::debug!(
+                session_id = hello.session_id,
+                shard = hello.shard,
+                assembled,
+                total_shards = self.queue_count,
+                "vsocktun(parent): accepted shard"
+            );
         }
+
+        tracing::debug!(
+            session_id = first_hello.session_id,
+            shards = self.queue_count,
+            "vsocktun(parent): assembled session"
+        );
 
         Ok(SessionSockets {
             session_id: first_hello.session_id,
@@ -127,9 +153,22 @@ pub(crate) async fn connect_session(
         .write_to_async(&mut socket)
         .await
         .with_context(|| format!("failed to send handshake for shard {shard}"))?;
+        tracing::debug!(
+            session_id,
+            shard,
+            parent_cid,
+            vsock_port,
+            "vsocktun(enclave): connected shard"
+        );
 
         shards.push(socket);
     }
+
+    tracing::debug!(
+        session_id,
+        shards = queue_count,
+        "vsocktun(enclave): opened all shards"
+    );
 
     Ok(SessionSockets { session_id, shards })
 }
