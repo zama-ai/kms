@@ -103,8 +103,9 @@ args:
     ENCLAVE_TUN_IP={{ .networkTunnel.enclaveAddress | quote }}
     TUN_SUBNET={{ .networkTunnel.subnet | quote }}
     VSOCK_PORT={{ .networkTunnel.vsockPort | quote }}
+    QUEUE_COUNT={{ .networkTunnel.queueCount | quote }}
     UPSTREAM_DNS=""
-    SOCAT_PID=""
+    TUNNEL_PID=""
     DNSPROXY_PID=""
 
     while read -r key value _; do
@@ -127,8 +128,8 @@ args:
     {{- end }}
 
     cleanup() {
-      if [ -n "$SOCAT_PID" ]; then
-        kill "$SOCAT_PID" 2>/dev/null || true
+      if [ -n "$TUNNEL_PID" ]; then
+        kill "$TUNNEL_PID" 2>/dev/null || true
       fi
       if [ -n "$DNSPROXY_PID" ]; then
         kill "$DNSPROXY_PID" 2>/dev/null || true
@@ -146,10 +147,12 @@ args:
       iptables -A FORWARD -o "$TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
     echo "enclave-network-tunnel: starting parent-side TUN bridge on $TUN_HOST via $UPSTREAM_DNS"
-    socat -d0 \
-      VSOCK-LISTEN:$VSOCK_PORT,fork,reuseaddr \
-      TUN:$TUN_ADDR,tun-name=$TUN_IF,iff-up &
-    SOCAT_PID=$!
+    vsocktun parent \
+      --tun-name "$TUN_IF" \
+      --tun-address "$TUN_ADDR" \
+      --vsock-port "$VSOCK_PORT" \
+      --queues "$QUEUE_COUNT" &
+    TUNNEL_PID=$!
 
     for _ in $(seq 1 30); do
       if ifconfig "$TUN_IF" >/dev/null 2>&1; then
@@ -180,14 +183,14 @@ args:
     dnsproxy -l "$TUN_HOST" -u "$UPSTREAM_DNS" &
     DNSPROXY_PID=$!
 
-    while kill -0 "$SOCAT_PID" 2>/dev/null && kill -0 "$DNSPROXY_PID" 2>/dev/null; do
+    while kill -0 "$TUNNEL_PID" 2>/dev/null && kill -0 "$DNSPROXY_PID" 2>/dev/null; do
       sleep 1
     done
 
-    if ! kill -0 "$SOCAT_PID" 2>/dev/null; then
-      SOCAT_STATUS=0
-      wait "$SOCAT_PID" || SOCAT_STATUS=$?
-      exit "$SOCAT_STATUS"
+    if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+      TUNNEL_STATUS=0
+      wait "$TUNNEL_PID" || TUNNEL_STATUS=$?
+      exit "$TUNNEL_STATUS"
     fi
 
     DNSPROXY_STATUS=0

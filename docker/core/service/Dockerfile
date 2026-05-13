@@ -31,6 +31,7 @@ COPY core ./core
 COPY core-client ./core-client
 COPY observability ./observability
 COPY tools ./tools
+COPY vsocktun ./vsocktun
 
 RUN mkdir -p /app/kms/core/service/bin
 
@@ -54,6 +55,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     cargo build --locked --profile=${LTO_RELEASE} -p kms \
       --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
       --bin kms-custodian --bin kms-gen-keys \
+      -p vsocktun --bin vsocktun
       -F insecure -F threshold-execution/testing && \
     if [ -n "${SCCACHE_BUCKET}" ]; then sccache --show-stats; fi && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
@@ -61,7 +63,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-init \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
        /app/kms/target/${LTO_RELEASE}/kms-custodian \
-    ./core/service/bin
+       /app/kms/target/${LTO_RELEASE}/vsocktun \
+     ./core/service/bin
 
 # Second stage: build raw IP proxies for enclave
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
