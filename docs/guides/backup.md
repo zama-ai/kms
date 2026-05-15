@@ -81,7 +81,7 @@ The alternative backup mode — wrapping the same key under an AWS KMS CMK — i
 | Party | What it does |
 |---|---|
 | **Custodian `B_j`** (`j = 1..n`) | Human-held, offline party. Owns a long-term signing key `sk^{S_j}` and a post-quantum encryption key `sk^{E_j}`, both deterministically derived from a BIP39 seed phrase. Stores nothing online beyond its public-key published in the `CustodianSetupMessage`. Re-signcrypts its share of the backup key on request. |
-| **Operator `P_i`** (KMS node) | Online KMS server. Holds a long-term signing key `sk^{P_i}`, a TFHE FHE secret key, and other private material that needs backing up. Receives `NewCustodianContext` and, later, `CustodianRecoveryInit` / `CustodianBackupRecovery` gRPC calls from the core-client. |
+| **Operator `P_i`** (KMS node) | Online KMS server. Holds a long-term signing key `sk^{P_i}`, a TFHE secret key, and other private material that needs backing up. Receives `NewCustodianContext` and, later, `CustodianRecoveryInit` / `CustodianBackupRecovery` gRPC calls from the core-client. |
 | **core-client** | The CLI that drives every gRPC call into the KMS for custodian-based backup. It bundles the operator-bound RPCs (`NewCustodianContext`, `CustodianRecoveryInit`, `CustodianBackupRecovery`, `RestoreFromBackup`) and shuttles the resulting `RecoveryRequest` / `InternalCustodianRecoveryOutput` files between the operator and the custodians out-of-band. Documented in [docs/guides/core_client.md](core_client.md). |
 | **Recovering operator `P_i'`** | A fresh operator process replacing `P_i` after the latter's private storage was lost. Reads only the public storage and the backup vault; coordinates with custodians (via the core-client) to rebuild private state. |
 
