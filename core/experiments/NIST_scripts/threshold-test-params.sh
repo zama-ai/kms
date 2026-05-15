@@ -49,6 +49,7 @@ cleanup_docker "temp/tfhe-bench-run-5p.yml"
 cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
 cleanup_docker "temp/bgv-bench-run.yml"
 
+### All but memory benchmarks
 ### TFHE
 # Prepare the tfhe docker image
 cargo make tfhe-docker-image-degree-3
@@ -85,6 +86,39 @@ cargo make bgv-docker-image
 cargo make bgv-bench-run
 # Run the test script
 ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run.toml GEN
+# Teardown docker
+cleanup_docker "temp/bgv-bench-run.yml"
+
+
+### Memory benchmarks
+### TFHE
+# Prepare the tfhe docker image
+cargo make tfhe-docker-image-degree-3-mem
+
+## small session
+# Create the test setup and starts the docker containers
+cargo make tfhe-bench-run-4p-mem
+# Run the test script
+NUM_CTXTS=1 ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml GEN
+# Teardown docker
+cleanup_docker "temp/tfhe-bench-run-4p.yml"
+
+## large session
+# Create the test setup and starts the docker containers
+cargo make tfhe-bench-run-5p-mem
+# Run the test script
+NUM_CTXTS=1 ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml GEN
+# Teardown docker
+cleanup_docker "temp/tfhe-bench-run-5p.yml"
+
+### BGV
+# Prepare the bgv docker image
+cargo make bgv-docker-image-mem
+
+# Create the test setup and starts the docker containers
+cargo make bgv-bench-run-mem
+# Run the test script
+NUM_CTXTS=1 ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run-mem.toml GEN
 # Teardown docker
 cleanup_docker "temp/bgv-bench-run.yml"
 
