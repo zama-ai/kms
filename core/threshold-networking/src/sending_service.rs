@@ -77,8 +77,16 @@ pub trait SendingService: Send + Sync {
     )>;
 }
 
+/// Per-peer connection pool. The vector contains one entry per cached
+/// gRPC client (each backed by an independent TCP/HTTP-2 connection).
+///
+/// For ordinary traffic we only ever read index 0; the bandwidth benchmark
+/// can grow the pool via [`GrpcSendingService::connect_to_party_pool`] so
+/// that parallel sessions can be striped across independent HTTP/2 codec
+/// tasks. All sessions targeting the same peer share the same underlying
+/// pool — the entries are clones of an `Arc`-backed [`Channel`].
 type ChannelMap =
-    HashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>;
+    HashMap<Identity, Vec<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>>;
 
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
@@ -94,14 +102,20 @@ pub struct GrpcSendingService {
 
 impl GrpcSendingService {
     /// Create the network channel between self and the grpc server of the other party
-    /// or retrieve it if one already exists
+    /// or retrieve it if one already exists.
+    ///
+    /// Returns the first connection of the peer's pool (creating a
+    /// one-element pool if no connection is cached yet). Production MPC
+    /// traffic should keep using this method.
     pub(crate) async fn connect_to_party(
         &self,
         receiver: &Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
-        if let Some(channel) = self.channel_map.read().await.get(receiver) {
+        if let Some(pool) = self.channel_map.read().await.get(receiver)
+            && let Some(client) = pool.first()
+        {
             tracing::debug!("Channel to {:?} already existed, retrieving it.", receiver);
-            return Ok(channel.clone());
+            return Ok(client.clone());
         }
 
         // Hold a write lock on the entry to avoid duplicate connections
@@ -109,14 +123,86 @@ impl GrpcSendingService {
         let entry = channel_map_write_lock.entry(receiver.clone());
 
         // First thing we do is re-check whether connection has been established while waiting for the lock
-        if let Entry::Occupied(channel) = entry {
+        if let Entry::Occupied(pool) = entry
+            && let Some(client) = pool.get().first()
+        {
             tracing::debug!(
                 "Channel to {:?} was created while waiting for the lock, retrieving it.",
                 receiver
             );
-            return Ok(channel.get().clone());
+            return Ok(client.clone());
         }
 
+        // `build_client` is synchronous in practice (it only constructs a
+        // lazy `Channel`), so holding the write lock across it does not
+        // yield control to other tasks.
+        let client = self.build_client(receiver)?;
+        let pool = channel_map_write_lock.entry(receiver.clone()).or_default();
+        if pool.is_empty() {
+            pool.push(client.clone());
+        }
+        Ok(client)
+    }
+
+    /// Ensure that `receiver`'s connection pool has at least `pool_size`
+    /// entries and return clones of the first `pool_size` of them.
+    ///
+    /// All callers asking for the same peer share the same underlying
+    /// connections — the pool is cached in [`Self::channel_map`] just like
+    /// the single-connection variant. Index 0 is the same client that
+    /// [`Self::connect_to_party`] returns. Indices `1..pool_size` are
+    /// additional, independent TCP/HTTP-2 connections (and therefore have
+    /// independent h2 codec tasks).
+    ///
+    /// `pool_size` is clamped to at least 1. Once the pool has grown the
+    /// extra connections stay alive for the lifetime of the
+    /// `GrpcSendingService`; that is intentional so that repeated benchmark
+    /// runs do not pay the connection-establishment cost each time, but it
+    /// does mean shrinking is not supported. Intended for the bandwidth
+    /// benchmark; production MPC traffic should keep using
+    /// [`Self::connect_to_party`] until we see real benefits of pooling.
+    pub(crate) async fn connect_to_party_pool(
+        &self,
+        receiver: &Identity,
+        pool_size: usize,
+    ) -> anyhow::Result<Vec<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>>
+    {
+        let pool_size = pool_size.max(1);
+
+        // Fast path: the cache already has at least `pool_size` entries.
+        if let Some(pool) = self.channel_map.read().await.get(receiver)
+            && pool.len() >= pool_size
+        {
+            return Ok(pool[..pool_size].to_vec());
+        }
+
+        // Slow path: take the write lock, top up the pool to `pool_size`
+        // entries, and return clones. `build_client` is synchronous in
+        // practice (lazy channel construction), so the write lock is not
+        // held across an actual yield point.
+        let mut channel_map_write_lock = self.channel_map.write().await;
+        let pool = channel_map_write_lock.entry(receiver.clone()).or_default();
+        while pool.len() < pool_size {
+            pool.push(self.build_client(receiver)?);
+        }
+        Ok(pool[..pool_size].to_vec())
+    }
+
+    /// Build a fresh, uncached `GnetworkingClient` (TLS or plaintext) to
+    /// `receiver`. Every call opens a new underlying TCP/HTTP-2 connection
+    /// (lazily — the actual connect happens on first use).
+    ///
+    /// This function is intentionally **not** `async` even though the
+    /// surrounding API is: every operation in the body — URI parsing,
+    /// rustls config cloning, `Channel::new` / `Channel::builder().connect_lazy()`,
+    /// `GnetworkingClient::with_interceptor` — is synchronous. Keeping it
+    /// synchronous lets [`Self::connect_to_party`] and
+    /// [`Self::connect_to_party_pool`] safely call it while holding the
+    /// `channel_map` write lock.
+    fn build_client(
+        &self,
+        receiver: &Identity,
+    ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
         let proto = match self.tls_config {
             Some(_) => "https",
             None => "http",
@@ -202,7 +288,6 @@ impl GrpcSendingService {
         let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
             .max_decoding_message_size(self.config.get_max_en_decode_message_size())
             .max_encoding_message_size(self.config.get_max_en_decode_message_size());
-        entry.insert_entry(client.clone());
         Ok(client)
     }
 

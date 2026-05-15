@@ -1,7 +1,10 @@
 use anyhow::Result;
-use kms_grpc::kms::v1::RequestId;
+use kms_grpc::kms::v1::{
+    BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, BandwidthKind, RequestId,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::config::{self};
 use crate::grpc_client::GrpcHealthClient;
@@ -500,4 +503,35 @@ pub async fn run_full_check(
     }
 
     Ok(result)
+}
+
+pub async fn run_bandwidth_benchmark(
+    endpoint: &str,
+    context_id: String,
+    duration: u64,
+    num_sessions: u32,
+    payload_size: u32,
+    connections_per_peer: u32,
+) -> Result<BandwidthBenchmarkResponse> {
+    let kind = if duration == 0 {
+        BandwidthKind::Once
+    } else {
+        BandwidthKind::Duration
+    }
+    .into();
+    let request = BandwidthBenchmarkRequest {
+        duration,
+        number_sessions: num_sessions,
+        payload_size_per_session: payload_size,
+        context_id: Some(RequestId {
+            request_id: context_id,
+        }),
+        connections_per_peer,
+        kind,
+    };
+
+    let client = GrpcHealthClient::new(endpoint);
+    client
+        .run_bandwidth_benchmark(request, Duration::from_secs(duration))
+        .await
 }

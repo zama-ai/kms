@@ -4,6 +4,8 @@ use clap::{Parser, Subcommand};
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::output::{print_bandwidth_benchmark_json, print_bandwidth_benchmark_text};
+
 mod checks;
 mod config;
 mod grpc_client;
@@ -55,6 +57,39 @@ enum Commands {
         #[arg(short, long)]
         config: PathBuf,
     },
+    /// Runs a bandwidth benchmark against the KMS endpoint
+    /// NOTE: It makes more sense to run it on all the parties at the same time to emulate real bandwidth usage, but it can be run on a single party as well.
+    BandwidthBench {
+        /// KMS endpoint
+        #[arg(short, long)]
+        endpoints: Vec<String>,
+
+        /// Context id of the MPC context to test
+        #[arg(short, long)]
+        context_id: String,
+
+        /// Duration of the benchmark in seconds
+        /// If Duration is set to 0 we only send one payload per session to each party and return the result immediately.
+        #[arg(short, long)]
+        duration: u64,
+
+        /// Number of sessions trying to send bytes in parallel
+        #[arg(short, long)]
+        num_sessions: u32,
+
+        /// Payload size per session in bytes
+        #[arg(short, long)]
+        payload_size: u32,
+
+        /// Number of independent gRPC connections to open per peer.
+        /// Sessions are striped round-robin across these connections so
+        /// they no longer all share a single HTTP/2 codec task.
+        /// Defaults to 1, which preserves the historical single-connection
+        /// behavior; raise it (e.g. 8) when investigating small-payload
+        /// throughput.
+        #[arg(long, default_value_t = 1)]
+        connections_per_peer: u32,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -83,16 +118,73 @@ async fn main() -> Result<()> {
     tracing::info!("Log level: {}", log_level);
     tracing::info!("Output format: {:?}", cli.format);
 
-    let result = match cli.command {
-        Commands::Config { file } => checks::run_config_validation(file.to_str().unwrap()).await?,
+    match cli.command {
+        Commands::Config { file } => {
+            output::print_result(
+                checks::run_config_validation(file.to_str().unwrap()).await?,
+                &cli.format,
+            )?;
+        }
         Commands::Live { endpoint, config } => {
-            checks::check_live(&endpoint, config.as_deref().map(Path::new)).await?
+            output::print_result(
+                checks::check_live(&endpoint, config.as_deref().map(Path::new)).await?,
+                &cli.format,
+            )?;
         }
         Commands::Full { endpoint, config } => {
-            checks::run_full_check(Some(config.to_str().unwrap()), &endpoint).await?
+            output::print_result(
+                checks::run_full_check(Some(config.to_str().unwrap()), &endpoint).await?,
+                &cli.format,
+            )?;
+        }
+        Commands::BandwidthBench {
+            endpoints,
+            context_id,
+            duration,
+            num_sessions,
+            payload_size,
+            connections_per_peer,
+        } => {
+            let mut joinset = tokio::task::JoinSet::new();
+            for ep in endpoints {
+                let context_id = context_id.clone();
+                joinset.spawn(async move {
+                    let result = checks::run_bandwidth_benchmark(
+                        &ep,
+                        context_id,
+                        duration,
+                        num_sessions,
+                        payload_size,
+                        connections_per_peer,
+                    )
+                    .await;
+                    (ep, result)
+                });
+            }
+            let mut results = Vec::new();
+            while let Some(res) = joinset.join_next().await {
+                let (endpoint, result) = res?;
+                let result = result?;
+                results.push((endpoint, result));
+            }
+            match cli.format {
+                OutputFormat::Json => print_bandwidth_benchmark_json(
+                    duration,
+                    num_sessions,
+                    payload_size,
+                    connections_per_peer,
+                    results,
+                )?,
+                OutputFormat::Text => print_bandwidth_benchmark_text(
+                    duration,
+                    num_sessions,
+                    payload_size,
+                    connections_per_peer,
+                    results,
+                )?,
+            }
         }
     };
 
-    output::print_result(result, &cli.format)?;
     Ok(())
 }

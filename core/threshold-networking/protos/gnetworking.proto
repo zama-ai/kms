@@ -27,6 +27,7 @@ enum Status {
 
 message HealthCheckRequest {
     bytes tag = 1;
+    bytes payload = 2;   // throwaway bytes for bandwidth testing
 }
 
 message HealthCheckResponse {}

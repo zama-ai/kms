@@ -99,7 +99,7 @@ kmsCore:
     maxOpenedInactiveSessionsPerParty: 1000
     enableSysMetrics: true
     refreshIntervalMs: 5000
-    tokioWorkerThreads: 10
+    tokioWorkerThreads: 40
     rayonNumThreads: 40
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties

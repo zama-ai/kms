@@ -374,10 +374,35 @@ impl GrpcNetworkingManager {
         })
     }
 
+    /// Build a [`HealthCheckSession`] with a single (cached) gRPC connection
+    /// per peer. This is the production health-check path.
     pub async fn make_healthcheck_session<R: RoleTrait>(
         &self,
         role_assignment: &RoleAssignment<R>,
         my_role: R,
+    ) -> anyhow::Result<HealthCheckSession<R>> {
+        self.make_healthcheck_session_with_pool(role_assignment, my_role, 1)
+            .await
+    }
+
+    /// Build a [`HealthCheckSession`] with `connections_per_peer` independent
+    /// gRPC connections per peer.
+    ///
+    /// `connections_per_peer` is clamped to at least 1. With a value of 1
+    /// this is identical to [`Self::make_healthcheck_session`]. Larger
+    /// values are intended for the bandwidth benchmark, which spreads its
+    /// parallel sessions across the pool to break out of the
+    /// single-codec-task throughput ceiling that limits small-payload
+    /// throughput on a single shared HTTP/2 connection.
+    ///
+    /// Only the first connection per peer is cached in the
+    /// [`crate::sending_service::GrpcSendingService`] channel map; the rest
+    /// live for the duration of the returned session.
+    pub async fn make_healthcheck_session_with_pool<R: RoleTrait>(
+        &self,
+        role_assignment: &RoleAssignment<R>,
+        my_role: R,
+        connections_per_peer: usize,
     ) -> anyhow::Result<HealthCheckSession<R>> {
         let mut others = role_assignment.clone();
 
@@ -397,8 +422,11 @@ impl GrpcNetworkingManager {
 
         let mut connection_channels = HashMap::new();
         for (role, identity) in others.inner.into_iter() {
-            let channel = self.sending_service.connect_to_party(&identity).await?;
-            connection_channels.insert((role, identity), channel);
+            let pool = self
+                .sending_service
+                .connect_to_party_pool(&identity, connections_per_peer)
+                .await?;
+            connection_channels.insert((role, identity), pool);
         }
 
         Ok(HealthCheckSession::new(
@@ -1020,7 +1048,7 @@ impl Gnetworking for NetworkingImpl {
         )
         .map_err(|e| *e)?;
 
-        tracing::info!("Received a HealthPing from {}", health_tag.sender);
+        tracing::debug!("Received a HealthPing from {}", health_tag.sender);
         Ok(tonic::Response::new(HealthCheckResponse::default()))
     }
 
