@@ -94,6 +94,7 @@ make generate-backward-compatibility-v0.11.1
 make generate-backward-compatibility-v0.13.0
 make generate-backward-compatibility-v0.13.10
 make generate-backward-compatibility-v0.13.20
+make generate-backward-compatibility-v0.14.0
 ```
 
 Clean all generated BC data:

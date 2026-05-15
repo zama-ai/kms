@@ -117,7 +117,10 @@ make test-backward-compatibility-local
 |----------------|--------------|--------------|------------------|--------|
 | `generate-v0.11.0` | `backward-compatibility-generate-v0-11-0` | v0.11.0 | serde 1.0.219, alloy 1.1.2, tfhe 1.3.2 | ✅ Active |
 | `generate-v0.11.1` | `backward-compatibility-generate-v0-11-1` | v0.11.1 | serde 1.0.226, alloy 1.3.1, tfhe 1.3.3 | ✅ Active |
-| `generate-v0.12.0` | `backward-compatibility-generate-v0-12-0` | v0.12.0+ | TBD | 🚧 Future (when needed) |
+| `generate-v0.13.0` | `backward-compatibility-generate-v0-13-0` | v0.13.0 | — | ✅ Active |
+| `generate-v0.13.10` | `backward-compatibility-generate-v0-13-10` | v0.13.10 | — | ✅ Active |
+| `generate-v0.13.20` | `backward-compatibility-generate-v0-13-20` | v0.13.20 | — | ✅ Active |
+| `generate-v0.14.0` | `backward-compatibility-generate-v0-14-0` | v0.14.0 | tfhe-versionable 0.7.0, tfhe 1.6.1, alloy 1.4.1, serde 1.0.228 | ✅ Active |
 
 **Note**: v0.11.0 and v0.11.1 require separate generators due to incompatible alloy and tfhe versions.
 
