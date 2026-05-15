@@ -9,7 +9,7 @@ MAIN_PATH="./temp/bgv-reproducible"
 KEY_PATH="${MAIN_PATH}/key"
 CTXT_PATH="${MAIN_PATH}/ctxt"
 SEED=42
-NUM_CTXTS=10
+NUM_CTXTS=${NUM_CTXTS:-10}
 CTXT_VALUE=12345
 
 mkdir -p $KEY_PATH

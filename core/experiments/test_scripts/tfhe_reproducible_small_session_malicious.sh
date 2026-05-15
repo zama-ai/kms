@@ -8,7 +8,7 @@ DDEC_MODES="noise-flood-small bit-dec-small"
 MAIN_PATH="./temp/tfhe_small_reproducible_malicious"
 PARAMS="params-test-bk-sns"
 SEED=42
-NUM_CTXTS=10
+NUM_CTXTS=${NUM_CTXTS:-10}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/tfhe_reproducible_common.sh"

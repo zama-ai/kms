@@ -65,6 +65,10 @@ args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=
 command = "docker"
 args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=extension_degree_4", "-t", "bgv-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
+[tasks.bgv-docker-image-mem]
+command = "docker"
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=measure_memory,extension_degree_4", "-t", "bgv-core-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
+
 # Generate the certificate for TLS communication of the parties
 # Note: templating feature isn't required, but allows to compile the code only once since gen-experiment requires the feature
 [tasks.gen-test-certs]
@@ -73,13 +77,15 @@ args = ["run", "--bin", "threshold-gen-tls-certs","--release","--features", "tem
 
 #Generate docker-compose file for the TFHE parties as well as the toml config file for the choreogrpaher for a local deployment (tfhe)
 [tasks.tfhe-gen-experiment]
-command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-s", "${MOBY_STRATEGY}", "-f", "temp", "-o", "${EXPERIMENT_NAME}", "all", "--protocol", "tfhe" ]
+script = '''
+cargo run --bin gen-experiment --release --features templating -- -n ${NUM_PARTIES} -t ${THRESHOLD} -s ${MOBY_STRATEGY} -f temp -o ${EXPERIMENT_NAME} all --protocol tfhe ${MEASURE_MEMORY}
+'''
 
 #Generate docker-compose file for the BGV parties as well as the toml config file for the choreogrpaher for a local deployment (bgv)
 [tasks.bgv-gen-experiment]
-command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-s", "${MOBY_STRATEGY}", "-f", "temp", "-o", "${EXPERIMENT_NAME}" , "all", "--protocol", "bgv"]
+script = '''
+cargo run --bin gen-experiment --release --features templating -- -n ${NUM_PARTIES} -t ${THRESHOLD} -f temp -o ${EXPERIMENT_NAME} all --protocol bgv ${MEASURE_MEMORY}
+'''
 
 
 #Bring parties alive based on provided yml file, waiting for health check to pass
@@ -125,7 +131,7 @@ mkdir -p temp/session_stats
 RUN_DATE="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 for i in $(seq 1 ${NUM_PARTIES}); do
     touch temp/session_stats/session_stats_$i.txt
-    printf "\nNEW_RUN: ${EXPERIMENT_NAME} ${RUN_DATE}" >> temp/session_stats/session_stats_$i.txt
+    printf "\nNEW_RUN: ${EXPERIMENT_NAME} ${RUN_DATE} ${MEASURE_MEMORY}" >> temp/session_stats/session_stats_$i.txt
     chmod o+w temp/session_stats/session_stats_$i.txt
 done
 '''
@@ -146,6 +152,16 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="drop_all", EXPERIMENT_NAME="tfhe-bench-run-4p-malicious-drop"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
+# Runs a cluster of 4 parties with the tfhe protocol, with a threshold of 1, and the "secure" strategy (no malicious behavior)
+[tasks.tfhe-bench-run-4p-mem]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run-4p-mem", MEASURE_MEMORY="--measure-memory"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
+# Runs a cluster of 5 parties with the tfhe protocol, with a threshold of 1, and the "secure" strategy (no malicious behavior)
+[tasks.tfhe-bench-run-5p-mem]
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run-5p-mem", MEASURE_MEMORY="--measure-memory"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
 # Runs a cluster of 4 parties with the tfhe protocol, with a threshold of 1, and the "malicious_broadcast" strategy (MaliciousBroadcastSenderEcho strategy)
 [tasks.tfhe-bench-run-4p-malicious-bcast]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="malicious_broadcast", EXPERIMENT_NAME="tfhe-bench-run-4p-malicious-bcast"}
@@ -154,4 +170,8 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 # Runs a cluster of 4 parties with the bgv protocol, with a threshold of 1, and the "secure" strategy (no malicious behavior)
 [tasks.bgv-bench-run]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-bench-run"}
+run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
+[tasks.bgv-bench-run-mem]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-bench-run-mem", MEASURE_MEMORY="--measure-memory"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}

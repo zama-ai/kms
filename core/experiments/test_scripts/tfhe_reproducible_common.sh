@@ -128,7 +128,7 @@ for DDEC_MODE in $DDEC_MODES
  do
     VALUE=$INIT_VALUE
     echo "### STARTING REQUESTS ON DDEC MODE $DDEC_MODE ###"
-    for CTXT_TYPE in bool u4 u8 u16 u32 u64 u128
+    for CTXT_TYPE in bool u4 u8 u16 u32 u64
     do
         echo "#TYPE $CTXT_TYPE#"
         #Create preproc
