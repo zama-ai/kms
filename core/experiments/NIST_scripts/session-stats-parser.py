@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,26 @@ BGV_RUN_NAME = "bgv-bench-run"
 
 NUM_CTXTS = 10
 
+# TFHE message types and their bit widths. bool is reported with bit_width = 1.
+TFHE_TYPES = ["bool", "u4", "u8", "u16", "u32", "u64", "u128"]
+TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
+    "bool": 1,
+    "u4": 4,
+    "u8": 8,
+    "u16": 16,
+    "u32": 32,
+    "u64": 64,
+    "u128": 128,
+}
+# Bit widths kept in the aggregated TDecOne/TDecTwo CSVs. u128 is intentionally dropped.
+TDEC_BIT_WIDTHS = [1, 4, 8, 16, 32, 64]
+
+NOISE_FLOOD_MODE = "NOISE_FLOOD_SMALL"
+BIT_DEC_MODE = "BIT_DEC_SMALL"
+
+
 def build_tfhe_operation_labels(include_prss_init: bool) -> List[str]:
-    labels = []
+    labels: List[str] = []
     if include_prss_init:
         labels.extend([
             "PRSS_INIT_Z64",
@@ -31,10 +49,13 @@ def build_tfhe_operation_labels(include_prss_init: bool) -> List[str]:
         "DKG_PREPROC",
         "DKG",
         "CRS_GEN",
+        # Reshare now emits two consecutive session-stats lines: preprocessing
+        # (RESHARE-PREPROC in the source) followed by the online phase (RESHARE).
+        "RESHARE_PREPROC",
         "RESHARE",
     ])
-    for mode in ["NOISE_FLOOD_SMALL", "BIT_DEC_SMALL"]:
-        for tfhe_type in ["bool", "u4", "u8", "u16", "u32", "u64", "u128"]:
+    for mode in [NOISE_FLOOD_MODE, BIT_DEC_MODE]:
+        for tfhe_type in TFHE_TYPES:
             labels.append(f"{mode}_{tfhe_type}_PREPROC")
             labels.append(f"{mode}_{tfhe_type}_DDEC")
     return labels
@@ -75,8 +96,11 @@ def num_ctxts_for_label(label: str) -> int:
     """Return the number of ciphertexts processed by an operation.
 
     Decrypt-related operations (PREPROC, DDEC, DDEC_PARALLEL) each process
-    NUM_CTXTS ciphertexts.  All other operations return 1.
+    NUM_CTXTS ciphertexts.  RESHARE_PREPROC and RESHARE are reshare-only and
+    are not per-ciphertext.  All other operations return 1.
     """
+    if label.startswith("RESHARE"):
+        return 1
     if "PREPROC" in label and "DKG" not in label:
         return NUM_CTXTS
     if "DDEC" in label:
@@ -93,6 +117,25 @@ class MetricLine:
     network_sent: int
     network_received: int
     time_active: int
+
+
+@dataclass
+class AggregatedOperation:
+    """Cross-party averaged metrics for one operation in one run.
+
+    ``avg_time_active_ms`` is already divided by ``num_ctxts_for_label(label)``
+    so it is per-ciphertext for DDEC/PREPROC labels and per-operation for
+    everything else.  ``avg_network_sent_B`` and ``avg_network_received_B`` are
+    batch totals (the existing parser does not divide them by num_ctxts).
+    """
+
+    label: str
+    reported_name: str
+    avg_num_sessions: float
+    avg_num_rounds: float
+    avg_network_sent_B: float
+    avg_network_received_B: float
+    avg_time_active_ms: float
 
 
 def parse_metric_line(raw_line: str) -> MetricLine:
@@ -275,6 +318,10 @@ def honest_party_count_for_run(run_name: str) -> int:
     return expected_party_count
 
 
+def is_malicious_run(run_name: str) -> int:
+    return 1 if "malicious" in run_name else 0
+
+
 def select_party_files_for_run(
     all_party_runs: Dict[str, Dict[str, List[List[MetricLine]]]],
     run_name: str,
@@ -315,12 +362,13 @@ def select_party_files_for_run(
 def aggregate_run(
     run_name: str,
     source_run_index: int,
-    complete_run_index: int,
     party_files: List[str],
     all_party_runs: Dict[str, Dict[str, List[List[MetricLine]]]],
     spread_warn_threshold: float,
-) -> List[List[object]]:
-    rows: List[List[object]] = []
+) -> List[AggregatedOperation]:
+    """Aggregate one source-run-index across parties into a list of
+    ``AggregatedOperation``s ordered by the run's operation labels."""
+    aggregated: List[AggregatedOperation] = []
     operation_labels = OPERATION_LABELS[run_name]
     expected_len = EXPECTED_LINES_PER_RUN[run_name]
 
@@ -393,25 +441,67 @@ def aggregate_run(
         )
 
         num_ctxts = num_ctxts_for_label(operation_labels[op_idx])
-        rows.append(
-            [
-                complete_run_index,
-                source_run_index + 1,
-                op_idx + 1,
-                operation_labels[op_idx],
-                per_party_metrics[0][1].name,
-                average(num_sessions_values),
-                average(num_rounds_values),
-                average(network_sent_values),
-                average(network_received_values),
-                average(time_active_values) / num_ctxts,
-            ]
+        aggregated.append(
+            AggregatedOperation(
+                label=operation_labels[op_idx],
+                reported_name=per_party_metrics[0][1].name,
+                avg_num_sessions=average(num_sessions_values),
+                avg_num_rounds=average(num_rounds_values),
+                avg_network_sent_B=average(network_sent_values),
+                avg_network_received_B=average(network_received_values),
+                avg_time_active_ms=average(time_active_values) / num_ctxts,
+            )
         )
 
-    return rows
+    return aggregated
 
 
-def write_csv(path: str, rows: List[List[object]]) -> None:
+def find_operation(
+    aggregated: List[AggregatedOperation],
+    label: str,
+) -> Optional[AggregatedOperation]:
+    for op in aggregated:
+        if op.label == label:
+            return op
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Legacy per-run CSV emission
+# ---------------------------------------------------------------------------
+#
+# The functions below were used by the previous entry point to write one CSV
+# per run-name (e.g. ``tfhe-bench-run-4p_4p_TestParams.csv``).  The current
+# entry point produces the new per-iteration aggregated CSVs and does NOT call
+# these helpers, but they are kept here as building blocks in case a caller
+# wants the per-run shape back.
+
+
+def aggregated_to_per_run_rows(
+    aggregated: List[AggregatedOperation],
+    complete_run_index: int,
+    source_run_index: int,
+) -> List[List[object]]:
+    """Build the rows of the legacy per-run CSV from one run's aggregated metrics."""
+    return [
+        [
+            complete_run_index,
+            source_run_index + 1,
+            op_idx + 1,
+            op.label,
+            op.reported_name,
+            op.avg_num_sessions,
+            op.avg_num_rounds,
+            op.avg_network_sent_B,
+            op.avg_network_received_B,
+            op.avg_time_active_ms,
+        ]
+        for op_idx, op in enumerate(aggregated)
+    ]
+
+
+def write_per_run_csv(path: str, rows: List[List[object]]) -> None:
+    """Legacy per-run CSV writer (not called by ``main``)."""
     with open(path, "w", encoding="utf-8", newline="") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(
@@ -432,11 +522,407 @@ def write_csv(path: str, rows: List[List[object]]) -> None:
             writer.writerow(row)
 
 
+# ---------------------------------------------------------------------------
+# Aggregated per-iteration CSV emission
+# ---------------------------------------------------------------------------
+
+
+CRS_HEADERS = [
+    "malicious",
+    "num_parties",
+    "avg_latency_ms",
+    "rounds",
+    "avg_bytes_sent_per_party",
+    "avg_bytes_received_per_party",
+    "max_memory_kBytes",
+]
+
+
+# Shared headers for KeyGen and Reshare CSVs (same shape, different sources).
+TWO_PHASE_HEADERS = [
+    "malicious",
+    "num_parties",
+    "offline_avg_latency_ms",
+    "offline_rounds",
+    "offline_avg_bytes_sent_per_party",
+    "offline_avg_bytes_received_per_party",
+    "offline_max_memory_kBytes",
+    "offline_avg_mem_kBytes",
+    "online_avg_latency_ms",
+    "online_rounds",
+    "online_avg_bytes_sent_per_party",
+    "online_avg_bytes_received_per_party",
+    "online_max_memory_kBytes",
+    "online_avg_mem_kBytes",
+]
+
+
+# Shared headers for the two threshold-decryption CSVs.
+TDEC_HEADERS = [
+    "malicious",
+    "num_parties",
+    "num_ctxt",
+    "offline_avg_latency_ms",
+    "offline_throughput_per_sec",
+    "online_avg_latency_ms",
+    "online_throughput_per_sec",
+    "offline_rounds",
+    "online_rounds",
+    "offline_avg_bytes_sent_per_party",
+    "offline_avg_bytes_received_per_party",
+    "online_avg_bytes_sent_per_party",
+    "online_avg_bytes_received_per_party",
+    "offline_max_memory_kBytes",
+    "online_max_memory_kBytes",
+]
+
+
+# BGV decryption is single-phase (one ``DDEC_PARALLEL_N`` line per parallelism
+# factor) so it gets a flatter CSV than the TFHE TDec ones.
+BGV_TDEC_HEADERS = [
+    "malicious",
+    "num_parties",
+    "num_ctxt",
+    "avg_latency_ms",
+    "throughput_per_sec",
+    "rounds",
+    "avg_bytes_sent_per_party",
+    "avg_bytes_received_per_party",
+    "max_memory_kBytes",
+    "avg_mem_kBytes",
+]
+
+
+# Parallelism factors of the BGV ``DDEC_PARALLEL_N`` benchmark lines, one row
+# per factor in the BGV TDec CSV.
+BGV_DDEC_PARALLEL_FACTORS = [1, 2, 4, 8, 16, 32]
+
+
+def _has_offline_phase(preproc: AggregatedOperation) -> bool:
+    """An offline phase exists for a row iff its PREPROC line did real work,
+    detected here by ``num_rounds != 0``."""
+    return preproc.avg_num_rounds != 0
+
+
+def _throughput_bits_per_sec(bit_width: int, per_ctxt_latency_ms: float) -> float:
+    """Throughput in bits/sec given per-ciphertext latency in ms and message bit width.
+
+    Per-ciphertext latency is what ``aggregate_run`` stores for DDEC/PREPROC
+    rows; ``bit_width / per_ctxt_seconds`` is equivalent to
+    ``bit_width * NUM_CTXTS / batch_seconds``.
+    """
+    if per_ctxt_latency_ms <= 0:
+        return 0.0
+    return bit_width * 1000.0 / per_ctxt_latency_ms
+
+
+def _two_phase_row(
+    run_name: str,
+    preproc: AggregatedOperation,
+    online: AggregatedOperation,
+) -> List[object]:
+    """Row for the KeyGen/Reshare CSVs.
+
+    Memory cells are always ``-1`` (not measured here).  Offline cells become
+    ``-1`` when the preproc line has ``num_rounds == 0``.
+    """
+    offline_present = _has_offline_phase(preproc)
+    return [
+        is_malicious_run(run_name),
+        num_parties_for_run(run_name),
+        preproc.avg_time_active_ms if offline_present else -1,
+        preproc.avg_num_rounds if offline_present else -1,
+        preproc.avg_network_sent_B if offline_present else -1,
+        preproc.avg_network_received_B if offline_present else -1,
+        -1,  # offline_max_memory_kBytes
+        -1,  # offline_avg_mem_kBytes
+        online.avg_time_active_ms,
+        online.avg_num_rounds,
+        online.avg_network_sent_B,
+        online.avg_network_received_B,
+        -1,  # online_max_memory_kBytes
+        -1,  # online_avg_mem_kBytes
+    ]
+
+
+def _tdec_one_row(
+    run_name: str,
+    bit_width: int,
+    preproc: AggregatedOperation,
+    ddec: AggregatedOperation,
+) -> List[object]:
+    """Row for ``TFHE_TDecOne_*`` (NOISE_FLOOD).
+
+    Offline is the PREPROC line (``-1`` when its ``num_rounds`` is 0); online
+    is the sum of PREPROC + DDEC (latency, rounds, bytes summed; throughput
+    recomputed from the summed per-ctxt latency).
+    """
+    offline_present = _has_offline_phase(preproc)
+    online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
+    online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
+    online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
+    online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
+    return [
+        is_malicious_run(run_name),
+        num_parties_for_run(run_name),
+        bit_width,
+        preproc.avg_time_active_ms if offline_present else -1,
+        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        online_latency_ms,
+        _throughput_bits_per_sec(bit_width, online_latency_ms),
+        preproc.avg_num_rounds if offline_present else -1,
+        online_rounds,
+        preproc.avg_network_sent_B if offline_present else -1,
+        preproc.avg_network_received_B if offline_present else -1,
+        online_bytes_sent,
+        online_bytes_received,
+        -1,  # offline_max_memory_kBytes
+        -1,  # online_max_memory_kBytes
+    ]
+
+
+def _tdec_two_row(
+    run_name: str,
+    bit_width: int,
+    preproc: AggregatedOperation,
+    ddec: AggregatedOperation,
+) -> List[object]:
+    """Row for ``TFHE_TDecTwo_*`` (BIT_DEC).
+
+    Offline is the PREPROC line (``-1`` when ``num_rounds`` is 0); online is
+    the DDEC line.
+    """
+    offline_present = _has_offline_phase(preproc)
+    return [
+        is_malicious_run(run_name),
+        num_parties_for_run(run_name),
+        bit_width,
+        preproc.avg_time_active_ms if offline_present else -1,
+        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        ddec.avg_time_active_ms,
+        _throughput_bits_per_sec(bit_width, ddec.avg_time_active_ms),
+        preproc.avg_num_rounds if offline_present else -1,
+        ddec.avg_num_rounds,
+        preproc.avg_network_sent_B if offline_present else -1,
+        preproc.avg_network_received_B if offline_present else -1,
+        ddec.avg_network_sent_B,
+        ddec.avg_network_received_B,
+        -1,
+        -1,
+    ]
+
+
+def num_parties_for_run(run_name: str) -> int:
+    return expected_party_count_for_run(run_name)
+
+
+def _write_csv(path: str, headers: List[str], rows: List[List[object]]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(headers)
+        writer.writerows(rows)
+
+
+def write_crs_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    rows: List[List[object]] = []
+    for run_name in TFHE_RUN_NAMES:
+        aggregated = iteration_aggregates.get(run_name)
+        if aggregated is None:
+            continue
+        crs = find_operation(aggregated, "CRS_GEN")
+        if crs is None:
+            # Should not happen; aggregate_run always returns one entry per label.
+            continue
+        rows.append([
+            is_malicious_run(run_name),
+            num_parties_for_run(run_name),
+            crs.avg_time_active_ms,
+            crs.avg_num_rounds,
+            crs.avg_network_sent_B,
+            crs.avg_network_received_B,
+            -1,  # max_memory_kBytes — not measured here
+        ])
+    _write_csv(path, CRS_HEADERS, rows)
+
+
+def _write_two_phase_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    preproc_label: str,
+    online_label: str,
+) -> None:
+    rows: List[List[object]] = []
+    for run_name in TFHE_RUN_NAMES:
+        aggregated = iteration_aggregates.get(run_name)
+        if aggregated is None:
+            continue
+        preproc = find_operation(aggregated, preproc_label)
+        online = find_operation(aggregated, online_label)
+        if preproc is None or online is None:
+            continue
+        rows.append(_two_phase_row(run_name, preproc, online))
+    _write_csv(path, TWO_PHASE_HEADERS, rows)
+
+
+def write_keygen_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    _write_two_phase_csv(path, iteration_aggregates, "DKG_PREPROC", "DKG")
+
+
+def write_reshare_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    _write_two_phase_csv(path, iteration_aggregates, "RESHARE_PREPROC", "RESHARE")
+
+
+def _write_tdec_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mode: str,
+    row_builder: Callable[[str, int, AggregatedOperation, AggregatedOperation], List[object]],
+) -> None:
+    rows: List[List[object]] = []
+    for run_name in TFHE_RUN_NAMES:
+        aggregated = iteration_aggregates.get(run_name)
+        if aggregated is None:
+            continue
+        for tfhe_type in TFHE_TYPES:
+            bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
+            if bit_width not in TDEC_BIT_WIDTHS:
+                continue
+            preproc = find_operation(aggregated, f"{mode}_{tfhe_type}_PREPROC")
+            ddec = find_operation(aggregated, f"{mode}_{tfhe_type}_DDEC")
+            if preproc is None or ddec is None:
+                continue
+            rows.append(row_builder(run_name, bit_width, preproc, ddec))
+    _write_csv(path, TDEC_HEADERS, rows)
+
+
+def write_tdec_one_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    _write_tdec_csv(path, iteration_aggregates, NOISE_FLOOD_MODE, _tdec_one_row)
+
+
+def write_tdec_two_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    _write_tdec_csv(path, iteration_aggregates, BIT_DEC_MODE, _tdec_two_row)
+
+
+def write_bgv_keygen_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    """BGV key generation CSV — same shape as ``TFHE_KeyGen_*``.
+
+    Offline = ``DKG_PREPROC``, online = ``DKG``.  The ``num_rounds == 0 → -1``
+    rule is reused mechanically; in practice BGV ``DKG_PREPROC`` always has
+    real rounds so offline is never blanked out here.
+    """
+    rows: List[List[object]] = []
+    aggregated = iteration_aggregates.get(BGV_RUN_NAME)
+    if aggregated is not None:
+        preproc = find_operation(aggregated, "DKG_PREPROC")
+        online = find_operation(aggregated, "DKG")
+        if preproc is not None and online is not None:
+            rows.append(_two_phase_row(BGV_RUN_NAME, preproc, online))
+    _write_csv(path, TWO_PHASE_HEADERS, rows)
+
+
+def write_bgv_tdec_csv(
+    path: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+) -> None:
+    """BGV threshold-decryption CSV.
+
+    One row per parallelism factor ``N`` in ``BGV_DDEC_PARALLEL_FACTORS``,
+    sourced from the corresponding ``DDEC_PARALLEL_N`` line.  Throughput is
+    decryptions per second: ``N × 1000 / per_call_latency_ms`` (``aggregate_run``
+    already divides ``time_active`` by ``NUM_CTXTS``, so the stored
+    ``avg_time_active_ms`` is the per-call latency of one ``DDEC_PARALLEL_N``
+    invocation that decrypts ``N`` ciphertexts in parallel).
+    """
+    rows: List[List[object]] = []
+    aggregated = iteration_aggregates.get(BGV_RUN_NAME)
+    if aggregated is not None:
+        for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
+            ddec = find_operation(aggregated, f"DDEC_PARALLEL_{parallel_n}")
+            if ddec is None:
+                continue
+            throughput = (
+                parallel_n * 1000.0 / ddec.avg_time_active_ms
+                if ddec.avg_time_active_ms > 0
+                else 0.0
+            )
+            rows.append([
+                is_malicious_run(BGV_RUN_NAME),  # always 0 — no malicious BGV run
+                num_parties_for_run(BGV_RUN_NAME),
+                parallel_n,
+                ddec.avg_time_active_ms,
+                throughput,
+                ddec.avg_num_rounds,
+                ddec.avg_network_sent_B,
+                ddec.avg_network_received_B,
+                -1,  # max_memory_kBytes — not measured here
+                -1,  # avg_mem_kBytes — not measured here
+            ])
+    _write_csv(path, BGV_TDEC_HEADERS, rows)
+
+
+def write_iteration_csvs(
+    iteration_dir: str,
+    iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    suffix: str,
+) -> None:
+    """Write the five aggregated CSVs for one iteration into ``iteration_dir``."""
+    os.makedirs(iteration_dir, exist_ok=True)
+    write_crs_csv(
+        os.path.join(iteration_dir, f"CRS_{suffix}.csv"),
+        iteration_aggregates,
+    )
+    write_keygen_csv(
+        os.path.join(iteration_dir, f"TFHE_KeyGen_{suffix}.csv"),
+        iteration_aggregates,
+    )
+    write_reshare_csv(
+        os.path.join(iteration_dir, f"TFHE_Reshare_{suffix}.csv"),
+        iteration_aggregates,
+    )
+    write_tdec_one_csv(
+        os.path.join(iteration_dir, f"TFHE_TDecOne_{suffix}.csv"),
+        iteration_aggregates,
+    )
+    write_tdec_two_csv(
+        os.path.join(iteration_dir, f"TFHE_TDecTwo_{suffix}.csv"),
+        iteration_aggregates,
+    )
+    write_bgv_keygen_csv(
+        os.path.join(iteration_dir, f"BGV_KeyGen_{suffix}.csv"),
+        iteration_aggregates,
+    )
+    write_bgv_tdec_csv(
+        os.path.join(iteration_dir, f"BGV_TDec_{suffix}.csv"),
+        iteration_aggregates,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Parse session_stats_*.txt files from all parties, keep only complete TFHE/BGV runs, "
-            "compute cross-party averages, and export TFHE/BGV CSV files."
+            "Parse session_stats_*.txt files from all parties, keep only "
+            "complete TFHE/BGV runs, compute cross-party averages, and emit "
+            "per-iteration aggregated CSVs (CRS, TFHE_KeyGen, TFHE_Reshare, "
+            "TFHE_TDecOne, TFHE_TDecTwo, BGV_KeyGen, BGV_TDec) under "
+            "<output-dir>/iteration_<N>/."
         )
     )
     parser.add_argument(
@@ -445,7 +931,12 @@ def main() -> None:
     )
     parser.add_argument(
         "output_suffix",
-        help="Suffix appended to output CSV names: TFHE_<NUM_PARTIES>_<suffix>.csv and BGV_<NUM_PARTIES>_<suffix>.csv.",
+        help=(
+            "Suffix appended to output CSV names: CRS_<suffix>.csv, "
+            "TFHE_KeyGen_<suffix>.csv, TFHE_Reshare_<suffix>.csv, "
+            "TFHE_TDecOne_<suffix>.csv, TFHE_TDecTwo_<suffix>.csv, "
+            "BGV_KeyGen_<suffix>.csv, BGV_TDec_<suffix>.csv."
+        ),
     )
     parser.add_argument(
         "--pattern",
@@ -455,7 +946,10 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         default=".",
-        help="Output directory for generated CSV files (default: current directory).",
+        help=(
+            "Output root directory. Each iteration's CSVs are written to "
+            "<output-dir>/iteration_<N>/. Default: current directory."
+        ),
     )
     parser.add_argument(
         "--spread-warning-threshold",
@@ -523,36 +1017,63 @@ def main() -> None:
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    all_run_names = TFHE_RUN_NAMES + [BGV_RUN_NAME]
-    all_complete_runs = {**tfhe_complete_runs_by_name, BGV_RUN_NAME: bgv_complete_runs}
-    all_run_party_files = {**tfhe_party_files_by_name, BGV_RUN_NAME: bgv_party_files}
+    # Iteration N pairs the N-th complete run of each TFHE run-name with the
+    # N-th complete BGV run. If counts differ, the iteration count is the max
+    # and rows for missing runs are simply omitted from that iteration's CSVs.
+    max_iterations = max(
+        [len(indexes) for indexes in tfhe_complete_runs_by_name.values()]
+        + [len(bgv_complete_runs)],
+        default=0,
+    )
 
-    for run_name in all_run_names:
-        run_party_files = all_run_party_files[run_name]
-        complete_runs = all_complete_runs[run_name]
-        run_num_parties = len(run_party_files)
+    if max_iterations == 0:
+        logger.error("No complete TFHE/BGV iterations found in %s", args.input_dir)
+        sys.exit(1)
 
-        rows: List[List[object]] = []
-        for complete_idx, run_idx in enumerate(complete_runs, start=1):
-            rows.extend(
-                aggregate_run(
-                    run_name=run_name,
-                    source_run_index=run_idx,
-                    complete_run_index=complete_idx,
-                    party_files=run_party_files,
-                    all_party_runs=all_party_runs,
-                    spread_warn_threshold=args.spread_warning_threshold,
+    for iteration_idx in range(max_iterations):
+        iteration_aggregates: Dict[str, List[AggregatedOperation]] = {}
+        for run_name in TFHE_RUN_NAMES:
+            complete_runs = tfhe_complete_runs_by_name[run_name]
+            if iteration_idx >= len(complete_runs):
+                logger.warning(
+                    "Iteration %s: run %s has no complete run at this ordinal; "
+                    "rows for this run will be omitted from the iteration CSVs.",
+                    iteration_idx + 1, run_name,
                 )
+                continue
+            source_run_idx = complete_runs[iteration_idx]
+            party_files_for_run = tfhe_party_files_by_name[run_name]
+            iteration_aggregates[run_name] = aggregate_run(
+                run_name=run_name,
+                source_run_index=source_run_idx,
+                party_files=party_files_for_run,
+                all_party_runs=all_party_runs,
+                spread_warn_threshold=args.spread_warning_threshold,
             )
 
-        output_path = os.path.join(
-            args.output_dir, f"{run_name}_{run_num_parties}p_{args.output_suffix}.csv"
-        )
-        write_csv(output_path, rows)
-        print(f"Complete {run_name} runs: {len(complete_runs)}")
-        print(f"Wrote CSV: {output_path}")
+        if iteration_idx < len(bgv_complete_runs):
+            source_run_idx = bgv_complete_runs[iteration_idx]
+            iteration_aggregates[BGV_RUN_NAME] = aggregate_run(
+                run_name=BGV_RUN_NAME,
+                source_run_index=source_run_idx,
+                party_files=bgv_party_files,
+                all_party_runs=all_party_runs,
+                spread_warn_threshold=args.spread_warning_threshold,
+            )
+        else:
+            logger.warning(
+                "Iteration %s: BGV has no complete run at this ordinal; "
+                "BGV_KeyGen and BGV_TDec CSVs will be empty for this iteration.",
+                iteration_idx + 1,
+            )
 
-    print(f"Parsed {num_parties} party files.")
+        iteration_dir = os.path.join(
+            args.output_dir, f"iteration_{iteration_idx + 1}"
+        )
+        write_iteration_csvs(iteration_dir, iteration_aggregates, args.output_suffix)
+        print(f"Wrote iteration_{iteration_idx + 1} CSVs to {iteration_dir}")
+
+    print(f"Parsed {num_parties} party files; {max_iterations} iterations produced.")
 
 
 if __name__ == "__main__":
