@@ -129,6 +129,7 @@ pub async fn create_test_context_info_from_core_config(
             threshold_networking::tls_certs::create_ca_cert_from_ca_keypair(
                 mpc_identity.as_ref(),
                 true,
+                true,
                 &ca_keypair,
             )?;
 
