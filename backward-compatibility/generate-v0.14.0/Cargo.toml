@@ -1,0 +1,63 @@
+[package]
+name = "backward-compatibility-generate-v0-14-0"
+version = "0.14.0"
+publish = false
+authors = ["Zama"]
+edition = "2021"
+license = "BSD-3-Clause-Clear"
+
+[dependencies]
+# Import the base backward-compatibility crate for shared types and utilities
+backward-compatibility = { path = ".." }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "3eb3862" }
+
+# NOTE: Some dependencies below are duplicated from ../Cargo.toml
+# This is intentional - these crates are excluded from the workspace for isolation.
+# Each generator may need different versions to match its target KMS version.
+
+# All dependencies below target tag v0.14.0-0.
+kms_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "3eb3862"}
+kms_grpc_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "3eb3862"}
+algebra_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "3eb3862" }
+threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "3eb3862", features = ["testing"] }
+threshold_networking_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "3eb3862" }
+threshold_types_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "3eb3862" }
+#error-utils_0_14_0 = { path = "./core/error-utils", default-features = false }
+#thread-handles_0_14_0 = { path = "./core/thread-handles" }
+
+# Dependencies for the 0.14.0 version
+# Note: these dependencies should match the versions used by the KMS and distributed decryption
+# modules as much as possible to avoid serialization differences
+cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
+tfhe_versionable_0_7 = { package = "tfhe-versionable", version = "=0.7.0" }
+tfhe_1_6_1 = { package = "tfhe", version = "=1.6.1", features = [
+    "shortint",
+] }
+alloy-sol-types-1_4_1 = { package = "alloy-sol-types", version = "=1.4.1" }
+alloy-primitives-1_4_1 = { package = "alloy-primitives", version = "=1.4.1" }
+
+# Common dependencies
+itertools = "=0.14.0"
+# Note: This serde version is used for metadata types imported from backward-compatibility crate.
+# The old KMS types (kms_0_11) will use their own serde 1.0.210 from their dependency tree.
+# Both serde versions coexist in the same binary - this is intentional and correct!
+serde = { version = "=1.0.228", features = ["derive"] }
+# bincode needed for generate.rs utility functions, must match bc2wrap version (2.0.1 from v0.12.2)
+# WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
+# See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
+bincode = { version = "=2.0.1", features = ["serde"] }
+aes-prng = "=0.2.1"
+rand = "=0.8.5"
+ron = { version = "=0.10.1", features = ["integer128"] }
+tokio = { version = "=1.49.0", features = ["full"] }
+tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
+
+[[bin]]
+name = "backward-compatibility-generate-v0-14-0"
+
+[patch.crates-io]
+# MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
+attestation-doc-validation = { git = 'https://github.com/mkmks/attestation-doc-validation.git', branch = 'timestamps' }
+rcgen = { git = 'https://github.com/zama-ai/rcgen.git' }
+rustls = { git = 'https://github.com/zama-ai/rustls.git', branch = 'rel-0.23' }
+rustls-webpki = { git = 'https://github.com/zama-ai/webpki.git', branch = 'rel-0.103' }
