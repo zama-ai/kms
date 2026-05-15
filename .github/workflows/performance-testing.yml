@@ -118,9 +118,6 @@ jobs:
     runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
     steps:
-      - name: Setup Home
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
