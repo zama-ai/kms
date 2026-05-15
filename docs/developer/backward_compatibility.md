@@ -36,6 +36,7 @@ However, this does not allow changes to be made to the test metadata scheme itse
 - `backward-compatibility/generate-v0.13.0` - For KMS v0.13.0
 - `backward-compatibility/generate-v0.13.10` - For KMS v0.13.10
 - `backward-compatibility/generate-v0.13.20` - For KMS v0.13.20
+- `backward-compatibility/generate-v0.14.0` - For KMS v0.14.0
 
 Each generator uses the exact dependencies from its target KMS version.
 
@@ -62,6 +63,9 @@ make generate-backward-compatibility-v0.13.10
 
 # Generate only v0.13.20 data
 make generate-backward-compatibility-v0.13.20
+
+# Generate only v0.14.0 data
+make generate-backward-compatibility-v0.14.0
 
 ```
 WARNING: Generating for specific versions removes previously generated data from the `.ron` files, effectively ignoring other versions in the tests!
