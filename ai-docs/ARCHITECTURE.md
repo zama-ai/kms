@@ -105,8 +105,10 @@ All under [core/service/src/bin/](core/service/src/bin/):
 - [kms-server.rs](core/service/src/bin/kms-server.rs) — main service process.
 - [kms-init.rs](core/service/src/bin/kms-init.rs) — post-deployment cluster
   initialization.
-- [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate signing
-  and root keys (supports `--mock-enclave` for local dev).
+- [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
+  signing keys (and, in threshold mode, per-party self-signed CA certificates
+  for mTLS). Supports `--mock-enclave` for local dev, must be compiled with the
+  `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
