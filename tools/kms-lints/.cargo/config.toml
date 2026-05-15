@@ -1,0 +1,5 @@
+[build]
+target-dir = "../../target/kms-lints"
+
+[target.'cfg(all())']
+linker = "dylint-link"

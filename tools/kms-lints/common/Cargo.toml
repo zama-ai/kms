@@ -1,0 +1,16 @@
+[package]
+name = "kms-lints-common"
+version = "0.1.0"
+description = "Shared utilities for KMS lints"
+edition = "2024"
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+serde_json = { workspace = true }
+
+[package.metadata.rust-analyzer]
+rustc_private = true

@@ -1,0 +1,32 @@
+[package]
+name = "kms-lints"
+version = "0.1.0"
+description = "Project specific lints for KMS"
+edition = "2024"
+publish = false
+autotests = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dylint_linting = { workspace = true }
+kms-lints-common = { path = "../common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+dylint_testing = "5.0.0" # Dylint UI test helper matching dylint_linting; test-only lint tooling.
+serde_json = { workspace = true }
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[[example]]
+name = "bc2wrap_type_inventory"
+path = "tests/bc2wrap_type_inventory/main.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(dylint_lib, values(any()))',
+] }

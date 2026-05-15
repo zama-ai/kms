@@ -1,0 +1,20 @@
+warning: generic or unresolved root type `T` used by `bc2wrap::serialize`
+  --> $DIR/main.rs:133:13
+   |
+LL |     let _ = bc2wrap::serialize(value);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: The concrete type cannot be inventoried from this generic sink
+   = note: `#[warn(bc2wrap_type_inventory)]` on by default
+
+warning: generic or unresolved root type `T` used by `vault::storage::store_versioned_at_request_id`
+  --> $DIR/main.rs:139:9
+   |
+LL |         vault::storage::store_versioned_at_request_id(storage, &request_id, value, "generic").await;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: The concrete type cannot be inventoried from this generic sink
+
+bc2wrap_type_inventory: wrote 16 calls, 4 local types, 1 generic sinks, 2 skipped roots for main
+warning: 2 warnings emitted
+
