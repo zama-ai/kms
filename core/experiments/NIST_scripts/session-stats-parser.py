@@ -1017,63 +1017,70 @@ def main() -> None:
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Iteration N pairs the N-th complete run of each TFHE run-name with the
-    # N-th complete BGV run. If counts differ, the iteration count is the max
-    # and rows for missing runs are simply omitted from that iteration's CSVs.
-    max_iterations = max(
-        [len(indexes) for indexes in tfhe_complete_runs_by_name.values()]
-        + [len(bgv_complete_runs)],
-        default=0,
-    )
+    # Pair iterations by the run's original index (its chronological position
+    # within the per-run-name list produced by ``parse_session_stats_file``).
+    # Each campaign of ``threshold-test-params.sh`` appends one ``NEW_RUN`` per
+    # run-name in order, so the N-th ``NEW_RUN`` of every run-name belongs to
+    # the same chronological campaign.  Iterating over the union of complete
+    # original indexes keeps TFHE and BGV aligned across run-names even if one
+    # run-name was rejected in some campaign (e.g. an early BGV iteration with
+    # fewer metric lines than expected): that campaign's folder still appears,
+    # with the rejected run-name's CSV rows simply omitted, instead of
+    # silently shifting later iterations down.
+    all_complete_original_indices: set = set()
+    for indexes in tfhe_complete_runs_by_name.values():
+        all_complete_original_indices.update(indexes)
+    all_complete_original_indices.update(bgv_complete_runs)
+    ordered_complete_indices = sorted(all_complete_original_indices)
 
-    if max_iterations == 0:
+    if not ordered_complete_indices:
         logger.error("No complete TFHE/BGV iterations found in %s", args.input_dir)
         sys.exit(1)
 
-    for iteration_idx in range(max_iterations):
+    for original_idx in ordered_complete_indices:
         iteration_aggregates: Dict[str, List[AggregatedOperation]] = {}
         for run_name in TFHE_RUN_NAMES:
-            complete_runs = tfhe_complete_runs_by_name[run_name]
-            if iteration_idx >= len(complete_runs):
+            if original_idx not in tfhe_complete_runs_by_name[run_name]:
                 logger.warning(
-                    "Iteration %s: run %s has no complete run at this ordinal; "
+                    "Iteration %s: run %s has no complete run at this campaign; "
                     "rows for this run will be omitted from the iteration CSVs.",
-                    iteration_idx + 1, run_name,
+                    original_idx + 1, run_name,
                 )
                 continue
-            source_run_idx = complete_runs[iteration_idx]
             party_files_for_run = tfhe_party_files_by_name[run_name]
             iteration_aggregates[run_name] = aggregate_run(
                 run_name=run_name,
-                source_run_index=source_run_idx,
+                source_run_index=original_idx,
                 party_files=party_files_for_run,
                 all_party_runs=all_party_runs,
                 spread_warn_threshold=args.spread_warning_threshold,
             )
 
-        if iteration_idx < len(bgv_complete_runs):
-            source_run_idx = bgv_complete_runs[iteration_idx]
+        if original_idx in bgv_complete_runs:
             iteration_aggregates[BGV_RUN_NAME] = aggregate_run(
                 run_name=BGV_RUN_NAME,
-                source_run_index=source_run_idx,
+                source_run_index=original_idx,
                 party_files=bgv_party_files,
                 all_party_runs=all_party_runs,
                 spread_warn_threshold=args.spread_warning_threshold,
             )
         else:
             logger.warning(
-                "Iteration %s: BGV has no complete run at this ordinal; "
+                "Iteration %s: BGV has no complete run at this campaign; "
                 "BGV_KeyGen and BGV_TDec CSVs will be empty for this iteration.",
-                iteration_idx + 1,
+                original_idx + 1,
             )
 
         iteration_dir = os.path.join(
-            args.output_dir, f"iteration_{iteration_idx + 1}"
+            args.output_dir, f"iteration_{original_idx + 1}"
         )
         write_iteration_csvs(iteration_dir, iteration_aggregates, args.output_suffix)
-        print(f"Wrote iteration_{iteration_idx + 1} CSVs to {iteration_dir}")
+        print(f"Wrote iteration_{original_idx + 1} CSVs to {iteration_dir}")
 
-    print(f"Parsed {num_parties} party files; {max_iterations} iterations produced.")
+    print(
+        f"Parsed {num_parties} party files; "
+        f"{len(ordered_complete_indices)} iterations produced."
+    )
 
 
 if __name__ == "__main__":
