@@ -18,6 +18,26 @@ TFHE_RUN_5P_NAME = "tfhe-bench-run-5p"
 TFHE_RUN_NAMES = [TFHE_RUN_4P_NAME, TFHE_RUN_4P_MALICIOUS_NAME, TFHE_RUN_5P_NAME]
 BGV_RUN_NAME = "bgv-bench-run"
 
+# Memory-benchmark variants of the runs above. They emit the same operation
+# labels as their non-mem counterparts plus an extra ``peak_mem(B)=N`` field on
+# every metric line. We pair each ``X-mem`` campaign iteration with the matching
+# ``X`` iteration to fill in the memory columns of the existing per-iteration
+# CSVs; the latency/network/rounds fields of the mem run itself are intentionally
+# ignored (they're skewed by the peak-allocator overhead).
+TFHE_RUN_4P_MEM_NAME = "tfhe-bench-run-4p-mem"
+TFHE_RUN_5P_MEM_NAME = "tfhe-bench-run-5p-mem"
+BGV_RUN_MEM_NAME = "bgv-bench-run-mem"
+TFHE_MEM_RUN_NAMES = [TFHE_RUN_4P_MEM_NAME, TFHE_RUN_5P_MEM_NAME]
+ALL_MEM_RUN_NAMES = TFHE_MEM_RUN_NAMES + [BGV_RUN_MEM_NAME]
+
+# Pairing: which mem run feeds memory cells of which non-mem run.
+MEM_RUN_FOR: Dict[str, str] = {
+    TFHE_RUN_4P_NAME: TFHE_RUN_4P_MEM_NAME,
+    TFHE_RUN_5P_NAME: TFHE_RUN_5P_MEM_NAME,
+    BGV_RUN_NAME: BGV_RUN_MEM_NAME,
+    # No malicious mem run today; if you add one, list it here.
+}
+
 NUM_CTXTS = 10
 
 # TFHE message types and their bit widths. bool is reported with bit_width = 1.
@@ -65,11 +85,29 @@ TFHE_4P_OPERATION_LABELS = build_tfhe_operation_labels(include_prss_init=True)
 TFHE_5P_OPERATION_LABELS = build_tfhe_operation_labels(include_prss_init=False)
 
 
+BGV_OPERATION_LABELS = [
+    "PRSS_INIT_LEVEL_ONE",
+    "PRSS_INIT_LEVEL_KSW",
+    "DKG_PREPROC",
+    "DKG",
+    "DDEC_PARALLEL_1",
+    "DDEC_PARALLEL_2",
+    "DDEC_PARALLEL_4",
+    "DDEC_PARALLEL_8",
+    "DDEC_PARALLEL_16",
+    "DDEC_PARALLEL_32",
+]
+
+
 EXPECTED_LINES_PER_RUN = {
     TFHE_RUN_4P_NAME: len(TFHE_4P_OPERATION_LABELS),
     TFHE_RUN_4P_MALICIOUS_NAME: len(TFHE_4P_OPERATION_LABELS),
     TFHE_RUN_5P_NAME: len(TFHE_5P_OPERATION_LABELS),
-    BGV_RUN_NAME: 10,
+    BGV_RUN_NAME: len(BGV_OPERATION_LABELS),
+    # Mem variants share the operation schedule of their non-mem counterparts.
+    TFHE_RUN_4P_MEM_NAME: len(TFHE_4P_OPERATION_LABELS),
+    TFHE_RUN_5P_MEM_NAME: len(TFHE_5P_OPERATION_LABELS),
+    BGV_RUN_MEM_NAME: len(BGV_OPERATION_LABELS),
 }
 
 
@@ -77,18 +115,10 @@ OPERATION_LABELS = {
     TFHE_RUN_4P_NAME: TFHE_4P_OPERATION_LABELS,
     TFHE_RUN_4P_MALICIOUS_NAME: TFHE_4P_OPERATION_LABELS,
     TFHE_RUN_5P_NAME: TFHE_5P_OPERATION_LABELS,
-    BGV_RUN_NAME: [
-        "PRSS_INIT_LEVEL_ONE",
-        "PRSS_INIT_LEVEL_KSW",
-        "DKG_PREPROC",
-        "DKG",
-        "DDEC_PARALLEL_1",
-        "DDEC_PARALLEL_2",
-        "DDEC_PARALLEL_4",
-        "DDEC_PARALLEL_8",
-        "DDEC_PARALLEL_16",
-        "DDEC_PARALLEL_32",
-    ],
+    BGV_RUN_NAME: BGV_OPERATION_LABELS,
+    TFHE_RUN_4P_MEM_NAME: TFHE_4P_OPERATION_LABELS,
+    TFHE_RUN_5P_MEM_NAME: TFHE_5P_OPERATION_LABELS,
+    BGV_RUN_MEM_NAME: BGV_OPERATION_LABELS,
 }
 
 
@@ -117,6 +147,11 @@ class MetricLine:
     network_sent: int
     network_received: int
     time_active: int
+    # ``peak_mem(B)`` is only emitted when the party binary was compiled with
+    # the ``measure_memory`` feature. It is the peak resident memory in bytes
+    # observed by ``peak_alloc`` for the duration of the operation. ``None`` on
+    # lines from non-mem runs.
+    peak_mem_B: Optional[int] = None
 
 
 @dataclass
@@ -127,6 +162,10 @@ class AggregatedOperation:
     so it is per-ciphertext for DDEC/PREPROC labels and per-operation for
     everything else.  ``avg_network_sent_B`` and ``avg_network_received_B`` are
     batch totals (the existing parser does not divide them by num_ctxts).
+
+    ``max_peak_mem_B`` and ``avg_peak_mem_B`` are populated only when every
+    party file for this operation reported a ``peak_mem(B)`` field — i.e. only
+    for ``-mem`` runs. Both are ``None`` for non-mem runs.
     """
 
     label: str
@@ -136,6 +175,8 @@ class AggregatedOperation:
     avg_network_sent_B: float
     avg_network_received_B: float
     avg_time_active_ms: float
+    max_peak_mem_B: Optional[float] = None
+    avg_peak_mem_B: Optional[float] = None
 
 
 def parse_metric_line(raw_line: str) -> MetricLine:
@@ -147,6 +188,7 @@ def parse_metric_line(raw_line: str) -> MetricLine:
         fields[key.strip()] = value.strip()
 
     try:
+        peak_mem_raw = fields.get("peak_mem(B)")
         return MetricLine(
             name=fields["name"],
             role=int(fields["role"]),
@@ -155,13 +197,22 @@ def parse_metric_line(raw_line: str) -> MetricLine:
             network_sent=int(fields["network_sent(B)"]),
             network_received=int(fields["network_received(B)"]),
             time_active=int(fields["time_active(ms)"]),
+            peak_mem_B=int(peak_mem_raw) if peak_mem_raw is not None else None,
         )
     except KeyError as exc:
         raise ValueError(f"Missing expected key {exc} in line: {raw_line.strip()}") from exc
 
 
 def split_run_marker(marker: str) -> Tuple[str, str]:
-    for run_name in TFHE_RUN_NAMES + [BGV_RUN_NAME]:
+    # Match longer (``-mem`` suffixed) names first so that, e.g.,
+    # ``tfhe-bench-run-4p-mem`` is not mis-classified as ``tfhe-bench-run-4p``
+    # with a stray ``-mem`` suffix in the run-id.
+    candidate_names = sorted(
+        TFHE_RUN_NAMES + [BGV_RUN_NAME] + ALL_MEM_RUN_NAMES,
+        key=len,
+        reverse=True,
+    )
+    for run_name in candidate_names:
         if marker == run_name:
             return run_name, ""
         run_prefix = f"{run_name} "
@@ -171,10 +222,9 @@ def split_run_marker(marker: str) -> Tuple[str, str]:
 
 
 def parse_session_stats_file(path: str) -> Tuple[Dict[str, List[List[MetricLine]]], Dict[str, List[str]]]:
-    runs: Dict[str, List[List[MetricLine]]] = {run_name: [] for run_name in TFHE_RUN_NAMES}
-    runs[BGV_RUN_NAME] = []
-    run_ids: Dict[str, List[str]] = {run_name: [] for run_name in TFHE_RUN_NAMES}
-    run_ids[BGV_RUN_NAME] = []
+    all_run_names = TFHE_RUN_NAMES + [BGV_RUN_NAME] + ALL_MEM_RUN_NAMES
+    runs: Dict[str, List[List[MetricLine]]] = {run_name: [] for run_name in all_run_names}
+    run_ids: Dict[str, List[str]] = {run_name: [] for run_name in all_run_names}
 
     current_run_name = ""
     current_run_id = ""
@@ -306,7 +356,7 @@ def expected_party_count_for_run(run_name: str) -> int:
         return 4
     if "-5p" in run_name:
         return 5
-    if run_name == BGV_RUN_NAME:
+    if run_name in (BGV_RUN_NAME, BGV_RUN_MEM_NAME):
         return 4
     return 0
 
@@ -440,6 +490,28 @@ def aggregate_run(
             threshold=spread_warn_threshold,
         )
 
+        peak_mem_values = [
+            metric_line.peak_mem_B for _, metric_line in per_party_metrics
+            if metric_line.peak_mem_B is not None
+        ]
+        # Require every party to report peak_mem for the aggregate to be
+        # considered valid. Mixed reporting almost certainly means a corrupted
+        # log file; conservatively drop it rather than guess.
+        if peak_mem_values and len(peak_mem_values) == len(per_party_metrics):
+            max_peak_mem_B: Optional[float] = float(max(peak_mem_values))
+            avg_peak_mem_B: Optional[float] = average(peak_mem_values)
+        else:
+            if peak_mem_values:
+                logger.warning(
+                    "Partial peak_mem reporting in run=%s, run_index=%s, "
+                    "operation_index=%s: %s of %s parties reported. "
+                    "Dropping peak_mem for this operation.",
+                    run_name, source_run_index + 1, op_idx + 1,
+                    len(peak_mem_values), len(per_party_metrics),
+                )
+            max_peak_mem_B = None
+            avg_peak_mem_B = None
+
         num_ctxts = num_ctxts_for_label(operation_labels[op_idx])
         aggregated.append(
             AggregatedOperation(
@@ -450,6 +522,8 @@ def aggregate_run(
                 avg_network_sent_B=average(network_sent_values),
                 avg_network_received_B=average(network_received_values),
                 avg_time_active_ms=average(time_active_values) / num_ctxts,
+                max_peak_mem_B=max_peak_mem_B,
+                avg_peak_mem_B=avg_peak_mem_B,
             )
         )
 
@@ -464,6 +538,58 @@ def find_operation(
         if op.label == label:
             return op
     return None
+
+
+# ---------------------------------------------------------------------------
+# Memory-cell helpers
+# ---------------------------------------------------------------------------
+#
+# All memory cells in the CSVs are expressed in kBytes; ``peak_mem_B`` from the
+# party logs is in bytes. The two helpers below centralise the "look up the
+# matching mem run, pick the right field, convert units, fall back to -1" logic
+# so the row builders stay readable.
+
+
+def _b_to_kb(value: Optional[float]) -> float:
+    """Bytes-to-kBytes conversion that yields -1 when no measurement exists."""
+    if value is None:
+        return -1
+    return value / 1024.0
+
+
+def _mem_aggregates_for(
+    run_name: str,
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]],
+) -> Optional[List[AggregatedOperation]]:
+    """Return the mem-run aggregates that feed memory cells of ``run_name``.
+
+    ``None`` when no ``-mem`` campaign exists for ``run_name`` (e.g. malicious
+    runs, or when the caller chose not to run the mem benchmark).
+    """
+    if mem_iteration_aggregates is None:
+        return None
+    mem_run_name = MEM_RUN_FOR.get(run_name)
+    if mem_run_name is None:
+        return None
+    return mem_iteration_aggregates.get(mem_run_name)
+
+
+def _peak_mem_kb_for(
+    label: str,
+    mem_aggregates: Optional[List[AggregatedOperation]],
+) -> Tuple[float, float]:
+    """``(max_peak_mem_kB, avg_peak_mem_kB)`` for ``label`` in ``mem_aggregates``.
+
+    Both default to ``-1`` when no mem campaign is available for this run, or
+    when the specific label is missing, or when the mem aggregate could not
+    compute a value (e.g. partial party reporting).
+    """
+    if mem_aggregates is None:
+        return -1, -1
+    mem_op = find_operation(mem_aggregates, label)
+    if mem_op is None:
+        return -1, -1
+    return _b_to_kb(mem_op.max_peak_mem_B), _b_to_kb(mem_op.avg_peak_mem_B)
 
 
 # ---------------------------------------------------------------------------
@@ -620,13 +746,17 @@ def _two_phase_row(
     run_name: str,
     preproc: AggregatedOperation,
     online: AggregatedOperation,
+    mem_aggregates: Optional[List[AggregatedOperation]] = None,
 ) -> List[object]:
     """Row for the KeyGen/Reshare CSVs.
 
-    Memory cells are always ``-1`` (not measured here).  Offline cells become
-    ``-1`` when the preproc line has ``num_rounds == 0``.
+    Memory cells are filled from ``mem_aggregates`` when available (the matching
+    ``-mem`` run's aggregates) and default to ``-1`` otherwise. Offline cells
+    become ``-1`` when the preproc line has ``num_rounds == 0``.
     """
     offline_present = _has_offline_phase(preproc)
+    offline_max_mem, offline_avg_mem = _peak_mem_kb_for(preproc.label, mem_aggregates)
+    online_max_mem, online_avg_mem = _peak_mem_kb_for(online.label, mem_aggregates)
     return [
         is_malicious_run(run_name),
         num_parties_for_run(run_name),
@@ -634,14 +764,14 @@ def _two_phase_row(
         preproc.avg_num_rounds if offline_present else -1,
         preproc.avg_network_sent_B if offline_present else -1,
         preproc.avg_network_received_B if offline_present else -1,
-        -1,  # offline_max_memory_kBytes
-        -1,  # offline_avg_mem_kBytes
+        offline_max_mem if offline_present else -1,
+        offline_avg_mem if offline_present else -1,
         online.avg_time_active_ms,
         online.avg_num_rounds,
         online.avg_network_sent_B,
         online.avg_network_received_B,
-        -1,  # online_max_memory_kBytes
-        -1,  # online_avg_mem_kBytes
+        online_max_mem,
+        online_avg_mem,
     ]
 
 
@@ -650,18 +780,30 @@ def _tdec_one_row(
     bit_width: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
+    mem_aggregates: Optional[List[AggregatedOperation]] = None,
 ) -> List[object]:
     """Row for ``TFHE_TDecOne_*`` (NOISE_FLOOD).
 
     Offline is the PREPROC line (``-1`` when its ``num_rounds`` is 0); online
     is the sum of PREPROC + DDEC (latency, rounds, bytes summed; throughput
     recomputed from the summed per-ctxt latency).
+
+    Memory cells are filled from ``mem_aggregates`` when available:
+    ``offline_max_memory`` is the PREPROC peak; ``online_max_memory`` is the
+    max of PREPROC and DDEC peaks because peak memory is non-additive across
+    the two phases.
     """
     offline_present = _has_offline_phase(preproc)
     online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
     online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
     online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
     online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
+    offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_aggregates)
+    ddec_max_mem, _ = _peak_mem_kb_for(ddec.label, mem_aggregates)
+    if offline_max_mem == -1 and ddec_max_mem == -1:
+        online_max_mem: float = -1
+    else:
+        online_max_mem = max(offline_max_mem, ddec_max_mem)
     return [
         is_malicious_run(run_name),
         num_parties_for_run(run_name),
@@ -676,8 +818,8 @@ def _tdec_one_row(
         preproc.avg_network_received_B if offline_present else -1,
         online_bytes_sent,
         online_bytes_received,
-        -1,  # offline_max_memory_kBytes
-        -1,  # online_max_memory_kBytes
+        offline_max_mem if offline_present else -1,
+        online_max_mem,
     ]
 
 
@@ -686,13 +828,16 @@ def _tdec_two_row(
     bit_width: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
+    mem_aggregates: Optional[List[AggregatedOperation]] = None,
 ) -> List[object]:
     """Row for ``TFHE_TDecTwo_*`` (BIT_DEC).
 
     Offline is the PREPROC line (``-1`` when ``num_rounds`` is 0); online is
-    the DDEC line.
+    the DDEC line. Memory cells follow the same source convention.
     """
     offline_present = _has_offline_phase(preproc)
+    offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_aggregates)
+    online_max_mem, _ = _peak_mem_kb_for(ddec.label, mem_aggregates)
     return [
         is_malicious_run(run_name),
         num_parties_for_run(run_name),
@@ -707,8 +852,8 @@ def _tdec_two_row(
         preproc.avg_network_received_B if offline_present else -1,
         ddec.avg_network_sent_B,
         ddec.avg_network_received_B,
-        -1,
-        -1,
+        offline_max_mem if offline_present else -1,
+        online_max_mem,
     ]
 
 
@@ -726,6 +871,7 @@ def _write_csv(path: str, headers: List[str], rows: List[List[object]]) -> None:
 def write_crs_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
     rows: List[List[object]] = []
     for run_name in TFHE_RUN_NAMES:
@@ -736,6 +882,9 @@ def write_crs_csv(
         if crs is None:
             # Should not happen; aggregate_run always returns one entry per label.
             continue
+        crs_max_mem, _ = _peak_mem_kb_for(
+            "CRS_GEN", _mem_aggregates_for(run_name, mem_iteration_aggregates)
+        )
         rows.append([
             is_malicious_run(run_name),
             num_parties_for_run(run_name),
@@ -743,7 +892,7 @@ def write_crs_csv(
             crs.avg_num_rounds,
             crs.avg_network_sent_B,
             crs.avg_network_received_B,
-            -1,  # max_memory_kBytes — not measured here
+            crs_max_mem,
         ])
     _write_csv(path, CRS_HEADERS, rows)
 
@@ -753,6 +902,7 @@ def _write_two_phase_csv(
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
     preproc_label: str,
     online_label: str,
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
     rows: List[List[object]] = []
     for run_name in TFHE_RUN_NAMES:
@@ -763,35 +913,55 @@ def _write_two_phase_csv(
         online = find_operation(aggregated, online_label)
         if preproc is None or online is None:
             continue
-        rows.append(_two_phase_row(run_name, preproc, online))
+        rows.append(
+            _two_phase_row(
+                run_name,
+                preproc,
+                online,
+                mem_aggregates=_mem_aggregates_for(run_name, mem_iteration_aggregates),
+            )
+        )
     _write_csv(path, TWO_PHASE_HEADERS, rows)
 
 
 def write_keygen_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
-    _write_two_phase_csv(path, iteration_aggregates, "DKG_PREPROC", "DKG")
+    _write_two_phase_csv(
+        path, iteration_aggregates, "DKG_PREPROC", "DKG",
+        mem_iteration_aggregates=mem_iteration_aggregates,
+    )
 
 
 def write_reshare_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
-    _write_two_phase_csv(path, iteration_aggregates, "RESHARE_PREPROC", "RESHARE")
+    _write_two_phase_csv(
+        path, iteration_aggregates, "RESHARE_PREPROC", "RESHARE",
+        mem_iteration_aggregates=mem_iteration_aggregates,
+    )
 
 
 def _write_tdec_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
     mode: str,
-    row_builder: Callable[[str, int, AggregatedOperation, AggregatedOperation], List[object]],
+    row_builder: Callable[
+        [str, int, AggregatedOperation, AggregatedOperation, Optional[List[AggregatedOperation]]],
+        List[object],
+    ],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
     rows: List[List[object]] = []
     for run_name in TFHE_RUN_NAMES:
         aggregated = iteration_aggregates.get(run_name)
         if aggregated is None:
             continue
+        mem_aggregates = _mem_aggregates_for(run_name, mem_iteration_aggregates)
         for tfhe_type in TFHE_TYPES:
             bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
             if bit_width not in TDEC_BIT_WIDTHS:
@@ -800,27 +970,36 @@ def _write_tdec_csv(
             ddec = find_operation(aggregated, f"{mode}_{tfhe_type}_DDEC")
             if preproc is None or ddec is None:
                 continue
-            rows.append(row_builder(run_name, bit_width, preproc, ddec))
+            rows.append(row_builder(run_name, bit_width, preproc, ddec, mem_aggregates))
     _write_csv(path, TDEC_HEADERS, rows)
 
 
 def write_tdec_one_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
-    _write_tdec_csv(path, iteration_aggregates, NOISE_FLOOD_MODE, _tdec_one_row)
+    _write_tdec_csv(
+        path, iteration_aggregates, NOISE_FLOOD_MODE, _tdec_one_row,
+        mem_iteration_aggregates=mem_iteration_aggregates,
+    )
 
 
 def write_tdec_two_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
-    _write_tdec_csv(path, iteration_aggregates, BIT_DEC_MODE, _tdec_two_row)
+    _write_tdec_csv(
+        path, iteration_aggregates, BIT_DEC_MODE, _tdec_two_row,
+        mem_iteration_aggregates=mem_iteration_aggregates,
+    )
 
 
 def write_bgv_keygen_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
     """BGV key generation CSV — same shape as ``TFHE_KeyGen_*``.
 
@@ -834,13 +1013,23 @@ def write_bgv_keygen_csv(
         preproc = find_operation(aggregated, "DKG_PREPROC")
         online = find_operation(aggregated, "DKG")
         if preproc is not None and online is not None:
-            rows.append(_two_phase_row(BGV_RUN_NAME, preproc, online))
+            rows.append(
+                _two_phase_row(
+                    BGV_RUN_NAME,
+                    preproc,
+                    online,
+                    mem_aggregates=_mem_aggregates_for(
+                        BGV_RUN_NAME, mem_iteration_aggregates
+                    ),
+                )
+            )
     _write_csv(path, TWO_PHASE_HEADERS, rows)
 
 
 def write_bgv_tdec_csv(
     path: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
     """BGV threshold-decryption CSV.
 
@@ -853,9 +1042,11 @@ def write_bgv_tdec_csv(
     """
     rows: List[List[object]] = []
     aggregated = iteration_aggregates.get(BGV_RUN_NAME)
+    mem_aggregates = _mem_aggregates_for(BGV_RUN_NAME, mem_iteration_aggregates)
     if aggregated is not None:
         for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
-            ddec = find_operation(aggregated, f"DDEC_PARALLEL_{parallel_n}")
+            label = f"DDEC_PARALLEL_{parallel_n}"
+            ddec = find_operation(aggregated, label)
             if ddec is None:
                 continue
             throughput = (
@@ -863,6 +1054,7 @@ def write_bgv_tdec_csv(
                 if ddec.avg_time_active_ms > 0
                 else 0.0
             )
+            max_mem, avg_mem = _peak_mem_kb_for(label, mem_aggregates)
             rows.append([
                 is_malicious_run(BGV_RUN_NAME),  # always 0 — no malicious BGV run
                 num_parties_for_run(BGV_RUN_NAME),
@@ -872,8 +1064,8 @@ def write_bgv_tdec_csv(
                 ddec.avg_num_rounds,
                 ddec.avg_network_sent_B,
                 ddec.avg_network_received_B,
-                -1,  # max_memory_kBytes — not measured here
-                -1,  # avg_mem_kBytes — not measured here
+                max_mem,
+                avg_mem,
             ])
     _write_csv(path, BGV_TDEC_HEADERS, rows)
 
@@ -882,36 +1074,49 @@ def write_iteration_csvs(
     iteration_dir: str,
     iteration_aggregates: Dict[str, List[AggregatedOperation]],
     suffix: str,
+    mem_iteration_aggregates: Optional[Dict[str, List[AggregatedOperation]]] = None,
 ) -> None:
-    """Write the five aggregated CSVs for one iteration into ``iteration_dir``."""
+    """Write the aggregated CSVs for one iteration into ``iteration_dir``.
+
+    ``mem_iteration_aggregates`` carries the aggregates of the same iteration's
+    matching ``-mem`` runs. When supplied, memory cells in the CSVs are filled
+    from it; otherwise they stay ``-1`` as before.
+    """
     os.makedirs(iteration_dir, exist_ok=True)
     write_crs_csv(
         os.path.join(iteration_dir, f"CRS_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
     write_keygen_csv(
         os.path.join(iteration_dir, f"TFHE_KeyGen_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
     write_reshare_csv(
         os.path.join(iteration_dir, f"TFHE_Reshare_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
     write_tdec_one_csv(
         os.path.join(iteration_dir, f"TFHE_TDecOne_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
     write_tdec_two_csv(
         os.path.join(iteration_dir, f"TFHE_TDecTwo_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
     write_bgv_keygen_csv(
         os.path.join(iteration_dir, f"BGV_KeyGen_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
     write_bgv_tdec_csv(
         os.path.join(iteration_dir, f"BGV_TDec_{suffix}.csv"),
         iteration_aggregates,
+        mem_iteration_aggregates=mem_iteration_aggregates,
     )
 
 
@@ -1015,6 +1220,24 @@ def main() -> None:
         party_files=bgv_party_files,
     )
 
+    # Mem campaigns: parsed and indexed exactly like non-mem runs, but kept on
+    # the side. They populate the memory cells of the existing CSVs and never
+    # contribute new rows on their own.
+    mem_complete_runs_by_name: Dict[str, List[int]] = {}
+    mem_party_files_by_name: Dict[str, List[str]] = {}
+    for mem_run_name in ALL_MEM_RUN_NAMES:
+        mem_party_files_by_name[mem_run_name] = select_party_files_for_run(
+            all_party_runs=all_party_runs,
+            run_name=mem_run_name,
+            party_files=party_files,
+        )
+        mem_complete_runs_by_name[mem_run_name] = collect_complete_run_indexes(
+            all_party_runs=all_party_runs,
+            all_party_run_ids=all_party_run_ids,
+            run_name=mem_run_name,
+            party_files=mem_party_files_by_name[mem_run_name],
+        )
+
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Pair iterations by the run's original index (its chronological position
@@ -1071,10 +1294,30 @@ def main() -> None:
                 original_idx + 1,
             )
 
+        # Aggregate any -mem campaign that landed on the same iteration index.
+        # Per the chosen "skip the row" rule, a mem campaign without a matching
+        # non-mem campaign contributes nothing and is just dropped here.
+        mem_iteration_aggregates: Dict[str, List[AggregatedOperation]] = {}
+        for mem_run_name in ALL_MEM_RUN_NAMES:
+            if original_idx not in mem_complete_runs_by_name[mem_run_name]:
+                continue
+            mem_iteration_aggregates[mem_run_name] = aggregate_run(
+                run_name=mem_run_name,
+                source_run_index=original_idx,
+                party_files=mem_party_files_by_name[mem_run_name],
+                all_party_runs=all_party_runs,
+                spread_warn_threshold=args.spread_warning_threshold,
+            )
+
         iteration_dir = os.path.join(
             args.output_dir, f"iteration_{original_idx + 1}"
         )
-        write_iteration_csvs(iteration_dir, iteration_aggregates, args.output_suffix)
+        write_iteration_csvs(
+            iteration_dir,
+            iteration_aggregates,
+            args.output_suffix,
+            mem_iteration_aggregates=mem_iteration_aggregates or None,
+        )
         print(f"Wrote iteration_{original_idx + 1} CSVs to {iteration_dir}")
 
     print(
