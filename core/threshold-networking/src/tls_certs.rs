@@ -64,6 +64,7 @@ pub struct Cli {
         short,
         long,
         default_value = "0",
+        allow_hyphen_values = true,
         help = "the number of core certificates to generate for each CA. Can be set to 0 to only generate the CA certificates. Can be set to -1 to generate a single certificate that's not CA"
     )]
     num_cores: i32,
