@@ -979,7 +979,6 @@ fn test_internal_custodian_recovery_output(
     let original_versionized: InternalCustodianRecoveryOutput =
         load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
-    let (operator_verification_key, _sk) = gen_sig_keys(&mut rng);
     let mut buf = [0u8; 100];
     rng.fill_bytes(&mut buf);
     let signcryption = UnifiedSigncryption {
@@ -988,7 +987,6 @@ fn test_internal_custodian_recovery_output(
         signing_type: SigningSchemeType::Ecdsa256k1,
     };
 
-    let _ = operator_verification_key;
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
         custodian_role: Role::indexed_from_one(2),

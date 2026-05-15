@@ -33,6 +33,7 @@ pub enum RecoverySkipReason {
     CustodianRoleMismatchInPayload,
     CustodianKeyMismatchInPayload,
     OperatorMismatchInPayload,
+    MissingCommitment,
     CommitmentMismatch,
 }
 

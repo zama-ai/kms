@@ -527,7 +527,8 @@ async fn filter_custodian_data(
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
 ) -> anyhow::Result<HashMap<Role, BackupMaterial>> {
-    let outputs_len = custodian_recovery_outputs.len();
+    // Use the number of custodian nodes that was part of the context, not the amount we have received from
+    let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
     let mut parsed_custodian_rec: HashMap<Role, BackupMaterial> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
 

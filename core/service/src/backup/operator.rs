@@ -706,7 +706,7 @@ impl Operator {
                 "No stored commitment for custodian role {}",
                 output.custodian_role
             );
-            RecoverySkipReason::MissingVerificationKey
+            RecoverySkipReason::MissingCommitment
         })?;
         if actual_commitment.as_slice() != expected_commitment {
             tracing::warn!(

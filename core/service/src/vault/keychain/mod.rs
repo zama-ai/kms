@@ -186,7 +186,7 @@ pub fn encrypt_under_data_key(
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
     if iv.len() != 12 {
         return Err(anyhow_error_and_log(
-            "Invalid IV length: must be exactly 96 bits for AES GCM",
+            "Invalid IV length: must be exactly 96 bits for AES-256-GCM-SIV",
         ));
     }
     #[allow(deprecated)]
@@ -209,12 +209,12 @@ pub fn decrypt_under_data_key(
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
     if iv.len() != 12 {
         return Err(anyhow_error_and_log(
-            "Invalid IV length: must be exactly 96 bits for AES GCM",
+            "Invalid IV length: must be exactly 96 bits for AES-256-GCM-SIV",
         ));
     }
     if auth_tag.len() != 16 {
         return Err(anyhow_error_and_log(
-            "Invalid auth tag length: must be exactly 128 bits for AES GCM",
+            "Invalid auth tag length: must be exactly 128 bits for AES-256-GCM-SIV",
         ));
     }
     #[allow(deprecated)]
