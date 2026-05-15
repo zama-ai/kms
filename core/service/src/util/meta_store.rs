@@ -8,7 +8,10 @@ use std::{
 };
 #[cfg(feature = "non-wasm")]
 use tokio::sync::RwLockReadGuard;
+use tokio::sync::{Mutex, MutexGuard, Semaphore};
 use tracing;
+#[cfg(feature = "non-wasm")]
+use wasm_bindgen::convert::Upcast;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -19,6 +22,17 @@ cfg_if::cfg_if! {
     }
 }
 
+pub struct MetaStorePermit<'a> {
+    req_id: RequestId,
+    mutex_guard: MutexGuard<'a, ()>,
+}
+
+enum EntryState<T> {
+    Pending(Mutex<()>), // This is used to lock the entry for updates, e.g. to prevent deletion while an update is in progress.
+    Deleted,
+    Done((Result<T, String>, Mutex<()>)), // TODO should embed Arc, and require this at insertion time
+}
+
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
 pub struct MetaStore<T> {
@@ -27,9 +41,10 @@ pub struct MetaStore<T> {
     // The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
     min_cache: usize,
     // Storage of all elements in the system
-    storage: HashMap<RequestId, Arc<AsyncCell<Result<T, String>>>>,
+    storage: HashMap<RequestId, Arc<EntryState<T>>>,
     // Queue of all elements that have been completed
     complete_queue: VecDeque<RequestId>,
+    // TODO should we embed a semaphore to allow parallel usage of meta store? and have limititation
 }
 
 impl<T: Clone> MetaStore<T> {
@@ -64,7 +79,7 @@ impl<T: Clone> MetaStore<T> {
             .into_iter()
             .map(|(key, value)| {
                 completed_queue.push_back(key);
-                (key, Arc::new(AsyncCell::new_with(Ok(value))))
+                (key, Arc::new(EntryState::Done((Ok(value), Mutex::new(())))))
             })
             .collect();
 
@@ -80,11 +95,11 @@ impl<T: Clone> MetaStore<T> {
         self.storage.contains_key(request_id)
     }
 
-    /// Get cell reference for status checking without cloning Arc
-    /// Returns borrowed reference to avoid Arc::clone() overhead
-    pub fn get_cell(&self, request_id: &RequestId) -> Option<&Arc<AsyncCell<Result<T, String>>>> {
-        self.storage.get(request_id)
-    }
+    // /// Get cell reference for status checking without cloning Arc
+    // /// Returns borrowed reference to avoid Arc::clone() overhead
+    // pub fn get_cell(&self, request_id: &RequestId) -> Option<&Arc<AsyncCell<Result<T, String>>>> {
+    //     self.storage.get(request_id)
+    // }
 
     /// Verify the invariant that storage.len() >= complete_queue.len()
     /// This is critical for preventing underflow in get_processing_count()
@@ -114,7 +129,7 @@ impl<T: Clone> MetaStore<T> {
     /// 2. there is enough time to retrieve an element before it is removed. This timespan is the time it takes to process [min_cache] elements.
     ///
     /// If the store is at max capacity and not enough elements have been completed, we will not accept new elements to be inserted.
-    pub fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
+    pub fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<MetaStorePermit> {
         if self.exists(request_id) {
             return Err(anyhow::anyhow!(
                 "The element with ID {request_id} already stored exists. Can not insert it more than once.",
@@ -142,77 +157,169 @@ impl<T: Clone> MetaStore<T> {
                 }
             }
         }
+        let mutex = Mutex::new(());
+        let permit = mutex
+            .try_lock()
+            .expect("Lock must be available after mutex construction");
         // Ignore the result since we have already checked that the element does not exist
-        let cell = AsyncCell::shared();
-        let _ = self.storage.insert(request_id.to_owned(), cell);
+        let _ = self
+            .storage
+            .insert(request_id.to_owned(), Arc::new(EntryState::Pending(mutex)));
 
+        Ok(MetaStorePermit {
+            req_id: *request_id,
+            mutex_guard: permit,
+        })
+    }
+
+    /// Sets the value of an already existing element.
+    ///
+    /// Observe that this enforces the following possible transistions:
+    /// Pending -> Done(Ok)  -> Deleted
+    /// Pending -> Done(Err) -> Deleted
+    /// Pending -> Deleted
+    /// Returns an error if something goes wrong, like
+    /// the element does not exist or the value was already set.
+    pub fn update(
+        &mut self,
+        update: Result<T, String>,
+        permit: MetaStorePermit,
+    ) -> anyhow::Result<()> {
+        let mut cell = if let Some(cell) = self.storage.get_mut(&permit.req_id) {
+            cell
+        } else {
+            return Err(anyhow_error_and_log(format!(
+                "The element with ID {} does not exist, update is not allowed",
+                permit.req_id
+            )));
+        };
+        match cell.as_ref() {
+            EntryState::Pending(mutex) => {
+                // Update state
+                *cell = Arc::new(EntryState::Done((update, *mutex)));
+            }
+            _ => {
+                return Err(anyhow_error_and_log(format!(
+                    "The element with ID {} is not in a pending state, update is not allowed",
+                    permit.req_id
+                )));
+            }
+        }
+        self.complete_queue.push_back(permit.req_id);
+        // Observe the permit is dropped here, which releases the lock and allows deletion of this element if needed
         Ok(())
     }
 
-    /// Sets the value of an already existing element. Returns an error if something goes wrong, like
-    /// the element does not exist or the value was already set.
-    pub fn update(
+    pub fn try_update(
         &mut self,
         request_id: &RequestId,
         update: Result<T, String>,
     ) -> anyhow::Result<()> {
-        let cell = if let Some(cell) = self.storage.get(request_id) {
-            cell
-        } else {
-            return Err(anyhow_error_and_log(format!(
+        // Try to lock the entry for an update.
+        let mut entry = match self.storage.get_mut(request_id) {
+            Some(entry) => entry,
+            None => anyhow::bail!(
                 "The element with ID {request_id} does not exist, update is not allowed"
-            )));
+            ),
         };
-
-        // We only allow setting the result once
-        if cell.is_set() {
-            return Err(anyhow_error_and_log(format!(
-                "The element with ID {request_id} is already done, update is not allowed"
-            )));
+        if let EntryState::Pending(mutex) = entry.as_ref() {
+            if let Ok(permit) = mutex.try_lock() {
+                // We have the permit, we can proceed with the update
+                self.update(
+                    update,
+                    MetaStorePermit {
+                        req_id: *request_id,
+                        mutex_guard: permit,
+                    },
+                )
+            } else {
+                // The entry is currently locked for update by another thread, so we cannot update it right now
+                anyhow::bail!("The element with ID {request_id} is currently locked for update");
+            }
+        } else {
+            // The entry is not in a pending state, so we cannot update it
+            anyhow::bail!(
+                "The element with ID {request_id} is not in a pending state, update is not allowed"
+            );
         }
-
-        cell.set(update);
-        self.complete_queue.push_back(*request_id);
-
-        Ok(())
     }
 
     /// Retrieve the cell of an element and return None if it does not exist
-    pub fn retrieve(&self, request_id: &RequestId) -> Option<Arc<AsyncCell<Result<T, String>>>> {
-        self.storage.get(request_id).cloned()
+    pub fn retrieve(&self, request_id: &RequestId) -> Option<&Arc<EntryState<T>>> {
+        self.storage.get(request_id)
     }
 
-    /// Deletes an element from the meta store and returns the value.
-    /// Warning: This is a slow operation if the request_id has been completed
-    /// and should be avoided if possible, since values are automatically removed when running out of space
-    pub fn delete(&mut self, request_id: &RequestId) -> Option<Arc<AsyncCell<Result<T, String>>>> {
-        match self.storage.remove(request_id) {
-            Some(handle) => {
-                // If the cell is set, it means the task has been processed
-                // and thus added to the complete queue
-                if handle.is_set() {
-                    let mut found = false;
-                    self.complete_queue.retain(|id| {
-                        if id == request_id {
-                            found = true;
-                            false // Remove this item
-                        } else {
-                            true // Keep this item
-                        }
-                    });
+    /// Mark an existing entry in the meta store as deleted, regardless of its current state.
+    /// Returns the removed entry if it existed, and None if it did not exist.
+    pub fn delete(&mut self, permit: MetaStorePermit) -> anyhow::Result<Arc<EntryState<T>>> {
+        let mut entry = match self.storage.get_mut(&permit.req_id) {
+            Some(entry) => entry,
+            None => anyhow::bail!(
+                "The element with ID {} does not exist, deletion is not allowed",
+                permit.req_id
+            ),
+        };
 
-                    // If we couldn't find it in complete_queue but it was completed,
-                    // this indicates a potential invariant violation that we should log
-                    if !found {
-                        tracing::error!(
-                            "INVARIANT VIOLATION: Completed item {request_id} not found in complete_queue during delete - data corruption detected"
-                        );
-                    }
-                }
-
-                Some(handle)
+        match entry.as_ref() {
+            EntryState::Pending(_) | EntryState::Done(_) => {
+                let old_entry = Arc::clone(entry);
+                // Update state
+                *entry = Arc::new(EntryState::Deleted);
+                return Ok(old_entry);
             }
-            None => None,
+            _ => {
+                return Err(anyhow_error_and_log(format!(
+                    "The element with ID {} is not in a pending or completed state, it is not possible to delete it",
+                    permit.req_id
+                )));
+            }
+        }
+    }
+
+    pub fn try_delete(&mut self, request_id: &RequestId) -> anyhow::Result<Arc<EntryState<T>>> {
+        // Try to lock the entry for an update.
+        let mut entry = match self.storage.get_mut(request_id) {
+            Some(entry) => entry,
+            None => anyhow::bail!(
+                "The element with ID {request_id} does not exist, update is not allowed"
+            ),
+        };
+        match entry.as_ref() {
+            EntryState::Pending(mutex) => {
+                if let Ok(permit) = mutex.try_lock() {
+                    // We have the permit, we can proceed with the update
+                    self.delete(MetaStorePermit {
+                        req_id: *request_id,
+                        mutex_guard: permit,
+                    })
+                } else {
+                    // The entry is currently locked
+                    anyhow::bail!(
+                        "The element with ID {request_id} is currently locked and cannot be deleted right now"
+                    );
+                }
+            }
+            EntryState::Done((_, mutex)) => {
+                if let Ok(permit) = mutex.try_lock() {
+                    // We have the permit, we can proceed with the update
+                    let _ = self.delete(MetaStorePermit {
+                        req_id: *request_id,
+                        mutex_guard: permit,
+                    })?;
+                    Ok(Arc::clone(entry))
+                } else {
+                    // The entry is currently locked
+                    anyhow::bail!(
+                        "The element with ID {request_id} is currently locked and cannot be deleted right now"
+                    );
+                }
+            }
+            _ => {
+                // The entry is not in a pending or done state, so we cannot update it
+                anyhow::bail!(
+                    "The element with ID {request_id} is not in a pending or completed state, deletion is not allowed"
+                );
+            }
         }
     }
 
@@ -265,6 +372,7 @@ impl<T: Clone> MetaStore<T> {
     }
 
     /// Get failed request IDs (completed with errors)
+    /// WARNING: This is a slow operation
     pub fn get_failed_request_ids(&self) -> Vec<RequestId> {
         self.complete_queue
             .iter()
@@ -272,10 +380,15 @@ impl<T: Clone> MetaStore<T> {
                 // Direct HashMap access - items in complete_queue should exist in storage
                 match self.storage.get(id) {
                     Some(cell) => {
-                        if let Some(Err(_)) = cell.try_get() {
-                            Some(*id)
-                        } else {
-                            None
+                        match cell.as_ref() {
+                            EntryState::Pending(_) => None,
+                            EntryState::Deleted => None,
+                            EntryState::Done((done, _)) => {
+                                match done {
+                                    Ok(_) => None,
+                                    Err(_) => Some(*id),
+                                }
+                            }
                         }
                     }
                     None => {
@@ -294,7 +407,7 @@ pub(crate) fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
-) -> Result<(), MetricedError> {
+) -> Result<MetaStorePermit, MetricedError> {
     if meta_store.exists(req_id) {
         return Err(MetricedError::new(
             request_metric,
@@ -303,11 +416,11 @@ pub(crate) fn add_req_to_meta_store<T: Clone>(
             tonic::Code::AlreadyExists,
         ));
     }
-    meta_store.insert(req_id).map_err(|e| {
+    let permit = meta_store.insert(req_id).map_err(|e| {
         // We likely reached capacity here
         MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
     })?;
-    Ok(())
+    Ok(permit)
 }
 
 #[cfg(feature = "non-wasm")]
@@ -316,14 +429,14 @@ pub(crate) fn update_req_in_meta_store<
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
 >(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
-    req_id: &RequestId,
+    permit: MetaStorePermit,
     result: Result<T, E>,
     request_metric: &'static str,
 ) -> bool {
     match result {
-        Ok(res) => update_ok_req_in_meta_store(meta_store, req_id, res, request_metric),
+        Ok(res) => update_ok_req_in_meta_store(meta_store, permit, res, request_metric),
         Result::Err(e) => {
-            update_err_req_in_meta_store(meta_store, req_id, format!("{e:?}"), request_metric)
+            update_err_req_in_meta_store(meta_store, permit, format!("{e:?}"), request_metric)
         }
     }
 }
@@ -331,15 +444,16 @@ pub(crate) fn update_req_in_meta_store<
 #[cfg(feature = "non-wasm")]
 pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
-    req_id: &RequestId,
+    permit: MetaStorePermit,
     result: T,
     request_metric: &'static str,
 ) -> bool {
-    match meta_store.update(req_id, Ok(result)) {
+    let req_id = permit.req_id.clone();
+    match meta_store.update(Ok(result), permit) {
         Ok(()) => true,
         Err(e) => {
             // Update error counter for meta-store update failure
-            MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
+            MetricedError::handle_unreturnable_error(request_metric, Some(req_id), e);
             false
         }
     }
@@ -351,13 +465,22 @@ pub(crate) async fn ensure_meta_store_request_pending<T: Clone>(
     req_id: &RequestId,
 ) -> anyhow::Result<()> {
     let guarded_meta_store = meta_store.read().await;
-    let cell = guarded_meta_store.get_cell(req_id).ok_or_else(|| {
-        anyhow::anyhow!("Error while updating meta store for {req_id}: request is missing")
-    })?;
-    if cell.is_set() {
-        anyhow::bail!("Error while updating meta store for {req_id}: request is already completed");
+    match guarded_meta_store.retrieve(req_id) {
+        Some(res) => {
+            if matches!(res.as_ref(), EntryState::Pending(_)) {
+                Ok(())
+            } else {
+                anyhow::bail!(
+                    "Request with ID {req_id} is not pending in the meta store as required for this operation"
+                )
+            }
+        }
+        None => {
+            anyhow::bail!(
+                "Request with ID {req_id} is not pending in the meta store as required for this operation"
+            )
+        }
     }
-    Ok(())
 }
 
 /// Helper method for updating the meta store with an error result
@@ -369,13 +492,13 @@ pub(crate) async fn ensure_meta_store_request_pending<T: Clone>(
 #[cfg(feature = "non-wasm")]
 pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
-    req_id: &RequestId,
+    permit: MetaStorePermit,
     error: String,
     request_metric: &'static str,
 ) -> bool {
-    MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
-
-    match meta_store.update(req_id, Err(error.clone())) {
+    let req_id = permit.req_id.clone();
+    MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
+    match meta_store.update(Err(error.clone()), permit) {
         Ok(()) => true,
         Err(e) => {
             // We already logged the original error, so just log the update failure here as there is not much else we can do
@@ -457,7 +580,7 @@ pub async fn handle_res<T: Clone>(
 
 #[cfg(feature = "non-wasm")]
 async fn handle_res_metriced<T: Clone>(
-    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    handle: Option<Arc<EntryState<T>>>,
     req_id: &RequestId,
     metric_scope: &'static str,
 ) -> Result<T, MetricedError> {
@@ -472,7 +595,7 @@ async fn handle_res_metriced<T: Clone>(
 
 #[cfg(feature = "non-wasm")]
 async fn handle_res_metriced_with_timeout<T: Clone>(
-    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    handle: Option<Arc<EntryState<T>>>,
     req_id: &RequestId,
     metric_scope: &'static str,
     wait_secs: u64,
