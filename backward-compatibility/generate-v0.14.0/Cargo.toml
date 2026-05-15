@@ -9,19 +9,19 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "3eb3862" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
 # Each generator may need different versions to match its target KMS version.
 
 # All dependencies below target tag v0.14.0-0.
-kms_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "3eb3862"}
-kms_grpc_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "3eb3862"}
-algebra_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "3eb3862" }
-threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "3eb3862", features = ["testing"] }
-threshold_networking_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "3eb3862" }
-threshold_types_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "3eb3862" }
+kms_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291"}
+kms_grpc_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291"}
+algebra_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291" }
+threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291", features = ["testing"] }
+threshold_networking_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291" }
+threshold_types_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "bf50d1e346fb40fa54a12b8910292b3b05b16291" }
 #error-utils_0_14_0 = { path = "./core/error-utils", default-features = false }
 #thread-handles_0_14_0 = { path = "./core/thread-handles" }
 

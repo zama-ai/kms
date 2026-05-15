@@ -659,13 +659,11 @@ message CustodianRecoveryInitRequest {
   bool overwrite_ephemeral_key = 1;
 }
 
-// The data constructed by a single custodian to help a single operator recover their private master decryption key
+// The data constructed by a single custodian to help a single operator recover their private master decryption key.
 message CustodianRecoveryOutput {
   OperatorBackupOutput backup_output = 1;
-  // The 1-indexed role of the custodian
+  // The 1-indexed role of the custodian (lookup hint; authenticated copy lives in the signcrypted BackupMaterial)
   uint64 custodian_role = 2;
-  bytes operator_verification_key = 3;
-  RequestId mpc_context_id = 4;
 }
 
 // The recovery request which contains the needed recovery data from all the custodians,
@@ -697,10 +695,6 @@ message RecoveryRequest {
   bytes ephem_op_enc_key = 1;
   /// The ciphertexts that are the backup. Indexed by the custodian role.
   map<uint64, OperatorBackupOutput> cts = 2;
-  /// The request ID under which the backup was created.
-  RequestId backup_id = 3;
-  /// Verification key of the operator.
-  bytes operator_verification_key = 4;
 }
 
 // Response containing available key material information

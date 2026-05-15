@@ -261,6 +261,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let cus_rec_req = emulate_custodian(
         &mut rng,
         recovery_req_resp,
+        env.req_new_cus,
         env.mnemonics.clone(),
         env.test_path(),
     )
@@ -356,6 +357,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let mut cus_rec_req = emulate_custodian(
         &mut rng,
         recovery_req_resp,
+        env.req_new_cus,
         env.mnemonics.clone(),
         env.test_path(),
     )
@@ -515,10 +517,10 @@ async fn test_mpc_context_backup_central() {
 async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_request: RecoveryRequest,
+    custodian_context_id: RequestId,
     mnemonics: Vec<String>,
     test_path: Option<&Path>,
 ) -> CustodianRecoveryRequest {
-    let backup_id = recovery_request.backup_id.clone().unwrap();
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
         let custodian: Custodian =
@@ -541,17 +543,15 @@ async fn emulate_custodian(
             .verify_reencrypt(
                 rng,
                 &cur_cus_reenc.to_owned().try_into().unwrap(),
-                kms_grpc::RequestId::from_bytes([7u8; 32]),
                 &verf_key,
                 &cur_enc_key,
-                backup_id.clone().try_into().unwrap(),
             )
             .unwrap();
         // Add the result from this custodian to the map of results to the correct operator
         cus_outputs.push(cur_out.try_into().unwrap());
     }
     CustodianRecoveryRequest {
-        custodian_context_id: Some(backup_id.clone()),
+        custodian_context_id: Some(custodian_context_id.into()),
         custodian_recovery_outputs: cus_outputs,
     }
 }

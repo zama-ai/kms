@@ -10,17 +10,14 @@ use kms_grpc::{
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
-use kms_lib::{
-    backup::{
-        custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
-        operator::InternalRecoveryRequest,
-    },
-    cryptography::internal_crypto_types::LegacySerialization,
+use kms_lib::backup::{
+    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
+    operator::InternalRecoveryRequest,
 };
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-use crate::{CoreClientConfig, CoreConf, s3_operations::fetch_kms_verification_keys};
+use crate::CoreConf;
 
 pub(crate) async fn do_get_operator_pub_keys(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
@@ -131,54 +128,36 @@ pub(crate) async fn do_custodian_recovery_init(
     Ok(res.into_iter().map(|(_, v)| v).collect())
 }
 
+/// Send every custodian recovery output to every operator.
 pub(crate) async fn do_custodian_backup_recovery(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    sim_conf: &CoreClientConfig,
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
-    let pivot_mpc_context_id = custodian_recovery_outputs
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("At least one custodian recovery output is required"))?
-        .mpc_context_id;
-    if custodian_recovery_outputs
-        .iter()
-        .any(|output| output.mpc_context_id != pivot_mpc_context_id)
-    {
-        anyhow::bail!("All custodian recovery outputs must have the same MPC context ID");
+    if custodian_recovery_outputs.is_empty() {
+        anyhow::bail!("At least one custodian recovery output is required");
     }
-    // fetch the public keys of operators
-    let verf_keys = fetch_kms_verification_keys(sim_conf).await?;
-    let mut req_tasks = JoinSet::new();
-    // we should change the key in the [core_endpoints] hashmap to be the verification key
-    for (core_conf, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        // We assume the core client endpoints are ordered by the server identity
-        let mut cur_recoveries = Vec::new();
-        for cur_recover in custodian_recovery_outputs.iter() {
-            // Find the recoveries designated for the correct server
-            let verf_key = &verf_keys[&core_conf.party_id];
+    let proto_outputs: Vec<CustodianRecoveryOutput> = custodian_recovery_outputs
+        .into_iter()
+        .map(|out| CustodianRecoveryOutput {
+            backup_output: Some(OperatorBackupOutput {
+                signcryption: out.signcryption.payload,
+                pke_type: out.signcryption.pke_type as i32,
+                signing_type: out.signcryption.signing_type as i32,
+            }),
+            custodian_role: out.custodian_role.one_based() as u64,
+        })
+        .collect();
 
-            if &cur_recover.operator_verification_key == verf_key {
-                cur_recoveries.push(CustodianRecoveryOutput {
-                    backup_output: Some(OperatorBackupOutput {
-                        signcryption: cur_recover.signcryption.payload.clone(),
-                        pke_type: cur_recover.signcryption.pke_type as i32,
-                        signing_type: cur_recover.signcryption.signing_type as i32,
-                    }),
-                    custodian_role: cur_recover.custodian_role.one_based() as u64,
-                    operator_verification_key: cur_recover
-                        .operator_verification_key
-                        .to_legacy_bytes()?,
-                    mpc_context_id: Some(pivot_mpc_context_id.into()),
-                });
-            }
-        }
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.values() {
+        let mut cur_client = ce.clone();
+        let outputs = proto_outputs.clone();
         req_tasks.spawn(async move {
             cur_client
                 .custodian_backup_recovery(tonic::Request::new(CustodianRecoveryRequest {
                     custodian_context_id: Some(custodian_context_id.into()),
-                    custodian_recovery_outputs: cur_recoveries,
+                    custodian_recovery_outputs: outputs,
                 }))
                 .await
         });
