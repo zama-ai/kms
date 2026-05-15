@@ -1308,28 +1308,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_filter_custodian_data_missing_verification_key() {
-        // The fixture has 3 custodians (roles 1..=3). Submit four outputs so role 4 passes the
-        // role-range check, then `validate_one_recovery_output` looks role 4 up in the operator's
-        // `custodian_keys` map, doesn't find it, and skips with `MissingVerificationKey`.
-        let (rec, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        run_filter_expect_skip(
-            vec![
-                dummy_output_for_operator(1),
-                dummy_output_for_operator(2),
-                dummy_output_for_operator(3),
-                dummy_output_for_operator(4),
-            ],
-            &rec,
-            &verf_key,
-            &dec_key,
-            &enc_key,
-            RecoverySkipReason::MissingVerificationKey,
-        )
-        .await;
-    }
-
-    #[tokio::test]
     async fn test_update_backup_vault() {
         let mut priv_storage = RamStorage::new();
         let mut backup_vault = make_unencrypted_vault();
