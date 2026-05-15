@@ -58,7 +58,7 @@ cargo install --force cargo-criterion
 
 # Clone the repository (replace with submission's repo URL)
 REPO_URL="https://github.com/zama-ai/kms.git"
-TARGET_DIR="$HOME/kms/core/experiments/
+TARGET_DIR="$HOME/kms/core/experiments/"
 
 if [ ! -d "$TARGET_DIR" ]; then
     cd $HOME

@@ -17,6 +17,8 @@ use threshold_bgv::bgv::basics::*;
 use threshold_bgv::bgv::utils::XofWrapper;
 use threshold_bgv::constants::*;
 
+use utilities::SAMPLE_SIZE;
+
 pub fn bench_bgv(
     bench_group: &mut BenchmarkGroup<'_, WallTime>,
     sk: SecretKey,
@@ -70,7 +72,9 @@ fn main() {
     let mut xof = XofWrapper::new_bgv_kg(seed);
     let (pk, sk) = keygen::<_, LevelEll, LevelKsw, N65536>(&mut xof, PLAINTEXT_MODULUS.get().0);
 
-    let mut c = Criterion::default().sample_size(10).configure_from_args();
+    let mut c = Criterion::default()
+        .sample_size(SAMPLE_SIZE)
+        .configure_from_args();
     {
         let mut group = c.benchmark_group("non-threshold_basic-ops_bgv");
         bench_bgv(&mut group, sk, pk);

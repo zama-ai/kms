@@ -191,6 +191,10 @@ struct ThresholdDecryptFromFileArgs {
     #[clap(long = "preproc-sid")]
     session_id_preproc: Option<u128>,
 
+    /// Number of ciphertexts to create must match with the preprocessing (default to 1)
+    #[clap(long = "num-ctxts", default_value = "1")]
+    num_ctxts: usize,
+
     /// Optional argument to set the master seed used by the parties.
     /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
@@ -250,7 +254,7 @@ struct ThresholdDecryptResultArgs {
     session_id_decrypt: u128,
 
     /// Optional argument to check the received value against expected plaintexts.
-    #[clap(long = "expected-values")]
+    #[clap(long = "expected-values", value_delimiter = ',')]
     expected_values: Option<Vec<u64>>,
 }
 
@@ -670,7 +674,7 @@ async fn threshold_decrypt_from_file_command(
             params
                 .session_id_preproc
                 .map_or_else(|| None, |id| Some(SessionId::from(id))),
-            vec![ctxt],
+            vec![ctxt; params.num_ctxts],
             None,
             tfhe_type,
             choreo_conf.threshold_topology.threshold,
@@ -781,10 +785,11 @@ async fn threshold_decrypt_result_command(
                 params.session_id_decrypt
             );
         } else {
-            println!(
+            eprintln!(
                 "❌ Plaintext for session ID {} does NOT match expected value: {:?} (got {:?})",
                 params.session_id_decrypt, expected_values, ptxts
             );
+            std::process::exit(1);
         }
     } else {
         println!(

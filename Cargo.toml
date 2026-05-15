@@ -252,7 +252,7 @@ split-debuginfo = "unpacked"
 debug = "line-tables-only"
 
 [profile.bench]
-debug = true
+debug = "line-tables-only"
 
 # actual release profile
 [profile.release]

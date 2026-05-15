@@ -23,7 +23,7 @@ use threshold_bgv::{
         levels::{LevelEll, LevelKsw},
         ntt::{Const, N65536},
     },
-    bgv::basics::{PublicKey, bgv_pk_encrypt},
+    bgv::basics::{LevelEllCiphertext, PublicKey, bgv_pk_encrypt},
     constants::PLAINTEXT_MODULUS,
 };
 use threshold_types::session_id::SessionId;
@@ -104,6 +104,50 @@ struct ThresholdKeyGenResultArgs {
 }
 
 #[derive(Args, Debug)]
+struct EncryptArgs {
+    /// Path to the public key file
+    #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
+    pub_key_file: String,
+
+    /// Value to encrypt (the plaintext polynomial will be value, value+1, value+2, ...)
+    #[clap(long = "value")]
+    value: u64,
+
+    /// Optional path to output file
+    #[clap(long = "output-file", default_value = "./temp/ctxt.bin")]
+    output_file: String,
+}
+
+#[derive(Args, Debug)]
+struct ThresholdDecryptFromFileArgs {
+    /// Path to the public key file (used to retrieve the key sid)
+    #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
+    pub_key_file: String,
+
+    /// Path to ciphertext file
+    #[clap(long = "input-file", default_value = "./temp/ctxt.bin")]
+    input_file: String,
+
+    /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
+    #[clap(long = "sid")]
+    session_id: Option<u128>,
+
+    /// Number of Ciphertexts to decrypt per session (Note the provided ctxt will be copied this many times on the server side)
+    #[clap(long = "num-ctxt-per-session")]
+    num_ctxt_per_session: u128,
+
+    /// Number of sessions to spawn in parallel (Note the provided ctxt will be copied for each session on the client side)
+    #[clap(long = "num-parallel-sessions")]
+    num_parallel_sessions: u128,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
+}
+
+#[derive(Args, Debug)]
 struct ThresholdDecryptArgs {
     /// Path to the public key file
     #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
@@ -113,7 +157,7 @@ struct ThresholdDecryptArgs {
     #[clap(long = "num-ctxt-per-session")]
     num_ctxt_per_session: u128,
 
-    /// Number of session to spawn in parallel
+    /// Number of sessions to spawn in parallel
     #[clap(long = "num-parallel-sessions")]
     num_parallel_sessions: u128,
 
@@ -134,6 +178,12 @@ struct ThresholdDecryptResultArgs {
     /// (Output of the threshold-decrypt command)
     #[clap(long = "sid")]
     session_id_decrypt: u128,
+
+    /// Optional argument to check the received plaintext against an expected value.
+    /// The expected plaintext polynomial is value, value+1, value+2, ...
+    /// If more than one plaintext were decrypted, we make sure they are all equal to this expected plaintext polynomial.
+    #[clap(long = "expected-value")]
+    expected_value: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -175,6 +225,10 @@ enum Commands {
     /// Retrieve the public key to be used for encryption.
     /// (Can also generate a key for testing purposes)
     ThresholdKeyGenResult(ThresholdKeyGenResultArgs),
+    /// Encrypt a BGV plaintext and store the ciphertext to a file
+    Encrypt(EncryptArgs),
+    /// Start DDec on cluster of stairways with ciphertexts from a file
+    ThresholdDecryptFromFile(ThresholdDecryptFromFileArgs),
     /// Start DDec on cluster of stairways
     ThresholdDecrypt(ThresholdDecryptArgs),
     /// Retrieve DDec result from cluster
@@ -267,6 +321,59 @@ async fn threshold_keygen_result_command(
     Ok(())
 }
 
+async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let pk_serialized = std::fs::read(params.pub_key_file)?;
+    let (_key_sid, pk): (u128, PublicKey<LevelEll, LevelKsw, N65536>) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+
+    let mut rng = AesRng::from_entropy();
+
+    let m: Vec<u32> = (0..N65536::VALUE)
+        .map(|i| ((params.value + i as u64) % PLAINTEXT_MODULUS.get().0) as u32)
+        .collect();
+
+    let ctxt = bgv_pk_encrypt(&mut rng, &m, &pk);
+
+    println!("Encrypted value {}", params.value);
+
+    let serialized_ctxt = bc2wrap::serialize(&ctxt)?;
+    std::fs::write(&params.output_file, serialized_ctxt)?;
+    println!("Ciphertexts stored in {}", params.output_file);
+
+    Ok(())
+}
+
+async fn threshold_decrypt_from_file_command(
+    runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
+    params: ThresholdDecryptFromFileArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pk_serialized = std::fs::read(params.pub_key_file)?;
+    let (key_sid, _pk): (u128, PublicKey<LevelEll, LevelKsw, N65536>) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+
+    let ctxt_serialized = std::fs::read(params.input_file)?;
+    let ctxt: LevelEllCiphertext = bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
+
+    let session_id = params.session_id.unwrap_or_else(random);
+    let session_id = runtime
+        .bgv_initiate_threshold_decrypt(
+            SessionId::from(session_id),
+            SessionId::from(key_sid),
+            vec![ctxt; params.num_parallel_sessions as usize],
+            params.num_ctxt_per_session as usize,
+            choreo_conf.threshold_topology.threshold,
+            params.seed,
+        )
+        .await?;
+
+    println!(
+        "Distributed Decryption started. The resulting plaintexts will be stored under session ID: {session_id:?}"
+    );
+
+    Ok(())
+}
+
 async fn threshold_decrypt_command(
     runtime: ChoreoRuntime,
     choreo_conf: ChoreoConf,
@@ -324,10 +431,30 @@ async fn threshold_decrypt_result_command(
         .bgv_initiate_threshold_decrypt_result(SessionId::from(params.session_id_decrypt))
         .await?;
 
-    println!(
-        "Retrieved plaintexts for session ID {}: \n\t {:?}",
-        params.session_id_decrypt, ptxts
-    );
+    if let Some(expected_value) = params.expected_value {
+        let expected: Vec<u32> = (0..N65536::VALUE)
+            .map(|i| ((expected_value + i as u64) % PLAINTEXT_MODULUS.get().0) as u32)
+            .collect();
+        // ptxts is Vec<Vec<u32>>, check each decrypted plaintext
+        let all_match = ptxts.into_iter().all(|ptxt| ptxt == expected);
+        if all_match {
+            println!(
+                "✅ Plaintext for session ID {} matches expected value",
+                params.session_id_decrypt
+            );
+        } else {
+            eprintln!(
+                "❌ Plaintext for session ID {} does NOT match expected value",
+                params.session_id_decrypt
+            );
+            std::process::exit(1);
+        }
+    } else {
+        println!(
+            "Retrieved plaintexts for session ID {}: \n\t {:?}",
+            params.session_id_decrypt, ptxts
+        );
+    }
     Ok(())
 }
 
@@ -389,6 +516,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::ThresholdKeyGenResult(params) => {
             threshold_keygen_result_command(runtime, params).await?;
+        }
+        Commands::Encrypt(params) => {
+            encrypt_command(params).await?;
+        }
+        Commands::ThresholdDecryptFromFile(params) => {
+            threshold_decrypt_from_file_command(runtime, conf, params).await?;
         }
         Commands::ThresholdDecrypt(params) => {
             threshold_decrypt_command(runtime, conf, params).await?;

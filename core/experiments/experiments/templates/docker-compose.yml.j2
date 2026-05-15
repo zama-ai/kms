@@ -8,13 +8,17 @@ services:
       - NET_ADMIN
     command:
       - "{{protocol}}"
+      - "--expected-num-parties"
+      - "{{n_parties}}"
+      - "--expected-threshold"
+      - "{{threshold}}"
     environment:
       - RUST_BACKTRACE=1
       - RUN_MODE=dev
       - RUST_LOG=info
       - NO_COLOR=true
       - MOBY_STRATEGY={% if loop.index == 1%}{{moby_strategy}}{% else %}secure{% endif %}
-      - DDEC__NET_CONF__NETWORK_TIMEOUT={% if moby_strategy != "secure" %}10{% else %}120{% endif %}
+      - DDEC__NET_CONF__NETWORK_TIMEOUT={% if moby_strategy != "secure" %}10{% else %}1200{% endif %}
       - DDEC__NET_CONF__MESSAGE_LIMIT=70
       - DDEC__NET_CONF__MULTIPLIER=1.1
       - DDEC__NET_CONF__MAX_INTERVAL=60
@@ -40,6 +44,7 @@ services:
       - ../parameters:/app/ddec/parameters
       - ../test_certs:/app/ddec/certs
       - ../docker/scripts:/app/ddec/scripts
+      - ../temp/session_stats:/app/ddec/session_stats
     ports:
       - {{ 50000 + i+1 }}:50000
       - {{ 60000 + i+1 }}:60000

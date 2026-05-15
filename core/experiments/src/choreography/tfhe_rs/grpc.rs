@@ -94,7 +94,7 @@ use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},
 };
-use tracing::{Instrument, instrument};
+use tracing::{Instrument, field, instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
 pub enum SupportedRing {
@@ -168,10 +168,15 @@ struct KeyBucket<const EXTENSION_DEGREE: usize> {
     pub_keyset: Arc<Option<CompressedXofKeySet>>,
     pub_keyset_decompressed: Arc<FhePubKeySet>,
     priv_keyset: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    priv_keyset_modswitched_z64: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
     params: DKGParams,
 }
 
-impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
+impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
     pub fn new_compressed(
         keys: (CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>),
         params: DKGParams,
@@ -183,7 +188,8 @@ impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
                 public_key,
                 server_key,
             }),
-            priv_keyset: Arc::new(keys.1),
+            priv_keyset: Arc::new(keys.1.clone()),
+            priv_keyset_modswitched_z64: Arc::new(keys.1.lift_to_z64()),
             params,
         }
     }
@@ -192,7 +198,8 @@ impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
         Self {
             pub_keyset: Arc::new(None),
             pub_keyset_decompressed: Arc::new(keys.0),
-            priv_keyset: Arc::new(keys.1),
+            priv_keyset: Arc::new(keys.1.clone()),
+            priv_keyset_modswitched_z64: Arc::new(keys.1.lift_to_z64()),
             params,
         }
     }
@@ -1923,7 +1930,7 @@ where
                                                 >(
                                                     &mut base_session,
                                                     &mut inner_preprocessings,
-                                                    key_ref.priv_keyset.as_ref(),
+                                                    key_ref.priv_keyset_modswitched_z64.as_ref(),
                                                     &ks,
                                                     inner_blocks_ctxt,
                                                 )
@@ -2132,7 +2139,7 @@ where
                                         task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, u64>(
                                             &mut session,
                                             &mut inner_preprocessings,
-                                            &key_share.priv_keyset,
+                                            &key_share.priv_keyset_modswitched_z64,
                                             &ksk,
                                             ctxts_blocks,
                                         )
@@ -2499,8 +2506,11 @@ where
         }))
     }
 
+    // NOTE: Integrated here means we are doing both the preprocessing and online phase
+    // in the same call. This denotes a bit with how DKG or DDec is done, but makes it easier
+    // to use.
     #[instrument(
-        name = "RESHARE",
+        name = "RESHARE-INTEGRATED",
         skip_all,
         fields(network_round, network_sent, network_received, peak_mem)
     )]
@@ -2599,106 +2609,147 @@ where
             let num_needed_preproc =
                 ResharePreprocRequired::new(num_parties, params, oprf_key_present);
 
-            let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
-                SessionType::Small => {
-                    let prss_setup_z128 = prss_setup
-                        .get(&SupportedRing::ResiduePolyZ128)
-                        .ok_or_else(|| {
-                            tonic::Status::new(
-                                tonic::Code::Aborted,
-                                "Failed to retrieve prss_setup_z128, try init it first".to_string(),
-                            )
-                        })
-                        .unwrap()
-                        .get_poly128()
-                        .unwrap();
+            let span = tracing::info_span!(
+                "RESHARE-PREPROC",
+                network_round = field::Empty,
+                network_sent = field::Empty,
+                network_received = field::Empty,
+                peak_mem = field::Empty
+            );
+            let (mut preprocessing_64, mut preprocessing_128) = async {
+                let (preprocessing_64, preprocessing_128, sessions) = match session_type {
+                    SessionType::Small => {
+                        let prss_setup_z128 = prss_setup
+                            .get(&SupportedRing::ResiduePolyZ128)
+                            .ok_or_else(|| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    "Failed to retrieve prss_setup_z128, try init it first"
+                                        .to_string(),
+                                )
+                            })
+                            .unwrap()
+                            .get_poly128()
+                            .unwrap();
 
-                    let prss_setup_z64 = prss_setup
-                        .get(&SupportedRing::ResiduePolyZ64)
-                        .ok_or_else(|| {
-                            tonic::Status::new(
-                                tonic::Code::Aborted,
-                                "Failed to retrieve prss_setup_z64, try init it first".to_string(),
-                            )
-                        })
-                        .unwrap()
-                        .get_poly64()
-                        .unwrap();
+                        let prss_setup_z64 = prss_setup
+                            .get(&SupportedRing::ResiduePolyZ64)
+                            .ok_or_else(|| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    "Failed to retrieve prss_setup_z64, try init it first"
+                                        .to_string(),
+                                )
+                            })
+                            .unwrap()
+                            .get_poly64()
+                            .unwrap();
 
-                    let mut small_session_z64 =
-                        create_small_session(preproc_z64_base_session, &prss_setup_z64);
-                    let mut small_session_z128 =
-                        create_small_session(preproc_z128_base_session, &prss_setup_z128);
+                        let mut small_session_z64 =
+                            create_small_session(preproc_z64_base_session, &prss_setup_z64);
+                        let mut small_session_z128 =
+                            create_small_session(preproc_z128_base_session, &prss_setup_z128);
 
-                    let correlated_randomness_z64 = SecureSmallPreprocessing::default()
-                        .execute(&mut small_session_z64, num_needed_preproc.batch_params_64)
-                        .await
-                        .unwrap();
+                        let correlated_randomness_z64 = SecureSmallPreprocessing::default()
+                            .execute(&mut small_session_z64, num_needed_preproc.batch_params_64)
+                            .in_current_span()
+                            .await
+                            .unwrap();
 
-                    let correlated_randomness_z128 = SecureSmallPreprocessing::default()
-                        .execute(&mut small_session_z128, num_needed_preproc.batch_params_128)
-                        .await
-                        .unwrap();
+                        let correlated_randomness_z128 = SecureSmallPreprocessing::default()
+                            .execute(&mut small_session_z128, num_needed_preproc.batch_params_128)
+                            .in_current_span()
+                            .await
+                            .unwrap();
 
-                    (
-                        correlated_randomness_z64,
-                        correlated_randomness_z128,
-                        [
-                            small_session_z64.to_base_session(),
-                            small_session_z128.to_base_session(),
-                        ],
-                    )
-                }
-                SessionType::Large => {
-                    let mut large_session_z64 = create_large_session(preproc_z64_base_session);
-                    let mut large_session_z128 = create_large_session(preproc_z128_base_session);
+                        (
+                            correlated_randomness_z64,
+                            correlated_randomness_z128,
+                            [
+                                small_session_z64.to_base_session(),
+                                small_session_z128.to_base_session(),
+                            ],
+                        )
+                    }
+                    SessionType::Large => {
+                        let mut large_session_z64 = create_large_session(preproc_z64_base_session);
+                        let mut large_session_z128 =
+                            create_large_session(preproc_z128_base_session);
 
-                    let correlated_randomness_z64 = SecureLargePreprocessing::default()
-                        .execute(&mut large_session_z64, num_needed_preproc.batch_params_64)
-                        .await
-                        .unwrap();
-                    let correlated_randomness_z128 = SecureLargePreprocessing::default()
-                        .execute(&mut large_session_z128, num_needed_preproc.batch_params_128)
-                        .await
-                        .unwrap();
+                        let correlated_randomness_z64 = SecureLargePreprocessing::default()
+                            .execute(&mut large_session_z64, num_needed_preproc.batch_params_64)
+                            .in_current_span()
+                            .await
+                            .unwrap();
+                        let correlated_randomness_z128 = SecureLargePreprocessing::default()
+                            .execute(&mut large_session_z128, num_needed_preproc.batch_params_128)
+                            .in_current_span()
+                            .await
+                            .unwrap();
 
-                    (
-                        correlated_randomness_z64,
-                        correlated_randomness_z128,
-                        [
-                            large_session_z64.to_base_session(),
-                            large_session_z128.to_base_session(),
-                        ],
-                    )
-                }
-            };
+                        (
+                            correlated_randomness_z64,
+                            correlated_randomness_z128,
+                            [
+                                large_session_z64.to_base_session(),
+                                large_session_z128.to_base_session(),
+                            ],
+                        )
+                    }
+                };
+
+                // Fill info for offline phase
+                let sessions = sessions.into_iter().collect_vec();
+                fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed())).await;
+                (preprocessing_64, preprocessing_128)
+            }
+            .instrument(span)
+            .await;
 
             //Perform online
-            let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
-                &mut reshare_base_session,
-                &mut preprocessing_128,
-                &mut preprocessing_64,
-                &mut Some(old_private_key_set),
-                params,
-                oprf_key_present,
-            )
-            .await
-            .unwrap();
-
-            //Store the new_private_key
-            //NOTE: we do not delete the old one as moby is only for testing purposes
-            key_store.insert(
-                reshare_params.new_key_sid,
-                Arc::new(KeyBucket {
-                    pub_keyset: public_key_set,
-                    pub_keyset_decompressed: public_key_set_decompressed,
-                    priv_keyset: Arc::new(new_private_key_set),
-                    params,
-                }),
+            let span = tracing::info_span!(
+                "RESHARE",
+                network_round = field::Empty,
+                network_sent = field::Empty,
+                network_received = field::Empty,
+                peak_mem = field::Empty
             );
-            let mut sessions = sessions.into_iter().collect_vec();
-            sessions.push(reshare_base_session);
-            fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed())).await;
+            #[cfg(feature = "measure_memory")]
+            MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
+            async {
+                let start = Instant::now();
+                let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
+                    &mut reshare_base_session,
+                    &mut preprocessing_128,
+                    &mut preprocessing_64,
+                    &mut Some(old_private_key_set),
+                    params,
+                    oprf_key_present,
+                )
+                .await
+                .unwrap();
+
+                //Store the new_private_key
+                //NOTE: we do not delete the old one as moby is only for testing purposes
+                key_store.insert(
+                    reshare_params.new_key_sid,
+                    Arc::new(KeyBucket {
+                        pub_keyset: public_key_set,
+                        pub_keyset_decompressed: public_key_set_decompressed,
+                        priv_keyset: Arc::new(new_private_key_set.clone()),
+                        priv_keyset_modswitched_z64: Arc::new(new_private_key_set.lift_to_z64()),
+                        params,
+                    }),
+                );
+                fill_network_memory_info_single_session(
+                    reshare_base_session,
+                    Some(start.elapsed()),
+                )
+                .await;
+            }
+            .instrument(span)
+            .await
         };
 
         self.data.status_store.insert(

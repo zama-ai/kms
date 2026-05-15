@@ -104,6 +104,9 @@ class ZkResultEntry:
         self.verify_batched_load_proof_memory:     float = -1
         self.verify_batched_load_verify_latency:   float = -1
         self.verify_batched_load_verify_memory:    float = -1
+        # Serialized proof sizes
+        self.proof_size_load_proof:                float = -1
+        self.proof_size_load_verify:               float = -1
 
     def all_missing(self):
         return all(v == -1 for v in [
@@ -114,6 +117,7 @@ class ZkResultEntry:
             self.verify_two_steps_load_verify_latency, self.verify_two_steps_load_verify_memory,
             self.verify_batched_load_proof_latency,    self.verify_batched_load_proof_memory,
             self.verify_batched_load_verify_latency,   self.verify_batched_load_verify_memory,
+            self.proof_size_load_proof,                self.proof_size_load_verify,
         ])
 
 
@@ -356,6 +360,37 @@ def parse_zk_memory(line):
             entry.verify_batched_load_verify_memory = memory
 
 # ---------------------------------------------------------------------------
+# ZK PoK size parsing
+# ---------------------------------------------------------------------------
+
+def parse_zk_size_line(line):
+    """Parse a line like 'proof size (B, serialized): non-threshold_zk-pok_PARAMS=1234'."""
+    match = re.search(r"proof size \(B, serialized\): (.+)=(\d+)", line)
+    if match is None:
+        return
+    name = match.group(1)
+    size_bytes = int(match.group(2))
+    size_kb = size_bytes * UNIT_CONV_TO_KB["B"]
+    for key in ZK_PARAMS_MAP:
+        if key in name:
+            entry = ZK_RESULT_MAP[key]
+            if name.endswith("_verify_load"):
+                entry.proof_size_load_verify = size_kb
+            elif name.endswith("_proof_load"):
+                entry.proof_size_load_proof = size_kb
+            else:
+                print("Unknown proof size line with name {}: {}".format(name, line))
+            return
+
+def parse_size_file():
+    if not os.path.isfile(SIZE_FILE):
+        return
+    with open(SIZE_FILE, "r") as f:
+        for line in f:
+            if "proof size" in line:
+                parse_zk_size_line(line)
+
+# ---------------------------------------------------------------------------
 # Shared memory-file entry point
 # ---------------------------------------------------------------------------
 
@@ -407,45 +442,55 @@ def output_zk_csv_files():
         file_name = os.path.join(OUTPUT_DIRECTORY, ZK_PARAMS_MAP[params])
         with open(file_name, "w") as f:
             w = csv.writer(f, delimiter=",")
-            w.writerow(["Operation", "avg_latency_ms", "max_memory_kBytes"])
+            w.writerow(["Operation", "avg_latency_ms", "max_memory_kBytes",
+                        "proof_size_kBytes"])
             w.writerow(["CRSGen",
                          result.crs_gen_latency,
-                         result.crs_gen_memory])
+                         result.crs_gen_memory,
+                         -1])
             w.writerow(["ProofGen_LoadProof",
                          result.proof_gen_load_proof_latency,
-                         result.proof_gen_load_proof_memory])
+                         result.proof_gen_load_proof_memory,
+                         result.proof_size_load_proof])
             w.writerow(["ProofGen_LoadVerify",
                          result.proof_gen_load_verify_latency,
-                         result.proof_gen_load_verify_memory])
+                         result.proof_gen_load_verify_memory,
+                         result.proof_size_load_verify])
             w.writerow(["VerifyTwoSteps_LoadProof",
                          result.verify_two_steps_load_proof_latency,
-                         result.verify_two_steps_load_proof_memory])
+                         result.verify_two_steps_load_proof_memory,
+                         result.proof_size_load_proof])
             w.writerow(["VerifyTwoSteps_LoadVerify",
                          result.verify_two_steps_load_verify_latency,
-                         result.verify_two_steps_load_verify_memory])
+                         result.verify_two_steps_load_verify_memory,
+                         result.proof_size_load_verify])
             w.writerow(["VerifyBatched_LoadProof",
                          result.verify_batched_load_proof_latency,
-                         result.verify_batched_load_proof_memory])
+                         result.verify_batched_load_proof_memory,
+                         result.proof_size_load_proof])
             w.writerow(["VerifyBatched_LoadVerify",
                          result.verify_batched_load_verify_latency,
-                         result.verify_batched_load_verify_memory])
+                         result.verify_batched_load_verify_memory,
+                         result.proof_size_load_verify])
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main():
-    global LATENCY_FILE, MEMORY_FILE, OUTPUT_DIRECTORY
+    global LATENCY_FILE, MEMORY_FILE, SIZE_FILE, OUTPUT_DIRECTORY
     if len(sys.argv) != 2:
         print("Usage: {} <folder>".format(sys.argv[0]))
         sys.exit(1)
     folder = sys.argv[1]
     LATENCY_FILE     = os.path.join(folder, "bench_results.json")
     MEMORY_FILE      = os.path.join(folder, "memory_bench_results.txt")
+    SIZE_FILE        = os.path.join(folder, "size_bench_results.txt")
     OUTPUT_DIRECTORY = os.path.join(folder, "output")
 
     parse_latency_file()
     parse_memory_file()
+    parse_size_file()
     output_result_csv_files()
     output_zk_csv_files()
 
