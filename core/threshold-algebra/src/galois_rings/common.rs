@@ -1,7 +1,7 @@
 use super::utils::ArrayVisitor;
 use crate::{
     base_ring::ToZ64,
-    bivariate::compute_powers_list,
+    matrix::compute_powers_list,
     poly::Poly,
     structure_traits::{
         BaseRing, Derive, FromU128, Invert, One, QuotientMaximalIdeal, Ring,

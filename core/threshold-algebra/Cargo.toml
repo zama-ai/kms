@@ -24,7 +24,12 @@ tfhe-versionable.workspace = true
 [dev-dependencies]
 aes-prng.workspace = true
 bc2wrap.workspace = true
+criterion.workspace = true
 num-traits.workspace = true
 paste.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+
+[[bench]]
+name = "bivariate"
+harness = false

@@ -5,4 +5,3 @@ libraries = [
 
 [non_local_effect_before_error_return]
 work_limit = 100000000
-
