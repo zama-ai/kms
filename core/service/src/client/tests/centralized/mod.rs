@@ -1,4 +1,5 @@
 mod crs_gen_tests;
+#[cfg(feature = "slow_tests")]
 mod custodian_backup_tests;
 mod custodian_context_tests;
 mod key_gen_tests;

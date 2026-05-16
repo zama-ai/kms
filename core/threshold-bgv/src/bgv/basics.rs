@@ -330,7 +330,7 @@ pub fn multiply_ctxt(
     modulus_switch::<LevelFourteen, LevelEll, N65536>(&relinearized, q, big_q, *PLAINTEXT_MODULUS)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use super::*;
     use crate::algebra::levels::{GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1};

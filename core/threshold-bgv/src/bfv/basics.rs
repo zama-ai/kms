@@ -117,7 +117,7 @@ pub fn bfv_to_bgv(
     LevelledCiphertext { c0, c1 }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use super::*;
     use crate::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
@@ -152,7 +152,6 @@ mod tests {
         assert_eq!(plaintext_from_bgv, plaintext_vec);
     }
 
-    #[cfg(feature = "slow_tests")]
     mod slow_tests {
         use super::super::*;
         use crate::algebra::ntt::NTTConstants;

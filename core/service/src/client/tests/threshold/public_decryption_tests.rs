@@ -3,9 +3,7 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
@@ -140,7 +138,6 @@ async fn default_decryption_threshold(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
@@ -167,7 +164,6 @@ async fn default_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

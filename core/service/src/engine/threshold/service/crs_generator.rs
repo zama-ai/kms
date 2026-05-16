@@ -877,6 +877,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn unavailable() {
         let mut rng = AesRng::seed_from_u64(123);

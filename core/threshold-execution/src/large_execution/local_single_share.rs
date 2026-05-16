@@ -447,31 +447,33 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    #[cfg(feature = "slow_tests")]
     use super::RealLocalSingleShare;
     use super::{Derive, LocalSingleShare, SecureLocalSingleShare};
     #[cfg(feature = "slow_tests")]
+    use crate::large_execution::{coinflip::SecureCoinflip, vss::SecureVss};
+    #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::{
-        malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+        malicious_coinflip::DroppingCoinflipAfterVss,
         malicious_share_dispute::{
             DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
         },
-        malicious_vss::{
-            DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
-        },
+        malicious_vss::{DroppingVssAfterR1, DroppingVssFromStart},
+    };
+    use crate::malicious_execution::large_execution::{
+        malicious_coinflip::MaliciousCoinflipRecons,
+        malicious_vss::{DroppingVssAfterR2, MaliciousVssR1},
     };
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::large_session::{LargeSession, LargeSessionHandles};
     use crate::tests::helper::tests::{
         TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
-    #[cfg(feature = "slow_tests")]
     use crate::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         large_execution::{
-            coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+            coinflip::{Coinflip, RealCoinflip},
             share_dispute::{RealShareDispute, ShareDispute},
-            vss::{RealVss, SecureVss, Vss},
+            vss::{RealVss, Vss},
         },
         sharing::open::{RobustOpen, SecureRobustOpen},
     };
@@ -667,7 +669,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     async fn test_lsl_malicious_subprotocols_not_caught<
