@@ -461,7 +461,6 @@ pub async fn ensure_central_keys_exist<PubS, PrivS>(
     other_key_id: &RequestId,
     epoch_id: &EpochId,
     deterministic: bool,
-    write_privkey: bool,
 ) -> bool
 where
     PubS: Storage,
@@ -581,9 +580,10 @@ where
         (*other_key_id, (compressed_keyset_2, public_key_2)),
     ]);
 
-    // Store private key data
+    // Store private key data. The centralized service reads back this slot as
+    // a `KmsFheKeyHandles`, so the bundled `key_info` is the value we persist
+    // (despite the type tag being named `FhePrivateKey`).
     for (req_id, key_info) in &priv_fhe_map {
-        // Store key info
         if let Err(e) = store_versioned_at_request_and_epoch_id(
             priv_storage,
             req_id,
@@ -597,33 +597,6 @@ where
             continue; // Skip this key but try others
         }
         log_storage_success(req_id, priv_storage.info(), "key data", false, false);
-
-        // When the flag [write_privkey] is set, store the private key separately
-        if write_privkey {
-            if let Err(e) = store_versioned_at_request_and_epoch_id(
-                priv_storage,
-                req_id,
-                epoch_id,
-                &key_info.client_key,
-                &PrivDataType::FhePrivateKey.to_string(),
-            )
-            .await
-            {
-                tracing::error!(
-                    "Failed to store private key for request ID {}: {}",
-                    req_id,
-                    e
-                );
-                continue; // Skip this key but try others
-            }
-            log_storage_success(
-                req_id,
-                priv_storage.info(),
-                "individual private key",
-                false,
-                false,
-            );
-        }
     }
 
     // Store compressed keyset and the public key derived from it as public key data

@@ -872,7 +872,6 @@ mod tests {
             &OTHER_CENTRAL_TEST_ID,
             &DEFAULT_EPOCH_ID,
             true,
-            false,
         )
         .await;
         let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
