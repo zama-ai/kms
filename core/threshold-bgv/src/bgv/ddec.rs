@@ -154,10 +154,11 @@ pub fn keygen_shares<R: Rng + CryptoRng>(
     all_shares
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    #[cfg(feature = "slow_tests")]
     use crate::algebra::cyclotomic::TernaryEntry;
     use crate::algebra::levels::LevelKsw;
     use crate::algebra::levels::LevelOne;
@@ -168,11 +169,16 @@ mod tests {
     use crate::bgv::ddec::LevelEll;
     use crate::bgv::ddec::keygen_shares;
     use aes_prng::AesRng;
+    #[cfg(feature = "slow_tests")]
     use algebra::sharing::shamir::RevealOp;
+    #[cfg(feature = "slow_tests")]
     use algebra::sharing::shamir::ShamirSharings;
+    #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::One;
     use algebra::structure_traits::Ring;
+    #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::ZConsts;
+    #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::Zero;
     use std::collections::HashMap;
     use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -188,6 +194,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_sharings_sk() {
         let mut rng = AesRng::seed_from_u64(0);

@@ -330,13 +330,14 @@ pub fn multiply_ctxt(
     modulus_switch::<LevelFourteen, LevelEll, N65536>(&relinearized, q, big_q, *PLAINTEXT_MODULUS)
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::algebra::levels::{GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1};
     use crate::algebra::ntt::N65536;
     use crate::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
+    #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::FromU128;
     use crypto_bigint::modular::ConstMontyParams;
     use rand::{RngCore, SeedableRng};
@@ -381,6 +382,7 @@ mod tests {
         assert_eq!(plaintext, plaintext_vec);
     }
 
+    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bgv_multiply() {
         let mut rng = AesRng::seed_from_u64(0);
