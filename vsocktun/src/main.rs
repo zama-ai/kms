@@ -14,13 +14,9 @@ mod vsock;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use protocol::{FrameReader, PendingFramedWrite, PendingSliceWrite};
-#[cfg(test)]
-use std::collections::VecDeque;
 use std::fmt::Arguments;
 use std::future::Future;
 use std::io;
-#[cfg(test)]
-use std::sync::{Mutex, OnceLock};
 use tokio::runtime::Builder;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
@@ -29,8 +25,6 @@ use tokio_vsock::{OwnedReadHalf, OwnedWriteHalf, VsockStream};
 use tracing::Level;
 use tun::{Ipv4Cidr, TunDevice};
 use tun_rs::AsyncDevice;
-#[cfg(test)]
-use tun_rs::VIRTIO_NET_HDR_LEN;
 use vsock::{ParentSessionAcceptor, SessionSockets, connect_session};
 
 fn log_level_from_count(count: u8) -> Level {
@@ -180,156 +174,6 @@ impl ShardLogContext {
             shard = self.shard,
             "{args}"
         );
-    }
-}
-
-#[cfg(test)]
-#[derive(Default)]
-struct TestFlowCounters {
-    parent_tun_to_vsock_packets: u64,
-    parent_vsock_to_tun_packets: u64,
-    enclave_tun_to_vsock_packets: u64,
-    enclave_vsock_to_tun_packets: u64,
-    parent_tun_to_vsock_samples: VecDeque<String>,
-    parent_vsock_to_tun_samples: VecDeque<String>,
-    enclave_tun_to_vsock_samples: VecDeque<String>,
-    enclave_vsock_to_tun_samples: VecDeque<String>,
-}
-
-#[cfg(test)]
-static TEST_FLOW_COUNTERS: OnceLock<Mutex<TestFlowCounters>> = OnceLock::new();
-
-#[cfg(test)]
-fn reset_test_flow_counters() {
-    *TEST_FLOW_COUNTERS
-        .get_or_init(|| Mutex::new(TestFlowCounters::default()))
-        .lock()
-        .expect("test flow counters mutex should not be poisoned") = TestFlowCounters::default();
-}
-
-#[cfg(test)]
-fn test_flow_summary() -> String {
-    let counters = TEST_FLOW_COUNTERS
-        .get_or_init(|| Mutex::new(TestFlowCounters::default()))
-        .lock()
-        .expect("test flow counters mutex should not be poisoned");
-    format!(
-        "parent_tun_to_vsock_packets={}, parent_vsock_to_tun_packets={}, enclave_tun_to_vsock_packets={}, enclave_vsock_to_tun_packets={}, parent_tun_to_vsock_samples={:?}, parent_vsock_to_tun_samples={:?}, enclave_tun_to_vsock_samples={:?}, enclave_vsock_to_tun_samples={:?}",
-        counters.parent_tun_to_vsock_packets,
-        counters.parent_vsock_to_tun_packets,
-        counters.enclave_tun_to_vsock_packets,
-        counters.enclave_vsock_to_tun_packets,
-        counters.parent_tun_to_vsock_samples,
-        counters.parent_vsock_to_tun_samples,
-        counters.enclave_tun_to_vsock_samples,
-        counters.enclave_vsock_to_tun_samples,
-    )
-}
-
-#[cfg(test)]
-fn push_sample(samples: &mut VecDeque<String>, summary: String) {
-    if samples.len() == 4 {
-        let _ = samples.pop_front();
-    }
-    samples.push_back(summary);
-}
-
-#[cfg(test)]
-fn record_test_tun_to_vsock(role: &'static str, packet: &[u8]) {
-    let mut counters = TEST_FLOW_COUNTERS
-        .get_or_init(|| Mutex::new(TestFlowCounters::default()))
-        .lock()
-        .expect("test flow counters mutex should not be poisoned");
-    let summary = packet_summary(packet);
-    match role {
-        "parent" => {
-            counters.parent_tun_to_vsock_packets += 1;
-            push_sample(&mut counters.parent_tun_to_vsock_samples, summary);
-        }
-        "enclave" => {
-            counters.enclave_tun_to_vsock_packets += 1;
-            push_sample(&mut counters.enclave_tun_to_vsock_samples, summary);
-        }
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-fn record_test_vsock_to_tun(role: &'static str, packet: &[u8]) {
-    let mut counters = TEST_FLOW_COUNTERS
-        .get_or_init(|| Mutex::new(TestFlowCounters::default()))
-        .lock()
-        .expect("test flow counters mutex should not be poisoned");
-    let summary = packet_summary(packet);
-    match role {
-        "parent" => {
-            counters.parent_vsock_to_tun_packets += 1;
-            push_sample(&mut counters.parent_vsock_to_tun_samples, summary);
-        }
-        "enclave" => {
-            counters.enclave_vsock_to_tun_packets += 1;
-            push_sample(&mut counters.enclave_vsock_to_tun_samples, summary);
-        }
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-fn packet_summary(packet: &[u8]) -> String {
-    if packet.len() < 20 {
-        return format!("short(len={})", packet.len());
-    }
-    let version = packet[0] >> 4;
-    if version != 4 {
-        return format!("ip_version={} len={}", version, packet.len());
-    }
-    let ihl = usize::from(packet[0] & 0x0f) * 4;
-    if ihl < 20 || packet.len() < ihl {
-        return format!("bad_ihl={} len={}", ihl, packet.len());
-    }
-    let src = format!(
-        "{}.{}.{}.{}",
-        packet[12], packet[13], packet[14], packet[15]
-    );
-    let dst = format!(
-        "{}.{}.{}.{}",
-        packet[16], packet[17], packet[18], packet[19]
-    );
-    match packet[9] {
-        17 if packet.len() >= ihl + 8 => {
-            let src_port = u16::from_be_bytes([packet[ihl], packet[ihl + 1]]);
-            let dst_port = u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]);
-            format!(
-                "udp {}:{} -> {}:{} len={}",
-                src,
-                src_port,
-                dst,
-                dst_port,
-                packet.len()
-            )
-        }
-        1 if packet.len() >= ihl + 2 => {
-            let icmp_type = packet[ihl];
-            let icmp_code = packet[ihl + 1];
-            format!(
-                "icmp {} -> {} type={} code={} len={}",
-                src,
-                dst,
-                icmp_type,
-                icmp_code,
-                packet.len()
-            )
-        }
-        proto => format!("proto={} {} -> {} len={}", proto, src, dst, packet.len()),
-    }
-}
-
-#[cfg(test)]
-fn packet_summary_bytes(tun_payload: &[u8], raw_tun_frames: bool) -> &[u8] {
-    if raw_tun_frames {
-        tun_payload.get(VIRTIO_NET_HDR_LEN..).unwrap_or(tun_payload)
-    } else {
-        tun_payload
     }
 }
 
@@ -649,77 +493,6 @@ async fn supervise_tun_session_workers(
     }
 }
 
-#[cfg(test)]
-async fn supervise_session_workers<WorkItem, ReturnedQueue, SpawnWorker, WorkerFuture>(
-    role: &'static str,
-    session_id: u64,
-    work_items: Vec<WorkItem>,
-    mut spawn_worker: SpawnWorker,
-) -> SupervisedWorkersOutcome<ReturnedQueue>
-where
-    WorkItem: Send + 'static,
-    ReturnedQueue: Send + 'static,
-    SpawnWorker: FnMut(usize, WorkItem, watch::Receiver<bool>) -> WorkerFuture,
-    WorkerFuture: Future<Output = (ReturnedQueue, Result<()>)> + Send + 'static,
-{
-    let (cancel_tx, _) = watch::channel(false);
-    let mut tasks = JoinSet::new();
-    let mut returned_queues = std::iter::repeat_with(|| None)
-        .take(work_items.len())
-        .collect::<Vec<Option<ReturnedQueue>>>();
-
-    for (shard, work_item) in work_items.into_iter().enumerate() {
-        tracing::debug!(role, session_id, shard, "vsocktun: spawning shard worker");
-        let cancel_rx = cancel_tx.subscribe();
-        let worker = spawn_worker(shard, work_item, cancel_rx);
-        tasks.spawn(async move {
-            let (returned_queue, result) = worker.await;
-            WorkerOutcome {
-                shard,
-                returned_queue,
-                result,
-            }
-        });
-    }
-
-    let mut first_error = None;
-    while let Some(joined) = tasks.join_next().await {
-        match joined {
-            Ok(outcome) => {
-                returned_queues[outcome.shard] = Some(outcome.returned_queue);
-                if let Err(err) = outcome.result
-                    && first_error.is_none()
-                {
-                    tracing::debug!(
-                        role,
-                        session_id,
-                        shard = outcome.shard,
-                        "vsocktun: cancelling session after shard failure"
-                    );
-                    let _ = cancel_tx.send(true);
-                    first_error = Some(anyhow!("shard {} failed: {err:#}", outcome.shard));
-                }
-            }
-            Err(err) => {
-                if first_error.is_none() {
-                    tracing::debug!(
-                        role,
-                        session_id,
-                        "vsocktun: cancelling session after worker task failure"
-                    );
-                    let _ = cancel_tx.send(true);
-                    first_error = Some(anyhow!("vsocktun worker task failed: {err}"));
-                }
-            }
-        }
-    }
-
-    SupervisedWorkersOutcome {
-        returned_queues,
-        result: first_error.map_or_else(|| Ok(()), Err),
-    }
-}
-
 /// Runs both packet directions for one shard.
 ///
 /// Each shard is one independently scheduled lane in the tunnel. It combines a
@@ -864,9 +637,9 @@ async fn forward_socket_to_tun(
                 if finished {
                     shard_log.trace(format_args!("forwarded {packet_len} bytes vsock->tun"));
                     #[cfg(test)]
-                    record_test_vsock_to_tun(
+                    test_support::record_test_vsock_to_tun(
                         shard_log.role,
-                        packet_summary_bytes(packet, raw_tun_frames),
+                        test_support::packet_summary_bytes(packet, raw_tun_frames),
                     );
                     break;
                 }
@@ -939,9 +712,9 @@ async fn forward_tun_to_socket(
             if finished {
                 shard_log.trace(format_args!("forwarded {packet_len} bytes tun->vsock"));
                 #[cfg(test)]
-                record_test_tun_to_vsock(
+                test_support::record_test_tun_to_vsock(
                     shard_log.role,
-                    packet_summary_bytes(packet, raw_tun_frames),
+                    test_support::packet_summary_bytes(packet, raw_tun_frames),
                 );
                 break;
             }
@@ -998,15 +771,165 @@ impl ParsedCommon {
 }
 
 #[cfg(test)]
+mod test_support {
+    use std::collections::VecDeque;
+    use std::sync::{Mutex, OnceLock};
+    use tun_rs::VIRTIO_NET_HDR_LEN;
+
+    #[derive(Default)]
+    struct TestFlowCounters {
+        parent_tun_to_vsock_packets: u64,
+        parent_vsock_to_tun_packets: u64,
+        enclave_tun_to_vsock_packets: u64,
+        enclave_vsock_to_tun_packets: u64,
+        parent_tun_to_vsock_samples: VecDeque<String>,
+        parent_vsock_to_tun_samples: VecDeque<String>,
+        enclave_tun_to_vsock_samples: VecDeque<String>,
+        enclave_vsock_to_tun_samples: VecDeque<String>,
+    }
+
+    static TEST_FLOW_COUNTERS: OnceLock<Mutex<TestFlowCounters>> = OnceLock::new();
+
+    pub(super) fn reset_test_flow_counters() {
+        *TEST_FLOW_COUNTERS
+            .get_or_init(|| Mutex::new(TestFlowCounters::default()))
+            .lock()
+            .expect("test flow counters mutex should not be poisoned") =
+            TestFlowCounters::default();
+    }
+
+    pub(super) fn test_flow_summary() -> String {
+        let counters = TEST_FLOW_COUNTERS
+            .get_or_init(|| Mutex::new(TestFlowCounters::default()))
+            .lock()
+            .expect("test flow counters mutex should not be poisoned");
+        format!(
+            "parent_tun_to_vsock_packets={}, parent_vsock_to_tun_packets={}, enclave_tun_to_vsock_packets={}, enclave_vsock_to_tun_packets={}, parent_tun_to_vsock_samples={:?}, parent_vsock_to_tun_samples={:?}, enclave_tun_to_vsock_samples={:?}, enclave_vsock_to_tun_samples={:?}",
+            counters.parent_tun_to_vsock_packets,
+            counters.parent_vsock_to_tun_packets,
+            counters.enclave_tun_to_vsock_packets,
+            counters.enclave_vsock_to_tun_packets,
+            counters.parent_tun_to_vsock_samples,
+            counters.parent_vsock_to_tun_samples,
+            counters.enclave_tun_to_vsock_samples,
+            counters.enclave_vsock_to_tun_samples,
+        )
+    }
+
+    fn push_sample(samples: &mut VecDeque<String>, summary: String) {
+        if samples.len() == 4 {
+            let _ = samples.pop_front();
+        }
+        samples.push_back(summary);
+    }
+
+    pub(super) fn record_test_tun_to_vsock(role: &'static str, packet: &[u8]) {
+        let mut counters = TEST_FLOW_COUNTERS
+            .get_or_init(|| Mutex::new(TestFlowCounters::default()))
+            .lock()
+            .expect("test flow counters mutex should not be poisoned");
+        let summary = packet_summary(packet);
+        match role {
+            "parent" => {
+                counters.parent_tun_to_vsock_packets += 1;
+                push_sample(&mut counters.parent_tun_to_vsock_samples, summary);
+            }
+            "enclave" => {
+                counters.enclave_tun_to_vsock_packets += 1;
+                push_sample(&mut counters.enclave_tun_to_vsock_samples, summary);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn record_test_vsock_to_tun(role: &'static str, packet: &[u8]) {
+        let mut counters = TEST_FLOW_COUNTERS
+            .get_or_init(|| Mutex::new(TestFlowCounters::default()))
+            .lock()
+            .expect("test flow counters mutex should not be poisoned");
+        let summary = packet_summary(packet);
+        match role {
+            "parent" => {
+                counters.parent_vsock_to_tun_packets += 1;
+                push_sample(&mut counters.parent_vsock_to_tun_samples, summary);
+            }
+            "enclave" => {
+                counters.enclave_vsock_to_tun_packets += 1;
+                push_sample(&mut counters.enclave_vsock_to_tun_samples, summary);
+            }
+            _ => {}
+        }
+    }
+
+    fn packet_summary(packet: &[u8]) -> String {
+        if packet.len() < 20 {
+            return format!("short(len={})", packet.len());
+        }
+        let version = packet[0] >> 4;
+        if version != 4 {
+            return format!("ip_version={} len={}", version, packet.len());
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl {
+            return format!("bad_ihl={} len={}", ihl, packet.len());
+        }
+        let src = format!(
+            "{}.{}.{}.{}",
+            packet[12], packet[13], packet[14], packet[15]
+        );
+        let dst = format!(
+            "{}.{}.{}.{}",
+            packet[16], packet[17], packet[18], packet[19]
+        );
+        match packet[9] {
+            17 if packet.len() >= ihl + 8 => {
+                let src_port = u16::from_be_bytes([packet[ihl], packet[ihl + 1]]);
+                let dst_port = u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]);
+                format!(
+                    "udp {}:{} -> {}:{} len={}",
+                    src,
+                    src_port,
+                    dst,
+                    dst_port,
+                    packet.len()
+                )
+            }
+            1 if packet.len() >= ihl + 2 => {
+                let icmp_type = packet[ihl];
+                let icmp_code = packet[ihl + 1];
+                format!(
+                    "icmp {} -> {} type={} code={} len={}",
+                    src,
+                    dst,
+                    icmp_type,
+                    icmp_code,
+                    packet.len()
+                )
+            }
+            proto => format!("proto={} {} -> {} len={}", proto, src, dst, packet.len()),
+        }
+    }
+
+    pub(super) fn packet_summary_bytes(tun_payload: &[u8], raw_tun_frames: bool) -> &[u8] {
+        if raw_tun_frames {
+            tun_payload.get(VIRTIO_NET_HDR_LEN..).unwrap_or(tun_payload)
+        } else {
+            tun_payload
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
-        Cli, Mode, QueueReturnGuard, SupervisedWorkersOutcome, log_level_from_count,
-        supervise_session_workers,
+        Cli, Mode, QueueReturnGuard, SupervisedWorkersOutcome, WorkerOutcome, log_level_from_count,
     };
     use anyhow::{Result, anyhow};
     use clap::Parser;
+    use std::future::Future;
     use tokio::runtime::Builder;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, watch};
+    use tokio::task::JoinSet;
     use tracing::Level;
 
     struct TestQueuePool<T> {
@@ -1042,12 +965,80 @@ mod tests {
             .expect("test runtime should be created")
     }
 
+    async fn supervise_session_workers<WorkItem, ReturnedQueue, SpawnWorker, WorkerFuture>(
+        role: &'static str,
+        session_id: u64,
+        work_items: Vec<WorkItem>,
+        mut spawn_worker: SpawnWorker,
+    ) -> SupervisedWorkersOutcome<ReturnedQueue>
+    where
+        WorkItem: Send + 'static,
+        ReturnedQueue: Send + 'static,
+        SpawnWorker: FnMut(usize, WorkItem, watch::Receiver<bool>) -> WorkerFuture,
+        WorkerFuture: Future<Output = (ReturnedQueue, Result<()>)> + Send + 'static,
+    {
+        let (cancel_tx, _) = watch::channel(false);
+        let mut tasks = JoinSet::new();
+        let mut returned_queues = std::iter::repeat_with(|| None)
+            .take(work_items.len())
+            .collect::<Vec<Option<ReturnedQueue>>>();
+
+        for (shard, work_item) in work_items.into_iter().enumerate() {
+            tracing::debug!(role, session_id, shard, "vsocktun: spawning shard worker");
+            let cancel_rx = cancel_tx.subscribe();
+            let worker = spawn_worker(shard, work_item, cancel_rx);
+            tasks.spawn(async move {
+                let (returned_queue, result) = worker.await;
+                WorkerOutcome {
+                    shard,
+                    returned_queue,
+                    result,
+                }
+            });
+        }
+
+        let mut first_error = None;
+        while let Some(joined) = tasks.join_next().await {
+            match joined {
+                Ok(outcome) => {
+                    returned_queues[outcome.shard] = Some(outcome.returned_queue);
+                    if let Err(err) = outcome.result
+                        && first_error.is_none()
+                    {
+                        tracing::debug!(
+                            role,
+                            session_id,
+                            shard = outcome.shard,
+                            "vsocktun: cancelling session after shard failure"
+                        );
+                        let _ = cancel_tx.send(true);
+                        first_error = Some(anyhow!("shard {} failed: {err:#}", outcome.shard));
+                    }
+                }
+                Err(err) => {
+                    if first_error.is_none() {
+                        tracing::debug!(
+                            role,
+                            session_id,
+                            "vsocktun: cancelling session after worker task failure"
+                        );
+                        let _ = cancel_tx.send(true);
+                        first_error = Some(anyhow!("vsocktun worker task failed: {err}"));
+                    }
+                }
+            }
+        }
+
+        SupervisedWorkersOutcome {
+            returned_queues,
+            result: first_error.map_or_else(|| Ok(()), Err),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     mod integration_tests {
-        use super::super::{
-            CommonArgs, EnclaveArgs, ParentArgs, reset_test_flow_counters, run_enclave, run_parent,
-            test_flow_summary,
-        };
+        use super::super::test_support::{reset_test_flow_counters, test_flow_summary};
+        use super::super::{CommonArgs, EnclaveArgs, ParentArgs, run_enclave, run_parent};
         use anyhow::{Context, Result, anyhow, bail};
         use etherparse::{NetSlice, SlicedPacket, TransportSlice};
         use netns_rs::NetNs;
