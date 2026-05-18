@@ -13,7 +13,7 @@ mod vsock;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
-use protocol::{FrameReader, OutgoingBuffer};
+use protocol::{FrameReader, PendingFramedWrite, PendingSliceWrite};
 #[cfg(test)]
 use std::collections::VecDeque;
 use std::fmt::Arguments;
@@ -724,45 +724,48 @@ async fn forward_socket_to_tun(
                     Err(_) => return Ok(()),
                 }
             }
-            result = frame_reader.read_packet_async(&mut socket_reader) => {
+            result = frame_reader.read_frame_async(&mut socket_reader) => {
                 result.with_context(|| format!("failed to read framed packet on shard {}", shard_log.shard))?
             }
         };
 
-        let Some(packet) = packet else {
+        let Some(packet_len) = packet else {
             continue;
         };
-        let packet_len = packet.len();
 
-        let mut pending_tun_write = OutgoingBuffer::raw(packet);
-        loop {
-            if *cancelled.borrow() {
-                return Ok(());
-            }
+        {
+            let packet = frame_reader.current_payload();
+            let mut pending_tun_write = PendingSliceWrite::new(packet);
+            loop {
+                if *cancelled.borrow() {
+                    return Ok(());
+                }
 
-            let finished = tokio::select! {
-                changed = cancelled.changed() => {
-                    match changed {
-                        Ok(()) if *cancelled.borrow() => return Ok(()),
-                        Ok(()) => continue,
-                        Err(_) => return Ok(()),
+                let finished = tokio::select! {
+                    changed = cancelled.changed() => {
+                        match changed {
+                            Ok(()) if *cancelled.borrow() => return Ok(()),
+                            Ok(()) => continue,
+                            Err(_) => return Ok(()),
+                        }
                     }
-                }
-                result = write_to_tun(&mut pending_tun_write, tun_queue) => {
-                    result.with_context(|| format!("failed to inject packet into TUN queue {}", shard_log.shard))?
-                }
-            };
+                    result = write_to_tun(&mut pending_tun_write, tun_queue) => {
+                        result.with_context(|| format!("failed to inject packet into TUN queue {}", shard_log.shard))?
+                    }
+                };
 
-            if finished {
-                shard_log.trace(format_args!("forwarded {packet_len} bytes vsock->tun"));
-                #[cfg(test)]
-                record_test_vsock_to_tun(
-                    shard_log.role,
-                    packet_summary_bytes(&pending_tun_write.bytes, raw_tun_frames),
-                );
-                break;
+                if finished {
+                    shard_log.trace(format_args!("forwarded {packet_len} bytes vsock->tun"));
+                    #[cfg(test)]
+                    record_test_vsock_to_tun(
+                        shard_log.role,
+                        packet_summary_bytes(packet, raw_tun_frames),
+                    );
+                    break;
+                }
             }
         }
+        frame_reader.finish_frame();
     }
 }
 
@@ -805,7 +808,7 @@ async fn forward_tun_to_socket(
         }
 
         let packet = &tun_buf[..packet_len];
-        let mut pending_socket_write = OutgoingBuffer::framed(packet).with_context(|| {
+        let mut pending_socket_write = PendingFramedWrite::new(packet).with_context(|| {
             format!("failed to frame TUN payload from queue {}", shard_log.shard)
         })?;
         loop {
@@ -843,17 +846,16 @@ async fn forward_tun_to_socket(
 ///
 /// The caller retains ownership of the pending packet buffer so partial writes
 /// can resume without rebuilding framing state.
-async fn write_to_tun(buffer: &mut OutgoingBuffer, tun_queue: &AsyncDevice) -> io::Result<bool> {
-    let bytes = &buffer.bytes[buffer.written..];
-    match tun_queue.send(bytes).await {
+async fn write_to_tun(
+    buffer: &mut PendingSliceWrite<'_>,
+    tun_queue: &AsyncDevice,
+) -> io::Result<bool> {
+    match tun_queue.send(buffer.remaining()).await {
         Ok(0) => Err(io::Error::new(
             io::ErrorKind::WriteZero,
             "failed to make forward progress while writing packet to TUN",
         )),
-        Ok(written) => {
-            buffer.written += written;
-            Ok(buffer.written == buffer.bytes.len())
-        }
+        Ok(written) => Ok(buffer.advance(written)),
         Err(err) => Err(err),
     }
 }
