@@ -7,8 +7,15 @@
 use crate::protocol::Hello;
 use anyhow::{Context, Result, anyhow, bail};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncRead;
 use tokio::time::{Instant, timeout};
 use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
+
+#[derive(Debug)]
+enum SessionShard<T> {
+    Inserted,
+    IgnoredUnrelated(T),
+}
 
 /// The set of VSOCK streams that make up one logical tunnel session.
 pub(crate) struct SessionSockets {
@@ -49,9 +56,12 @@ impl ParentSessionAcceptor {
             .await
             .map(|(stream, _addr)| stream)
             .context("failed to accept first shard connection")?;
-        let first_hello = Hello::read_from_async(&mut first_socket)
-            .await
-            .context("failed to read first shard session header")?;
+        let first_hello = read_hello_with_timeout(
+            &mut first_socket,
+            self.accept_timeout,
+            "read first shard session header",
+        )
+        .await?;
         tracing::debug!(
             session_id = first_hello.session_id,
             shard = first_hello.shard,
@@ -80,11 +90,21 @@ impl ParentSessionAcceptor {
                 .context("timed out while waiting for additional shard connections")?
                 .map(|(stream, _addr)| stream)
                 .context("failed to accept additional shard connection")?;
-            let hello = Hello::read_from_async(&mut socket)
-                .await
-                .context("failed to read shard session header")?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                bail!(
+                    "timed out while waiting for {} vsock shards for session {}",
+                    self.queue_count,
+                    first_hello.session_id,
+                );
+            }
+            let hello =
+                read_hello_with_timeout(&mut socket, remaining, "read shard session header")
+                    .await?;
 
-            if hello.session_id != first_hello.session_id {
+            if let SessionShard::IgnoredUnrelated(_socket) =
+                record_session_shard(&mut shards, first_hello.session_id, hello, socket)?
+            {
                 tracing::debug!(
                     assembling_session_id = first_hello.session_id,
                     ignored_session_id = hello.session_id,
@@ -94,16 +114,6 @@ impl ParentSessionAcceptor {
                 continue;
             }
 
-            validate_hello(hello, self.queue_count)?;
-            let slot = &mut shards[usize::from(hello.shard)];
-            if slot.is_some() {
-                bail!(
-                    "received duplicate shard {} for session {}",
-                    hello.shard,
-                    hello.session_id,
-                );
-            }
-            *slot = Some(socket);
             let assembled = shards.iter().filter(|socket| socket.is_some()).count();
             tracing::debug!(
                 session_id = hello.session_id,
@@ -196,6 +206,40 @@ fn generate_session_id() -> u64 {
     nanos ^ u64::from(std::process::id())
 }
 
+async fn read_hello_with_timeout<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    timeout_duration: Duration,
+    action: &str,
+) -> Result<Hello> {
+    timeout(timeout_duration, Hello::read_from_async(reader))
+        .await
+        .with_context(|| format!("timed out while {action}"))?
+        .with_context(|| format!("failed to {action}"))
+}
+
+fn record_session_shard<T>(
+    shards: &mut [Option<T>],
+    assembling_session_id: u64,
+    hello: Hello,
+    socket: T,
+) -> Result<SessionShard<T>> {
+    if hello.session_id != assembling_session_id {
+        return Ok(SessionShard::IgnoredUnrelated(socket));
+    }
+
+    validate_hello(hello, shards.len())?;
+    let slot = &mut shards[usize::from(hello.shard)];
+    if slot.is_some() {
+        bail!(
+            "received duplicate shard {} for session {}",
+            hello.shard,
+            hello.session_id,
+        );
+    }
+    *slot = Some(socket);
+    Ok(SessionShard::Inserted)
+}
+
 fn validate_hello(hello: Hello, queue_count: usize) -> Result<()> {
     if usize::from(hello.queues) != queue_count {
         bail!(
@@ -214,4 +258,134 @@ fn validate_hello(hello: Hello, queue_count: usize) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Hello, SessionShard, read_hello_with_timeout, record_session_shard, validate_hello,
+    };
+    use anyhow::Result;
+    use tokio::io::{self, AsyncWriteExt};
+    use tokio::runtime::Builder;
+    use tokio::time::Duration;
+
+    fn test_runtime() -> tokio::runtime::Runtime {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should be created")
+    }
+
+    #[test]
+    fn read_hello_timeout_is_enforced() {
+        test_runtime().block_on(async {
+            let (_writer, mut reader) = io::duplex(Hello::ENCODED_LEN);
+            let err = read_hello_with_timeout(
+                &mut reader,
+                Duration::from_millis(5),
+                "read shard session header",
+            )
+            .await
+            .expect_err("stalled hello should time out");
+
+            assert!(
+                err.to_string()
+                    .contains("timed out while read shard session header")
+            );
+        });
+    }
+
+    #[test]
+    fn read_hello_succeeds_before_timeout() {
+        test_runtime().block_on(async {
+            let (mut writer, mut reader) = io::duplex(Hello::ENCODED_LEN);
+            let expected = Hello {
+                session_id: 7,
+                queues: 2,
+                shard: 1,
+            };
+            writer
+                .write_all(&expected.encode())
+                .await
+                .expect("hello bytes should be written");
+
+            let decoded = read_hello_with_timeout(
+                &mut reader,
+                Duration::from_millis(50),
+                "read shard session header",
+            )
+            .await
+            .expect("hello should decode before timeout");
+
+            assert_eq!(decoded, expected);
+        });
+    }
+
+    #[test]
+    fn record_session_shard_ignores_unrelated_sessions() -> Result<()> {
+        let mut shards = vec![None];
+        let disposition = record_session_shard(
+            &mut shards,
+            9,
+            Hello {
+                session_id: 10,
+                queues: 1,
+                shard: 0,
+            },
+            42_u8,
+        )?;
+
+        assert!(matches!(disposition, SessionShard::IgnoredUnrelated(42)));
+        assert!(shards[0].is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn record_session_shard_rejects_duplicates() {
+        let mut shards = vec![Some(11_u8)];
+        let err = record_session_shard(
+            &mut shards,
+            9,
+            Hello {
+                session_id: 9,
+                queues: 1,
+                shard: 0,
+            },
+            42_u8,
+        )
+        .expect_err("duplicate shard should be rejected");
+
+        assert!(err.to_string().contains("duplicate shard 0"));
+    }
+
+    #[test]
+    fn validate_hello_rejects_wrong_queue_count() {
+        let err = validate_hello(
+            Hello {
+                session_id: 1,
+                queues: 2,
+                shard: 0,
+            },
+            1,
+        )
+        .expect_err("queue mismatch should be rejected");
+
+        assert!(err.to_string().contains("peer requested 2 queues"));
+    }
+
+    #[test]
+    fn validate_hello_rejects_out_of_range_shard() {
+        let err = validate_hello(
+            Hello {
+                session_id: 1,
+                queues: 2,
+                shard: 2,
+            },
+            2,
+        )
+        .expect_err("out-of-range shard should be rejected");
+
+        assert!(err.to_string().contains("peer requested shard 2"));
+    }
 }

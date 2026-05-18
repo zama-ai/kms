@@ -97,7 +97,7 @@ vsocktun enclave \
 
 Parent-only:
 - `--session-timeout-secs`: how long the parent waits for all shards of a new
-  session to arrive
+  session to arrive and complete their initial session headers
 
 Enclave-only:
 - `--parent-cid`: VSOCK CID of the parent instance, normally `3` on Nitro
