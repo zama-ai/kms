@@ -31,74 +31,126 @@ mod bc2wrap {
 
 mod vault {
     pub mod storage {
-        #[derive(Clone, Copy)]
-        pub enum PubDataType {
-            PublicKey,
+        pub trait Storage {
+            fn store_data<T>(
+                &mut self,
+                _data: &T,
+                _request_id: &u64,
+                _data_type: &str,
+            ) -> Result<(), ()>;
         }
 
-        #[derive(Clone, Copy)]
-        pub enum PrivDataType {
-            FheKeyInfo,
+        pub trait StorageExt: Storage {
+            fn store_data_at_epoch<T>(
+                &mut self,
+                _data: &T,
+                _request_id: &u64,
+                _epoch_id: &u64,
+                _data_type: &str,
+            ) -> Result<(), ()>;
         }
 
-        pub struct Storage;
-
-        pub async fn store_versioned_at_request_id<S, T>(
-            _storage: &mut S,
-            _request_id: &u64,
-            _data: &T,
-            _data_type: &str,
-        ) -> Result<(), ()> {
-            Ok(())
+        pub trait StorageReader {
+            fn read_data<T>(&self, _request_id: &u64, _data_type: &str) -> Result<T, ()>;
         }
 
-        pub async fn store_versioned_at_request_and_epoch_id<S, T>(
-            _storage: &mut S,
-            _request_id: &u64,
-            _epoch_id: &u64,
-            _data: &T,
-            _data_type: &str,
-        ) -> Result<(), ()> {
-            Ok(())
+        pub trait StorageReaderExt: StorageReader {
+            fn read_data_at_epoch<T>(
+                &self,
+                _request_id: &u64,
+                _epoch_id: &u64,
+                _data_type: &str,
+            ) -> Result<T, ()>;
         }
 
-        pub async fn read_versioned_at_request_id<S, T>(
-            _storage: &S,
-            _request_id: &u64,
-            _data_type: &str,
-        ) -> Result<T, ()> {
-            panic!("test fixture does not execute")
-        }
+        pub struct MemoryStorage;
 
-        pub async fn read_versioned_at_request_and_epoch_id<S, T>(
-            _storage: &S,
-            _request_id: &u64,
-            _epoch_id: &u64,
-            _data_type: &str,
-        ) -> Result<T, ()> {
-            panic!("test fixture does not execute")
-        }
-
-        pub mod crypto_material {
-            pub mod base {
-                use super::super::{PrivDataType, PubDataType};
-
-                pub struct StorageRoot;
-
-                impl StorageRoot {
-                    pub async fn write_all<PubData, PrivData>(
-                        &self,
-                        _request_id: &u64,
-                        _epoch_id: Option<&u64>,
-                        _pub_data: Option<(&PubData, PubDataType)>,
-                        _priv_data: Option<(&PrivData, PrivDataType)>,
-                        _update_backup: bool,
-                        _op_metric_tag: &'static str,
-                    ) -> Result<(), ()> {
-                        Ok(())
-                    }
-                }
+        impl Storage for MemoryStorage {
+            fn store_data<T>(
+                &mut self,
+                _data: &T,
+                _request_id: &u64,
+                _data_type: &str,
+            ) -> Result<(), ()> {
+                Ok(())
             }
+        }
+
+        impl StorageExt for MemoryStorage {
+            fn store_data_at_epoch<T>(
+                &mut self,
+                _data: &T,
+                _request_id: &u64,
+                _epoch_id: &u64,
+                _data_type: &str,
+            ) -> Result<(), ()> {
+                Ok(())
+            }
+        }
+
+        impl StorageReader for MemoryStorage {
+            fn read_data<T>(&self, _request_id: &u64, _data_type: &str) -> Result<T, ()> {
+                panic!("test fixture does not execute")
+            }
+        }
+
+        impl StorageReaderExt for MemoryStorage {
+            fn read_data_at_epoch<T>(
+                &self,
+                _request_id: &u64,
+                _epoch_id: &u64,
+                _data_type: &str,
+            ) -> Result<T, ()> {
+                panic!("test fixture does not execute")
+            }
+        }
+
+        pub fn store_versioned_at_request_id<S, T>(
+            storage: &mut S,
+            request_id: &u64,
+            data: &T,
+            data_type: &str,
+        ) -> Result<(), ()>
+        where
+            S: Storage,
+        {
+            storage.store_data(data, request_id, data_type)
+        }
+
+        pub fn store_versioned_at_request_and_epoch_id<S, T>(
+            storage: &mut S,
+            request_id: &u64,
+            epoch_id: &u64,
+            data: &T,
+            data_type: &str,
+        ) -> Result<(), ()>
+        where
+            S: StorageExt,
+        {
+            storage.store_data_at_epoch(data, request_id, epoch_id, data_type)
+        }
+
+        pub fn read_versioned_at_request_id<S, T>(
+            storage: &S,
+            request_id: &u64,
+            data_type: &str,
+        ) -> Result<T, ()>
+        where
+            S: StorageReader,
+        {
+            storage.read_data(request_id, data_type)
+        }
+
+        pub fn read_versioned_at_request_and_epoch_id<S, T>(
+            storage: &S,
+            request_id: &u64,
+            epoch_id: &u64,
+            data_type: &str,
+        ) -> Result<T, ()>
+        where
+            S: StorageReaderExt,
+        {
+            storage.read_data_at_epoch(request_id, epoch_id, data_type)
         }
     }
 }
@@ -108,14 +160,6 @@ struct LocalPayload {
 }
 
 struct LocalStoragePayload {
-    _value: u64,
-}
-
-struct LocalPublicMaterial {
-    _value: u64,
-}
-
-struct LocalPrivateMaterial {
     _value: u64,
 }
 
@@ -133,58 +177,37 @@ fn generic_sink<T>(value: &T) {
     let _ = bc2wrap::serialize(value);
 }
 
-async fn generic_storage_sink<T>(storage: &mut vault::storage::Storage, value: &T) {
+fn generic_storage_sink<T>(storage: &mut vault::storage::MemoryStorage, value: &T) {
     let request_id = 7;
-    let _ =
-        vault::storage::store_versioned_at_request_id(storage, &request_id, value, "generic").await;
+    let _ = vault::storage::store_versioned_at_request_id(storage, &request_id, value, "generic");
 }
 
-async fn storage_sinks() {
-    use vault::storage::crypto_material::base::StorageRoot;
+fn storage_sinks() {
     use vault::storage::{
-        PrivDataType, PubDataType, Storage, read_versioned_at_request_and_epoch_id,
-        read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
-        store_versioned_at_request_id,
+        MemoryStorage, read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+        store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
     };
 
-    let mut storage = Storage;
-    let storage_root = StorageRoot;
+    let mut storage = MemoryStorage;
     let request_id = 7;
     let epoch_id = 11;
     let payload = LocalStoragePayload { _value: 13 };
-    let public_material = LocalPublicMaterial { _value: 17 };
-    let private_material = LocalPrivateMaterial { _value: 19 };
 
-    let _ = store_versioned_at_request_id(&mut storage, &request_id, &payload, "payload").await;
+    let _ = store_versioned_at_request_id(&mut storage, &request_id, &payload, "payload");
     let _ = store_versioned_at_request_and_epoch_id(
         &mut storage,
         &request_id,
         &epoch_id,
         &payload,
         "payload",
-    )
-    .await;
+    );
 
-    let _: LocalPayload = read_versioned_at_request_id(&storage, &request_id, "payload")
-        .await
-        .unwrap();
+    let _: LocalPayload = read_versioned_at_request_id(&storage, &request_id, "payload").unwrap();
     let _: LocalStoragePayload =
         read_versioned_at_request_and_epoch_id(&storage, &request_id, &epoch_id, "payload")
-            .await
             .unwrap();
 
-    let _ = storage_root
-        .write_all::<LocalPublicMaterial, LocalPrivateMaterial>(
-            &request_id,
-            Some(&epoch_id),
-            Some((&public_material, PubDataType::PublicKey)),
-            Some((&private_material, PrivDataType::FheKeyInfo)),
-            false,
-            "fixture",
-        )
-        .await;
-
-    generic_storage_sink(&mut storage, &payload).await;
+    generic_storage_sink(&mut storage, &payload);
 }
 
 fn main() {
@@ -209,4 +232,5 @@ fn main() {
     let _ = LocalPayload::decode(&bytes);
 
     generic_sink(&payload);
+    storage_sinks();
 }

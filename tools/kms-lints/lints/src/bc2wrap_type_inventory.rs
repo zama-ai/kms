@@ -11,22 +11,23 @@
 //! reads that report to check that every persisted type is covered by
 //! backward-compatibility tests.
 //!
-//! Why a compiler plugin? Because we need **post-typecheck** information.
-//! Plain text-search can't tell you that a generic helper is monomorphized to
-//! `MyKey` at one call site and `Vec<u8>` at another. Hooking into rustc as a
-//! `LateLintPass` gives us fully resolved types after type inference, for free.
+//! Why a compiler plugin? Because we need **post-monomorphization** information.
+//! Plain text-search and HIR linting can't tell you that a generic helper is
+//! monomorphized to `MyKey` at one call site and `Vec<u8>` at another. Hooking
+//! into rustc as a `LateLintPass` lets us ask rustc for the concrete instances
+//! it will codegen, then inspect those instances' MIR.
 //!
 //! ## Vocabulary
 //!
 //! - **Sink** — a function whose call sites we care about. Sinks are listed in
 //!   `SINK_SPECS`. The current set covers the raw encode / decode helpers in
-//!   the `bc2wrap` crate and the vault read / write helpers in this workspace.
+//!   the `bc2wrap` crate and the canonical vault storage reader / writer trait
+//!   methods in this workspace.
 //! - **Root type** — the top of the type tree handed to a sink. Fields are
 //!   *not* recursed into: if a sink receives `&MyStruct { … }`, the root is
 //!   `MyStruct`, full stop.
-//! - **Extractor** — a `RootExtractor` tells the lint *where* in a call to
-//!   look for the root. A sink may declare more than one (e.g. `write_all`
-//!   records both its public-data and private-data roots).
+//! - **Extractor** — a `RootExtractor` tells the lint *where* in a
+//!   monomorphized call to look for the root.
 //!
 //! ## Categories
 //!
@@ -35,29 +36,31 @@
 //! - `Local` — defined in a workspace crate. **These are the rows that matter
 //!   for backward compatibility.**
 //! - `Foreign` — defined in an external dependency. Recorded for visibility.
-//! - `Generic` / `Unknown` — the concrete type isn't resolvable at this call
-//!   site (e.g. a generic helper that hasn't been specialized yet). Every
-//!   such occurrence emits a compile-time warning so the author can refactor
-//!   the call to expose the concrete type.
+//! - `Generic` / `Unknown` — the concrete type still isn't resolvable after
+//!   monomorphization. Every such occurrence emits a compile-time warning so
+//!   the author can refactor the call to expose the concrete type.
 //! - `Compound` / `Primitive` — tuples, arrays, ints, etc. Recorded but
 //!   normally filtered out downstream.
 //!
 //! ## Pipeline (per crate)
 //!
-//! 1. `check_expr` runs on every expression in the crate. `sink_for_expr`
-//!    tries to resolve it to a `(MatchedSink, args)` pair by matching the
-//!    callee's `DefId` against `SINK_SPECS`. If nothing matches, we return.
-//! 2. For each `RootExtractor` on the matched spec, `extract_root_type`
-//!    returns one of:
+//! 1. `check_crate_post` seeds a local worklist with codegen-reachable
+//!    non-generic MIR roots, then follows local monomorphized calls and
+//!    closure / coroutine bodies.
+//! 2. The lint deduplicates local function instances and scans each instance's
+//!    MIR call terminators. For every call, it substitutes the caller
+//!    instance's concrete args into the callee and argument types.
+//! 3. `sink_for_mono_call` canonicalizes impl-method calls back to their trait
+//!    item when applicable, then matches the callee against `SINK_SPECS`.
+//! 4. For each `RootExtractor` on the matched spec, `extract_mono_root_type`
+//!    returns either:
 //!    - `Root(ty)` — the concrete root. We classify it via `classify_root`
 //!      and push a `CallRecord`.
-//!    - `NoRoot` — the position is legitimately empty (e.g. a `None`
-//!      argument). Skipped silently.
-//!    - `Unresolved` — we expected a root and couldn't determine one. We
-//!      push a synthetic `<unknown>` record and emit a warning.
-//! 3. Once the whole crate has been linted, `check_crate_post` writes the
-//!    JSON file (one per crate target). The file contains the full `calls`
-//!    array plus a deduped `types` summary built by `summarize_types`.
+//!    - `Unresolved` — we expected a root and couldn't determine one. We push
+//!      a synthetic `<unknown>` record and emit a warning.
+//! 5. `check_crate_post` writes the JSON file (one per crate target). The file
+//!    contains the full `calls` array plus a deduped `types` summary built by
+//!    `summarize_types`.
 //!
 //! ### Running example
 //!
@@ -68,37 +71,35 @@
 //! let _ = bc2wrap::serialize(&payload);
 //! ```
 //!
-//! 1. rustc visits the `Call` expression and invokes `check_expr`.
-//! 2. `sink_for_expr` resolves the callee's `DefId` to `bc2wrap::serialize`
-//!    and looks it up in `SINK_SPECS`, finding the entry whose extractors
-//!    are `&[RootExtractor::Arg(0)]`.
-//! 3. `extract_root_type` runs `Arg(0)`: it reads arg 0's type
-//!    (`&LocalPayload`), peels the reference, and returns
+//! 1. rustc monomorphizes the caller containing the call.
+//! 2. `collect_mono_calls` scans that caller's MIR and sees a call terminator
+//!    whose callee resolves to `bc2wrap::serialize`.
+//! 3. `extract_mono_root_type` runs `Arg(0)`: it reads arg 0's monomorphized
+//!    type (`&LocalPayload`), peels the reference, and returns
 //!    `Root(LocalPayload)`.
 //! 4. `classify_root` sees an ADT defined in a workspace crate and returns
 //!    `RootCategory::Local`.
 //! 5. `record` pushes a `CallRecord` with `function = "serialize"`,
 //!    `sink_path = "bc2wrap::serialize"`, `type_display = "LocalPayload"`,
-//!    `category = Local`, and the source file / line / column of the call.
-//! 6. After every other expression in the crate has been visited,
-//!    `check_crate_post` collapses duplicate calls into the `types` summary
-//!    and writes the JSON file.
+//!    `category = Local`, and the source file / line / column of the matched
+//!    lower-level sink call.
+//! 6. After every mono item has been scanned, `check_crate_post` collapses
+//!    duplicate calls into the `types` summary and writes the JSON file.
 //!
 //! Replace `&payload` with a generic `value: &T` inside `fn f<T>(value: &T)`
-//! and only step 4 changes: `classify_root` sees `ty.has_param()`, returns
-//! `RootCategory::Generic`, and `record` additionally emits a compile-time
-//! warning so the author can refactor the call site to expose a concrete
-//! type. The call is still recorded, just under the generic bucket.
+//! and call `f(&payload)`: the monomorphized MIR for `f::<LocalPayload>`
+//! still records `LocalPayload`, not `T`. A `Generic` or `Unknown` warning is
+//! emitted only if the root remains unresolved after monomorphization.
 //!
 //! ## How to add a new sink
 //!
 //! 1. Append an entry to `SINK_SPECS`: the function name, a `path_contains`
-//!    substring that disambiguates same-named functions, and one or more
-//!    extractors. The sink only matches functions defined in a workspace
+//!    substring that disambiguates same-named functions or traits, and one or
+//!    more extractors. The sink only matches functions defined in a workspace
 //!    crate (via `is_workspace_def`) — there is no separate "owner" knob.
 //! 2. If none of the existing `RootExtractor` variants captures where the
 //!    root lives in your signature, add a variant and handle it in
-//!    `extract_root_type`.
+//!    `extract_mono_root_type`.
 //! 3. Extend the UI fixture in `tests/bc2wrap_type_inventory/main.rs` and add
 //!    an assertion in the `ui` test at the bottom of this file so the new
 //!    sink is exercised by `cargo test`.
@@ -108,17 +109,22 @@
 //! Set `KMS_BC2WRAP_INVENTORY_DIR` to override the output directory. The
 //! workspace crate set is always auto-detected via `cargo metadata`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use kms_lints_common::{
     def_crate_name, get_def_id_from_ty, inventory_dir, is_workspace_def, peel_references,
     source_position, workspace_crates,
 };
-use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass, LintContext};
-use rustc_middle::ty::{GenericArgsRef, Ty, TyKind, TypeVisitableExt};
+use rustc_middle::mir::{
+    AggregateKind, Body, Operand, Rvalue, StatementKind, Terminator, TerminatorKind,
+};
+use rustc_middle::ty::{
+    self, EarlyBinder, GenericArgsRef, Instance, Ty, TyKind, TypeVisitableExt, Unnormalized,
+};
 use rustc_session::{declare_lint, impl_lint_pass};
 use rustc_span::def_id::{DefId, LOCAL_CRATE};
+use rustc_span::{Span, Spanned};
 use serde::Serialize;
 
 const SINK_SPECS: &[SinkSpec] = &[
@@ -135,40 +141,32 @@ const SINK_SPECS: &[SinkSpec] = &[
     SinkSpec {
         function: "deserialize_safe",
         path_contains: Some("bc2wrap"),
-        extractors: &[RootExtractor::ReturnResultOk],
+        extractors: &[RootExtractor::LastFnGenericArg],
     },
     SinkSpec {
         function: "deserialize_unsafe",
         path_contains: Some("bc2wrap"),
-        extractors: &[RootExtractor::ReturnResultOk],
+        extractors: &[RootExtractor::LastFnGenericArg],
     },
     SinkSpec {
-        function: "store_versioned_at_request_id",
-        path_contains: Some("vault::storage"),
-        extractors: &[RootExtractor::Arg(2)],
+        function: "store_data",
+        path_contains: Some("vault::storage::Storage"),
+        extractors: &[RootExtractor::Arg(1)],
     },
     SinkSpec {
-        function: "store_versioned_at_request_and_epoch_id",
-        path_contains: Some("vault::storage"),
-        extractors: &[RootExtractor::Arg(3)],
+        function: "store_data_at_epoch",
+        path_contains: Some("vault::storage::StorageExt"),
+        extractors: &[RootExtractor::Arg(1)],
     },
     SinkSpec {
-        function: "read_versioned_at_request_id",
-        path_contains: Some("vault::storage"),
-        extractors: &[RootExtractor::FnGenericArg(1)],
+        function: "read_data",
+        path_contains: Some("vault::storage::StorageReader"),
+        extractors: &[RootExtractor::LastFnGenericArg],
     },
     SinkSpec {
-        function: "read_versioned_at_request_and_epoch_id",
-        path_contains: Some("vault::storage"),
-        extractors: &[RootExtractor::FnGenericArg(1)],
-    },
-    SinkSpec {
-        function: "write_all",
-        path_contains: Some("vault::storage::crypto_material::base"),
-        extractors: &[
-            RootExtractor::OptionTupleRefFirst(2),
-            RootExtractor::OptionTupleRefFirst(3),
-        ],
+        function: "read_data_at_epoch",
+        path_contains: Some("vault::storage::StorageReaderExt"),
+        extractors: &[RootExtractor::LastFnGenericArg],
     },
 ];
 
@@ -242,25 +240,50 @@ struct SinkSpec {
     extractors: &'static [RootExtractor],
 }
 
+/// Where in a monomorphized sink call the root type lives.
+///
+/// The convention for `LastFnGenericArg` is that the inventoried type is always the *last* type
+/// generic of the callee. For trait methods this works because the implicit `Self` precedes the
+/// method's own type params, so `T` in `read_data<T>(&self, ...)` is the last entry in the
+/// monomorphized `GenericArgsRef`. For free functions with a single type param (`deserialize_safe<T>`)
+/// "last" is equivalently "only".
 #[derive(Clone, Copy, Debug)]
 enum RootExtractor {
+    /// Read the type of the call's positional argument at `index` (after monomorphization and
+    /// reference peeling). Arg 0 is the receiver for trait methods.
     Arg(usize),
-    OptionTupleRefFirst(usize),
-    ReturnResultOk,
-    FnGenericArg(usize),
+    /// Read the last type generic of the callee. Used for sinks that take the root by `T` in the
+    /// signature (e.g. `deserialize_safe<T>(bytes: &[u8]) -> Result<T, _>`,
+    /// `StorageReader::read_data<T>`).
+    LastFnGenericArg,
 }
 
 #[derive(Clone, Debug)]
 struct MatchedSink<'tcx> {
     spec: &'static SinkSpec,
     sink_path: String,
-    generic_args: Option<GenericArgsRef<'tcx>>,
+    generic_args: GenericArgsRef<'tcx>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MonoCallee<'tcx> {
+    canonical_def_id: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+    instance: Option<Instance<'tcx>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MonoCall<'a, 'tcx> {
+    caller: Instance<'tcx>,
+    body: &'a Body<'tcx>,
+    func: &'a Operand<'tcx>,
+    args: &'a [Spanned<Operand<'tcx>>],
+    span: Span,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum ExtractedRoot<'tcx> {
     Root(Ty<'tcx>),
-    NoRoot,
     Unresolved,
 }
 
@@ -285,28 +308,6 @@ declare_lint! {
 impl_lint_pass!(Bc2wrapTypeInventory => [BC2WRAP_TYPE_INVENTORY]);
 
 impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
-    // Record each resolved sink call as it is visited. The final JSON is emitted once the crate
-    // has been fully checked so the summaries can be built from all call records.
-    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
-        let Some((sink, args)) = sink_for_expr(cx, expr) else {
-            return;
-        };
-
-        for extractor in sink.spec.extractors {
-            let root_info = match extract_root_type(*extractor, cx, expr, args, sink.generic_args) {
-                ExtractedRoot::Root(root_ty) => classify_root(cx, root_ty),
-                ExtractedRoot::NoRoot => continue,
-                ExtractedRoot::Unresolved => RootInfo {
-                    type_display: "<unknown>".to_string(),
-                    def_path: None,
-                    owner_crate: None,
-                    category: RootCategory::Unknown,
-                },
-            };
-            self.record(cx, expr, &sink, root_info);
-        }
-    }
-
     // Write one inventory file per crate target. Dylint also checks build scripts, but those do
     // not represent production bc2wrap call sites for this inventory.
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
@@ -316,6 +317,7 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
         }
 
         let target_name = crate_name.clone();
+        self.collect_mono_calls(cx);
         let calls = std::mem::take(&mut self.calls);
 
         let inventory = build_inventory(crate_name.clone(), target_name, calls);
@@ -374,10 +376,98 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
 }
 
 impl Bc2wrapTypeInventory {
+    fn collect_mono_calls<'tcx>(&mut self, cx: &LateContext<'tcx>) {
+        let tcx = cx.tcx;
+        let mut pending = VecDeque::new();
+        let mut seen_instances = HashSet::new();
+
+        for &def_id in tcx.mir_keys(()).iter() {
+            if tcx.generics_of(def_id).requires_monomorphization(tcx) {
+                continue;
+            }
+            let def_id = def_id.to_def_id();
+            let is_root = tcx.entry_fn(()).is_some_and(|(entry, _)| entry == def_id)
+                || tcx.is_reachable_non_generic(def_id);
+            if is_root {
+                pending.push_back(Instance::mono(tcx, def_id));
+            }
+        }
+
+        while let Some(instance) = pending.pop_front() {
+            if !seen_instances.insert(instance) {
+                continue;
+            }
+
+            let body = tcx.instance_mir(instance.def);
+            for basic_block in body.basic_blocks.iter() {
+                for statement in &basic_block.statements {
+                    if let StatementKind::Assign(assign) = &statement.kind {
+                        let (_, rvalue) = &**assign;
+                        enqueue_local_aggregate_instance(cx, instance, rvalue, &mut pending);
+                    }
+                }
+
+                if let Some((func, args, fn_span)) =
+                    call_terminator_fields(basic_block.terminator())
+                {
+                    self.record_mono_call(
+                        cx,
+                        MonoCall {
+                            caller: instance,
+                            body,
+                            func,
+                            args,
+                            span: fn_span,
+                        },
+                        &mut pending,
+                    );
+                }
+            }
+        }
+    }
+
+    fn record_mono_call<'tcx>(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        call: MonoCall<'_, 'tcx>,
+        pending: &mut VecDeque<Instance<'tcx>>,
+    ) {
+        let Some(callee) = resolve_mono_callee(cx, call.caller, call.body, call.func) else {
+            return;
+        };
+        if let Some(instance) = callee.instance {
+            enqueue_local_instance(cx, instance, pending);
+        }
+
+        let Some(sink) = sink_for_mono_callee(cx, callee) else {
+            return;
+        };
+
+        for extractor in sink.spec.extractors {
+            let root_info = match extract_mono_root_type(
+                *extractor,
+                cx,
+                call.caller,
+                call.body,
+                call.args,
+                &sink,
+            ) {
+                ExtractedRoot::Root(root_ty) => classify_root(cx, root_ty),
+                ExtractedRoot::Unresolved => RootInfo {
+                    type_display: "<unknown>".to_string(),
+                    def_path: None,
+                    owner_crate: None,
+                    category: RootCategory::Unknown,
+                },
+            };
+            self.record(cx, call.span, &sink, root_info);
+        }
+    }
+
     fn record<'tcx>(
         &mut self,
         cx: &LateContext<'tcx>,
-        expr: &'tcx Expr<'_>,
+        span: Span,
         sink: &MatchedSink<'tcx>,
         root_info: RootInfo,
     ) {
@@ -385,13 +475,17 @@ impl Bc2wrapTypeInventory {
             root_info.category,
             RootCategory::Generic | RootCategory::Unknown
         ) {
-            cx.span_lint(BC2WRAP_TYPE_INVENTORY, expr.span, |diag| {
-                diag.primary_message(format!(
-                    "generic or unresolved root type `{}` used by `{}`",
-                    root_info.type_display, sink.sink_path,
-                ));
-                diag.note("The concrete type cannot be inventoried from this generic sink");
-            });
+            cx.emit_span_lint(
+                BC2WRAP_TYPE_INVENTORY,
+                span,
+                rustc_errors::DiagDecorator(|diag| {
+                    diag.primary_message(format!(
+                        "generic or unresolved root type `{}` used by `{}`",
+                        root_info.type_display, sink.sink_path,
+                    ));
+                    diag.note("The concrete type could not be inventoried after monomorphization");
+                }),
+            );
         }
 
         self.calls.push(CallRecord {
@@ -401,41 +495,63 @@ impl Bc2wrapTypeInventory {
             def_path: root_info.def_path,
             owner_crate: root_info.owner_crate,
             category: root_info.category,
-            source: source_location(cx, expr),
+            source: source_location(cx, span),
         });
     }
 }
 
-/// Resolve a call or method-call expression to one of the configured serialization sinks.
-fn sink_for_expr<'tcx>(
+/// Resolve a monomorphized MIR call to its concrete instance when rustc can do so.
+fn resolve_mono_callee<'tcx>(
     cx: &LateContext<'tcx>,
-    expr: &'tcx Expr<'tcx>,
-) -> Option<(MatchedSink<'tcx>, &'tcx [Expr<'tcx>])> {
-    match expr.kind {
-        ExprKind::Call(callee, args) => {
-            let (def_id, generic_args) = resolved_call_def(cx, callee)?;
-            let spec = sink_spec_for_def(cx, def_id)?;
-            Some((MatchedSink::new(cx, spec, def_id, Some(generic_args)), args))
-        }
-        ExprKind::MethodCall(_, _, args, _) => {
-            let def_id = cx.typeck_results().type_dependent_def_id(expr.hir_id)?;
-            let spec = sink_spec_for_def(cx, def_id)?;
-            Some((MatchedSink::new(cx, spec, def_id, None), args))
-        }
-        _ => None,
-    }
-}
-
-/// Resolve the `DefId` and inferred generic arguments of a function call.
-fn resolved_call_def<'tcx>(
-    cx: &LateContext<'tcx>,
-    callee: &'tcx Expr<'_>,
-) -> Option<(DefId, GenericArgsRef<'tcx>)> {
-    let callee_ty = cx.typeck_results().expr_ty(callee);
+    caller: Instance<'tcx>,
+    body: &Body<'tcx>,
+    func: &Operand<'tcx>,
+) -> Option<MonoCallee<'tcx>> {
+    let callee_ty = monomorphize_ty(cx, caller, func.ty(body, cx.tcx));
     let TyKind::FnDef(def_id, generic_args) = callee_ty.kind() else {
         return None;
     };
-    Some((*def_id, generic_args))
+
+    let instance = Instance::try_resolve(
+        cx.tcx,
+        ty::TypingEnv::fully_monomorphized(),
+        *def_id,
+        generic_args,
+    )
+    .ok()
+    .flatten();
+    let resolved_def_id = instance
+        .map(|instance| instance.def_id())
+        .unwrap_or(*def_id);
+    // Canonicalize impl-method calls back to the trait item so the sink lookup matches the trait
+    // path (e.g. `<MemoryStorage as Storage>::store_data` → `Storage::store_data`). We try the
+    // resolved (impl) DefId first, then fall back to the unresolved one — the latter fires when
+    // `Instance::try_resolve` failed and the original call is already against a trait item.
+    let canonical_def_id = cx
+        .tcx
+        .trait_item_of(resolved_def_id)
+        .or_else(|| cx.tcx.trait_item_of(*def_id))
+        .unwrap_or(*def_id);
+
+    Some(MonoCallee {
+        canonical_def_id,
+        generic_args,
+        instance,
+    })
+}
+
+/// Match a resolved monomorphized MIR call against the configured serialization sinks.
+fn sink_for_mono_callee<'tcx>(
+    cx: &LateContext<'tcx>,
+    callee: MonoCallee<'tcx>,
+) -> Option<MatchedSink<'tcx>> {
+    let spec = sink_spec_for_def(cx, callee.canonical_def_id)?;
+    Some(MatchedSink::new(
+        cx,
+        spec,
+        callee.canonical_def_id,
+        callee.generic_args,
+    ))
 }
 
 /// Find the sink spec for a resolved function or method definition.
@@ -469,7 +585,7 @@ impl<'tcx> MatchedSink<'tcx> {
         cx: &LateContext<'tcx>,
         spec: &'static SinkSpec,
         def_id: DefId,
-        generic_args: Option<GenericArgsRef<'tcx>>,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> Self {
         Self {
             spec,
@@ -480,75 +596,108 @@ impl<'tcx> MatchedSink<'tcx> {
 }
 
 /// Extract the root type that a configured sink serializes or deserializes at a call site.
-fn extract_root_type<'tcx>(
+fn extract_mono_root_type<'tcx>(
     extractor: RootExtractor,
     cx: &LateContext<'tcx>,
-    expr: &'tcx Expr<'_>,
-    args: &'tcx [Expr<'tcx>],
-    generic_args: Option<GenericArgsRef<'tcx>>,
+    caller: Instance<'tcx>,
+    body: &Body<'tcx>,
+    args: &[Spanned<Operand<'tcx>>],
+    sink: &MatchedSink<'tcx>,
 ) -> ExtractedRoot<'tcx> {
     match extractor {
-        RootExtractor::Arg(index) => extract_arg(cx, args, index),
-        RootExtractor::OptionTupleRefFirst(index) => option_tuple_ref_first(cx, args, index),
-        RootExtractor::ReturnResultOk => decode_ok_type(cx.typeck_results().expr_ty(expr))
-            .map(ExtractedRoot::Root)
-            .unwrap_or(ExtractedRoot::Unresolved),
-        RootExtractor::FnGenericArg(index) => generic_args
-            .and_then(|args| args.types().nth(index))
+        RootExtractor::Arg(index) => extract_mono_arg(cx, caller, body, args, index),
+        RootExtractor::LastFnGenericArg => sink
+            .generic_args
+            .types()
+            .last()
             .map(ExtractedRoot::Root)
             .unwrap_or(ExtractedRoot::Unresolved),
     }
 }
 
-fn extract_arg<'tcx>(
+fn extract_mono_arg<'tcx>(
     cx: &LateContext<'tcx>,
-    args: &'tcx [Expr<'tcx>],
+    caller: Instance<'tcx>,
+    body: &Body<'tcx>,
+    args: &[Spanned<Operand<'tcx>>],
     index: usize,
 ) -> ExtractedRoot<'tcx> {
     args.get(index)
-        .map(|arg| ExtractedRoot::Root(peel_references(cx.typeck_results().expr_ty(arg))))
+        .map(|arg| {
+            let ty = arg.node.ty(body, cx.tcx);
+            let ty = monomorphize_ty(cx, caller, ty);
+            ExtractedRoot::Root(peel_references(ty))
+        })
         .unwrap_or(ExtractedRoot::Unresolved)
 }
 
-fn option_tuple_ref_first<'tcx>(
-    cx: &LateContext<'tcx>,
-    args: &'tcx [Expr<'tcx>],
-    index: usize,
-) -> ExtractedRoot<'tcx> {
-    let Some(arg) = args.get(index) else {
-        return ExtractedRoot::Unresolved;
-    };
-
-    let ExprKind::Call(_, option_args) = arg.kind else {
-        return ExtractedRoot::NoRoot;
-    };
-    let Some(tuple_expr) = option_args.first() else {
-        return ExtractedRoot::NoRoot;
-    };
-    let ExprKind::Tup(tuple_fields) = tuple_expr.kind else {
-        return ExtractedRoot::Unresolved;
-    };
-    let Some(first_field) = tuple_fields.first() else {
-        return ExtractedRoot::Unresolved;
-    };
-
-    ExtractedRoot::Root(peel_references(cx.typeck_results().expr_ty(first_field)))
+/// Extract `(func, args, fn_span)` from any call-shaped terminator. Returns `None` for any other
+/// terminator kind.
+fn call_terminator_fields<'a, 'tcx>(
+    terminator: &'a Terminator<'tcx>,
+) -> Option<(&'a Operand<'tcx>, &'a [Spanned<Operand<'tcx>>], Span)> {
+    match &terminator.kind {
+        TerminatorKind::Call {
+            func,
+            args,
+            fn_span,
+            ..
+        }
+        | TerminatorKind::TailCall {
+            func,
+            args,
+            fn_span,
+        } => Some((func, &**args, *fn_span)),
+        _ => None,
+    }
 }
 
-/// Return the first type argument of an enum return type, which is `T` for `Result<T, E>`.
-///
-/// This intentionally stays structural instead of checking for the exact `Result` definition:
-/// bc2wrap decode helpers already identify the function, and the first enum type argument is the
-/// value type we need from their return signature.
-fn decode_ok_type<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    let TyKind::Adt(adt_def, args) = ty.kind() else {
-        return None;
+fn monomorphize_ty<'tcx>(cx: &LateContext<'tcx>, caller: Instance<'tcx>, ty: Ty<'tcx>) -> Ty<'tcx> {
+    caller.instantiate_mir_and_normalize_erasing_regions(
+        cx.tcx,
+        ty::TypingEnv::fully_monomorphized(),
+        EarlyBinder::bind(ty),
+    )
+}
+
+fn enqueue_local_aggregate_instance<'tcx>(
+    cx: &LateContext<'tcx>,
+    caller: Instance<'tcx>,
+    rvalue: &Rvalue<'tcx>,
+    pending: &mut VecDeque<Instance<'tcx>>,
+) {
+    let Rvalue::Aggregate(kind, _) = rvalue else {
+        return;
+    };
+    let (AggregateKind::Closure(def_id, args)
+    | AggregateKind::Coroutine(def_id, args)
+    | AggregateKind::CoroutineClosure(def_id, args)) = &**kind
+    else {
+        return;
     };
 
-    if !adt_def.is_enum() {
-        return None;
+    let args = caller.instantiate_mir_and_normalize_erasing_regions(
+        cx.tcx,
+        ty::TypingEnv::fully_monomorphized(),
+        EarlyBinder::bind(*args),
+    );
+    let instance = Instance::new_raw(*def_id, args);
+    if let Ok(instance) = cx.tcx.try_normalize_erasing_regions(
+        ty::TypingEnv::fully_monomorphized(),
+        Unnormalized::new_wip(instance),
+    ) {
+        enqueue_local_instance(cx, instance, pending);
     }
-    args.types().next()
+}
+
+fn enqueue_local_instance<'tcx>(
+    cx: &LateContext<'tcx>,
+    instance: Instance<'tcx>,
+    pending: &mut VecDeque<Instance<'tcx>>,
+) {
+    if instance.def_id().is_local() && cx.tcx.is_mir_available(instance.def_id()) {
+        pending.push_back(instance);
+    }
 }
 
 /// Classify a root type into the inventory categories used by the JSON output.
@@ -626,8 +775,8 @@ fn classify_named_root(cx: &LateContext<'_>, ty: Ty<'_>) -> RootInfo {
 }
 
 /// Convert a rustc span into a stable, JSON-friendly source location.
-fn source_location(cx: &LateContext<'_>, expr: &Expr<'_>) -> SourceLocation {
-    let position = source_position(cx, expr.span);
+fn source_location(cx: &LateContext<'_>, span: Span) -> SourceLocation {
+    let position = source_position(cx, span);
     SourceLocation {
         file: position.file,
         line: position.line,
@@ -737,20 +886,45 @@ fn ui() {
     assert!(
         types
             .iter()
-            .any(|entry| entry["type_display"].as_str() == Some("T")
-                && entry["category"].as_str() == Some("generic")
-                && sink_paths_contains(entry, "bc2wrap")
-                && sink_paths_contains(entry, "vault::storage")),
-        "generic T should be recorded by both a bc2wrap and a versioned-storage sink"
+            .all(|entry| entry["category"].as_str() != Some("generic")),
+        "generic roots should be resolved by post-monomorphization analysis"
     );
 
     assert!(
         types.iter().any(
             |entry| entry["type_display"].as_str() == Some("LocalStoragePayload")
                 && entry["category"].as_str() == Some("local")
-                && sink_paths_contains(entry, "vault::storage")
+                && sink_paths_contains(entry, "vault::storage::Storage::store_data")
+                && sink_paths_contains(entry, "vault::storage::StorageExt::store_data_at_epoch")
+                && sink_paths_contains(
+                    entry,
+                    "vault::storage::StorageReaderExt::read_data_at_epoch"
+                )
         ),
-        "LocalStoragePayload should be inventoried as a local versioned storage root"
+        "LocalStoragePayload should be inventoried through canonical storage trait sinks"
+    );
+
+    assert!(
+        types.iter().any(
+            |entry| entry["type_display"].as_str() == Some("LocalPayload")
+                && entry["category"].as_str() == Some("local")
+                && sink_paths_contains(entry, "bc2wrap::serialize")
+                && sink_paths_contains(entry, "vault::storage::StorageReader::read_data")
+        ),
+        "LocalPayload should include concrete generic bc2wrap and storage-reader roots"
+    );
+
+    let calls = inventory["calls"]
+        .as_array()
+        .expect("calls should be an array");
+    assert!(
+        calls.iter().all(|entry| {
+            let sink_path = entry["sink_path"].as_str().unwrap_or_default();
+            !sink_path.contains("store_versioned")
+                && !sink_path.contains("read_versioned")
+                && !sink_path.contains("write_all")
+        }),
+        "wrapper functions should not be matched as storage sinks"
     );
 }
 

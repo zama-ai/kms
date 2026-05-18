@@ -19,17 +19,16 @@ examples.
 ### `bc2wrap_type_inventory`
 
 Collects the root workspace-local types used at curated serialization sink call
-sites, including:
+sites in codegen-reachable monomorphized MIR, including:
 
 - `bc2wrap::serialize`
 - `bc2wrap::serialize_into`
 - `bc2wrap::deserialize_safe`
 - `bc2wrap::deserialize_unsafe`
-- `store_versioned_at_request_id`
-- `store_versioned_at_request_and_epoch_id`
-- `read_versioned_at_request_id`
-- `read_versioned_at_request_and_epoch_id`
-- the `write_all` storage wrapper method
+- `Storage::store_data`
+- `StorageExt::store_data_at_epoch`
+- `StorageReader::read_data`
+- `StorageReaderExt::read_data_at_epoch`
 
 The lint writes one JSON file per checked crate target under
 `target/kms-lints/bc2wrap-type-inventory` by default. Set
@@ -40,3 +39,6 @@ Each file contains full `calls` plus a `types` summary categorized as `local`,
 `foreign`, `generic`, `compound`, `primitive`, or `unknown` for auditability.
 Call records include `sink_path` (the rustc def path of the matched sink),
 and type summaries aggregate every distinct sink path each root flowed through.
+Storage wrapper functions are intentionally not listed as sinks; their concrete
+types are recovered from the canonical storage trait calls reached after
+monomorphization.

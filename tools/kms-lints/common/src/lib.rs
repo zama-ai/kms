@@ -50,7 +50,7 @@ pub fn source_position(cx: &LateContext<'_>, span: Span) -> SourcePosition {
 pub fn get_def_id_from_ty(ty: Ty<'_>) -> Option<DefId> {
     match ty.kind() {
         TyKind::Adt(adt_def, _) => Some(adt_def.did()),
-        TyKind::Alias(_, alias_ty) => Some(alias_ty.def_id),
+        TyKind::Alias(alias_ty) => Some(alias_ty.kind.def_id()),
         TyKind::Dynamic(predicates, ..) => predicates.principal_def_id(),
         TyKind::FnDef(def_id, _)
         | TyKind::Foreign(def_id)

@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 #![warn(unused_extern_crates)]
 
-extern crate rustc_hir;
+extern crate rustc_errors;
 extern crate rustc_lint;
 extern crate rustc_middle;
 extern crate rustc_session;
@@ -9,7 +9,14 @@ extern crate rustc_span;
 
 mod bc2wrap_type_inventory;
 
-dylint_linting::dylint_library!();
+#[allow(unused_extern_crates)]
+extern crate rustc_driver;
+
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "C" fn dylint_version() -> *mut std::os::raw::c_char {
+    std::ffi::CString::from(c"0.1.0").into_raw()
+}
 
 #[allow(clippy::no_mangle_with_rust_abi)]
 #[unsafe(no_mangle)]
