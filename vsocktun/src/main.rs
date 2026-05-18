@@ -22,7 +22,7 @@ use std::io;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 use tokio::runtime::Builder;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::{Duration, sleep};
 use tokio_vsock::{OwnedReadHalf, OwnedWriteHalf, VsockStream};
@@ -107,6 +107,46 @@ struct WorkerOutcome<ReturnedQueue> {
 struct SupervisedWorkersOutcome<ReturnedQueue> {
     returned_queues: Vec<Option<ReturnedQueue>>,
     result: Result<()>,
+}
+
+struct QueueReturnGuard<ReturnedQueue> {
+    shard: usize,
+    returned_queue: Option<ReturnedQueue>,
+    return_tx: mpsc::UnboundedSender<(usize, ReturnedQueue)>,
+}
+
+impl<ReturnedQueue> QueueReturnGuard<ReturnedQueue> {
+    fn new(
+        shard: usize,
+        returned_queue: ReturnedQueue,
+        return_tx: mpsc::UnboundedSender<(usize, ReturnedQueue)>,
+    ) -> Self {
+        Self {
+            shard,
+            returned_queue: Some(returned_queue),
+            return_tx,
+        }
+    }
+
+    fn returned_queue_ref(&self) -> &ReturnedQueue {
+        self.returned_queue
+            .as_ref()
+            .expect("queue guard should retain ownership until explicitly taken")
+    }
+
+    fn take(&mut self) -> ReturnedQueue {
+        self.returned_queue
+            .take()
+            .expect("queue guard should only hand ownership back once")
+    }
+}
+
+impl<ReturnedQueue> Drop for QueueReturnGuard<ReturnedQueue> {
+    fn drop(&mut self) {
+        if let Some(returned_queue) = self.returned_queue.take() {
+            let _ = self.return_tx.send((self.shard, returned_queue));
+        }
+    }
 }
 
 /// Identifies which half of a shard finished first so the other half can be
@@ -505,23 +545,7 @@ async fn run_session(role: &'static str, tun: &TunDevice, session: SessionSocket
     let SupervisedWorkersOutcome {
         returned_queues,
         result,
-    } =
-        supervise_session_workers(
-            role,
-            session_id,
-            work_items,
-            |shard, (tun_queue, socket), cancel_rx| {
-                let shard_log = ShardLogContext {
-                    role,
-                    session_id,
-                    shard,
-                };
-                async move {
-                    pump_shard(shard_log, tun_queue, socket, max_tun_frame_bytes, cancel_rx).await
-                }
-            },
-        )
-        .await;
+    } = supervise_tun_session_workers(role, session_id, work_items, max_tun_frame_bytes).await;
 
     let restored_queues = returned_queues
         .into_iter()
@@ -539,6 +563,93 @@ async fn run_session(role: &'static str, tun: &TunDevice, session: SessionSocket
     Ok(())
 }
 
+async fn supervise_tun_session_workers(
+    role: &'static str,
+    session_id: u64,
+    work_items: Vec<(AsyncDevice, VsockStream)>,
+    max_tun_frame_bytes: usize,
+) -> SupervisedWorkersOutcome<AsyncDevice> {
+    let (cancel_tx, _) = watch::channel(false);
+    let (return_tx, mut return_rx) = mpsc::unbounded_channel();
+    let mut tasks = JoinSet::new();
+    let mut returned_queues = std::iter::repeat_with(|| None)
+        .take(work_items.len())
+        .collect::<Vec<Option<AsyncDevice>>>();
+
+    for (shard, (tun_queue, socket)) in work_items.into_iter().enumerate() {
+        tracing::debug!(role, session_id, shard, "vsocktun: spawning shard worker");
+        let cancel_rx = cancel_tx.subscribe();
+        let return_tx = return_tx.clone();
+        let shard_log = ShardLogContext {
+            role,
+            session_id,
+            shard,
+        };
+        tasks.spawn(async move {
+            let mut queue_guard = QueueReturnGuard::new(shard, tun_queue, return_tx);
+            let result = pump_shard(
+                shard_log,
+                queue_guard.returned_queue_ref(),
+                socket,
+                max_tun_frame_bytes,
+                cancel_rx,
+            )
+            .await;
+            let returned_queue = queue_guard.take();
+            WorkerOutcome {
+                shard,
+                returned_queue,
+                result,
+            }
+        });
+    }
+    drop(return_tx);
+
+    let mut first_error = None;
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok(outcome) => {
+                returned_queues[outcome.shard] = Some(outcome.returned_queue);
+                if let Err(err) = outcome.result
+                    && first_error.is_none()
+                {
+                    tracing::debug!(
+                        role,
+                        session_id,
+                        shard = outcome.shard,
+                        "vsocktun: cancelling session after shard failure"
+                    );
+                    let _ = cancel_tx.send(true);
+                    first_error = Some(anyhow!("shard {} failed: {err:#}", outcome.shard));
+                }
+            }
+            Err(err) => {
+                if first_error.is_none() {
+                    tracing::debug!(
+                        role,
+                        session_id,
+                        "vsocktun: cancelling session after worker task failure"
+                    );
+                    let _ = cancel_tx.send(true);
+                    first_error = Some(anyhow!("vsocktun worker task failed: {err}"));
+                }
+            }
+        }
+    }
+
+    while let Ok((shard, returned_queue)) = return_rx.try_recv() {
+        if returned_queues[shard].is_none() {
+            returned_queues[shard] = Some(returned_queue);
+        }
+    }
+
+    SupervisedWorkersOutcome {
+        returned_queues,
+        result: first_error.map_or_else(|| Ok(()), Err),
+    }
+}
+
+#[cfg(test)]
 async fn supervise_session_workers<WorkItem, ReturnedQueue, SpawnWorker, WorkerFuture>(
     role: &'static str,
     session_id: u64,
@@ -616,13 +727,13 @@ where
 /// unit for lifecycle and error handling.
 async fn pump_shard(
     shard_log: ShardLogContext,
-    tun_queue: AsyncDevice,
+    tun_queue: &AsyncDevice,
     socket: VsockStream,
     max_tun_frame_bytes: usize,
     mut session_cancelled: watch::Receiver<bool>,
-) -> (AsyncDevice, Result<()>) {
+) -> Result<()> {
     if *session_cancelled.borrow() {
-        return (tun_queue, Ok(()));
+        return Ok(());
     }
 
     shard_log.debug(format_args!("starting"));
@@ -630,20 +741,17 @@ async fn pump_shard(
     let (socket_reader, socket_writer) = socket.into_split();
     let (local_cancel_tx, _) = watch::channel(false);
 
-    let result = {
-        // Both directions only need a shared borrow of the queue. Keeping ownership in this
-        // worker guarantees the session supervisor can recover the queue even when one direction
-        // exits with an error.
+    {
         let socket_to_tun = forward_socket_to_tun(
             shard_log,
             socket_reader,
-            &tun_queue,
+            tun_queue,
             max_tun_frame_bytes,
             local_cancel_tx.subscribe(),
         );
         let tun_to_socket = forward_tun_to_socket(
             shard_log,
-            &tun_queue,
+            tun_queue,
             socket_writer,
             max_tun_frame_bytes,
             local_cancel_tx.subscribe(),
@@ -690,8 +798,7 @@ async fn pump_shard(
         } else {
             Ok(())
         }
-    };
-    (tun_queue, result)
+    }
 }
 
 /// Moves framed packets from the shard's VSOCK stream into the matching TUN
@@ -893,11 +1000,13 @@ impl ParsedCommon {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Mode, SupervisedWorkersOutcome, log_level_from_count, supervise_session_workers,
+        Cli, Mode, QueueReturnGuard, SupervisedWorkersOutcome, log_level_from_count,
+        supervise_session_workers,
     };
     use anyhow::{Result, anyhow};
     use clap::Parser;
     use tokio::runtime::Builder;
+    use tokio::sync::mpsc;
     use tracing::Level;
 
     struct TestQueuePool<T> {
@@ -1632,6 +1741,32 @@ mod tests {
         assert_eq!(log_level_from_count(1), Level::DEBUG);
         assert_eq!(log_level_from_count(2), Level::TRACE);
         assert_eq!(log_level_from_count(7), Level::TRACE);
+    }
+
+    #[test]
+    fn queue_return_guard_returns_queue_when_dropped() {
+        let (return_tx, mut return_rx) = mpsc::unbounded_channel();
+        {
+            let _guard = QueueReturnGuard::new(3, 9_u8, return_tx);
+        }
+
+        assert_eq!(
+            return_rx
+                .try_recv()
+                .expect("dropped guard should return queue"),
+            (3, 9)
+        );
+    }
+
+    #[test]
+    fn queue_return_guard_does_not_return_taken_queue() {
+        let (return_tx, mut return_rx) = mpsc::unbounded_channel();
+        let mut guard = QueueReturnGuard::new(3, 9_u8, return_tx);
+
+        assert_eq!(guard.take(), 9);
+        drop(guard);
+
+        assert!(return_rx.try_recv().is_err());
     }
 
     #[test]
