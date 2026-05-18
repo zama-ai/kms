@@ -136,6 +136,7 @@ crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-s
 dashmap = "=6.1.0"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 derive_more = { version = "=2.0.1", features = ["display"] }  # Derive macros for common traits - HIGH RISK: Individual maintainer (JelteF), despite 180M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
+etherparse = "=0.20.1"  # HIGH RISK: Individual maintainer (JulianSchmid), but focused, well-documented, and added as a test-only dependency so vsocktun can parse captured IPv4/UDP packets without bespoke header decoding
 futures = "=0.3.31"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.31"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
@@ -150,6 +151,8 @@ minijinja = { version = "=2.11.0", features = ["loader"] }  # Template engine - 
 ml-kem = { version = "=0.2.2", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
+netns-rs = "=0.2.0"  # Linux network namespaces - MEDIUM RISK: openanolis/dragonball + individual maintainer, small focused crate; used by vsocktun test code to create, enter, and clean up named netns without bespoke mount/setns lifecycle logic
+nix = { version = "=0.30.1", features = ["socket"] }  # Unix/POSIX bindings - LOW RISK: nix-rust project, widely used; used by vsocktun test code for standard Linux socket options
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
