@@ -109,7 +109,7 @@ struct EncryptArgs {
     #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
     pub_key_file: String,
 
-    /// Value to encrypt (the plaintext polynomial will be value, value+1, value+2, ...)
+    /// Value to encrypt (the plaintext polynomial will be \sum_i (value + i) X^i )
     #[clap(long = "value")]
     value: u64,
 
@@ -180,7 +180,7 @@ struct ThresholdDecryptResultArgs {
     session_id_decrypt: u128,
 
     /// Optional argument to check the received plaintext against an expected value.
-    /// The expected plaintext polynomial is value, value+1, value+2, ...
+    /// The expected plaintext polynomial is then \sum_i (value + i) X^i to match the EncryptArgs command
     /// If more than one plaintext were decrypted, we make sure they are all equal to this expected plaintext polynomial.
     #[clap(long = "expected-value")]
     expected_value: Option<u64>,
