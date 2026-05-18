@@ -10,8 +10,6 @@
 use std::future::poll_fn;
 use std::io;
 use std::io::IoSlice;
-#[cfg(test)]
-use std::io::{Read, Write};
 use std::pin::Pin;
 use std::task::Poll;
 use tokio::io::ReadBuf;
@@ -57,14 +55,6 @@ impl Hello {
         bytes[18..20].copy_from_slice(&self.shard.to_be_bytes());
         bytes[20..24].copy_from_slice(&self.capabilities.to_be_bytes());
         bytes
-    }
-
-    #[cfg(test)]
-    pub(crate) fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let mut bytes = [0_u8; Self::ENCODED_LEN];
-        reader.read_exact(&mut bytes)?;
-
-        Self::decode(bytes)
     }
 
     pub(crate) async fn read_from_async<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
@@ -168,11 +158,6 @@ impl FrameReader {
         self.frame_ready = false;
     }
 
-    #[cfg(test)]
-    fn payload_capacity(&self) -> usize {
-        self.payload.capacity()
-    }
-
     fn begin_payload(&mut self) -> io::Result<()> {
         let payload_len = u32::from_be_bytes(self.header) as usize;
         if payload_len == 0 {
@@ -225,55 +210,6 @@ impl FrameReader {
         }
         self.payload_read += read;
         Ok(read)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn read_frame<R: Read>(&mut self, reader: &mut R) -> io::Result<Option<usize>> {
-        loop {
-            if self.header_read < self.header.len() {
-                match reader.read(&mut self.header[self.header_read..]) {
-                    Ok(0) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "vsock shard closed while reading packet header",
-                        ));
-                    }
-                    Ok(read) => {
-                        self.header_read += read;
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-                    Err(err) => return Err(err),
-                }
-
-                if self.header_read < self.header.len() {
-                    continue;
-                }
-
-                self.begin_payload()?;
-                self.payload.resize(self.payload_len, 0);
-            }
-
-            match reader.read(&mut self.payload[self.payload_read..self.payload_len]) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "vsock shard closed while reading packet payload",
-                    ));
-                }
-                Ok(read) => {
-                    self.payload_read += read;
-                }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-                Err(err) => return Err(err),
-            }
-
-            if self.payload_read < self.payload_len {
-                continue;
-            }
-
-            self.frame_ready = true;
-            return Ok(Some(self.payload_len));
-        }
     }
 
     pub(crate) async fn read_frame_async<R: AsyncRead + Unpin>(
@@ -344,19 +280,6 @@ impl<'a> PendingSliceWrite<'a> {
         self.written += written;
         self.written == self.bytes.len()
     }
-
-    #[cfg(test)]
-    pub(crate) fn write_to<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
-        match writer.write(self.remaining()) {
-            Ok(0) => Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "failed to make forward progress while writing packet",
-            )),
-            Ok(written) => Ok(self.advance(written)),
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
-            Err(err) => Err(err),
-        }
-    }
 }
 
 /// Best-effort writer for a framed payload without copying the payload into a
@@ -406,22 +329,6 @@ impl<'a> PendingFramedWrite<'a> {
         self.header_written == self.header.len() && self.body_written == self.body.len()
     }
 
-    #[cfg(test)]
-    pub(crate) fn write_to<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
-        let header = self.remaining_header();
-        let body = self.remaining_body();
-        let bytes = if !header.is_empty() { header } else { body };
-        match writer.write(bytes) {
-            Ok(0) => Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "failed to make forward progress while writing packet",
-            )),
-            Ok(written) => Ok(self.advance(written)),
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
-            Err(err) => Err(err),
-        }
-    }
-
     pub(crate) async fn write_to_async<W: AsyncWrite + Unpin>(
         &mut self,
         writer: &mut W,
@@ -451,7 +358,7 @@ impl<'a> PendingFramedWrite<'a> {
 mod tests {
     use super::{FrameReader, Hello, PendingFramedWrite, PendingSliceWrite};
     use std::fs::File;
-    use std::io::{self, Seek, SeekFrom, Write};
+    use std::io::{self, Read, Seek, SeekFrom, Write};
     use tempfile::tempfile;
     use tokio::io::{self as tokio_io, AsyncWriteExt};
     use tokio::runtime::Builder;
@@ -494,6 +401,98 @@ mod tests {
             .expect("test runtime should be created")
     }
 
+    fn read_hello<R: Read>(reader: &mut R) -> io::Result<Hello> {
+        let mut bytes = [0_u8; Hello::ENCODED_LEN];
+        reader.read_exact(&mut bytes)?;
+
+        Hello::decode(bytes)
+    }
+
+    fn frame_reader_payload_capacity(reader: &FrameReader) -> usize {
+        reader.payload.capacity()
+    }
+
+    fn read_frame<R: Read>(reader: &mut FrameReader, input: &mut R) -> io::Result<Option<usize>> {
+        loop {
+            if reader.header_read < reader.header.len() {
+                match input.read(&mut reader.header[reader.header_read..]) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "vsock shard closed while reading packet header",
+                        ));
+                    }
+                    Ok(read) => {
+                        reader.header_read += read;
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                    Err(err) => return Err(err),
+                }
+
+                if reader.header_read < reader.header.len() {
+                    continue;
+                }
+
+                reader.begin_payload()?;
+                reader.payload.resize(reader.payload_len, 0);
+            }
+
+            match input.read(&mut reader.payload[reader.payload_read..reader.payload_len]) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "vsock shard closed while reading packet payload",
+                    ));
+                }
+                Ok(read) => {
+                    reader.payload_read += read;
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(err) => return Err(err),
+            }
+
+            if reader.payload_read < reader.payload_len {
+                continue;
+            }
+
+            reader.frame_ready = true;
+            return Ok(Some(reader.payload_len));
+        }
+    }
+
+    fn write_pending_slice<W: Write>(
+        pending: &mut PendingSliceWrite<'_>,
+        writer: &mut W,
+    ) -> io::Result<bool> {
+        match writer.write(pending.remaining()) {
+            Ok(0) => Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to make forward progress while writing packet",
+            )),
+            Ok(written) => Ok(pending.advance(written)),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn write_pending_framed<W: Write>(
+        pending: &mut PendingFramedWrite<'_>,
+        writer: &mut W,
+    ) -> io::Result<bool> {
+        let header = pending.remaining_header();
+        let body = pending.remaining_body();
+        let bytes = if !header.is_empty() { header } else { body };
+        match writer.write(bytes) {
+            Ok(0) => Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to make forward progress while writing packet",
+            )),
+            Ok(written) => Ok(pending.advance(written)),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
     #[test]
     fn hello_round_trip() {
         let hello = Hello::new(42, 8, 3, true);
@@ -504,7 +503,7 @@ mod tests {
             .expect("hello bytes should be written to temporary file");
         reset_file(&mut file).expect("temporary file should rewind");
 
-        let decoded = Hello::read_from(&mut file).expect("hello bytes should decode");
+        let decoded = read_hello(&mut file).expect("hello bytes should decode");
         assert_eq!(decoded, hello);
         assert!(decoded.supports_raw_tun_frames());
     }
@@ -516,15 +515,13 @@ mod tests {
             PendingFramedWrite::new(&packet).expect("packet should fit into framed payload");
         let mut file = tempfile().expect("temporary file should be created");
 
-        while !outgoing
-            .write_to(&mut file)
+        while !write_pending_framed(&mut outgoing, &mut file)
             .expect("packet should write to temporary file")
         {}
 
         reset_file(&mut file).expect("temporary file should rewind");
         let mut reader = FrameReader::new(4096);
-        let decoded_len = reader
-            .read_frame(&mut file)
+        let decoded_len = read_frame(&mut reader, &mut file)
             .expect("reader should decode file-backed packet")
             .expect("reader should produce one packet");
         let decoded = reader.current_payload();
@@ -540,22 +537,23 @@ mod tests {
             PendingFramedWrite::new(&packet).expect("packet should fit into framed payload");
         let mut file = tempfile().expect("temporary file should be created");
 
-        while !outgoing
-            .write_to(&mut file)
+        while !write_pending_framed(&mut outgoing, &mut file)
             .expect("packet should write to temporary file")
         {}
 
         reset_file(&mut file).expect("temporary file should rewind");
         let mut reader = FrameReader::new(4096);
-        let _decoded_len = reader
-            .read_frame(&mut file)
+        let _decoded_len = read_frame(&mut reader, &mut file)
             .expect("reader should decode file-backed packet")
             .expect("reader should produce one packet");
-        let capacity_before_finish = reader.payload_capacity();
+        let capacity_before_finish = frame_reader_payload_capacity(&reader);
 
         assert!(capacity_before_finish >= packet.len());
         reader.finish_frame();
-        assert_eq!(reader.payload_capacity(), capacity_before_finish);
+        assert_eq!(
+            frame_reader_payload_capacity(&reader),
+            capacity_before_finish
+        );
     }
 
     #[test]
@@ -564,8 +562,7 @@ mod tests {
         let mut writer = LimitedWriter::new(2);
         let mut pending = PendingSliceWrite::new(&packet);
 
-        while !pending
-            .write_to(&mut writer)
+        while !write_pending_slice(&mut pending, &mut writer)
             .expect("partial writes should make progress")
         {}
 
@@ -579,8 +576,7 @@ mod tests {
         let mut pending =
             PendingFramedWrite::new(&packet).expect("packet should fit into framed payload");
 
-        while !pending
-            .write_to(&mut writer)
+        while !write_pending_framed(&mut pending, &mut writer)
             .expect("partial writes should make progress")
         {}
 
