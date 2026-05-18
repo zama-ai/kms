@@ -22,9 +22,6 @@ cfg_if::cfg_if! {
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use std::sync::Arc;
-    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-    use crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL;
-    use crate::util::key_setup::test_tools::purge;
 }}
 
 #[cfg(feature = "insecure")]
@@ -166,9 +163,6 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO(dp): legacy global-storage path — only `nightly_tests.rs` callers
-// (slow_tests-gated) still use this. Port them to `ThresholdTestEnv::builder()`
-// and delete this helper.
 #[cfg(feature = "slow_tests")]
 pub(crate) async fn crs_gen(
     amount_parties: usize,
@@ -178,29 +172,30 @@ pub(crate) async fn crs_gen(
     iterations: usize,
     concurrent: bool,
 ) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    for i in 0..iterations {
-        let req_crs: RequestId = derive_request_id(&format!(
-            "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
-        ))
-        .unwrap();
-        purge(
-            None,
-            None,
-            &req_crs,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
-    }
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
     let dkg_param: WrappedDKGParams = parameter.into();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    // The threshold handle should only be started after the storage is purged
-    // since the threshold parties will load the CRS from private storage
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+    let spec = {
+        let mut s = match parameter {
+            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
+            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
+        };
+        s.required_keys.remove(&KeyType::FheKeys);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name(format!("crs_gen_{amount_parties}_{parameter:?}_{insecure}"))
+        .with_party_count(amount_parties)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await
+        .unwrap();
+    let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
 
     if concurrent {
         let arc_clients = Arc::new(kms_clients);
@@ -214,6 +209,7 @@ pub(crate) async fn crs_gen(
             crs_set.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
+                let path_clone = material_path.clone();
                 async move {
                     let _ = run_crs(
                         parameter,
@@ -222,7 +218,7 @@ pub(crate) async fn crs_gen(
                         insecure,
                         &cur_id,
                         max_bits,
-                        None,
+                        Some(path_clone.as_path()),
                     )
                     .await;
                 }
@@ -243,7 +239,7 @@ pub(crate) async fn crs_gen(
                 insecure,
                 &cur_id,
                 max_bits,
-                None,
+                Some(material_path.as_path()),
             )
             .await;
         }

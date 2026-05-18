@@ -5,10 +5,8 @@
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use crate::client::tests::common::default_isolated_extra_data;
-    use crate::client::tests::threshold::common::threshold_handles;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::{DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_uncompressed_keygen};
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{
         delete_at_request_and_epoch_id, delete_at_request_id,
         read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
@@ -50,9 +48,7 @@ cfg_if::cfg_if! {
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use crate::client::tests::common::keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{
-    TIME_TO_SLEEP_MS, decompression_keygen_config, uncompressed_keygen_config,
-};
+use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
@@ -493,8 +489,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
     parameter: FheParameter,
     insecure: bool,
 ) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let preproc_id_1 = if insecure {
         *INSECURE_PREPROCESSING_ID
     } else {
@@ -505,14 +499,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
-    purge(
-        None,
-        None,
-        &key_id_1,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
 
     let preproc_id_2 = if insecure {
         *INSECURE_PREPROCESSING_ID
@@ -524,14 +510,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
-    purge(
-        None,
-        None,
-        &key_id_2,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
 
     let preproc_id_3 = derive_request_id(&format!(
         "decom_dkg_preproc_{amount_parties}_{parameter:?}_3"
@@ -539,19 +517,33 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .unwrap();
     let key_id_3: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
-    purge(
-        None,
-        None,
-        &key_id_3,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
-    let (kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+    let spec = {
+        let mut s = match parameter {
+            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
+            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
+        };
+        s.required_keys.remove(&KeyType::FheKeys);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let (material_dir, kms_servers, kms_clients, internal_client) = {
+        let env = ThresholdTestEnv::builder()
+            .with_test_name(format!(
+                "decom_dkg_{amount_parties}_{parameter:?}_{insecure}"
+            ))
+            .with_party_count(amount_parties)
+            .with_material_spec(spec)
+            .with_prss()
+            .build()
+            .await
+            .unwrap();
+        let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+        (env.material_dir, env.servers, env.clients, internal_client)
+    };
+    let test_path = material_dir.path();
 
     if !insecure {
         run_preproc(
@@ -577,7 +569,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         keyset_config,
         keyset_added_info,
         insecure,
-        None,
+        Some(test_path),
         0,
     )
     .await
@@ -608,7 +600,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         keyset_config,
         keyset_added_info,
         insecure,
-        None,
+        Some(test_path),
         0,
     )
     .await
@@ -639,7 +631,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         keyset_config,
         keyset_added_info,
         insecure,
-        None,
+        Some(test_path),
         0,
     )
     .await
@@ -714,8 +706,6 @@ pub(crate) async fn preproc_and_keygen(
         newly_crashed
     }
 
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut preproc_ids = vec![];
     let mut key_ids = vec![];
     for i in 0..iterations {
@@ -723,28 +713,12 @@ pub(crate) async fn preproc_and_keygen(
             "full_dkg_preproc_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
-        purge(
-            None,
-            None,
-            &req_preproc,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
         preproc_ids.push(req_preproc);
 
         let req_key: RequestId = derive_request_id(&format!(
             "full_dkg_key_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
-        purge(
-            None,
-            None,
-            &req_key,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
         key_ids.push(req_key);
     }
 
@@ -763,15 +737,32 @@ pub(crate) async fn preproc_and_keygen(
         new_epoch: 1,
     };
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        *dkg_param,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        None,
-    )
-    .await;
+    let spec = {
+        let mut s = match parameter {
+            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
+            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
+        };
+        s.required_keys.remove(&KeyType::FheKeys);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
+        let env = ThresholdTestEnv::builder()
+            .with_test_name(format!(
+                "preproc_and_keygen_{amount_parties}_{parameter:?}_{compressed}_{insecure_key_gen}"
+            ))
+            .with_party_count(amount_parties)
+            .with_material_spec(spec)
+            .with_prss()
+            .with_rate_limiter(rate_limiter_conf)
+            .build()
+            .await
+            .unwrap();
+        let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+        (env.material_dir, env.servers, env.clients, internal_client)
+    };
+    let test_path = material_dir.path().to_path_buf();
 
     let mut expected_num_parties_crashed =
         party_ids_to_crash_preproc.as_ref().map_or(0, |v| v.len());
@@ -834,6 +825,7 @@ pub(crate) async fn preproc_and_keygen(
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
+                let path_clone = test_path.clone();
                 async move {
                     // todo proper use of insecure to skip preproc
                     (
@@ -847,7 +839,7 @@ pub(crate) async fn preproc_and_keygen(
                             keyset_config,
                             keyset_added_info,
                             insecure_key_gen,
-                            None,
+                            Some(path_clone.as_path()),
                             expected_num_parties_crashed,
                         )
                         .await
@@ -880,7 +872,7 @@ pub(crate) async fn preproc_and_keygen(
                 },
                 None,
                 1,
-                None,
+                Some(test_path.as_path()),
             )
             .await;
         }
@@ -921,7 +913,7 @@ pub(crate) async fn preproc_and_keygen(
                 keyset_config,
                 keyset_added_info,
                 insecure_key_gen,
-                None,
+                Some(test_path.as_path()),
                 expected_num_parties_crashed,
             )
             .await
@@ -945,7 +937,7 @@ pub(crate) async fn preproc_and_keygen(
                 },
                 None,
                 1,
-                None,
+                Some(test_path.as_path()),
             )
             .await;
         }
