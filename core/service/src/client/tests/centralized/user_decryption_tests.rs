@@ -1,8 +1,6 @@
 use crate::client::client_wasm::ServerIdentities;
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
@@ -107,7 +105,6 @@ async fn default_user_decryption_centralized_and_write_transcript() -> Result<()
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_user_decryption_centralized(#[values(true, false)] secure: bool) -> Result<()> {
@@ -130,7 +127,6 @@ async fn default_user_decryption_centralized(#[values(true, false)] secure: bool
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_user_decryption_centralized_no_compression(
@@ -155,7 +151,6 @@ async fn default_user_decryption_centralized_no_compression(
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_user_decryption_centralized_precompute_sns(

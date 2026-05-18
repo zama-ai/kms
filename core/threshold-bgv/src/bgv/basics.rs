@@ -337,6 +337,7 @@ mod tests {
     use crate::algebra::ntt::N65536;
     use crate::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
+    #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::FromU128;
     use crypto_bigint::modular::ConstMontyParams;
     use rand::{RngCore, SeedableRng};
@@ -381,6 +382,7 @@ mod tests {
         assert_eq!(plaintext, plaintext_vec);
     }
 
+    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_bgv_multiply() {
         let mut rng = AesRng::seed_from_u64(0);

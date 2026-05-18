@@ -2,9 +2,7 @@ use crate::client::client_wasm::{Client, ServerIdentities};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
 use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
@@ -241,7 +239,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(TestingPlaintext::Bool(true), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
@@ -272,7 +269,6 @@ async fn default_user_decryption_threshold(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
@@ -302,7 +298,6 @@ async fn default_user_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

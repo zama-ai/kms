@@ -1,6 +1,5 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::OptKeySetConfigAccessor;
-#[cfg(feature = "slow_tests")]
 use crate::client::tests::common::keygen_config;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
@@ -38,6 +37,7 @@ async fn test_key_gen_centralized() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_decompression_key_gen_centralized() -> anyhow::Result<()> {
     decompression_key_gen_centralized(
@@ -75,6 +75,7 @@ async fn default_decompression_key_gen_centralized() -> anyhow::Result<()> {
 
 /// Generate two keysets and a decompression-only keyset linking them, all inside a single
 /// isolated tempdir so the third `run_key_gen_centralized` call can read the first two.
+#[cfg(feature = "slow_tests")]
 async fn decompression_key_gen_centralized(
     params: FheParameter,
     test_name: &str,
@@ -436,7 +437,6 @@ pub async fn run_key_gen_centralized(
     }
 }
 
-#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_compressed_key_gen_centralized() -> anyhow::Result<()> {
     let request_id = derive_request_id("test_compressed_key_gen_centralized").unwrap();
