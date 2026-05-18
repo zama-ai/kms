@@ -112,6 +112,9 @@ Enclave-only:
 - Both sides must agree on `--queues` and `--vsock-port`.
 - Both sides must run compatible `vsocktun` protocol versions. Newer binaries
   reject older handshake versions during session setup.
+- If peer TUN offload framing support differs between parent and enclave,
+  session setup is rejected with an explicit log message instead of silently
+  downgrading.
 - The parent and enclave TUN addresses must be on the same point-to-point
   subnet.
 - The parent-side runtime still needs IP forwarding and NAT configured outside
