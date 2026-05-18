@@ -261,7 +261,7 @@ The reproducible test scripts use a `cleanup_docker` helper to shutdown the expe
 ### Reproducible end-to-end runs
 
 The `test_scripts/` folder contains the bash scripts that drive a cluster
-through a full PRSS → preproc → DKG → (CRS, reshare) → decryption pipeline.
+through a full PRSS (if applicable) → preproc → DKG → (CRS, reshare) → decryption pipeline.
 Two flavours are shipped:
 
 - The legacy `tfhe_test_small_session.sh` / `tfhe_test_large_session.sh` and
@@ -278,6 +278,12 @@ Two flavours are shipped:
   - `tfhe_reproducible_small_session_malicious.sh` (4 parties, t = 1, with a
     `malicious_broadcast` party 1, otherwise identical to the small session).
   - `bgv_reproducible.sh` (4 parties, t = 1, real BGV parameters).
+
+Large and small here identifies the underlying protocols used for performing the various pre-processing phases.
+When the number of parties is *small* (i.e. less than $20$ parties) we can rely on PRSS-based protocols and
+which are secure for $t < n/3$, whereas when the number of parties is bigger
+we have to switch to less communication-friendly protocols which are secure for $t < n/4$.
+
 
 Each reproducible script expects the choreographer `.toml` as its first
 argument (and an optional `GEN` flag to generate the encryptions), for example:

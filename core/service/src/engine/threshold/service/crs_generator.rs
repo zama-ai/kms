@@ -668,6 +668,13 @@ mod tests {
     #[derive(Clone, Default)]
     pub struct SlowCeremony {}
 
+    impl ProtocolDescription for SlowCeremony {
+        fn protocol_desc(depth: usize) -> String {
+            let indent = Self::INDENT_STRING.repeat(depth);
+            format!("{indent}-SlowCeremony")
+        }
+    }
+
     #[tonic::async_trait]
     impl Ceremony for SlowCeremony {
         async fn execute<Z: Ring, S: BaseSessionHandles>(
