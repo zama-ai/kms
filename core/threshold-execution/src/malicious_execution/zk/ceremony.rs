@@ -6,6 +6,7 @@ use crate::{
 use itertools::Itertools;
 use std::collections::HashSet;
 use tfhe_zk_pok::curve_api::bls12_446 as curve;
+use threshold_types::protocol::ProtocolDescription;
 
 use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
@@ -18,6 +19,13 @@ use algebra::structure_traits::Ring;
 
 #[derive(Clone, Default)]
 pub struct InsecureCeremony {}
+
+impl ProtocolDescription for InsecureCeremony {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{}-InsecureCeremony", indent)
+    }
+}
 
 #[tonic::async_trait]
 impl Ceremony for InsecureCeremony {
@@ -42,6 +50,13 @@ impl Ceremony for InsecureCeremony {
 #[derive(Clone, Default)]
 pub struct DroppingCeremony;
 
+impl ProtocolDescription for DroppingCeremony {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{}-DroppingCeremony", indent)
+    }
+}
+
 #[tonic::async_trait]
 impl Ceremony for DroppingCeremony {
     async fn execute<Z: Ring, S: BaseSessionHandles>(
@@ -61,6 +76,17 @@ impl Ceremony for DroppingCeremony {
 #[derive(Clone, Default)]
 pub struct RushingCeremony<BCast: Broadcast> {
     pub broadcast: BCast,
+}
+
+impl<B: Broadcast + Default> ProtocolDescription for RushingCeremony<B> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!(
+            "{}-RushingCeremony:\n{}",
+            indent,
+            B::protocol_desc(depth + 1)
+        )
+    }
 }
 
 #[tonic::async_trait]

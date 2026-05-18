@@ -389,6 +389,7 @@ where
         let small_desc = SmallOfflineStrategy::protocol_desc(1);
         let large_z64_desc = LargeOfflineStrategyZ64::protocol_desc(1);
         let large_z128_desc = LargeOfflineStrategyZ128::protocol_desc(1);
+        let crs_gen_desc = CrsGenStrategy::protocol_desc(1);
 
         // Calculate the maximum width needed
         let header = "GRPC CHOREOGRAPHY PROTOCOL DESCRIPTIONS";
@@ -397,6 +398,7 @@ where
             "SmallOffline:",
             "LargeOfflineZ64:",
             "LargeOfflineZ128:",
+            "CrsGen:",
         ];
 
         // Find max line width across ALL content (including headers and section titles)
@@ -425,9 +427,9 @@ where
         };
 
         // Build the table
-        let line = '─'.to_string().repeat(content_width + 2).to_string();
+        let line = '─'.to_string().repeat(content_width - 5).to_string();
         format!(
-            "┌{}┐\n│ {:^width$} │\n├{}┤\n{}├{}┤\n{}├{}┤\n{}├{}┤\n{}└{}┘",
+            "┌{}┐\n│ {:^width$} │\n├{}┤\n{}├{}┤\n{}├{}┤\n{}├{}┤\n{}├{}┤\n{}└{}┘",
             line,
             header,
             line,
@@ -438,6 +440,8 @@ where
             format_section("LargeOfflineZ64:", &large_z64_desc),
             line,
             format_section("LargeOfflineZ128:", &large_z128_desc),
+            line,
+            format_section("CrsGen:", &crs_gen_desc),
             line,
             width = content_width
         )
