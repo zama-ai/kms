@@ -318,7 +318,7 @@ impl TestedModule for KMS {
 
 ## Coverage gate for `VersionsDispatch` enums
 
-A workspace-level test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) statically scans every `#[derive(VersionsDispatch)]` enum in the workspace and enforces two invariants:
+A test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) runs as part of the `core/service` test suite, but its scan is workspace-wide: it uses `cargo metadata` to enumerate every workspace member and statically inspects each one for `#[derive(VersionsDispatch)]` enums, enforcing two invariants:
 
 1. **Contiguous variants** — variants must be named `V0`, `V1`, `V2`, … in order.
 2. **Fixture coverage** — every dispatch type (with its `Versioned` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
@@ -327,10 +327,11 @@ The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is
 
 ### Updating `ALLOW_UNCOVERED`
 
-Each entry must carry a comment that records:
+The `ALLOW_UNCOVERED` list is found in [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs)
+where entry must carry a comment that records:
 
-- **Who uses it** — the parent struct/enum that contains the type as a field, or the precise way the type is otherwise reached (e.g. as a signcrypted payload).
-- **Who covers it** — the `*Test` fixture(s) in `backward-compatibility/src/lib.rs` whose serialized output transitively exercises the type.
+- **Who uses it** — one parent struct/enum that contains the type as a field, or the precise way the type is otherwise reached (e.g. as a signcrypted payload). One example is enough — you don't need to enumerate every parent.
+- **Who covers it** — one `*Test` fixture in `backward-compatibility/src/lib.rs` whose serialized output transitively exercises the type.
 
 Example:
 

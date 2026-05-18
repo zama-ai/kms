@@ -11,3 +11,4 @@ When reviewing changes — whether a single commit or an entire branch — ignor
 - Check that refactors and functional changes have been applied in every analogous place. Threshold-side changes usually need centralized-side counterparts; S3-storage changes usually need filesystem-storage counterparts.
 - If CLI code or configuration files changed, validate that docs (markdown) and deployment configs (yml, toml) have been updated consistently.
 - Check for new security vulnerabilities. Cross-reference [OWASP ASVS](https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/OWASP_Application_Security_Verification_Standard_5.0.0_en.pdf) and the [MPC pitfalls repo](https://github.com/rot256/mpc-pitfalls).
+- If there are changes in structs that derive `Versionize`, make sure it follows the [backward compatibility guide](docs/developer/backward_compatibility.md).
