@@ -304,18 +304,12 @@ pub(crate) async fn crs_gen_background<
 
     if let Err(e) = crypto_storage
         .inner
-        .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
+        .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
         .await
     {
         tracing::error!("Failed to write CRS to storage: {e}");
         return;
     }
-    // Update the backup and handle potential failures by incrementing backup errors in the metrics
-    crypto_storage
-        .inner
-        .update_backup_vault(false, op_tag)
-        .await;
-
     tracing::info!(
         "⏱️ Core Event Time for CRS-gen request id {}: {:?}",
         req_id,

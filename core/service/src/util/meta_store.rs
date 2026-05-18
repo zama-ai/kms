@@ -360,17 +360,6 @@ pub(crate) async fn ensure_meta_store_request_pending<T: Clone>(
     Ok(())
 }
 
-#[cfg(feature = "non-wasm")]
-pub(crate) fn should_purge_after_meta_update_failure<T: Clone>(
-    meta_store: &MetaStore<T>,
-    req_id: &RequestId,
-) -> bool {
-    match meta_store.get_cell(req_id) {
-        Some(cell) => !cell.is_set(),
-        None => true,
-    }
-}
-
 /// Helper method for updating the meta store with an error result
 /// The method gracefully handles potential update failures by logging and updating metrics
 /// [req_id] is the request ID to update

@@ -131,7 +131,6 @@ pub async fn regenerate_central_keys(
         &OTHER_CENTRAL_TEST_ID,
         &DEFAULT_EPOCH_ID,
         true, // deterministic
-        true, // write_privkey
     )
     .await
     {

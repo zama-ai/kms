@@ -620,6 +620,7 @@ mod tests {
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
+    use observability::metrics_names::OP_NEW_MPC_CONTEXT;
     use rand::SeedableRng;
     use tfhe::CompactPublicKey;
     use tfhe::ServerKey;
@@ -779,7 +780,7 @@ mod tests {
 
         crypto_storage
             .inner
-            .write_context_info(&context_id, &context_info)
+            .write_context_info(&context_id, &context_info, OP_NEW_MPC_CONTEXT)
             .await
             .unwrap();
 
@@ -1114,7 +1115,7 @@ mod tests {
 
         crypto_storage
             .inner
-            .write_context_info(&context_id, &context_info)
+            .write_context_info(&context_id, &context_info, OP_NEW_MPC_CONTEXT)
             .await
             .unwrap();
 

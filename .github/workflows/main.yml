@@ -738,9 +738,6 @@ jobs:
           # `*/slow_tests`, which is a *superset* of the default test set.
           - group: crates-normies
             crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
-            # Default features avoid slow_tests; turn on `all_extension_degrees`
-            # on threshold-algebra so its per-degree tests run.
-            features: '-F threshold-algebra/all_extension_degrees'
             threads: ''
             runs-on: '64cpu-linux-x64'
 

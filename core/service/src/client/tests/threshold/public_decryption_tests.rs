@@ -3,9 +3,7 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
@@ -140,7 +138,6 @@ async fn default_decryption_threshold(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
@@ -167,7 +164,6 @@ async fn default_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -262,7 +258,6 @@ pub async fn decryption_threshold(
         party_ids_to_crash,
         parallelism,
         Some(&material_path),
-        false, // compressed_keys
     )
     .await;
 }
@@ -280,8 +275,6 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
-    // TODO(dp): this should have stayed "compressed" and not been renamed. Mea culpa.
-    uncompressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(
         amount_parties,
@@ -297,7 +290,6 @@ pub async fn run_decryption_threshold(
         parallelism,
         data_root_path,
         false,
-        uncompressed_keys,
     )
     .await
 }
@@ -319,7 +311,6 @@ pub async fn run_decryption_threshold_optionally_fail(
     parallelism: usize,
     data_root_path: Option<&Path>,
     expect_request_failure: bool,
-    uncompressed_keys: bool,
 ) {
     let encryption_key_id = encryption_key_id.unwrap_or(key_id);
     assert_eq!(kms_clients.len(), kms_servers.len());
@@ -333,7 +324,6 @@ pub async fn run_decryption_threshold_optionally_fail(
             encryption_key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
-            uncompressed_keys,
         )
         .await;
         let ctt = TypedCiphertext {

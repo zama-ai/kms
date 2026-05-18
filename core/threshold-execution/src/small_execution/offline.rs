@@ -402,16 +402,20 @@ mod test {
     use std::{collections::HashMap, num::Wrapping};
 
     use crate::communication::broadcast::SyncReliableBroadcast;
+    #[cfg(feature = "slow_tests")]
     use crate::large_execution::vss::SecureVss;
     use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
     use crate::malicious_execution::small_execution::malicious_offline::{
         MaliciousOfflineDrop, MaliciousOfflineWrongAmount,
     };
+    use crate::malicious_execution::small_execution::malicious_prss::MaliciousPrssDrop;
+    #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::small_execution::malicious_prss::{
-        MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
+        MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
     };
     use crate::runtime::sessions::base_session::ToBaseSession;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
+    #[cfg(feature = "slow_tests")]
     use crate::small_execution::agree_random::RobustSecureAgreeRandom;
     use crate::small_execution::offline::reconstruct_d_values;
     use crate::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
@@ -445,6 +449,7 @@ mod test {
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 
+    #[cfg(feature = "slow_tests")]
     use super::RealSmallPreprocessing;
 
     // Needs to be big enough to cope with statistical tests
@@ -753,6 +758,7 @@ mod test {
         .await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
@@ -791,6 +797,7 @@ mod test {
         .await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]

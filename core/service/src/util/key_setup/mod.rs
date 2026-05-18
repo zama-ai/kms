@@ -14,6 +14,7 @@ cfg_if::cfg_if! {
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits,  data_exists, get_core_signing_key,
         };
+        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
@@ -350,27 +351,25 @@ where
     PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-
-    use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-
     match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         crs_id,
         epoch_id,
-        &[PubDataType::CRS.to_string()],
-        &[PrivDataType::CrsInfo.to_string()],
+        &PubDataType::CRS,
+        &PrivDataType::CrsInfo,
     )
     .await
     {
         Ok(true) => {
-            log_data_exists(priv_storage.info(), Some(pub_storage.info()), crs_id, "CRS");
             return false;
         }
-        Ok(false) => {} // Continue with generation
+        Ok(false) => {
+            // continue with generation
+            tracing::info!("CRS does not exist, proceeding with generation.");
+        }
         Err(e) => {
-            tracing::warn!("Error checking if CRS exists: {}", e);
-            // Continue with generation, assuming data doesn't exist
+            tracing::warn!("Failed to check if CRS exists, proceeding with generation anyway: {e}");
         }
     }
 
@@ -462,7 +461,6 @@ pub async fn ensure_central_keys_exist<PubS, PrivS>(
     other_key_id: &RequestId,
     epoch_id: &EpochId,
     deterministic: bool,
-    write_privkey: bool,
 ) -> bool
 where
     PubS: Storage,
@@ -582,9 +580,10 @@ where
         (*other_key_id, (compressed_keyset_2, public_key_2)),
     ]);
 
-    // Store private key data
+    // Store private key data. The centralized service reads back this slot as
+    // a `KmsFheKeyHandles`, so the bundled `key_info` is the value we persist
+    // (despite the type tag being named `FhePrivateKey`).
     for (req_id, key_info) in &priv_fhe_map {
-        // Store key info
         if let Err(e) = store_versioned_at_request_and_epoch_id(
             priv_storage,
             req_id,
@@ -598,33 +597,6 @@ where
             continue; // Skip this key but try others
         }
         log_storage_success(req_id, priv_storage.info(), "key data", false, false);
-
-        // When the flag [write_privkey] is set, store the private key separately
-        if write_privkey {
-            if let Err(e) = store_versioned_at_request_and_epoch_id(
-                priv_storage,
-                req_id,
-                epoch_id,
-                &key_info.client_key,
-                &PrivDataType::FhePrivateKey.to_string(),
-            )
-            .await
-            {
-                tracing::error!(
-                    "Failed to store private key for request ID {}: {}",
-                    req_id,
-                    e
-                );
-                continue; // Skip this key but try others
-            }
-            log_storage_success(
-                req_id,
-                priv_storage.info(),
-                "individual private key",
-                false,
-                false,
-            );
-        }
     }
 
     // Store compressed keyset and the public key derived from it as public key data
@@ -1285,28 +1257,26 @@ where
     // PANICS: If storage access fails or if no storage is available
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-
         match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             crs_id,
             epoch_id,
-            &[PubDataType::CRS.to_string()],
-            &[PrivDataType::CrsInfo.to_string()],
+            &PubDataType::CRS,
+            &PrivDataType::CrsInfo,
         )
         .await
         {
-            Ok(true) => {
-                continue; // Data exists for this party, check next
-            }
+            Ok(true) => continue,
             Ok(false) => {
+                tracing::info!("CRS does not exist, proceeding with generation.");
                 all_data_exists = false;
                 break;
             }
             Err(e) => {
-                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-                // Continue with generation, assuming data doesn't exist
+                tracing::warn!(
+                    "Failed to check if threshold CRS exists, proceeding with generation anyway: {e}"
+                );
                 all_data_exists = false;
                 break;
             }

@@ -14,13 +14,12 @@ use crate::util::meta_store::{
     MetaStore, add_req_to_meta_store, handle_res, retrieve_from_meta_store,
     update_err_req_in_meta_store,
 };
-use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
+use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
 use crate::vault::storage::{Storage, StorageExt};
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::KMSType;
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
@@ -119,6 +118,25 @@ pub async fn key_gen_impl<
         } else {
             dkg_params
         };
+
+        // Ensure that no key already exists for a given request.
+        let already_exists = service
+            .crypto_storage
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal))?;
+        if already_exists {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(req_id),
+                anyhow::anyhow!(
+                    "FHE key for request {} and epoch {} already exists in storage",
+                    req_id,
+                    epoch_id
+                ),
+                tonic::Code::AlreadyExists,
+            ));
+        }
 
         // check that the request ID is not used yet
         // and then insert the request ID only if it's unused
@@ -260,11 +278,8 @@ pub(crate) async fn run_keygen_with_cancel<
                     "Failed to mark request {req_id} as aborted in the key meta store: {e}"
                 );
             }
-            // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem.
-            // In connection with this the meta store update should be moved to AFTER the purging
             crypto_storage_cancel
-                .inner
-                .purge_key_material(&req_id, &epoch_id, KMSType::Centralized, guarded_meta_store)
+                .purge_fhe_keys(&req_id, &epoch_id)
                 .await;
         }
     }
@@ -398,22 +413,6 @@ pub(crate) async fn key_gen_background<
     op_tag: &'static str,
 ) {
     let start = tokio::time::Instant::now();
-    {
-        // Check if the key already exists
-        if crypto_storage
-            .read_centralized_fhe_keys(req_id, epoch_id)
-            .await
-            .is_ok()
-        {
-            let _ = update_err_req_in_meta_store(
-                &mut meta_store.write().await,
-                req_id,
-                format!("Failed key generation: Key with ID {req_id} already exists!"),
-                op_tag,
-            );
-            return;
-        }
-    }
     match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
             let keygen_result = match async_generate_fhe_keys(
@@ -440,44 +439,29 @@ pub(crate) async fn key_gen_background<
                 }
             };
 
-            match keygen_result {
+            let (pks, key_info) = match keygen_result {
                 CentralizedKeyGenResult::Uncompressed(fhe_key_set, key_info) => {
-                    if let Err(e) = crypto_storage
-                        .write_centralized_keys_with_meta_store(
-                            req_id,
-                            epoch_id,
-                            key_info,
-                            fhe_key_set,
-                            meta_store,
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            "Failed to write centralized keys for request {req_id}: {e}"
-                        );
-                        return;
-                    }
+                    (PublicKeySet::Uncompressed(Arc::new(fhe_key_set)), key_info)
                 }
-                CentralizedKeyGenResult::Compressed(compressed_keyset, public_key, key_info) => {
-                    if let Err(e) = crypto_storage
-                        .write_centralized_compressed_keys_with_meta_store(
-                            req_id,
-                            epoch_id,
-                            key_info,
-                            &compressed_keyset,
-                            &public_key,
-                            meta_store,
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            "Failed to write compressed centralized keys for request {req_id}: {e}"
-                        );
-                        return;
-                    }
-                }
+                CentralizedKeyGenResult::Compressed(
+                    compressed_keyset,
+                    compact_public_key,
+                    key_info,
+                ) => (
+                    PublicKeySet::Compressed {
+                        compact_public_key: Arc::new(compact_public_key),
+                        compressed_keyset: Arc::new(compressed_keyset),
+                    },
+                    key_info,
+                ),
+            };
+            if let Err(e) = crypto_storage
+                .write_fhe_keys(req_id, epoch_id, key_info, pks, meta_store, op_tag)
+                .await
+            {
+                tracing::error!("Failed to write centralized keys for request {req_id}: {e}");
+                return;
             }
-
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
         }
         KeySetConfig::DecompressionOnly => {
@@ -532,25 +516,22 @@ pub(crate) async fn key_gen_background<
                     return;
                 }
             };
-            crypto_storage
-                .write_decompression_key_with_meta_store(
-                    req_id,
-                    decompression_key,
-                    info,
-                    meta_store,
-                )
-                .await;
+            if let Err(e) = crypto_storage
+                .inner
+                .write_decompression_key(req_id, info, decompression_key, meta_store)
+                .await
+            {
+                tracing::error!(
+                    "Failed to write centralized decompression key for request {req_id}: {e}"
+                );
+                return;
+            }
             tracing::info!(
                 "⏱️ Core Event Time for decompression Keygen: {:?}",
                 start.elapsed()
             );
         }
     }
-    // Update the backup and handle potential failures by incrementing backup errors in the metrics
-    crypto_storage
-        .inner
-        .update_backup_vault(false, op_tag)
-        .await;
 }
 
 #[cfg(test)]
