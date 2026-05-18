@@ -41,7 +41,7 @@ MEM_RUN_FOR: Dict[str, str] = {
 NUM_CTXTS = 10
 
 # TFHE message types and their bit widths. bool is reported with bit_width = 1.
-TFHE_TYPES = ["bool", "u4", "u8", "u16", "u32", "u64", "u128"]
+TFHE_TYPES = ["bool", "u4", "u8", "u16", "u32", "u64"]
 TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "bool": 1,
     "u4": 4,
@@ -49,7 +49,6 @@ TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "u16": 16,
     "u32": 32,
     "u64": 64,
-    "u128": 128,
 }
 # Bit widths kept in the aggregated TDecOne/TDecTwo CSVs. u128 is intentionally dropped.
 TDEC_BIT_WIDTHS = [1, 4, 8, 16, 32, 64]

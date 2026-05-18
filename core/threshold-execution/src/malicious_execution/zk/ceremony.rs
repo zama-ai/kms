@@ -1,15 +1,11 @@
-cfg_if::cfg_if! {
-    if #[cfg(test)] {
-        use std::collections::HashSet;
-        use itertools::Itertools;
-        use tfhe_zk_pok::curve_api::bls12_446 as curve;
-        use crate::{
-            communication::broadcast::Broadcast,
-            zk::ceremony::{make_partial_proof_deterministic, PartialProof,},
-            network_value::BroadcastValue,
-        };
-    }
-}
+use crate::{
+    communication::broadcast::Broadcast,
+    network_value::BroadcastValue,
+    zk::ceremony::{PartialProof, make_partial_proof_deterministic},
+};
+use itertools::Itertools;
+use std::collections::HashSet;
+use tfhe_zk_pok::curve_api::bls12_446 as curve;
 
 use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
@@ -43,11 +39,9 @@ impl Ceremony for InsecureCeremony {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Default)]
-pub(crate) struct DroppingCeremony;
+pub struct DroppingCeremony;
 
-#[cfg(test)]
 #[tonic::async_trait]
 impl Ceremony for DroppingCeremony {
     async fn execute<Z: Ring, S: BaseSessionHandles>(
@@ -64,13 +58,11 @@ impl Ceremony for DroppingCeremony {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Default)]
-pub(crate) struct RushingCeremony<BCast: Broadcast> {
-    pub(crate) broadcast: BCast,
+pub struct RushingCeremony<BCast: Broadcast> {
+    pub broadcast: BCast,
 }
 
-#[cfg(test)]
 #[tonic::async_trait]
 impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
     // this implements an adversary that rushes the protocol,

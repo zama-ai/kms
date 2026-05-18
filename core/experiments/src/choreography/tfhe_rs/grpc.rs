@@ -82,7 +82,7 @@ use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives
 use threshold_execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
+use threshold_execution::zk::ceremony::{Ceremony, InternalPublicParameter};
 use threshold_networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
@@ -279,6 +279,7 @@ pub struct GrpcChoreography<
     SmallOfflineStrategy: Default,
     LargeOfflineStrategyZ64: Default,
     LargeOfflineStrategyZ128: Default,
+    CrsGenStrategy: Default,
 > where
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
@@ -295,6 +296,7 @@ pub struct GrpcChoreography<
     _marker_small_offline_strat: std::marker::PhantomData<SmallOfflineStrategy>,
     _marker_large_offline_z64_strat: std::marker::PhantomData<LargeOfflineStrategyZ64>,
     _marker_large_offline_z128_strat: std::marker::PhantomData<LargeOfflineStrategyZ128>,
+    _marker_crs_gen_strat: std::marker::PhantomData<CrsGenStrategy>,
 }
 
 struct SecureBitGenEvenProducerFactory<Z, S, P>
@@ -322,6 +324,7 @@ impl<
     SmallOfflineStrategy: Default + 'static,
     LargeOfflineStrategyZ64: Default + 'static,
     LargeOfflineStrategyZ128: Default + 'static,
+    CrsGenStrategy: Default + 'static,
 >
     GrpcChoreography<
         EXTENSION_DEGREE,
@@ -329,6 +332,7 @@ impl<
         SmallOfflineStrategy,
         LargeOfflineStrategyZ64,
         LargeOfflineStrategyZ128,
+        CrsGenStrategy,
     >
 where
     // Ring requirements for both Z64 and Z128 polynomials
@@ -357,6 +361,7 @@ where
         >,
     LargeOfflineStrategyZ64: Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, LargeSession>,
     LargeOfflineStrategyZ128: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession>,
+    CrsGenStrategy: Ceremony,
 {
     pub fn new(
         my_role: Role,
@@ -374,6 +379,7 @@ where
             _marker_small_offline_strat: std::marker::PhantomData,
             _marker_large_offline_z64_strat: std::marker::PhantomData,
             _marker_large_offline_z128_strat: std::marker::PhantomData,
+            _marker_crs_gen_strat: std::marker::PhantomData,
         }
     }
 
@@ -540,6 +546,7 @@ impl<
     SmallOfflineStrategy: Default + 'static,
     LargeOfflineStrategyZ64: Default + 'static,
     LargeOfflineStrategyZ128: Default + 'static,
+    CrsGenStrategy: Default + 'static,
 > Choreography
     for GrpcChoreography<
         EXTENSION_DEGREE,
@@ -547,6 +554,7 @@ impl<
         SmallOfflineStrategy,
         LargeOfflineStrategyZ64,
         LargeOfflineStrategyZ128,
+        CrsGenStrategy,
     >
 where
     // Ring requirements for both Z64 and Z128 polynomials
@@ -575,6 +583,7 @@ where
         >,
     LargeOfflineStrategyZ64: Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, LargeSession>,
     LargeOfflineStrategyZ128: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession>,
+    CrsGenStrategy: Ceremony,
 {
     #[instrument(
         name = "PRSS-INIT",
@@ -2404,8 +2413,8 @@ where
 
         let crs_store = self.data.crs_store.clone();
         let my_future = || async move {
-            let real_ceremony = SecureCeremony::default();
-            let pp = real_ceremony
+            let ceremony = CrsGenStrategy::default();
+            let pp = ceremony
                 .execute::<Z64, _>(
                     &mut base_session,
                     witness_dim as usize,
