@@ -176,17 +176,17 @@ impl CentralizedTestEnvBuilder {
         })
     }
 
-    /// Build a KMS server with an existing TestEnv's storage. Use this to verify that state persists across restarts.
-    /// The test material directory stays owned by `env` and must outlive the returned pair.
-    pub async fn from_env(
+    /// Spin up a KMS server on an existing material directory. Use to verify
+    /// state persists across server restarts. `path` must outlive the
+    /// returned pair.
+    pub async fn from_path(
         self,
-        env: &CentralizedTestEnv,
+        path: &Path,
     ) -> Result<(ServerHandle, CoreServiceEndpointClient<Channel>)> {
-        let material_path = env.material_dir.path();
-        let pub_storage = FileStorage::new(Some(material_path), StorageType::PUB, None)?;
-        let priv_storage = FileStorage::new(Some(material_path), StorageType::PRIV, None)?;
+        let pub_storage = FileStorage::new(Some(path), StorageType::PUB, None)?;
+        let priv_storage = FileStorage::new(Some(path), StorageType::PRIV, None)?;
         let backup_vault = if self.with_backup_vault {
-            Some(build_backup_vault(material_path, self.with_custodian_keychain).await?)
+            Some(build_backup_vault(path, self.with_custodian_keychain).await?)
         } else {
             None
         };
