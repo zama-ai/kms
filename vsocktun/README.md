@@ -16,6 +16,8 @@ That means:
 - `vsocktun` does not terminate or re-originate inner TCP flows
 - packet boundaries are preserved explicitly by a small framing layer on top of
   the stream-oriented VSOCK transport
+- when both ends support Linux virtio-net headers, `vsocktun` forwards raw TUN
+  frames end-to-end so GSO and checksum metadata survive across VSOCK
 
 The tunnel is organized around two levels:
 
@@ -26,9 +28,11 @@ Each shard carries a subset of the tunnel traffic. Using multiple shards avoids
 forcing every inner flow through one ordered outer stream, which reduces head
 of-line blocking under concurrent MPC traffic.
 
-The TUN device is configured with Linux offload support through `tun-rs`, so
-the tunnel can carry coalesced or segmented traffic instead of always forcing
-one outer packet per inner TCP segment.
+The TUN device is configured with Linux offload support through `tun-rs`. When
+that succeeds on both sides, the tunnel carries raw TUN frames, including the
+virtio-net metadata needed for TCP segmentation and checksum offload. If both
+sides fall back to plain L3 TUN packets, the relay still works, but without the
+same offload preservation.
 
 ## Responsibilities
 
@@ -106,6 +110,8 @@ Enclave-only:
 ## Operational notes
 
 - Both sides must agree on `--queues` and `--vsock-port`.
+- Both sides must run compatible `vsocktun` protocol versions. Newer binaries
+  reject older handshake versions during session setup.
 - The parent and enclave TUN addresses must be on the same point-to-point
   subnet.
 - The parent-side runtime still needs IP forwarding and NAT configured outside

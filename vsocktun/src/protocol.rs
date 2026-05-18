@@ -3,8 +3,8 @@
 //! The tunnel transport itself is stream-oriented, so this module provides the
 //! two pieces of structure the relay needs on top of raw bytes:
 //! - a small session header that lets both sides assemble shard streams into
-//!   one logical tunnel session
-//! - length-prefixed packet framing so TUN packets can be forwarded without
+//!   one logical tunnel session and agree on the framing mode
+//! - length-prefixed packet framing so TUN payloads can be forwarded without
 //!   depending on any stream-level message boundaries
 
 use std::io;
@@ -12,18 +12,37 @@ use std::io;
 use std::io::{Read, Write};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-const HELLO_MAGIC: [u8; 8] = *b"VSTUN001";
+const HELLO_MAGIC: [u8; 8] = *b"VSTUN002";
 const HELLO_RESERVED_BYTES: usize = 4;
+const HELLO_CAP_RAW_TUN_FRAMES: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Hello {
     pub(crate) session_id: u64,
     pub(crate) queues: u16,
     pub(crate) shard: u16,
+    capabilities: u32,
 }
 
 impl Hello {
     pub(crate) const ENCODED_LEN: usize = HELLO_MAGIC.len() + 8 + 2 + 2 + HELLO_RESERVED_BYTES;
+
+    pub(crate) fn new(session_id: u64, queues: u16, shard: u16, raw_tun_frames: bool) -> Self {
+        Self {
+            session_id,
+            queues,
+            shard,
+            capabilities: if raw_tun_frames {
+                HELLO_CAP_RAW_TUN_FRAMES
+            } else {
+                0
+            },
+        }
+    }
+
+    pub(crate) fn supports_raw_tun_frames(self) -> bool {
+        self.capabilities & HELLO_CAP_RAW_TUN_FRAMES != 0
+    }
 
     pub(crate) fn encode(self) -> [u8; Self::ENCODED_LEN] {
         let mut bytes = [0_u8; Self::ENCODED_LEN];
@@ -31,6 +50,7 @@ impl Hello {
         bytes[8..16].copy_from_slice(&self.session_id.to_be_bytes());
         bytes[16..18].copy_from_slice(&self.queues.to_be_bytes());
         bytes[18..20].copy_from_slice(&self.shard.to_be_bytes());
+        bytes[20..24].copy_from_slice(&self.capabilities.to_be_bytes());
         bytes
     }
 
@@ -75,11 +95,18 @@ impl Hello {
                 "received truncated vsocktun shard identifier",
             )
         })?);
+        let capabilities = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received truncated vsocktun capability flags",
+            )
+        })?);
 
         Ok(Self {
             session_id,
             queues,
             shard,
+            capabilities,
         })
     }
 
@@ -91,10 +118,10 @@ impl Hello {
     }
 }
 
-/// Incremental decoder for framed TUN packets read from a VSOCK byte stream.
+/// Incremental decoder for framed TUN payloads read from a VSOCK byte stream.
 ///
 /// It keeps enough state to resume a partially read frame without assuming that
-/// every socket read returns a whole packet.
+/// every socket read returns a whole frame.
 #[derive(Debug)]
 pub(crate) struct FrameReader {
     header: [u8; 4],
@@ -252,8 +279,8 @@ impl FrameReader {
     }
 }
 
-/// Incremental encoder for framed packets waiting to be written to either side
-/// of the tunnel.
+/// Incremental encoder for framed TUN payloads waiting to be written to either
+/// side of the tunnel.
 ///
 /// This keeps partial-write bookkeeping separate from the higher-level shard
 /// control flow so the same helper can be reused for TUN and VSOCK writes.
@@ -333,11 +360,7 @@ mod tests {
 
     #[test]
     fn hello_round_trip() {
-        let hello = Hello {
-            session_id: 42,
-            queues: 8,
-            shard: 3,
-        };
+        let hello = Hello::new(42, 8, 3, true);
 
         let encoded = hello.encode();
         let mut file = tempfile().expect("temporary file should be created");
@@ -347,6 +370,7 @@ mod tests {
 
         let decoded = Hello::read_from(&mut file).expect("hello bytes should decode");
         assert_eq!(decoded, hello);
+        assert!(decoded.supports_raw_tun_frames());
     }
 
     #[test]
