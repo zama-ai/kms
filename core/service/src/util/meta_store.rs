@@ -1,53 +1,87 @@
-use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
-use anyhow::bail;
-use async_cell::sync::AsyncCell;
+use crate::{anyhow_error_and_log, some_or_err};
 use kms_grpc::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
-#[cfg(feature = "non-wasm")]
-use tokio::sync::RwLockReadGuard;
-use tokio::sync::{Mutex, MutexGuard, Semaphore};
 use tracing;
-#[cfg(feature = "non-wasm")]
-use wasm_bindgen::convert::Upcast;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
         use crate::engine::utils::MetricedError;
         use anyhow::anyhow;
         use std::fmt::{self};
+        use std::time::Duration;
         use tokio::sync::{RwLock, RwLockWriteGuard};
+        use tokio::time::Instant;
     }
 }
 
-pub struct MetaStorePermit<'a> {
+/// Cadence at which `retrieve_from_meta_store` re-checks a pending entry while
+/// waiting for it to complete. Picked to keep worst-case lock acquisitions
+/// bounded (60s / 250ms = 240 reads) while keeping latency-after-completion
+/// well under half a second.
+#[cfg(feature = "non-wasm")]
+const META_STORE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Token proving the holder is the rightful updater of a single MetaStore entry.
+///
+/// Returned by [`MetaStore::insert`]. Required by [`MetaStore::update`] and
+/// [`MetaStore::delete`] to perform the mutation. If the holder drops the
+/// permit without consuming it, the entry is left in `Pending`, and any
+/// other caller can finish or remove it via [`MetaStore::try_update`] or
+/// [`MetaStore::try_delete`].
+///
+/// "Permit alive" is tracked by the strong count of an internal `Arc<()>`:
+/// while the permit exists, `Arc::strong_count` of the entry's claim arc is
+/// at least 2 (one held by the entry, one by the permit). `try_*` paths
+/// check `strong_count == 1` to determine that no permit is outstanding.
+pub struct MetaStorePermit {
     req_id: RequestId,
-    mutex_guard: MutexGuard<'a, ()>,
+    _claim: Arc<()>,
 }
 
-enum EntryState<T> {
-    Pending(Mutex<()>), // This is used to lock the entry for updates, e.g. to prevent deletion while an update is in progress.
+impl MetaStorePermit {
+    pub fn req_id(&self) -> &RequestId {
+        &self.req_id
+    }
+}
+
+impl Drop for MetaStorePermit {
+    fn drop(&mut self) {
+        tracing::debug!(
+            "MetaStorePermit for request ID {} dropped; claim released",
+            self.req_id
+        );
+    }
+}
+
+pub enum EntryState<T> {
+    /// Inserted but not yet completed. The `Arc<()>` is the permit-tracking
+    /// token: its strong count is `1 + (number of live permits for this entry)`.
+    Pending(Arc<()>),
+    /// Completed with a successful or error result. The success value is
+    /// wrapped in `Arc` so retrievers can share it cheaply.
+    Done(Result<Arc<T>, String>),
+    /// Tombstone after deletion.
     Deleted,
-    Done((Result<T, String>, Mutex<()>)), // TODO should embed Arc, and require this at insertion time
 }
 
-/// Data structure that stores elements that are being processed and their status (Started, Done, Error).
-/// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
+/// Data structure that stores elements that are being processed and their status (Pending, Done, Deleted).
+/// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done], if there are sufficiently many.
 pub struct MetaStore<T> {
     // The maximum amount of entries in total (finished and unfinished)
     capacity: usize,
     // The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
     min_cache: usize,
     // Storage of all elements in the system
-    storage: HashMap<RequestId, Arc<EntryState<T>>>,
+    storage: HashMap<RequestId, EntryState<T>>,
     // Queue of all elements that have been completed
     complete_queue: VecDeque<RequestId>,
-    // TODO should we embed a semaphore to allow parallel usage of meta store? and have limititation
 }
 
-impl<T: Clone> MetaStore<T> {
+impl<T> MetaStore<T> {
     /// Creates a new MetaStore with a given capacity and minimal cache size.
     /// In more detail, this means that the MetaStore will be able to hold [capacity] of total elements,
     /// of which we can be sure that at least [min_cache] elements are kept in the cache after completion
@@ -72,14 +106,14 @@ impl<T: Clone> MetaStore<T> {
         }
     }
 
-    // Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
+    /// Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
     pub fn new_from_map(map: HashMap<RequestId, T>) -> Self {
         let mut completed_queue = VecDeque::new();
         let storage = map
             .into_iter()
             .map(|(key, value)| {
                 completed_queue.push_back(key);
-                (key, Arc::new(EntryState::Done((Ok(value), Mutex::new(())))))
+                (key, EntryState::Done(Ok(Arc::new(value))))
             })
             .collect();
 
@@ -94,12 +128,6 @@ impl<T: Clone> MetaStore<T> {
     pub fn exists(&self, request_id: &RequestId) -> bool {
         self.storage.contains_key(request_id)
     }
-
-    // /// Get cell reference for status checking without cloning Arc
-    // /// Returns borrowed reference to avoid Arc::clone() overhead
-    // pub fn get_cell(&self, request_id: &RequestId) -> Option<&Arc<AsyncCell<Result<T, String>>>> {
-    //     self.storage.get(request_id)
-    // }
 
     /// Verify the invariant that storage.len() >= complete_queue.len()
     /// This is critical for preventing underflow in get_processing_count()
@@ -120,35 +148,37 @@ impl<T: Clone> MetaStore<T> {
     // fails, which means that the queue is empty, and thus we do not have any non-local effects.
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
-    /// Insert a new element, throwing an exception if the element already exists or if the system is fully loaded.
+    /// Insert a new element, throwing an error if the element already exists or if the system is fully loaded.
+    ///
+    /// On success, returns a [`MetaStorePermit`] granting the caller the right to
+    /// later [`update`] or [`delete`] this entry. Hold the permit until the
+    /// mutation; drop it if the work is abandoned (other callers can recover via
+    /// `try_update` / `try_delete`).
     ///
     /// Elements can trivially be inserted until the store reaches its [capacity].
-    /// Once the store is full, we will remove old elements that have completed, but only once we have at least [min_cache] elements of them.
-    /// This is to ensure that:
-    /// 1. there are never more than [capacity] - [min_cache] elements currently being processed (id not in `complete_queue`) and
-    /// 2. there is enough time to retrieve an element before it is removed. This timespan is the time it takes to process [min_cache] elements.
-    ///
-    /// If the store is at max capacity and not enough elements have been completed, we will not accept new elements to be inserted.
+    /// Once the store is full, old completed elements are evicted, but only once we have at least [min_cache] of them.
+    /// This ensures:
+    /// 1. there are never more than [capacity] - [min_cache] elements currently being processed, and
+    /// 2. there is enough time to retrieve an element before it is removed.
     pub fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<MetaStorePermit> {
-        if self.exists(request_id) {
+        // `Deleted` is a permanent tombstone: a request id, once deleted, may
+        // not be reused for a fresh insert. Callers that need to overwrite an
+        // existing entry should use [`replace_done`] instead.
+        if self.storage.contains_key(request_id) {
             return Err(anyhow::anyhow!(
                 "The element with ID {request_id} already stored exists. Can not insert it more than once.",
             ));
         }
         if self.storage.len() >= self.capacity {
-            // We have reached the capacity limit. Delete an old element.
             if self.complete_queue.len() <= self.min_cache {
                 return Err(anyhow_error_and_log(
                     "The system is fully loaded and the cache of finished elements is not at minimum size yet. Cannot insert new element.",
                 ));
             } else {
-                // Remove the first (oldest) element from the age queue
                 let old_request_id = some_or_err(
                     self.complete_queue.pop_front(),
                     "Could not remove an old request from the cache".to_string(),
                 )?;
-                // and also remove it from the storage map
-                // If storage removal fails, we need to restore the complete_queue to maintain invariant
                 if self.storage.remove(&old_request_id).is_none() {
                     self.complete_queue.push_front(old_request_id);
                     return Err(anyhow_error_and_log(format!(
@@ -157,170 +187,181 @@ impl<T: Clone> MetaStore<T> {
                 }
             }
         }
-        let mutex = Mutex::new(());
-        let permit = mutex
-            .try_lock()
-            .expect("Lock must be available after mutex construction");
-        // Ignore the result since we have already checked that the element does not exist
-        let _ = self
-            .storage
-            .insert(request_id.to_owned(), Arc::new(EntryState::Pending(mutex)));
-
-        Ok(MetaStorePermit {
+        let claim = Arc::new(());
+        let permit = MetaStorePermit {
             req_id: *request_id,
-            mutex_guard: permit,
-        })
+            _claim: Arc::clone(&claim),
+        };
+        self.storage.insert(*request_id, EntryState::Pending(claim));
+        Ok(permit)
     }
 
-    /// Sets the value of an already existing element.
+    /// Sets the value of an already existing element. Consumes the permit.
     ///
-    /// Observe that this enforces the following possible transistions:
-    /// Pending -> Done(Ok)  -> Deleted
-    /// Pending -> Done(Err) -> Deleted
-    /// Pending -> Deleted
-    /// Returns an error if something goes wrong, like
-    /// the element does not exist or the value was already set.
+    /// Enforces the state transitions:
+    /// - Pending -> Done(Ok)
+    /// - Pending -> Done(Err)
+    ///
+    /// Returns an error if the element does not exist, has already been
+    /// completed, or has been deleted.
     pub fn update(
         &mut self,
         update: Result<T, String>,
         permit: MetaStorePermit,
     ) -> anyhow::Result<()> {
-        let mut cell = if let Some(cell) = self.storage.get_mut(&permit.req_id) {
-            cell
-        } else {
+        let req_id = permit.req_id;
+        let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
+            anyhow_error_and_log(format!(
+                "The element with ID {req_id} does not exist, update is not allowed"
+            ))
+        })?;
+        if !matches!(cell, EntryState::Pending(_)) {
             return Err(anyhow_error_and_log(format!(
-                "The element with ID {} does not exist, update is not allowed",
-                permit.req_id
+                "The element with ID {req_id} is not in a pending state, update is not allowed"
             )));
-        };
-        match cell.as_ref() {
-            EntryState::Pending(mutex) => {
-                // Update state
-                *cell = Arc::new(EntryState::Done((update, *mutex)));
-            }
-            _ => {
-                return Err(anyhow_error_and_log(format!(
-                    "The element with ID {} is not in a pending state, update is not allowed",
-                    permit.req_id
-                )));
-            }
         }
-        self.complete_queue.push_back(permit.req_id);
-        // Observe the permit is dropped here, which releases the lock and allows deletion of this element if needed
+        *cell = EntryState::Done(update.map(Arc::new));
+        self.complete_queue.push_back(req_id);
+        // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
     }
 
+    /// Like [`update`], but for callers that do not hold a permit. Succeeds
+    /// only if no other live permit exists for this entry (i.e. the original
+    /// permit was dropped without being used).
     pub fn try_update(
         &mut self,
         request_id: &RequestId,
         update: Result<T, String>,
     ) -> anyhow::Result<()> {
-        // Try to lock the entry for an update.
-        let mut entry = match self.storage.get_mut(request_id) {
-            Some(entry) => entry,
-            None => anyhow::bail!(
-                "The element with ID {request_id} does not exist, update is not allowed"
-            ),
-        };
-        if let EntryState::Pending(mutex) = entry.as_ref() {
-            if let Ok(permit) = mutex.try_lock() {
-                // We have the permit, we can proceed with the update
-                self.update(
-                    update,
-                    MetaStorePermit {
-                        req_id: *request_id,
-                        mutex_guard: permit,
-                    },
-                )
-            } else {
-                // The entry is currently locked for update by another thread, so we cannot update it right now
-                anyhow::bail!("The element with ID {request_id} is currently locked for update");
+        let claim = {
+            let entry = self.storage.get(request_id).ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "The element with ID {request_id} does not exist, update is not allowed"
+                ))
+            })?;
+            match entry {
+                EntryState::Pending(arc) => {
+                    if Arc::strong_count(arc) > 1 {
+                        anyhow::bail!(
+                            "The element with ID {request_id} is currently locked for update"
+                        );
+                    }
+                    Arc::clone(arc)
+                }
+                EntryState::Done(_) => {
+                    return Err(anyhow_error_and_log(format!(
+                        "The element with ID {request_id} is not in a pending state, update is not allowed"
+                    )));
+                }
+                EntryState::Deleted => {
+                    return Err(anyhow_error_and_log(format!(
+                        "The element with ID {request_id} has been deleted, update is not allowed"
+                    )));
+                }
             }
-        } else {
-            // The entry is not in a pending state, so we cannot update it
-            anyhow::bail!(
-                "The element with ID {request_id} is not in a pending state, update is not allowed"
-            );
-        }
+        };
+        self.update(
+            update,
+            MetaStorePermit {
+                req_id: *request_id,
+                _claim: claim,
+            },
+        )
     }
 
-    /// Retrieve the cell of an element and return None if it does not exist
-    pub fn retrieve(&self, request_id: &RequestId) -> Option<&Arc<EntryState<T>>> {
+    /// Set the entry at `request_id` directly to `Done(Ok(value))`, either by
+    /// overwriting an existing `Done` entry or by inserting a fresh one if no
+    /// entry exists. Returns an error if the entry is currently `Pending`
+    /// (a live operation is in progress) or `Deleted` (tombstone).
+    ///
+    /// Intended for migration / admin flows that rewrite the metadata of an
+    /// already-completed entry — or seed a fresh one — without going through
+    /// the standard `insert → update` lifecycle. Bypasses the permit
+    /// mechanism on purpose: no live permit can exist for a `Done` entry, and
+    /// fresh inserts via this path are explicitly admin-scoped.
+    pub(crate) fn replace_done(&mut self, request_id: &RequestId, value: T) -> anyhow::Result<()> {
+        match self.storage.get(request_id) {
+            Some(EntryState::Pending(_)) => {
+                return Err(anyhow_error_and_log(format!(
+                    "The element with ID {request_id} is currently pending, replace_done is not allowed"
+                )));
+            }
+            Some(EntryState::Deleted) => {
+                return Err(anyhow_error_and_log(format!(
+                    "The element with ID {request_id} has been deleted, replace_done is not allowed"
+                )));
+            }
+            Some(EntryState::Done(_)) => {
+                // Existing Done entry — overwrite in place, keep complete_queue slot.
+                self.storage
+                    .insert(*request_id, EntryState::Done(Ok(Arc::new(value))));
+            }
+            None => {
+                // Fresh insert — record completion.
+                self.storage
+                    .insert(*request_id, EntryState::Done(Ok(Arc::new(value))));
+                self.complete_queue.push_back(*request_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Retrieve the state of an element and return None if it does not exist.
+    pub fn retrieve(&self, request_id: &RequestId) -> Option<&EntryState<T>> {
         self.storage.get(request_id)
     }
 
-    /// Mark an existing entry in the meta store as deleted, regardless of its current state.
-    /// Returns the removed entry if it existed, and None if it did not exist.
-    pub fn delete(&mut self, permit: MetaStorePermit) -> anyhow::Result<Arc<EntryState<T>>> {
-        let mut entry = match self.storage.get_mut(&permit.req_id) {
-            Some(entry) => entry,
-            None => anyhow::bail!(
-                "The element with ID {} does not exist, deletion is not allowed",
-                permit.req_id
-            ),
-        };
-
-        match entry.as_ref() {
-            EntryState::Pending(_) | EntryState::Done(_) => {
-                let old_entry = Arc::clone(entry);
-                // Update state
-                *entry = Arc::new(EntryState::Deleted);
-                return Ok(old_entry);
-            }
-            _ => {
-                return Err(anyhow_error_and_log(format!(
-                    "The element with ID {} is not in a pending or completed state, it is not possible to delete it",
-                    permit.req_id
-                )));
-            }
+    /// Mark an existing entry as deleted, regardless of whether it was Pending
+    /// or Done. Consumes the permit. Returns the previous state. If the previous
+    /// state was `Done`, the entry is also removed from the completion queue.
+    pub fn delete(&mut self, permit: MetaStorePermit) -> anyhow::Result<EntryState<T>> {
+        let req_id = permit.req_id;
+        let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
+            anyhow::anyhow!("The element with ID {req_id} does not exist, deletion is not allowed")
+        })?;
+        if matches!(cell, EntryState::Deleted) {
+            anyhow::bail!("The element with ID {req_id} has already been deleted");
         }
+        let old = std::mem::replace(cell, EntryState::Deleted);
+        if matches!(old, EntryState::Done(_)) {
+            self.complete_queue.retain(|id| id != &req_id);
+        }
+        Ok(old)
     }
 
-    pub fn try_delete(&mut self, request_id: &RequestId) -> anyhow::Result<Arc<EntryState<T>>> {
-        // Try to lock the entry for an update.
-        let mut entry = match self.storage.get_mut(request_id) {
-            Some(entry) => entry,
-            None => anyhow::bail!(
-                "The element with ID {request_id} does not exist, update is not allowed"
-            ),
-        };
-        match entry.as_ref() {
-            EntryState::Pending(mutex) => {
-                if let Ok(permit) = mutex.try_lock() {
-                    // We have the permit, we can proceed with the update
-                    self.delete(MetaStorePermit {
-                        req_id: *request_id,
-                        mutex_guard: permit,
-                    })
-                } else {
-                    // The entry is currently locked
-                    anyhow::bail!(
-                        "The element with ID {request_id} is currently locked and cannot be deleted right now"
-                    );
+    /// Like [`delete`], but for callers that do not hold a permit. Succeeds
+    /// for any non-Deleted state when no live permit is outstanding. Returns
+    /// the previous state.
+    pub fn try_delete(&mut self, request_id: &RequestId) -> anyhow::Result<EntryState<T>> {
+        {
+            let entry = self.storage.get(request_id).ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "The element with ID {request_id} does not exist, deletion is not allowed"
+                ))
+            })?;
+            match entry {
+                EntryState::Pending(arc) => {
+                    if Arc::strong_count(arc) > 1 {
+                        anyhow::bail!(
+                            "The element with ID {request_id} is currently locked and cannot be deleted"
+                        );
+                    }
                 }
-            }
-            EntryState::Done((_, mutex)) => {
-                if let Ok(permit) = mutex.try_lock() {
-                    // We have the permit, we can proceed with the update
-                    let _ = self.delete(MetaStorePermit {
-                        req_id: *request_id,
-                        mutex_guard: permit,
-                    })?;
-                    Ok(Arc::clone(entry))
-                } else {
-                    // The entry is currently locked
-                    anyhow::bail!(
-                        "The element with ID {request_id} is currently locked and cannot be deleted right now"
-                    );
+                EntryState::Done(_) => { /* no permit possible on Done */ }
+                EntryState::Deleted => {
+                    anyhow::bail!("The element with ID {request_id} has already been deleted");
                 }
-            }
-            _ => {
-                // The entry is not in a pending or done state, so we cannot update it
-                anyhow::bail!(
-                    "The element with ID {request_id} is not in a pending or completed state, deletion is not allowed"
-                );
             }
         }
+        // Safe: we just verified the entry exists and is not Deleted.
+        let cell = self.storage.get_mut(request_id).unwrap();
+        // TODO ensure we can just clone the old entry
+        let old = std::mem::replace(cell, EntryState::Deleted);
+        if matches!(old, EntryState::Done(_)) {
+            self.complete_queue.retain(|id| id != request_id);
+        }
+        Ok(old)
     }
 
     /// Get the maximum capacity of this MetaStore
@@ -345,10 +386,7 @@ impl<T: Clone> MetaStore<T> {
 
     /// Get the number of items currently being processed
     pub fn get_processing_count(&self) -> usize {
-        // Non-fallible invariant check that logs errors but doesn't panic
         self.verify_invariant();
-
-        // Ensure invariant: storage.len() >= complete_queue.len() to prevent underflow
         self.storage.len().saturating_sub(self.complete_queue.len())
     }
 
@@ -376,34 +414,32 @@ impl<T: Clone> MetaStore<T> {
     pub fn get_failed_request_ids(&self) -> Vec<RequestId> {
         self.complete_queue
             .iter()
-            .filter_map(|id| {
-                // Direct HashMap access - items in complete_queue should exist in storage
-                match self.storage.get(id) {
-                    Some(cell) => {
-                        match cell.as_ref() {
-                            EntryState::Pending(_) => None,
-                            EntryState::Deleted => None,
-                            EntryState::Done((done, _)) => {
-                                match done {
-                                    Ok(_) => None,
-                                    Err(_) => Some(*id),
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        // This should never happen - indicates invariant violation
-                        tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
-                        None
-                    }
+            .filter_map(|id| match self.storage.get(id) {
+                Some(EntryState::Done(Err(_))) => Some(*id),
+                Some(_) => None,
+                None => {
+                    tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
+                    None
                 }
+            })
+            .collect()
+    }
+
+    /// Get deleted request IDs (requests that have been deleted)
+    /// WARNING: This is a slow operation
+    pub fn get_deleted_request_ids(&self) -> Vec<RequestId> {
+        self.storage
+            .iter()
+            .filter_map(|(id, state)| match state {
+                EntryState::Deleted => Some(*id),
+                _ => None,
             })
             .collect()
     }
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) fn add_req_to_meta_store<T: Clone>(
+pub(crate) fn add_req_to_meta_store<T>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
@@ -416,16 +452,15 @@ pub(crate) fn add_req_to_meta_store<T: Clone>(
             tonic::Code::AlreadyExists,
         ));
     }
-    let permit = meta_store.insert(req_id).map_err(|e| {
+    meta_store.insert(req_id).map_err(|e| {
         // We likely reached capacity here
         MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
-    })?;
-    Ok(permit)
+    })
 }
 
 #[cfg(feature = "non-wasm")]
 pub(crate) fn update_req_in_meta_store<
-    T: Clone,
+    T,
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
 >(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
@@ -435,73 +470,47 @@ pub(crate) fn update_req_in_meta_store<
 ) -> bool {
     match result {
         Ok(res) => update_ok_req_in_meta_store(meta_store, permit, res, request_metric),
-        Result::Err(e) => {
+        Err(e) => {
             update_err_req_in_meta_store(meta_store, permit, format!("{e:?}"), request_metric)
         }
     }
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
+pub(crate) fn update_ok_req_in_meta_store<T>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     permit: MetaStorePermit,
     result: T,
     request_metric: &'static str,
 ) -> bool {
-    let req_id = permit.req_id.clone();
+    let req_id = permit.req_id;
     match meta_store.update(Ok(result), permit) {
         Ok(()) => true,
         Err(e) => {
-            // Update error counter for meta-store update failure
             MetricedError::handle_unreturnable_error(request_metric, Some(req_id), e);
             false
         }
     }
 }
 
+/// Helper method for updating the meta store with an error result.
+/// The method gracefully handles potential update failures by logging and updating metrics.
+/// [permit] is consumed to mark the entry done.
+/// [error] is the error message to store.
+/// [request_metric] is a free-form string used only for error logging the origin of the failure.
+/// Returns true if the update was successful, false otherwise.
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn ensure_meta_store_request_pending<T: Clone>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
-    req_id: &RequestId,
-) -> anyhow::Result<()> {
-    let guarded_meta_store = meta_store.read().await;
-    match guarded_meta_store.retrieve(req_id) {
-        Some(res) => {
-            if matches!(res.as_ref(), EntryState::Pending(_)) {
-                Ok(())
-            } else {
-                anyhow::bail!(
-                    "Request with ID {req_id} is not pending in the meta store as required for this operation"
-                )
-            }
-        }
-        None => {
-            anyhow::bail!(
-                "Request with ID {req_id} is not pending in the meta store as required for this operation"
-            )
-        }
-    }
-}
-
-/// Helper method for updating the meta store with an error result
-/// The method gracefully handles potential update failures by logging and updating metrics
-/// [req_id] is the request ID to update
-/// [error] is the error message to store
-/// [request_metric] is a free-form string used only for error logging the origin of the failure
-/// Returns true if the update was successful, false otherwise
-#[cfg(feature = "non-wasm")]
-pub(crate) fn update_err_req_in_meta_store<T: Clone>(
+pub(crate) fn update_err_req_in_meta_store<T>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     permit: MetaStorePermit,
     error: String,
     request_metric: &'static str,
 ) -> bool {
-    let req_id = permit.req_id.clone();
+    let req_id = permit.req_id;
     MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
     match meta_store.update(Err(error.clone()), permit) {
         Ok(()) => true,
         Err(e) => {
-            // We already logged the original error, so just log the update failure here as there is not much else we can do
             tracing::error!(
                 "Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}"
             );
@@ -510,147 +519,171 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     }
 }
 
-/// Helper method for retrieving the result of a request from an appropriate meta store
-/// [req_id] is the request ID to retrieve
-/// [request_type] is a free-form string used only for error logging the origin of the failure
+/// Like [`update_req_in_meta_store`] but does not require a permit. Internally
+/// dispatches to [`try_update_ok_req_in_meta_store`] or
+/// [`try_update_err_req_in_meta_store`].
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn retrieve_from_meta_store<T: Clone>(
-    meta_store: RwLockReadGuard<'_, MetaStore<T>>,
+pub(crate) fn try_update_req_in_meta_store<
+    T,
+    E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
+>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
-    metric_scope: &'static str,
-) -> Result<T, MetricedError> {
-    let handle = meta_store.retrieve(req_id);
-    drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
-    handle_res_metriced(handle, req_id, metric_scope).await
-}
-
-/// Like [`retrieve_from_meta_store`] but with a custom server-side wait duration.
-/// Use this for operations (e.g. preprocessing) that are inherently slower than
-/// the default 60-second window.
-#[cfg(feature = "non-wasm")]
-pub(crate) async fn retrieve_from_meta_store_with_timeout<T: Clone>(
-    meta_store: RwLockReadGuard<'_, MetaStore<T>>,
-    req_id: &RequestId,
-    metric_scope: &'static str,
-    wait_secs: u64,
-) -> Result<T, MetricedError> {
-    let handle = meta_store.retrieve(req_id);
-    drop(meta_store); // Release the read lock early
-    handle_res_metriced_with_timeout(handle, req_id, metric_scope, wait_secs).await
-}
-
-#[cfg(feature = "non-wasm")]
-pub async fn handle_res<T: Clone>(
-    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
-    req_id: &RequestId,
-) -> anyhow::Result<T> {
-    match handle {
-        None => {
-            bail!("Could not retrieve the result with request ID {req_id}. It does not exist")
+    result: Result<T, E>,
+    request_metric: &'static str,
+) -> bool {
+    match result {
+        Ok(res) => try_update_ok_req_in_meta_store(meta_store, req_id, res, request_metric),
+        Err(e) => {
+            try_update_err_req_in_meta_store(meta_store, req_id, format!("{e:?}"), request_metric)
         }
-        Some(cell) => {
-            let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
-                cell.get(),
-            )
-            .await;
-            // Peel off the potential errors
-            if let Ok(result) = result {
-                match result {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        let msg = format!(
-                            "Could not retrieve the result with request ID {req_id} since it finished with an error: {e}"
-                        );
-                        tracing::warn!(msg);
-                        bail!(msg);
-                    }
-                }
-            } else {
-                let msg = format!(
-                    "Could not retrieve the result with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
-                );
-                tracing::info!(msg);
-                bail!(msg);
-            }
-            // Note that this is not logged as an error as we expect calls to take some time to be completed
+    }
+}
+
+/// Like [`update_ok_req_in_meta_store`] but does not require a permit. Uses
+/// [`MetaStore::try_update`] internally; succeeds only if no live permit is
+/// outstanding for this entry. Intended for spawned task flows that cannot
+/// easily thread the permit through (e.g. internal updates from helper
+/// functions in `vault/storage/crypto_material`).
+#[cfg(feature = "non-wasm")]
+pub(crate) fn try_update_ok_req_in_meta_store<T>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    result: T,
+    request_metric: &'static str,
+) -> bool {
+    match meta_store.try_update(req_id, Ok(result)) {
+        Ok(()) => true,
+        Err(e) => {
+            MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
+            false
+        }
+    }
+}
+
+/// Like [`update_err_req_in_meta_store`] but does not require a permit. Uses
+/// [`MetaStore::try_update`] internally; succeeds only if no live permit is
+/// outstanding for this entry. Intended for error paths that cannot easily
+/// thread the permit through (e.g. deep matchers in spawned task handlers).
+#[cfg(feature = "non-wasm")]
+pub(crate) fn try_update_err_req_in_meta_store<T>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    error: String,
+    request_metric: &'static str,
+) -> bool {
+    MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
+    match meta_store.try_update(req_id, Err(error.clone())) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!(
+                "Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}"
+            );
+            false
         }
     }
 }
 
 #[cfg(feature = "non-wasm")]
-async fn handle_res_metriced<T: Clone>(
-    handle: Option<Arc<EntryState<T>>>,
+pub(crate) async fn ensure_meta_store_request_pending<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    req_id: &RequestId,
+) -> anyhow::Result<()> {
+    let guarded = meta_store.read().await;
+    match guarded.retrieve(req_id) {
+        Some(EntryState::Pending(_)) => Ok(()),
+        Some(EntryState::Done(_)) => anyhow::bail!(
+            "Error while updating meta store for {req_id}: request is already completed"
+        ),
+        Some(EntryState::Deleted) | None => {
+            anyhow::bail!("Error while updating meta store for {req_id}: request is missing")
+        }
+    }
+}
+
+/// Helper for retrieving the result of a request from a meta store.
+///
+/// Polls the meta store every [`META_STORE_POLL_INTERVAL`] until either the
+/// entry is `Done`, becomes unreachable, or the timeout expires.
+///
+/// Returns `Arc<T>` on success; `Unavailable` if the entry is still pending at
+/// timeout; `NotFound` if missing or deleted; `Internal`/`Aborted` if the entry
+/// completed with an error.
+///
+/// Each poll iteration acquires the read lock briefly and releases it before
+/// sleeping, so other writers are not blocked.
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn retrieve_from_meta_store<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
     req_id: &RequestId,
     metric_scope: &'static str,
-) -> Result<T, MetricedError> {
-    handle_res_metriced_with_timeout(
-        handle,
-        req_id,
-        metric_scope,
-        DURATION_WAITING_ON_RESULT_SECONDS,
-    )
-    .await
+) -> Result<Arc<T>, MetricedError> {
+    let deadline = Instant::now() + Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS);
+    loop {
+        match poll_entry(meta_store, req_id, metric_scope).await {
+            PollOutcome::Done(res) => return res,
+            PollOutcome::Pending => {
+                if Instant::now() >= deadline {
+                    let msg = format!(
+                        "Result in scope {metric_scope} with request ID {req_id} not completed after {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                    );
+                    tracing::info!(msg);
+                    return Err(MetricedError::new(
+                        metric_scope,
+                        Some(*req_id),
+                        anyhow!(msg),
+                        tonic::Code::Unavailable,
+                    ));
+                }
+                tokio::time::sleep(META_STORE_POLL_INTERVAL).await;
+            }
+        }
+    }
 }
 
 #[cfg(feature = "non-wasm")]
-async fn handle_res_metriced_with_timeout<T: Clone>(
-    handle: Option<Arc<EntryState<T>>>,
+enum PollOutcome<T> {
+    Done(Result<Arc<T>, MetricedError>),
+    Pending,
+}
+
+#[cfg(feature = "non-wasm")]
+async fn poll_entry<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
     req_id: &RequestId,
     metric_scope: &'static str,
-    wait_secs: u64,
-) -> Result<T, MetricedError> {
-    match handle {
-        None => {
+) -> PollOutcome<T> {
+    let guard = meta_store.read().await;
+    match guard.retrieve(req_id) {
+        None | Some(EntryState::Deleted) => {
             let msg = format!(
                 "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
             );
-
-            Err(MetricedError::new(
+            PollOutcome::Done(Err(MetricedError::new(
                 metric_scope,
                 Some(*req_id),
                 anyhow!(msg),
                 tonic::Code::NotFound,
-            ))
+            )))
         }
-        Some(cell) => {
-            let result =
-                tokio::time::timeout(tokio::time::Duration::from_secs(wait_secs), cell.get()).await;
-            // Peel off the potential errors
-            if let Ok(result) = result {
-                match result {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        let msg = format!(
-                            "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
-                        );
-                        tracing::warn!(msg);
-                        let code = if e.to_ascii_lowercase().contains("abort") {
-                            tonic::Code::Aborted
-                        } else {
-                            tonic::Code::Internal
-                        };
-                        Err(MetricedError::new(
-                            metric_scope,
-                            Some(*req_id),
-                            anyhow!(msg),
-                            code,
-                        ))
-                    }
-                }
+        Some(EntryState::Pending(_)) => PollOutcome::Pending,
+        Some(EntryState::Done(Ok(arc))) => PollOutcome::Done(Ok(Arc::clone(arc))),
+        Some(EntryState::Done(Err(e))) => {
+            let msg = format!(
+                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
+            );
+            tracing::warn!(msg);
+            let code = if e.to_ascii_lowercase().contains("abort") {
+                tonic::Code::Aborted
             } else {
-                let msg = format!(
-                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {wait_secs} seconds"
-                );
-                tracing::info!(msg);
-                Err(MetricedError::new(
-                    metric_scope,
-                    Some(*req_id),
-                    anyhow!(msg),
-                    tonic::Code::Unavailable,
-                ))
-            }
-            // Note that this is not logged as an error as we expect calls to take some time to be completed
+                tonic::Code::Internal
+            };
+            PollOutcome::Done(Err(MetricedError::new(
+                metric_scope,
+                Some(*req_id),
+                anyhow!(msg),
+                code,
+            )))
         }
     }
 }
@@ -660,29 +693,46 @@ mod tests {
     use super::*;
     use crate::engine::base::derive_request_id;
     use kms_grpc::RequestId;
-    use tokio::sync::RwLock;
+
+    fn assert_done_ok<T: PartialEq + std::fmt::Debug>(
+        store: &MetaStore<T>,
+        id: &RequestId,
+        expected: &T,
+    ) {
+        match store.retrieve(id).expect("entry missing") {
+            EntryState::Done(Ok(arc)) => assert_eq!(arc.as_ref(), expected),
+            other => panic!(
+                "expected Done(Ok), got {:?}",
+                match other {
+                    EntryState::Pending(_) => "Pending",
+                    EntryState::Done(Err(_)) => "Done(Err)",
+                    EntryState::Deleted => "Deleted",
+                    EntryState::Done(Ok(_)) => unreachable!(),
+                }
+            ),
+        }
+    }
 
     #[test]
     fn sunshine() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
-        // Data does not exist
         assert!(!meta_store.exists(&request_id));
         assert!(
             meta_store
-                .update(&request_id, Ok("OK".to_string()))
+                .try_update(&request_id, Ok("OK".to_string()))
                 .is_err()
         );
 
-        meta_store.insert(&request_id).unwrap();
-        // Data exits
+        let permit = meta_store.insert(&request_id).unwrap();
         assert!(meta_store.exists(&request_id));
-        assert!(meta_store.update(&request_id, Ok("OK".to_string())).is_ok());
+        assert!(meta_store.update(Ok("OK".to_string()), permit).is_ok());
+        assert_done_ok(&meta_store, &request_id, &"OK".to_string());
 
-        // Re-update not allowed
+        // Re-update not allowed (entry is now Done; try_update sees not Pending)
         assert!(
             meta_store
-                .update(&request_id, Ok("NOK".to_string()))
+                .try_update(&request_id, Ok("NOK".to_string()))
                 .is_err()
         );
     }
@@ -690,139 +740,127 @@ mod tests {
     #[test]
     fn test_kickout_of_errors() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let request_id_1: RequestId = derive_request_id("1").unwrap();
-        let request_id_2: RequestId = derive_request_id("2").unwrap();
-        let request_id_3: RequestId = derive_request_id("3").unwrap();
-        meta_store.insert(&request_id_1).unwrap();
-        assert!(
-            meta_store
-                .update(&request_id_1, Err("Err1".to_string()))
-                .is_ok()
-        );
-        meta_store.insert(&request_id_2).unwrap();
-        assert!(
-            meta_store
-                .update(&request_id_2, Ok("OK2".to_string()))
-                .is_ok()
-        );
-        // The storage is full so we should kick the oldest element out
-        meta_store.insert(&request_id_3).unwrap();
-        assert!(
-            meta_store
-                .update(&request_id_3, Err("Err3".to_string()))
-                .is_ok()
-        );
+        let id1: RequestId = derive_request_id("1").unwrap();
+        let id2: RequestId = derive_request_id("2").unwrap();
+        let id3: RequestId = derive_request_id("3").unwrap();
+        let p1 = meta_store.insert(&id1).unwrap();
+        assert!(meta_store.update(Err("Err1".to_string()), p1).is_ok());
+        let p2 = meta_store.insert(&id2).unwrap();
+        assert!(meta_store.update(Ok("OK2".to_string()), p2).is_ok());
+        // storage full, eviction should kick id1 out
+        let p3 = meta_store.insert(&id3).unwrap();
+        assert!(meta_store.update(Err("Err3".to_string()), p3).is_ok());
 
-        // Validate the oldest element is removed
-        assert!(!meta_store.exists(&request_id_1));
-        // Validate the two newer elements are still there
-        assert!(meta_store.exists(&request_id_2));
-        assert!(meta_store.exists(&request_id_3));
+        assert!(!meta_store.exists(&id1));
+        assert!(meta_store.exists(&id2));
+        assert!(meta_store.exists(&id3));
     }
 
     #[test]
     fn double_insert() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let request_id: RequestId = derive_request_id("meta_store").unwrap();
-        meta_store.insert(&request_id).unwrap();
-        // We cannot insert the same request_id twice
-        assert!(meta_store.insert(&request_id).is_err());
+        let id: RequestId = derive_request_id("meta_store").unwrap();
+        let _p = meta_store.insert(&id).unwrap();
+        assert!(meta_store.insert(&id).is_err());
     }
 
     #[test]
     fn too_many_elements() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let req_1: RequestId = derive_request_id("1").unwrap();
-        let req_2: RequestId = derive_request_id("2").unwrap();
-        let req_3: RequestId = derive_request_id("3").unwrap();
-        meta_store.insert(&req_1).unwrap();
-        meta_store.insert(&req_2).unwrap();
-        // Only room for 2 elements
-        assert!(meta_store.insert(&req_3).is_err());
+        let id1: RequestId = derive_request_id("1").unwrap();
+        let id2: RequestId = derive_request_id("2").unwrap();
+        let id3: RequestId = derive_request_id("3").unwrap();
+        let _p1 = meta_store.insert(&id1).unwrap();
+        let _p2 = meta_store.insert(&id2).unwrap();
+        assert!(meta_store.insert(&id3).is_err());
     }
 
     #[test]
     fn auto_remove() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let req_1: RequestId = derive_request_id("1").unwrap();
-        let req_2: RequestId = derive_request_id("2").unwrap();
-        let req_3: RequestId = derive_request_id("3").unwrap();
-        meta_store.insert(&req_1).unwrap();
-        assert!(meta_store.update(&req_1, Ok("OK".to_string())).is_ok());
-        assert!(meta_store.retrieve(&req_1).is_some());
-        meta_store.insert(&req_2).unwrap();
-        assert!(meta_store.update(&req_2, Ok("OK".to_string())).is_ok());
-        assert!(meta_store.retrieve(&req_1).is_some());
-        assert!(meta_store.retrieve(&req_2).is_some());
-        meta_store.insert(&req_3).unwrap();
-        // Only room for 2 elements
-        assert!(meta_store.retrieve(&req_3).is_some());
-        assert!(meta_store.retrieve(&req_2).is_some());
-        // The oldest element is removed
-        assert!(meta_store.retrieve(&req_1).is_none());
-        // But the other two elements are
-    }
-
-    #[tokio::test]
-    async fn test_subscription() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let req_1: RequestId = derive_request_id("1").unwrap();
-        meta_store.insert(&req_1).unwrap();
-        let meta_store = Arc::new(RwLock::new(meta_store));
-
-        let cloned_meta_store = Arc::clone(&meta_store);
-        let handle = tokio::spawn(async move {
-            let meta_store = Arc::clone(&cloned_meta_store);
-            let handle = meta_store.read().await.retrieve(&req_1);
-            handle_res_metriced(handle, &req_1, "test").await
-        });
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        meta_store
-            .write()
-            .await
-            .update(&req_1, Ok("OK".to_string()))
-            .unwrap();
-
-        let result = handle.await.unwrap().unwrap();
-        assert_eq!(result, "OK".to_string());
+        let id1: RequestId = derive_request_id("1").unwrap();
+        let id2: RequestId = derive_request_id("2").unwrap();
+        let id3: RequestId = derive_request_id("3").unwrap();
+        let p1 = meta_store.insert(&id1).unwrap();
+        assert!(meta_store.update(Ok("OK".to_string()), p1).is_ok());
+        assert!(meta_store.retrieve(&id1).is_some());
+        let p2 = meta_store.insert(&id2).unwrap();
+        assert!(meta_store.update(Ok("OK".to_string()), p2).is_ok());
+        assert!(meta_store.retrieve(&id1).is_some());
+        assert!(meta_store.retrieve(&id2).is_some());
+        let p3 = meta_store.insert(&id3).unwrap();
+        assert!(meta_store.retrieve(&id3).is_some());
+        assert!(meta_store.retrieve(&id2).is_some());
+        // Oldest removed during insert's eviction step
+        assert!(meta_store.retrieve(&id1).is_none());
+        let _ = p3;
     }
 
     #[test]
-    fn delete() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(10, 2);
-        let req_1: RequestId = derive_request_id("1").unwrap();
-        let req_2: RequestId = derive_request_id("2").unwrap();
-        let req_3: RequestId = derive_request_id("3").unwrap();
-        let req_4: RequestId = derive_request_id("4").unwrap();
+    fn try_update_blocked_by_live_permit() {
+        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let id: RequestId = derive_request_id("locked").unwrap();
+        let permit = meta_store.insert(&id).unwrap();
+        // Permit is live; try_update should fail.
+        assert!(meta_store.try_update(&id, Ok("v".to_string())).is_err());
+        // Drop the permit and retry.
+        drop(permit);
+        assert!(meta_store.try_update(&id, Ok("v".to_string())).is_ok());
+        assert_done_ok(&meta_store, &id, &"v".to_string());
+    }
 
-        meta_store.insert(&req_1).unwrap();
-        meta_store.insert(&req_2).unwrap();
-        meta_store.insert(&req_3).unwrap();
-        meta_store.insert(&req_4).unwrap();
+    #[test]
+    fn try_update_rejects_done_and_deleted() {
+        let mut meta_store: MetaStore<String> = MetaStore::new(4, 1);
+        let id_done: RequestId = derive_request_id("done").unwrap();
+        let id_del: RequestId = derive_request_id("del").unwrap();
+        let p_done = meta_store.insert(&id_done).unwrap();
+        meta_store.update(Ok("x".to_string()), p_done).unwrap();
+        let p_del = meta_store.insert(&id_del).unwrap();
+        meta_store.delete(p_del).unwrap();
 
-        assert_eq!(meta_store.complete_queue.len(), 0);
+        assert!(
+            meta_store
+                .try_update(&id_done, Ok("y".to_string()))
+                .is_err()
+        );
+        assert!(meta_store.try_update(&id_del, Ok("y".to_string())).is_err());
+    }
 
-        // set req1 to Done and req2 to Error
-        assert!(meta_store.update(&req_1, Ok("OK".to_string())).is_ok());
-        assert!(meta_store.update(&req_2, Err("Err".to_string())).is_ok());
-        assert_eq!(meta_store.complete_queue.len(), 2);
+    #[test]
+    fn try_delete_blocked_by_live_permit() {
+        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let id: RequestId = derive_request_id("locked-del").unwrap();
+        let permit = meta_store.insert(&id).unwrap();
+        assert!(meta_store.try_delete(&id).is_err());
+        drop(permit);
+        assert!(meta_store.try_delete(&id).is_ok());
+        assert!(matches!(
+            meta_store.retrieve(&id),
+            Some(EntryState::Deleted)
+        ));
+    }
 
-        // check that we can delete req_1 (Done)
-        assert!(meta_store.delete(&req_1).is_some());
-        // check that we cannot delete req_1 again
-        assert!(meta_store.delete(&req_1).is_none());
-        assert_eq!(meta_store.complete_queue.len(), 1);
+    #[test]
+    fn delete_consumes_permit() {
+        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let id: RequestId = derive_request_id("perm-del").unwrap();
+        let permit = meta_store.insert(&id).unwrap();
+        let prev = meta_store.delete(permit).unwrap();
+        assert!(matches!(prev, EntryState::Pending(_)));
+        assert!(matches!(
+            meta_store.retrieve(&id),
+            Some(EntryState::Deleted)
+        ));
+        // Cannot delete twice.
+        assert!(meta_store.try_delete(&id).is_err());
+    }
 
-        // check that we can delete req_2 (Err)
-        assert!(meta_store.delete(&req_2).is_some());
-        // check that we cannot delete req_2 again
-        assert!(meta_store.delete(&req_2).is_none());
-        assert_eq!(meta_store.complete_queue.len(), 0);
-
-        // check that we can delete req_3 (Started)
-        assert!(meta_store.delete(&req_3).is_some());
-        // check that we cannot delete req_3 again
-        assert!(meta_store.delete(&req_3).is_none());
-        assert_eq!(meta_store.complete_queue.len(), 0);
+    #[test]
+    fn permit_send_across_spawn() {
+        // Compile-time check: MetaStorePermit must be Send so it can be
+        // moved into tokio::spawn closures.
+        fn assert_send<T: Send>() {}
+        assert_send::<MetaStorePermit>();
     }
 }

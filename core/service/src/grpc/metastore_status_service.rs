@@ -22,7 +22,7 @@ use crate::{
         base::{CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
         threshold::service::BucketMetaStore,
     },
-    util::meta_store::MetaStore,
+    util::meta_store::{EntryState, MetaStore},
 };
 use kms_grpc::{
     kms::v1::Empty,
@@ -169,9 +169,22 @@ impl MetaStoreStatusServiceImpl {
                     store_type
                 );
 
-                let cell_data = store_guard.get_cell(internal_id).map(|cell| cell.try_get());
+                let entry_status: Option<(RequestProcessingStatus, Option<String>)> =
+                    match store_guard.retrieve(internal_id) {
+                        Some(EntryState::Done(Ok(_))) => {
+                            Some((RequestProcessingStatus::Completed, None))
+                        }
+                        Some(EntryState::Done(Err(err))) => {
+                            Some((RequestProcessingStatus::Failed, Some(err.clone())))
+                        }
+                        Some(EntryState::Pending(_)) => {
+                            Some((RequestProcessingStatus::Processing, None))
+                        }
+                        Some(EntryState::Deleted) => Some((RequestProcessingStatus::Deleted, None)),
+                        None => None,
+                    };
 
-                data.push((original_id.clone(), *internal_id, cell_data));
+                data.push((original_id.clone(), *internal_id, entry_status));
             }
 
             data
@@ -179,43 +192,21 @@ impl MetaStoreStatusServiceImpl {
 
         // Process results without holding lock (expensive operations)
         let mut statuses = Vec::new();
-        for (original_id, internal_id, cell_data) in request_data {
-            let (status, error_message) = match cell_data {
-                Some(Some(Ok(_))) => {
-                    tracing::debug!(
-                        "Request {} in {:?} store has COMPLETED status",
-                        internal_id,
-                        store_type
-                    );
-                    (RequestProcessingStatus::Completed, None)
-                }
-                Some(Some(Err(err))) => {
-                    tracing::debug!(
-                        "Request {} in {:?} store has FAILED status: {}",
-                        internal_id,
-                        store_type,
-                        err
-                    );
-                    (RequestProcessingStatus::Failed, Some(err.clone()))
-                }
-                Some(None) => {
-                    tracing::debug!(
-                        "Request {} in {:?} store has PROCESSING status",
-                        internal_id,
-                        store_type
-                    );
-                    (RequestProcessingStatus::Processing, None)
-                }
-                None => {
-                    tracing::debug!(
-                        "Request {} not found in {:?} store",
-                        internal_id,
-                        store_type
-                    );
-                    // Continue to search other stores
-                    continue;
-                }
+        for (original_id, internal_id, entry_status) in request_data {
+            let Some((status, error_message)) = entry_status else {
+                tracing::debug!(
+                    "Request {} not found in {:?} store",
+                    internal_id,
+                    store_type
+                );
+                continue;
             };
+            tracing::debug!(
+                "Request {} in {:?} store has status {:?}",
+                internal_id,
+                store_type,
+                status
+            );
 
             statuses.push(RequestStatusInfo {
                 request_id: original_id,
@@ -268,6 +259,7 @@ impl MetaStoreStatusServiceImpl {
             Some(RequestProcessingStatus::Completed) => store_guard.get_completed_request_ids(),
             Some(RequestProcessingStatus::Failed) => store_guard.get_failed_request_ids(),
             Some(RequestProcessingStatus::Any) | None => store_guard.get_all_request_ids(),
+            Some(RequestProcessingStatus::Deleted) => store_guard.get_deleted_request_ids(),
         };
 
         // Handle pagination
@@ -322,62 +314,42 @@ impl MetaStoreStatusServiceImpl {
         };
 
         // Batch collect all request data while holding lock once
-        let mut request_data = Vec::new();
+        let mut request_data: Vec<(_, (RequestProcessingStatus, Option<String>))> = Vec::new();
         for request_id in paginated_ids {
-            if let Some(cell) = store_guard.retrieve(request_id) {
-                let status_result = cell.try_get();
-                request_data.push((*request_id, Some(status_result)));
-            } else {
-                request_data.push((*request_id, None));
-            }
-        }
-        drop(store_guard); // Explicitly release the read lock
-
-        // Convert to RequestStatusInfo with enhanced status detection (without holding lock)
-        let mut requests = Vec::new();
-        let total_request_count = request_ids.len();
-        for (request_id, cell_data) in request_data {
-            let (status, error_message) = match cell_data {
-                Some(Some(Ok(_))) => {
-                    tracing::debug!(
-                        "Request {} in {:?} store has COMPLETED status",
-                        request_id,
-                        store_type
-                    );
-                    (RequestProcessingStatus::Completed, None)
+            let status_pair = match store_guard.retrieve(request_id) {
+                Some(EntryState::Done(Ok(_))) => (RequestProcessingStatus::Completed, None),
+                Some(EntryState::Done(Err(err))) => {
+                    (RequestProcessingStatus::Failed, Some(err.clone()))
                 }
-                Some(Some(Err(err))) => {
-                    tracing::debug!(
-                        "Request {} in {:?} store has FAILED status: {}",
-                        request_id,
-                        store_type,
-                        err
-                    );
-                    (RequestProcessingStatus::Failed, Some(err))
-                }
-                Some(None) => {
-                    tracing::debug!(
-                        "Request {} in {:?} store has PROCESSING status",
-                        request_id,
-                        store_type
-                    );
-                    (RequestProcessingStatus::Processing, None)
-                }
+                Some(EntryState::Pending(_)) => (RequestProcessingStatus::Processing, None),
+                Some(EntryState::Deleted) => (RequestProcessingStatus::Deleted, None),
                 None => {
                     // INVARIANT VIOLATION: Request ID from store's own collection is not retrievable
-                    // This indicates data corruption or race condition
                     tracing::error!(
                         "INVARIANT VIOLATION: Request {} found in {:?} store ID list but not retrievable - data corruption detected",
                         request_id,
                         store_type
                     );
-                    // Mark as FAILED since this represents a system error
                     (
                         RequestProcessingStatus::Failed,
                         Some("Internal error: Request data corrupted".to_string()),
                     )
                 }
             };
+            request_data.push((*request_id, status_pair));
+        }
+        drop(store_guard); // Explicitly release the read lock
+
+        // Convert to RequestStatusInfo with enhanced status detection (without holding lock)
+        let mut requests = Vec::new();
+        let total_request_count = request_ids.len();
+        for (request_id, (status, error_message)) in request_data {
+            tracing::debug!(
+                "Request {} in {:?} store has status {:?}",
+                request_id,
+                store_type,
+                status
+            );
 
             requests.push(RequestStatusInfo {
                 request_id: request_id.to_string(),

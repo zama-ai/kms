@@ -84,14 +84,14 @@ pub async fn init_impl<
             ));
         }
     }
-    add_req_to_meta_store(
+    let permit = add_req_to_meta_store(
         &mut service.epoch_ids.write().await,
         &verified_request.epoch_id.into(),
         OP_NEW_EPOCH,
     )?;
     update_req_in_meta_store::<(), anyhow::Error>(
         &mut service.epoch_ids.write().await,
-        &verified_request.epoch_id.into(),
+        permit,
         Ok(()),
         OP_NEW_EPOCH,
     );

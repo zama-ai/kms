@@ -379,15 +379,21 @@ async fn test_copy_compressed_key_to_original_success() {
     // dkg_pubinfo_meta_store now holds the new metadata for old_key_id.
     {
         let guard = meta_store.read().await;
-        let cell = guard
-            .get_cell(&old_key_id)
+        let entry = guard
+            .retrieve(&old_key_id)
             .unwrap_or_else(|| panic!("meta_store entry should exist for old_key_id={old_key_id}"));
-        let value = cell.try_get().unwrap_or_else(|| {
-            panic!("meta_store entry should be set for old_key_id={old_key_id}")
-        });
-        let meta = value.unwrap_or_else(|err| {
-            panic!("meta_store should hold Ok(metadata) for old_key_id={old_key_id}: {err:?}")
-        });
+        let meta = match entry {
+            crate::util::meta_store::EntryState::Done(Ok(arc)) => Arc::clone(arc),
+            other => panic!(
+                "meta_store should hold Done(Ok(metadata)) for old_key_id={old_key_id}, got {other:?}",
+                other = match other {
+                    crate::util::meta_store::EntryState::Pending(_) => "Pending",
+                    crate::util::meta_store::EntryState::Done(Err(e)) => e.as_str(),
+                    crate::util::meta_store::EntryState::Deleted => "Deleted",
+                    crate::util::meta_store::EntryState::Done(Ok(_)) => unreachable!(),
+                }
+            ),
+        };
         assert_current_compressed_metadata(&meta, &old_key_id);
         assert_current_metadata_extra_data(&meta, &extra_data);
     }
@@ -725,7 +731,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     {
         let guard = meta_store.read().await;
         assert!(
-            guard.get_cell(&old_key_id).is_none(),
+            guard.retrieve(&old_key_id).is_none(),
             "meta_store must not be mutated for old_key_id={old_key_id} on validation failure while copying from new_key_id={new_key_id}"
         );
     }

@@ -12,7 +12,8 @@ use crate::{
     dummy_domain,
     engine::base::{CrsGenMetadata, KeyGenMetadata, derive_request_id},
     util::meta_store::{
-        add_req_to_meta_store, ensure_meta_store_request_pending, retrieve_from_meta_store,
+        EntryState, add_req_to_meta_store, ensure_meta_store_request_pending,
+        retrieve_from_meta_store,
     },
     vault::{
         Vault,
@@ -51,7 +52,7 @@ use crate::{
         centralized::central_kms::{async_generate_crs, generate_fhe_keys},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
-    util::meta_store::{MetaStore, update_ok_req_in_meta_store},
+    util::meta_store::{MetaStore, try_update_ok_req_in_meta_store},
     vault::storage::{
         StorageReader, StorageReaderExt,
         crypto_material::{
@@ -157,6 +158,7 @@ async fn write_crs() {
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
+            None,
             OP_CRS_GEN_REQUEST,
         )
         .await;
@@ -204,6 +206,7 @@ async fn write_crs() {
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
+            None,
             OP_CRS_GEN_REQUEST,
         )
         .await;
@@ -218,6 +221,7 @@ async fn write_crs() {
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
+            None,
             OP_CRS_GEN_REQUEST,
         )
         .await;
@@ -250,7 +254,7 @@ async fn write_crs() {
     let new_req_id = derive_request_id("write_crs_2").unwrap();
     {
         let mut guard = meta_store.write().await;
-        guard.insert(&new_req_id).unwrap();
+        let _ = guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
         .write_crs(
@@ -259,6 +263,7 @@ async fn write_crs() {
             pp,
             crs_info,
             meta_store.clone(),
+            None,
             OP_CRS_GEN_REQUEST,
         )
         .await;
@@ -506,14 +511,17 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
         "expected storage failure to surface an error, got: {result:?}"
     );
 
-    let status = {
+    let is_err_status = {
         let guard = meta_store.read().await;
-        guard
-            .retrieve(&req_id)
-            .expect("request should remain tracked in meta store after failure")
+        matches!(
+            guard
+                .retrieve(&req_id)
+                .expect("request should remain tracked in meta store after failure"),
+            EntryState::Done(Err(_))
+        )
     };
     assert!(
-        status.get().await.as_ref().is_err(),
+        is_err_status,
         "expected terminal error status in meta store after storage failure"
     );
 }
@@ -1618,11 +1626,11 @@ async fn update_meta_store_storage_outcomes() {
 
     {
         let mut write_guard = meta_store.write().await;
-        add_req_to_meta_store(&mut write_guard, &req_ok, TEST_METRIC).unwrap();
-        add_req_to_meta_store(&mut write_guard, &req_backup, TEST_METRIC).unwrap();
-        add_req_to_meta_store(&mut write_guard, &req_writing, TEST_METRIC).unwrap();
+        let _ = add_req_to_meta_store(&mut write_guard, &req_ok, TEST_METRIC).unwrap();
+        let _ = add_req_to_meta_store(&mut write_guard, &req_backup, TEST_METRIC).unwrap();
+        let _ = add_req_to_meta_store(&mut write_guard, &req_writing, TEST_METRIC).unwrap();
         assert!(
-            update_meta_store(Ok(()), &req_ok, 42_u32, &mut write_guard, TEST_METRIC)
+            update_meta_store(Ok(()), &req_ok, 42_u32, &mut write_guard, None, TEST_METRIC)
                 .await
                 .is_ok()
         );
@@ -1632,6 +1640,7 @@ async fn update_meta_store_storage_outcomes() {
                 &req_backup,
                 7_u32,
                 &mut write_guard,
+                None,
                 TEST_METRIC,
             )
             .await,
@@ -1643,6 +1652,7 @@ async fn update_meta_store_storage_outcomes() {
                 &req_writing,
                 0_u32,
                 &mut write_guard,
+                None,
                 TEST_METRIC,
             )
             .await,
@@ -1650,19 +1660,19 @@ async fn update_meta_store_storage_outcomes() {
         );
     }
     assert_eq!(
-        retrieve_from_meta_store::<u32>(meta_store.read().await, &req_ok, TEST_METRIC)
+        *retrieve_from_meta_store::<u32>(&meta_store, &req_ok, TEST_METRIC)
             .await
             .unwrap(),
         42
     );
     assert_eq!(
-        retrieve_from_meta_store::<u32>(meta_store.read().await, &req_backup, TEST_METRIC)
+        *retrieve_from_meta_store::<u32>(&meta_store, &req_backup, TEST_METRIC)
             .await
             .unwrap(),
         7
     );
     assert!(
-        retrieve_from_meta_store::<u32>(meta_store.read().await, &req_writing, TEST_METRIC)
+        retrieve_from_meta_store::<u32>(&meta_store, &req_writing, TEST_METRIC)
             .await
             .is_err(),
     );
@@ -1677,8 +1687,9 @@ async fn update_meta_store_failure_paths() {
     let missing = derive_request_id("ums_missing").unwrap();
     let already_set = derive_request_id("ums_already_set").unwrap();
     let meta_store: Arc<RwLock<MetaStore<u32>>> = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    add_req_to_meta_store(&mut meta_store.write().await, &already_set, TEST_METRIC).unwrap();
-    assert!(update_ok_req_in_meta_store(
+    let _ = add_req_to_meta_store(&mut meta_store.write().await, &already_set, TEST_METRIC)
+        .unwrap();
+    assert!(try_update_ok_req_in_meta_store(
         &mut meta_store.write().await,
         &already_set,
         99_u32,
@@ -1686,7 +1697,7 @@ async fn update_meta_store_failure_paths() {
     ));
 
     let mut guard = meta_store.write().await;
-    match update_meta_store(Ok(()), &missing, 1_u32, &mut guard, TEST_METRIC)
+    match update_meta_store(Ok(()), &missing, 1_u32, &mut guard, None, TEST_METRIC)
         .await
         .unwrap_err()
     {
@@ -1701,6 +1712,7 @@ async fn update_meta_store_failure_paths() {
         &missing,
         2_u32,
         &mut guard,
+        None,
         TEST_METRIC,
     )
     .await
@@ -1713,7 +1725,7 @@ async fn update_meta_store_failure_paths() {
         other => panic!("expected MetaStoreError, got {other:?}"),
     }
     assert!(matches!(
-        update_meta_store(Ok(()), &already_set, 1_u32, &mut guard, TEST_METRIC).await,
+        update_meta_store(Ok(()), &already_set, 1_u32, &mut guard, None, TEST_METRIC).await,
         Err(StorageError::MetaStore(_)),
     ));
 }

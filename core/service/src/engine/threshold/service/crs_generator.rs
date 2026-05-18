@@ -42,7 +42,7 @@ use crate::{
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
-use crate::{engine::utils::MetricedError, util::meta_store::update_err_req_in_meta_store};
+use crate::{engine::utils::MetricedError, util::meta_store::try_update_err_req_in_meta_store};
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -133,7 +133,9 @@ impl<
             ));
         }
 
-        add_req_to_meta_store(
+        // Permit is discarded: the spawned crs gen task is the only writer
+        // and uses try_update via downstream helpers.
+        let _ = add_req_to_meta_store(
             &mut self.crs_meta_store.write().await,
             &verified.req_id,
             op_tag,
@@ -249,7 +251,7 @@ impl<
                                 tracing::error!(msg);
                                 msg
                             };
-                            update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, op_tag);
+                            try_update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, op_tag);
                         }
                     },
                 }
@@ -273,9 +275,9 @@ impl<
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
         let crs_data =
-            retrieve_from_meta_store(self.crs_meta_store.read().await, &request_id, op_tag).await?;
+            retrieve_from_meta_store(&self.crs_meta_store, &request_id, op_tag).await?;
 
-        match crs_data {
+        match (*crs_data).clone() {
             CrsGenMetadata::Current(crs_data) => {
                 if crs_data.crs_id != request_id {
                     return Err(MetricedError::new(
@@ -403,7 +405,7 @@ impl<
                     let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
-                            let _ = update_err_req_in_meta_store(
+                            let _ = try_update_err_req_in_meta_store(
                                 &mut meta_store.write().await,
                                 req_id,
                                 e.to_string(),
@@ -447,7 +449,7 @@ impl<
         let (pp, crs_info) = match res_info_pp {
             Ok((pp, pp_id)) => (pp, pp_id),
             Err(e) => {
-                let _ = update_err_req_in_meta_store(
+                let _ = try_update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     req_id,
                     e.to_string(),
@@ -464,7 +466,7 @@ impl<
 
         let res = crypto_storage
             .inner
-            .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
+            .write_crs(req_id, epoch_id, pp, crs_info, meta_store, None, op_tag)
             .await;
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);

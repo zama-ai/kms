@@ -88,8 +88,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store,
-            update_req_in_meta_store,
+            MetaStore, retrieve_from_meta_store, try_update_err_req_in_meta_store,
+            try_update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -526,7 +526,7 @@ impl<
 
             // We update the meta store with the same metadata as in the epoch we reshare from
             // i.e. parties in Set 1 only do NOT re-sign the metadata
-            meta_store.write().await.update(
+            meta_store.write().await.try_update(
                 &epoch_id_as_request_id,
                 Ok(EpochOutput::Reshare((keys_metadata, crs_metadata))),
             )?;
@@ -796,7 +796,7 @@ impl<
             Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
         };
         // Finally update the meta store
-        if !update_req_in_meta_store(
+        if !try_update_req_in_meta_store(
             &mut meta_store.write().await,
             &new_epoch_id.into(),
             agg_res,
@@ -1328,7 +1328,9 @@ impl<
 
         {
             let mut guarded_meta_store = self.reshare_pubinfo_meta_store.write().await;
-            guarded_meta_store.insert(&epoch_id.into()).map_err(|e| {
+            // Permit is discarded: the spawned task is the only writer and
+            // uses try_update via downstream helpers.
+            let _ = guarded_meta_store.insert(&epoch_id.into()).map_err(|e| {
                 MetricedError::new(
                     OP_NEW_EPOCH,
                     Some(epoch_id.into()),
@@ -1353,7 +1355,7 @@ impl<
                         .await
             {
                 let err = format!("PRSS initialization failed during epoch creation: {e:?}");
-                let _ = update_err_req_in_meta_store(
+                let _ = try_update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     &epoch_id.into(),
                     err,
@@ -1364,7 +1366,7 @@ impl<
             if let Some(resharing_task) = resharing_task {
                 if let Err(e) = resharing_task.await {
                     let err = format!("Resharing failed during epoch creation: {e:?}");
-                    let _ = update_err_req_in_meta_store(
+                    let _ = try_update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         &epoch_id.into(),
                         err,
@@ -1376,7 +1378,7 @@ impl<
                 let _ = meta_store
                     .write()
                     .await
-                    .update(&epoch_id.into(), Ok(EpochOutput::PRSSInitOnly));
+                    .try_update(&epoch_id.into(), Ok(EpochOutput::PRSSInitOnly));
             }
         });
 
@@ -1415,13 +1417,13 @@ impl<
                 })?;
 
         let res = retrieve_from_meta_store(
-            self.reshare_pubinfo_meta_store.read().await,
+            &self.reshare_pubinfo_meta_store,
             &request_id,
             OP_GET_EPOCH_RESULT,
         )
         .await?;
 
-        match res {
+        match (*res).clone() {
             EpochOutput::PRSSInitOnly => {
                 tracing::info!(
                     "New Epoch with only PRSS initialization for request ID {:?}.",

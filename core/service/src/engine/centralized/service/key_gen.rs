@@ -11,8 +11,8 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
 use crate::util::meta_store::{
-    MetaStore, add_req_to_meta_store, handle_res, retrieve_from_meta_store,
-    update_err_req_in_meta_store,
+    EntryState, MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+    try_update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
 use crate::vault::storage::{Storage, StorageExt};
@@ -100,7 +100,7 @@ pub async fn key_gen_impl<
         // If we're in insecure mode, we skip removing preprocessed material since it may not exist
         let params = if !insecure {
             let preproc = retrieve_from_meta_store(
-                service.preprocessing_meta_store.read().await,
+                &service.preprocessing_meta_store,
                 &preproc_id,
                 op_tag,
             )
@@ -140,8 +140,13 @@ pub async fn key_gen_impl<
 
         // check that the request ID is not used yet
         // and then insert the request ID only if it's unused
-        // all validation must be done before inserting the request ID
-        add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)?;
+        // all validation must be done before inserting the request ID.
+        // We discard the meta-store permit immediately: the keygen background
+        // is the only writer for this entry, and threading the permit through
+        // many nested branches and into `crypto_storage.write_fhe_keys` adds
+        // significant complexity. The downstream paths use try_update which
+        // succeeds because no permit is outstanding.
+        let _ = add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)?;
 
         (params, permit)
     };
@@ -176,14 +181,32 @@ pub async fn key_gen_impl<
     let keygen_background = async move {
         // "Remove" the preprocessing material by deleting its entry from the meta store
         tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-        let handle = {
+        let delete_res = {
             let mut meta_store_guard = preproc_meta_store.write().await;
-            meta_store_guard.delete(&preproc_id)
+            meta_store_guard.try_delete(&preproc_id)
         };
-        match handle_res(handle, &preproc_id).await {
-            Ok(_) => {
+        match delete_res {
+            Ok(EntryState::Done(Ok(_))) => {
                 tracing::info!(
                     "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                );
+            }
+            Ok(EntryState::Done(Err(e))) => {
+                MetricedError::handle_unreturnable_error(
+                    op_tag,
+                    Some(req_id),
+                    anyhow::anyhow!(
+                        "Preprocessing ID {preproc_id} finished with error: {e}"
+                    ),
+                );
+            }
+            Ok(_) => {
+                MetricedError::handle_unreturnable_error(
+                    op_tag,
+                    Some(req_id),
+                    anyhow::anyhow!(
+                        "Preprocessing ID {preproc_id} deleted but was not in Done state"
+                    ),
                 );
             }
             Err(e) => {
@@ -272,7 +295,7 @@ pub(crate) async fn run_keygen_with_cancel<
             );
             let mut guarded_meta_store = key_meta_store_cancel.write().await;
             if let Err(e) = guarded_meta_store
-                .update(&req_id, Result::Err("Key generation was aborted".to_string()))
+                .try_update(&req_id, Result::Err("Key generation was aborted".to_string()))
             {
                 tracing::warn!(
                     "Failed to mark request {req_id} as aborted in the key meta store: {e}"
@@ -309,8 +332,8 @@ pub async fn get_key_gen_result_impl<
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
     let key_gen_res =
-        retrieve_from_meta_store(service.key_meta_map.read().await, &request_id, op_tag).await?;
-    match key_gen_res {
+        retrieve_from_meta_store(&service.key_meta_map, &request_id, op_tag).await?;
+    match (*key_gen_res).clone() {
         KeyGenMetadata::Current(res) => {
             if request_id != res.key_id {
                 return Err(MetricedError::new(
@@ -429,7 +452,7 @@ pub(crate) async fn key_gen_background<
             {
                 Ok(result) => result,
                 Err(e) => {
-                    let _ = update_err_req_in_meta_store(
+                    let _ = try_update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed key generation: {e}"),
@@ -468,7 +491,7 @@ pub(crate) async fn key_gen_background<
             let (from, to) = match internal_keyset_config.get_from_and_to() {
                 Ok((from, to)) => (from, to),
                 Err(e) => {
-                    let _ = update_err_req_in_meta_store(
+                    let _ = try_update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed to use decompression key generation parameters: {e}"),
@@ -487,7 +510,7 @@ pub(crate) async fn key_gen_background<
             {
                 Ok(decompression_key) => decompression_key,
                 Err(e) => {
-                    let _ = update_err_req_in_meta_store(
+                    let _ = try_update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed decompression key generation: {e}"),
@@ -507,7 +530,7 @@ pub(crate) async fn key_gen_background<
             ) {
                 Ok(info) => info,
                 Err(e) => {
-                    let _ = update_err_req_in_meta_store(
+                    let _ = try_update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed to compute decompression key info: {e}"),
@@ -968,7 +991,7 @@ pub(crate) mod tests {
 
         // Register the request id in the key meta store so `get_key_gen_result_impl`
         // has a cell to wait on, mirroring what `key_gen_impl` does before spawning.
-        add_req_to_meta_store(
+        let _ = add_req_to_meta_store(
             &mut kms.key_meta_map.write().await,
             &req_id,
             OP_KEYGEN_REQUEST,

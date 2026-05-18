@@ -193,6 +193,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             key_id,
             meta_res,
             &mut guarded_meta_store,
+            None,
             op_metric_tag,
         )
         .await
@@ -443,17 +444,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
 
         // --- Phase C: refresh dkg_pubinfo_meta_store for old_key_id. ---
-        // `MetaStore::update` only accepts pending entries, so replace the
-        // existing completed entry with delete + insert + update, all under
-        // the meta_store write guard already held since the top of the function.
-        let _ = guarded_meta_store.delete(old_key_id);
-        guarded_meta_store.insert(old_key_id).map_err(|e| {
-            anyhow::anyhow!("Failed to insert {old_key_id} into keygen meta-store: {e}")
-        })?;
+        // The entry is already in Done state from the original key generation;
+        // overwrite the metadata in place. `replace_done` keeps the entry's
+        // slot in the completion queue, which matches what we want here.
         guarded_meta_store
-            .update(old_key_id, Ok(new_metadata))
+            .replace_done(old_key_id, new_metadata)
             .map_err(|e| {
-                anyhow::anyhow!("Failed to update {old_key_id} in keygen meta-store: {e}")
+                anyhow::anyhow!("Failed to replace {old_key_id} in keygen meta-store: {e}")
             })?;
 
         tracing::info!(

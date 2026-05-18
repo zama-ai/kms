@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
@@ -10,6 +8,7 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_CRS_GEN_ABORT, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
     OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
 };
+use std::sync::Arc;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +25,8 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request,
 };
 use crate::util::meta_store::{
-    MetaStore, add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
+    MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+    update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::{Storage, StorageExt};
@@ -74,17 +74,17 @@ pub async fn crs_gen_impl<
 
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
-    // all validation must be done before inserting the request ID
-    add_req_to_meta_store(
+    // all validation must be done before inserting the request ID.
+    // The meta-store permit is threaded into crs_gen_background and consumed
+    // by one of: the abort arm, the generation-error arm, or write_crs.
+    let meta_permit = add_req_to_meta_store(
         &mut service.crs_meta_map.write().await,
         &verified.req_id,
         op_tag,
     )?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
-    let meta_store_cancel = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let crypto_storage_cancel = service.crypto_storage.clone();
     let sk = service
             .base_kms
             .sig_key()
@@ -115,46 +115,26 @@ pub async fn crs_gen_impl<
         async move {
             let _timer = timer;
             let _permit = permit;
-            tokio::select! {
-                () = crs_gen_background(
-                    &req_id,
-                    &epoch_id,
-                    rng,
-                    meta_store,
-                    crypto_storage,
-                    sk,
-                    verified.params,
-                    verified.eip712_domain,
-                    verified.extra_data,
-                    max_bits,
-                    op_tag,
-                ) => {
-                    tracing::info!("CRS generation of request {} exiting normally.", req_id);
-                    // Remove cancellation token since generation is now done.
-                    ongoing.lock().await.remove(&req_id);
-                },
-                () = token.cancelled() => {
-                    MetricedError::handle_unreturnable_error(
-                        OP_CRS_GEN_REQUEST,
-                        Some(req_id),
-                        anyhow::anyhow!("CRS generation of request {} exiting before completion because of an abort request.", req_id),
-                    );
-                    let del_res = crypto_storage_cancel.inner.purge_crs_material(&req_id, &epoch_id).await;
-                    {
-                        let mut guarded_meta_store = meta_store_cancel.write().await;
-                        let msg = if del_res {
-                            let msg = format!("CRS generation aborted and CRS material deleted successfully for request {}", req_id);
-                            tracing::info!(msg);
-                            msg
-                        } else {
-                            let msg = format!("CRS generation aborted but failed to delete CRS material for request {}", req_id);
-                            tracing::error!(msg);
-                            msg
-                        };
-                        update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, OP_CRS_GEN_REQUEST);
-                    }
-                }
-            }
+            crs_gen_background(
+                meta_permit,
+                token,
+                &req_id,
+                &epoch_id,
+                rng,
+                meta_store,
+                crypto_storage,
+                sk,
+                verified.params,
+                verified.eip712_domain,
+                verified.extra_data,
+                max_bits,
+                op_tag,
+            )
+            .await;
+            // Cleanup runs on every termination (normal completion, generation
+            // error, or abort) — the cancellation handling now lives inside
+            // `crs_gen_background`.
+            ongoing.lock().await.remove(&req_id);
         }
         .instrument(tracing::Span::current()),
     );
@@ -183,10 +163,9 @@ pub async fn get_crs_gen_result_impl<
             .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 
-    let crs_info =
-        retrieve_from_meta_store(service.crs_meta_map.read().await, &request_id, op_tag).await?;
+    let crs_info = retrieve_from_meta_store(&service.crs_meta_map, &request_id, op_tag).await?;
 
-    match crs_info {
+    match (*crs_info).clone() {
         CrsGenMetadata::LegacyV0(_) => {
             // This is a legacy result, we cannot return the crs_digest or external_signature
             // as they're signed using a different SolStruct and hashed using a different domain separator
@@ -259,12 +238,35 @@ pub async fn abort_crs_gen_impl<
     }
 }
 
-/// Background task for CRS generation
+/// Outcome of the cancellable CRS-generation phase inside [`crs_gen_background`].
+///
+/// `Generated` is heap-boxed so the success variant doesn't dominate the
+/// enum size (it carries a `CompactPkeCrs` of a few hundred bytes).
+enum CrsOutcome {
+    /// Generation completed successfully — proceed to write_crs.
+    Generated(Box<(tfhe::zk::CompactPkeCrs, CrsGenMetadata)>),
+    /// Generation returned an error — mark the entry as failed.
+    GenError(String),
+    /// Cancellation token fired while generation was still running —
+    /// purge any partial material and mark the entry as aborted.
+    Aborted,
+}
+
+/// Background task for CRS generation.
+///
+/// Owns the meta-store permit for the entire lifetime of the request. The
+/// cancellation token is checked only during the long-running
+/// [`async_generate_crs`] phase via an inner `tokio::select!`; once
+/// generation succeeds, the disk-write phase is intentionally uncancellable
+/// so we never end up with "purged material on disk" + "Done state in
+/// meta store".
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 >(
+    permit: MetaStorePermit,
+    cancel_token: CancellationToken,
     req_id: &RequestId,
     epoch_id: &EpochId,
     rng: AesRng,
@@ -279,42 +281,73 @@ pub(crate) async fn crs_gen_background<
 ) {
     let start = tokio::time::Instant::now();
 
-    let (pp, crs_info) = match async_generate_crs(
-        &sk,
-        params,
-        max_number_bits,
-        eip712_domain,
-        extra_data,
-        req_id,
-        rng,
-    )
-    .await
-    {
-        Ok((pp, crs_info)) => (pp, crs_info),
-        Err(e) => {
-            let _ = update_err_req_in_meta_store(
-                &mut meta_store.write().await,
-                req_id,
-                e.to_string(),
-                op_tag,
-            );
-            return;
-        }
+    // Only the generation is cancellable. Neither arm of this select! owns
+    // the permit — it lives in the surrounding function scope and is consumed
+    // by exactly one of the match arms below.
+    let outcome = tokio::select! {
+        biased;
+        () = cancel_token.cancelled() => CrsOutcome::Aborted,
+        result = async_generate_crs(
+            &sk, params, max_number_bits, eip712_domain, extra_data, req_id, rng,
+        ) => match result {
+            Ok(v) => CrsOutcome::Generated(Box::new(v)),
+            Err(e) => CrsOutcome::GenError(e.to_string()),
+        },
     };
 
-    if let Err(e) = crypto_storage
-        .inner
-        .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-        .await
-    {
-        tracing::error!("Failed to write CRS to storage: {e}");
-        return;
+    match outcome {
+        CrsOutcome::Aborted => {
+            let del_res = crypto_storage
+                .inner
+                .purge_crs_material(req_id, epoch_id)
+                .await;
+            let msg = if del_res {
+                let m = format!(
+                    "CRS generation aborted and CRS material deleted successfully for request {req_id}"
+                );
+                tracing::info!(m);
+                m
+            } else {
+                let m = format!(
+                    "CRS generation aborted but failed to delete CRS material for request {req_id}"
+                );
+                tracing::error!(m);
+                m
+            };
+            let _ = update_err_req_in_meta_store(
+                &mut meta_store.write().await,
+                permit,
+                msg,
+                op_tag,
+            );
+        }
+        CrsOutcome::GenError(msg) => {
+            let _ = update_err_req_in_meta_store(
+                &mut meta_store.write().await,
+                permit,
+                msg,
+                op_tag,
+            );
+        }
+        CrsOutcome::Generated(boxed) => {
+            let (pp, crs_info) = *boxed;
+            // write_crs consumes the permit via update_meta_store internally
+            // (Ok branch -> update_ok_req_in_meta_store, Err -> update_err).
+            if let Err(e) = crypto_storage
+                .inner
+                .write_crs(req_id, epoch_id, pp, crs_info, meta_store, Some(permit), op_tag)
+                .await
+            {
+                tracing::error!("Failed to write CRS to storage: {e}");
+                return;
+            }
+            tracing::info!(
+                "⏱️ Core Event Time for CRS-gen request id {}: {:?}",
+                req_id,
+                start.elapsed()
+            );
+        }
     }
-    tracing::info!(
-        "⏱️ Core Event Time for CRS-gen request id {}: {:?}",
-        req_id,
-        start.elapsed()
-    );
 }
 
 #[cfg(test)]

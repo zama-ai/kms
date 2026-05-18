@@ -42,7 +42,7 @@ use threshold_execution::{
         public_keysets::FhePubKeySet,
     },
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -72,8 +72,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, handle_res, retrieve_from_meta_store,
-            retrieve_from_meta_store_with_timeout, update_err_req_in_meta_store,
+            EntryState, MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            try_update_err_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -414,14 +414,28 @@ impl<
                     tracing::info!(
                         "Deleting preprocessed material with ID {preproc_id} from meta store"
                     );
-                    let handle = {
+                    let delete_res = {
                         let mut meta_store_guard = preproc_bucket.write().await;
-                        meta_store_guard.delete(preproc_id)
+                        meta_store_guard.try_delete(preproc_id)
                     };
-                    match handle_res(handle, preproc_id).await {
-                        Ok(_) => {
+                    match delete_res {
+                        Ok(EntryState::Done(Ok(_))) => {
                             tracing::info!(
                                 "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                            );
+                        }
+                        Ok(EntryState::Done(Err(e))) => {
+                            MetricedError::handle_unreturnable_error(
+                                op_tag,
+                                Some(req_id),
+                                anyhow::anyhow!("Preprocessing ID {preproc_id} finished with error: {e}"),
+                            );
+                        }
+                        Ok(_) => {
+                            MetricedError::handle_unreturnable_error(
+                                op_tag,
+                                Some(req_id),
+                                anyhow::anyhow!("Preprocessing ID {preproc_id} deleted but was not in Done state"),
                             );
                         }
                         Err(e) => {
@@ -494,7 +508,7 @@ impl<
                         );
                         tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
                         let mut guarded_meta_store = meta_store_cancelled.write().await;
-                        let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
+                        let _ = guarded_meta_store.try_update(&req_id, Result::Err("Key generation was aborted".to_string()));
                         crypto_storage_cancelled.purge_fhe_keys(&req_id, &epoch_id).await;
                     },
                 }
@@ -547,7 +561,7 @@ impl<
         let (preproc_handle, dkg_params) =
             // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
             Self::retrieve_preproc_handle(
-                self.preproc_buckets.read().await,
+                &self.preproc_buckets,
                 req_id,
                 preproc_id,
                 params,
@@ -574,7 +588,12 @@ impl<
             ));
         }
 
-        add_req_to_meta_store(
+        // Permit is discarded immediately: the spawned task is the only writer
+        // for this entry, and threading the permit through the cancel arm,
+        // many error paths and into `crypto_storage.write_fhe_keys` adds
+        // significant complexity. Downstream paths use try_update which
+        // succeeds because no permit is outstanding.
+        let _ = add_req_to_meta_store(
             &mut self.dkg_pubinfo_meta_store.write().await,
             &req_id,
             op_tag,
@@ -624,7 +643,7 @@ impl<
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
     /// This method also does NOT delete the preprocessing entry from the meta store
     async fn retrieve_preproc_handle(
-        bucket_metastore: RwLockReadGuard<'_, MetaStore<BucketMetaStore>>,
+        bucket_metastore: &Arc<RwLock<MetaStore<BucketMetaStore>>>,
         key_req_id: RequestId,
         preproc_id: RequestId,
         params: Option<i32>,
@@ -656,6 +675,7 @@ impl<
                             e.code(),
                         )
                     })?;
+            let preproc_bucket = (*preproc_bucket).clone();
             if preproc_bucket.preprocessing_id != preproc_id {
                 return Err(MetricedError::new(
                     op_tag,
@@ -692,15 +712,14 @@ impl<
         let request_id =
             parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
-        let key_gen_res = retrieve_from_meta_store_with_timeout(
-            self.dkg_pubinfo_meta_store.read().await,
+        let key_gen_res = retrieve_from_meta_store(
+            &self.dkg_pubinfo_meta_store,
             &request_id,
             op_tag,
-            crate::consts::DURATION_WAITING_ON_KEYGEN_RESULT_SECONDS,
         )
         .await?;
 
-        match key_gen_res {
+        match (*key_gen_res).clone() {
             KeyGenMetadata::Current(res) => {
                 if res.key_id != request_id {
                     return Err(MetricedError::new(
@@ -1070,7 +1089,7 @@ impl<
             Ok(k) => k,
             Err(e) => {
                 // If dkg errored out, update status
-                update_err_req_in_meta_store(
+                try_update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     req_id,
                     format!("Failed to construct decompression key: {e}"),
@@ -1092,7 +1111,7 @@ impl<
         ) {
             Ok(info) => info,
             Err(e) => {
-                update_err_req_in_meta_store(
+                try_update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     req_id,
                     format!("Failed to compute key info: {e}"),
@@ -1288,7 +1307,7 @@ impl<
                             }),
                             _ => {
                                 // insecure keygen from existing compression key is not supported
-                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),  op_tag);
+                                try_update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),  op_tag);
                                 return;
                             }
                         },
@@ -1383,7 +1402,7 @@ impl<
         let dkg_result = match dkg_res {
             Ok(result) => result,
             Err(e) => {
-                update_err_req_in_meta_store(
+                try_update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     req_id,
                     format!("Standard key generation failed: {e}"),
@@ -1408,7 +1427,7 @@ impl<
                 ) {
                     Ok(info) => info,
                     Err(e) => {
-                        update_err_req_in_meta_store(
+                        try_update_err_req_in_meta_store(
                             &mut meta_store.write().await,
                             req_id,
                             format!(
@@ -1476,7 +1495,7 @@ impl<
                     None => match compressed_keyset.decompress() {
                         Ok(ks) => ks.into_raw_parts().0,
                         Err(e) => {
-                            update_err_req_in_meta_store(
+                            try_update_err_req_in_meta_store(
                                 &mut meta_store.write().await,
                                 req_id,
                                 format!(
@@ -1502,7 +1521,7 @@ impl<
                 ) {
                     Ok(info) => info,
                     Err(e) => {
-                        update_err_req_in_meta_store(
+                        try_update_err_req_in_meta_store(
                             &mut meta_store.write().await,
                             req_id,
                             format!(
@@ -1864,9 +1883,9 @@ mod tests {
                 dkg_param: TEST_PARAM,
             };
             let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
-            (*guarded_prep_bucket).insert(prep_id).unwrap();
+            let permit = (*guarded_prep_bucket).insert(prep_id).unwrap();
             (*guarded_prep_bucket)
-                .update(prep_id, Ok(dummy_prep))
+                .update(Ok(dummy_prep), permit)
                 .unwrap();
         }
         (prep_ids, kg)

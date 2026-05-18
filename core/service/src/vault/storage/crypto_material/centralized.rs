@@ -102,6 +102,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             key_id,
             meta_res,
             &mut guarded_meta_store,
+            None,
             op_metric_tag,
         )
         .await

@@ -34,7 +34,6 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{BaseKmsStruct, compute_external_signature_preprocessing},
@@ -46,7 +45,7 @@ use crate::{
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
-        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store_with_timeout},
+        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store},
         rate_limiter::RateLimiter,
     },
 };
@@ -163,7 +162,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         // NOTE: Any correlated randomness that was already generated should be cleaned up from Redis on drop.
                         tracing::error!("Preprocessing of request {} exiting before completion because of an abort request.", &request_id);
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
-                        let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was aborted".to_string()));
+                        let _ = guarded_bucket_store.try_update(&request_id, Result::Err("Preprocessing was aborted".to_string()));
                         MetricedError::handle_unreturnable_error(
                             OP_KEYGEN_PREPROC_REQUEST,
                             Some(request_id),
@@ -333,7 +332,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         let handle_update = handle_update.map(|(_sessions, inner)| inner);
         // We cannot do much if updating the storage fails at this point...
-        let meta_store_write = guarded_meta_store.update(
+        let meta_store_write = guarded_meta_store.try_update(
             req_id,
             handle_update.clone().map(|inner| BucketMetaStore {
                 external_signature,
@@ -405,8 +404,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
-        // Add preprocessing to metastore and fail in case it is already present
-        add_req_to_meta_store(
+        // Add preprocessing to metastore and fail in case it is already present.
+        // Permit is discarded: the spawned preprocessing task (launch_dkg_preproc)
+        // is the only writer and uses try_update.
+        let _ = add_req_to_meta_store(
             &mut self.preproc_buckets.write().await,
             &request_id,
             OP_KEYGEN_PREPROC_REQUEST,
@@ -484,17 +485,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
                     )
                 })?;
 
-        tracing::info!(
-            "Polling preproc result for request {} (waiting up to {}s)",
-            request_id,
-            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-        );
+        tracing::info!("Reading preproc result for request {}", request_id);
 
-        let preproc_data = retrieve_from_meta_store_with_timeout(
-            self.preproc_buckets.read().await,
+        let preproc_data = retrieve_from_meta_store(
+            &self.preproc_buckets,
             &request_id,
             OP_KEYGEN_PREPROC_RESULT,
-            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
         )
         .await?;
 
@@ -515,7 +511,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
         Ok(Response::new(KeyGenPreprocResult {
             preprocessing_id: Some(request_id.into()),
-            external_signature: preproc_data.external_signature,
+            external_signature: preproc_data.external_signature.clone(),
         }))
     }
 

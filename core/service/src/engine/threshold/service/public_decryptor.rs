@@ -318,7 +318,7 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        add_req_to_meta_store(
+        let meta_permit = add_req_to_meta_store(
             &mut self.pub_dec_meta_store.write().await,
             &req_id,
             OP_PUBLIC_DECRYPT_REQUEST,
@@ -541,6 +541,7 @@ impl<
             // it when decryptions are available
             let _timer = timer;
             // NOTE: _permit should be dropped at the end of this function
+            let mut meta_permit = Some(meta_permit);
             let mut decs = HashMap::new();
 
             // Collect all results first, without holding any locks
@@ -562,7 +563,7 @@ impl<
                 };
                 let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
-                    &req_id,
+                    meta_permit.take().expect("permit must still be present on first error"),
                     err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
                 );
@@ -601,7 +602,7 @@ impl<
 
             update_req_in_meta_store(
                 &mut meta_store.write().await,
-                &req_id,
+                meta_permit.take().expect("permit must still be present on success path"),
                 res,
                 OP_PUBLIC_DECRYPT_REQUEST,
             );
@@ -633,13 +634,13 @@ impl<
             )
         })?;
 
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-            retrieve_from_meta_store(
-                self.pub_dec_meta_store.read().await,
-                &request_id,
-                OP_PUBLIC_DECRYPT_RESULT,
-            )
-            .await?;
+        let arc = retrieve_from_meta_store(
+            &self.pub_dec_meta_store,
+            &request_id,
+            OP_PUBLIC_DECRYPT_RESULT,
+        )
+        .await?;
+        let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
 
         if request_id != retrieved_req_id {
             return Err(MetricedError::new(
