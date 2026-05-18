@@ -589,6 +589,7 @@ mod tests {
         runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
         zk::ceremony::FinalizedInternalPublicParameter,
     };
+    use threshold_types::protocol::ProtocolDescription;
 
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DURATION_WAITING_ON_RESULT_SECONDS},
@@ -644,6 +645,13 @@ mod tests {
 
     #[derive(Clone, Default)]
     pub struct BrokenCeremony {}
+
+    impl ProtocolDescription for BrokenCeremony {
+        fn protocol_desc(depth: usize) -> String {
+            let indent = Self::INDENT_STRING.repeat(depth);
+            format!("{indent}-BrokenCeremony")
+        }
+    }
 
     #[tonic::async_trait]
     impl Ceremony for BrokenCeremony {
