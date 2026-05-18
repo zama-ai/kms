@@ -2,7 +2,7 @@
 //!
 //! This module owns the parent/enclave control plane for the outer transport:
 //! creating the shard streams, grouping them into one logical session, and
-//! validating that both sides agree on the shard layout.
+//! validating that both sides agree on the shard layout and framing mode.
 
 use crate::protocol::Hello;
 use anyhow::{Context, Result, anyhow, bail};
@@ -29,6 +29,7 @@ pub(crate) struct ParentSessionAcceptor {
     listener: VsockListener,
     queue_count: usize,
     accept_timeout: Duration,
+    raw_tun_frames: bool,
 }
 
 impl ParentSessionAcceptor {
@@ -37,6 +38,7 @@ impl ParentSessionAcceptor {
         vsock_port: u32,
         queue_count: usize,
         accept_timeout: Duration,
+        raw_tun_frames: bool,
     ) -> Result<Self> {
         let listener = VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, vsock_port))
             .with_context(|| format!("failed to listen on VSOCK port {vsock_port}"))?;
@@ -45,6 +47,7 @@ impl ParentSessionAcceptor {
             listener,
             queue_count,
             accept_timeout,
+            raw_tun_frames,
         })
     }
 
@@ -69,7 +72,7 @@ impl ParentSessionAcceptor {
             "vsocktun(parent): accepted first shard"
         );
 
-        validate_hello(first_hello, self.queue_count)?;
+        validate_hello(first_hello, self.queue_count, self.raw_tun_frames)?;
 
         let mut shards = empty_shard_slots(self.queue_count);
         shards[usize::from(first_hello.shard)] = Some(first_socket);
@@ -102,9 +105,13 @@ impl ParentSessionAcceptor {
                 read_hello_with_timeout(&mut socket, remaining, "read shard session header")
                     .await?;
 
-            if let SessionShard::IgnoredUnrelated(_socket) =
-                record_session_shard(&mut shards, first_hello.session_id, hello, socket)?
-            {
+            if let SessionShard::IgnoredUnrelated(_socket) = record_session_shard(
+                &mut shards,
+                first_hello.session_id,
+                hello,
+                socket,
+                self.raw_tun_frames,
+            )? {
                 tracing::debug!(
                     assembling_session_id = first_hello.session_id,
                     ignored_session_id = hello.session_id,
@@ -143,6 +150,7 @@ pub(crate) async fn connect_session(
     parent_cid: u32,
     vsock_port: u32,
     queue_count: usize,
+    raw_tun_frames: bool,
 ) -> Result<SessionSockets> {
     let session_id = generate_session_id();
     let mut shards = Vec::with_capacity(queue_count);
@@ -155,11 +163,12 @@ pub(crate) async fn connect_session(
                     "failed to connect shard {shard} to parent CID {parent_cid} on VSOCK port {vsock_port}",
                 )
             })?;
-        Hello {
+        Hello::new(
             session_id,
-            queues: u16::try_from(queue_count).context("queue count exceeds handshake range")?,
-            shard: u16::try_from(shard).context("shard index exceeds handshake range")?,
-        }
+            u16::try_from(queue_count).context("queue count exceeds handshake range")?,
+            u16::try_from(shard).context("shard index exceeds handshake range")?,
+            raw_tun_frames,
+        )
         .write_to_async(&mut socket)
         .await
         .with_context(|| format!("failed to send handshake for shard {shard}"))?;
@@ -222,12 +231,13 @@ fn record_session_shard<T>(
     assembling_session_id: u64,
     hello: Hello,
     socket: T,
+    expected_raw_tun_frames: bool,
 ) -> Result<SessionShard<T>> {
     if hello.session_id != assembling_session_id {
         return Ok(SessionShard::IgnoredUnrelated(socket));
     }
 
-    validate_hello(hello, shards.len())?;
+    validate_hello(hello, shards.len(), expected_raw_tun_frames)?;
     let slot = &mut shards[usize::from(hello.shard)];
     if slot.is_some() {
         bail!(
@@ -240,7 +250,7 @@ fn record_session_shard<T>(
     Ok(SessionShard::Inserted)
 }
 
-fn validate_hello(hello: Hello, queue_count: usize) -> Result<()> {
+fn validate_hello(hello: Hello, queue_count: usize, expected_raw_tun_frames: bool) -> Result<()> {
     if usize::from(hello.queues) != queue_count {
         bail!(
             "peer requested {} queues but this side expects {}",
@@ -254,6 +264,22 @@ fn validate_hello(hello: Hello, queue_count: usize) -> Result<()> {
             "peer requested shard {} but this side only has {} queues",
             hello.shard,
             queue_count,
+        );
+    }
+
+    if hello.supports_raw_tun_frames() != expected_raw_tun_frames {
+        bail!(
+            "peer raw-tun-frame transport is {} but this side expects it to be {}",
+            if hello.supports_raw_tun_frames() {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            if expected_raw_tun_frames {
+                "enabled"
+            } else {
+                "disabled"
+            },
         );
     }
 
@@ -300,11 +326,7 @@ mod tests {
     fn read_hello_succeeds_before_timeout() {
         test_runtime().block_on(async {
             let (mut writer, mut reader) = io::duplex(Hello::ENCODED_LEN);
-            let expected = Hello {
-                session_id: 7,
-                queues: 2,
-                shard: 1,
-            };
+            let expected = Hello::new(7, 2, 1, true);
             writer
                 .write_all(&expected.encode())
                 .await
@@ -325,16 +347,8 @@ mod tests {
     #[test]
     fn record_session_shard_ignores_unrelated_sessions() -> Result<()> {
         let mut shards = vec![None];
-        let disposition = record_session_shard(
-            &mut shards,
-            9,
-            Hello {
-                session_id: 10,
-                queues: 1,
-                shard: 0,
-            },
-            42_u8,
-        )?;
+        let disposition =
+            record_session_shard(&mut shards, 9, Hello::new(10, 1, 0, true), 42_u8, true)?;
 
         assert!(matches!(disposition, SessionShard::IgnoredUnrelated(42)));
         assert!(shards[0].is_none());
@@ -344,48 +358,33 @@ mod tests {
     #[test]
     fn record_session_shard_rejects_duplicates() {
         let mut shards = vec![Some(11_u8)];
-        let err = record_session_shard(
-            &mut shards,
-            9,
-            Hello {
-                session_id: 9,
-                queues: 1,
-                shard: 0,
-            },
-            42_u8,
-        )
-        .expect_err("duplicate shard should be rejected");
+        let err = record_session_shard(&mut shards, 9, Hello::new(9, 1, 0, true), 42_u8, true)
+            .expect_err("duplicate shard should be rejected");
 
         assert!(err.to_string().contains("duplicate shard 0"));
     }
 
     #[test]
     fn validate_hello_rejects_wrong_queue_count() {
-        let err = validate_hello(
-            Hello {
-                session_id: 1,
-                queues: 2,
-                shard: 0,
-            },
-            1,
-        )
-        .expect_err("queue mismatch should be rejected");
+        let err = validate_hello(Hello::new(1, 2, 0, true), 1, true)
+            .expect_err("queue mismatch should be rejected");
 
         assert!(err.to_string().contains("peer requested 2 queues"));
     }
 
     #[test]
     fn validate_hello_rejects_out_of_range_shard() {
-        let err = validate_hello(
-            Hello {
-                session_id: 1,
-                queues: 2,
-                shard: 2,
-            },
-            2,
-        )
-        .expect_err("out-of-range shard should be rejected");
+        let err = validate_hello(Hello::new(1, 2, 2, true), 2, true)
+            .expect_err("out-of-range shard should be rejected");
 
         assert!(err.to_string().contains("peer requested shard 2"));
+    }
+
+    #[test]
+    fn validate_hello_rejects_raw_tun_frame_mismatch() {
+        let err = validate_hello(Hello::new(1, 2, 1, false), 2, true)
+            .expect_err("capability mismatch should be rejected");
+
+        assert!(err.to_string().contains("raw-tun-frame transport"));
     }
 }
