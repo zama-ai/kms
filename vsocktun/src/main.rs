@@ -19,7 +19,6 @@ use std::collections::VecDeque;
 use std::fmt::Arguments;
 use std::future::Future;
 use std::io;
-use std::sync::Arc;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 use tokio::runtime::Builder;
@@ -99,9 +98,14 @@ struct EnclaveArgs {
     reconnect_delay_ms: u64,
 }
 
-struct WorkerOutcome {
+struct WorkerOutcome<ReturnedQueue> {
     shard: usize,
-    tun_queue: AsyncDevice,
+    returned_queue: ReturnedQueue,
+    result: Result<()>,
+}
+
+struct SupervisedWorkersOutcome<ReturnedQueue> {
+    returned_queues: Vec<Option<ReturnedQueue>>,
     result: Result<()>,
 }
 
@@ -484,26 +488,71 @@ async fn run_session(role: &'static str, tun: &TunDevice, session: SessionSocket
         "vsocktun: starting session"
     );
 
+    let work_items = tun_queues.drain(..).zip(session.shards).collect::<Vec<_>>();
+    let SupervisedWorkersOutcome {
+        returned_queues,
+        result,
+    } =
+        supervise_session_workers(
+            role,
+            session_id,
+            work_items,
+            |shard, (tun_queue, socket), cancel_rx| {
+                let shard_log = ShardLogContext {
+                    role,
+                    session_id,
+                    shard,
+                };
+                async move {
+                    pump_shard(shard_log, tun_queue, socket, max_tun_frame_bytes, cancel_rx).await
+                }
+            },
+        )
+        .await;
+
+    let restored_queues = returned_queues
+        .into_iter()
+        .enumerate()
+        .map(|(shard, queue)| {
+            queue.ok_or_else(|| anyhow!("missing returned TUN queue for shard {shard}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    tun.restore_queues(restored_queues);
+
+    result?;
+
+    tracing::debug!(role, session_id, "vsocktun: session completed cleanly");
+
+    Ok(())
+}
+
+async fn supervise_session_workers<WorkItem, ReturnedQueue, SpawnWorker, WorkerFuture>(
+    role: &'static str,
+    session_id: u64,
+    work_items: Vec<WorkItem>,
+    mut spawn_worker: SpawnWorker,
+) -> SupervisedWorkersOutcome<ReturnedQueue>
+where
+    WorkItem: Send + 'static,
+    ReturnedQueue: Send + 'static,
+    SpawnWorker: FnMut(usize, WorkItem, watch::Receiver<bool>) -> WorkerFuture,
+    WorkerFuture: Future<Output = (ReturnedQueue, Result<()>)> + Send + 'static,
+{
     let (cancel_tx, _) = watch::channel(false);
     let mut tasks = JoinSet::new();
     let mut returned_queues = std::iter::repeat_with(|| None)
-        .take(tun_queues.len())
-        .collect::<Vec<Option<AsyncDevice>>>();
+        .take(work_items.len())
+        .collect::<Vec<Option<ReturnedQueue>>>();
 
-    for (shard, (tun_queue, socket)) in tun_queues.drain(..).zip(session.shards).enumerate() {
+    for (shard, work_item) in work_items.into_iter().enumerate() {
         tracing::debug!(role, session_id, shard, "vsocktun: spawning shard worker");
-        let shard_log = ShardLogContext {
-            role,
-            session_id,
-            shard,
-        };
         let cancel_rx = cancel_tx.subscribe();
+        let worker = spawn_worker(shard, work_item, cancel_rx);
         tasks.spawn(async move {
-            let (tun_queue, result) =
-                pump_shard(shard_log, tun_queue, socket, max_tun_frame_bytes, cancel_rx).await;
+            let (returned_queue, result) = worker.await;
             WorkerOutcome {
                 shard,
-                tun_queue,
+                returned_queue,
                 result,
             }
         });
@@ -513,7 +562,7 @@ async fn run_session(role: &'static str, tun: &TunDevice, session: SessionSocket
     while let Some(joined) = tasks.join_next().await {
         match joined {
             Ok(outcome) => {
-                returned_queues[outcome.shard] = Some(outcome.tun_queue);
+                returned_queues[outcome.shard] = Some(outcome.returned_queue);
                 if let Err(err) = outcome.result
                     && first_error.is_none()
                 {
@@ -541,22 +590,10 @@ async fn run_session(role: &'static str, tun: &TunDevice, session: SessionSocket
         }
     }
 
-    let restored_queues = returned_queues
-        .into_iter()
-        .enumerate()
-        .map(|(shard, queue)| {
-            queue.ok_or_else(|| anyhow!("missing returned TUN queue for shard {shard}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    tun.restore_queues(restored_queues);
-
-    if let Some(err) = first_error {
-        return Err(err);
+    SupervisedWorkersOutcome {
+        returned_queues,
+        result: first_error.map_or_else(|| Ok(()), Err),
     }
-
-    tracing::debug!(role, session_id, "vsocktun: session completed cleanly");
-
-    Ok(())
 }
 
 /// Runs both packet directions for one shard.
@@ -577,76 +614,70 @@ async fn pump_shard(
 
     shard_log.debug(format_args!("starting"));
 
-    let tun_queue = Arc::new(tun_queue);
     let socket_frame_bytes = MAX_TUN_FRAME_BYTES.max(max_tun_frame_bytes);
     let (socket_reader, socket_writer) = socket.into_split();
     let (local_cancel_tx, _) = watch::channel(false);
 
-    let socket_to_tun = forward_socket_to_tun(
-        shard_log,
-        socket_reader,
-        Arc::clone(&tun_queue),
-        socket_frame_bytes,
-        local_cancel_tx.subscribe(),
-    );
-    let tun_to_socket = forward_tun_to_socket(
-        shard_log,
-        Arc::clone(&tun_queue),
-        socket_writer,
-        socket_frame_bytes,
-        local_cancel_tx.subscribe(),
-    );
-    tokio::pin!(socket_to_tun);
-    tokio::pin!(tun_to_socket);
+    let result = {
+        // Both directions only need a shared borrow of the queue. Keeping ownership in this
+        // worker guarantees the session supervisor can recover the queue even when one direction
+        // exits with an error.
+        let socket_to_tun = forward_socket_to_tun(
+            shard_log,
+            socket_reader,
+            &tun_queue,
+            socket_frame_bytes,
+            local_cancel_tx.subscribe(),
+        );
+        let tun_to_socket = forward_tun_to_socket(
+            shard_log,
+            &tun_queue,
+            socket_writer,
+            socket_frame_bytes,
+            local_cancel_tx.subscribe(),
+        );
+        tokio::pin!(socket_to_tun);
+        tokio::pin!(tun_to_socket);
 
-    let first = tokio::select! {
-        changed = session_cancelled.changed() => {
-            match changed {
-                Ok(()) if *session_cancelled.borrow() => {
-                    shard_log.debug(format_args!("received session cancellation"));
-                    let _ = local_cancel_tx.send(true);
-                    let _ = (&mut socket_to_tun).await;
-                    let _ = (&mut tun_to_socket).await;
-                    None
-                }
-                Ok(()) | Err(_) => {
-                    let _ = local_cancel_tx.send(true);
-                    let _ = (&mut socket_to_tun).await;
-                    let _ = (&mut tun_to_socket).await;
-                    None
+        let first = tokio::select! {
+            changed = session_cancelled.changed() => {
+                match changed {
+                    Ok(()) if *session_cancelled.borrow() => {
+                        shard_log.debug(format_args!("received session cancellation"));
+                        let _ = local_cancel_tx.send(true);
+                        let _ = (&mut socket_to_tun).await;
+                        let _ = (&mut tun_to_socket).await;
+                        None
+                    }
+                    Ok(()) | Err(_) => {
+                        let _ = local_cancel_tx.send(true);
+                        let _ = (&mut socket_to_tun).await;
+                        let _ = (&mut tun_to_socket).await;
+                        None
+                    }
                 }
             }
-        }
-        result = &mut socket_to_tun => Some((DirectionTask::SocketToTun, result)),
-        result = &mut tun_to_socket => Some((DirectionTask::TunToSocket, result)),
-    };
-
-    let Some(first) = first else {
-        let tun_queue = match Arc::try_unwrap(tun_queue) {
-            Ok(tun_queue) => tun_queue,
-            Err(_) => panic!("pump_shard should recover exclusive ownership of the TUN queue"),
+            result = &mut socket_to_tun => Some((DirectionTask::SocketToTun, result)),
+            result = &mut tun_to_socket => Some((DirectionTask::TunToSocket, result)),
         };
-        return (tun_queue, Ok(()));
-    };
 
-    let _ = local_cancel_tx.send(true);
-    let second = match first.0 {
-        DirectionTask::SocketToTun => (&mut tun_to_socket).await,
-        DirectionTask::TunToSocket => (&mut socket_to_tun).await,
-    };
+        if let Some(first) = first {
+            let _ = local_cancel_tx.send(true);
+            let second = match first.0 {
+                DirectionTask::SocketToTun => (&mut tun_to_socket).await,
+                DirectionTask::TunToSocket => (&mut socket_to_tun).await,
+            };
 
-    shard_log.debug(format_args!("stopping"));
+            shard_log.debug(format_args!("stopping"));
 
-    let result = match (first.1, second) {
-        (Err(err), _) => Err(err),
-        (Ok(()), Err(err)) => Err(err),
-        (Ok(()), Ok(())) => Ok(()),
-    };
-    // Both direction futures have completed, so this shard should be the only remaining owner
-    // of the queue wrapper. If not, the cancellation/drain logic above is broken.
-    let tun_queue = match Arc::try_unwrap(tun_queue) {
-        Ok(tun_queue) => tun_queue,
-        Err(_) => panic!("pump_shard should recover exclusive ownership of the TUN queue"),
+            match (first.1, second) {
+                (Err(err), _) => Err(err),
+                (Ok(()), Err(err)) => Err(err),
+                (Ok(()), Ok(())) => Ok(()),
+            }
+        } else {
+            Ok(())
+        }
     };
     (tun_queue, result)
 }
@@ -659,7 +690,7 @@ async fn pump_shard(
 async fn forward_socket_to_tun(
     shard_log: ShardLogContext,
     mut socket_reader: OwnedReadHalf,
-    tun_queue: Arc<AsyncDevice>,
+    tun_queue: &AsyncDevice,
     max_tun_frame_bytes: usize,
     mut cancelled: watch::Receiver<bool>,
 ) -> Result<()> {
@@ -708,7 +739,7 @@ async fn forward_socket_to_tun(
                             Err(_) => return Ok(()),
                         }
                     }
-                    result = write_to_tun(&mut pending_tun_write, tun_queue.as_ref()) => {
+                    result = write_to_tun(&mut pending_tun_write, tun_queue) => {
                         result.with_context(|| format!("failed to inject packet into TUN queue {}", shard_log.shard))?
                     }
                 };
@@ -737,7 +768,7 @@ async fn forward_socket_to_tun(
                         Err(_) => return Ok(()),
                     }
                 }
-                result = write_to_tun(&mut pending_tun_write, tun_queue.as_ref()) => {
+                result = write_to_tun(&mut pending_tun_write, tun_queue) => {
                     result.with_context(|| format!("failed to inject packet into TUN queue {}", shard_log.shard))?
                 }
             };
@@ -762,7 +793,7 @@ async fn forward_socket_to_tun(
 /// exposes rather than normalizing it back to one frame per inner segment.
 async fn forward_tun_to_socket(
     shard_log: ShardLogContext,
-    tun_queue: Arc<AsyncDevice>,
+    tun_queue: &AsyncDevice,
     mut socket_writer: OwnedWriteHalf,
     max_tun_frame_bytes: usize,
     mut cancelled: watch::Receiver<bool>,
@@ -897,9 +928,46 @@ impl ParsedCommon {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Mode, log_level_from_count};
+    use super::{
+        Cli, Mode, SupervisedWorkersOutcome, log_level_from_count, supervise_session_workers,
+    };
+    use anyhow::{Result, anyhow};
     use clap::Parser;
+    use tokio::runtime::Builder;
     use tracing::Level;
+
+    struct TestQueuePool<T> {
+        queues: Option<Vec<T>>,
+    }
+
+    impl<T> TestQueuePool<T> {
+        fn new(queues: Vec<T>) -> Self {
+            Self {
+                queues: Some(queues),
+            }
+        }
+
+        fn take(&mut self) -> Vec<T> {
+            self.queues
+                .take()
+                .expect("test queue pool should have queues available")
+        }
+
+        fn restore(&mut self, queues: Vec<T>) {
+            let previous = self.queues.replace(queues);
+            assert!(
+                previous.is_none(),
+                "test queue pool should not overwrite already-available queues"
+            );
+        }
+    }
+
+    fn test_runtime() -> tokio::runtime::Runtime {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should be created")
+    }
 
     #[cfg(target_os = "linux")]
     mod integration_tests {
@@ -1600,5 +1668,50 @@ mod tests {
         assert_eq!(log_level_from_count(1), Level::DEBUG);
         assert_eq!(log_level_from_count(2), Level::TRACE);
         assert_eq!(log_level_from_count(7), Level::TRACE);
+    }
+
+    #[test]
+    fn session_supervisor_restores_all_queues_after_worker_error() -> Result<()> {
+        let mut queue_pool = TestQueuePool::new(vec![10_u8, 20_u8]);
+        let work_items = queue_pool.take();
+
+        let SupervisedWorkersOutcome {
+            returned_queues,
+            result,
+        } = test_runtime().block_on(supervise_session_workers(
+            "test",
+            42,
+            work_items,
+            |shard, queue, mut cancelled| async move {
+                if shard == 0 {
+                    (queue, Err(anyhow!("synthetic shard failure")))
+                } else {
+                    cancelled
+                        .changed()
+                        .await
+                        .expect("cancellation should reach sibling worker");
+                    assert!(
+                        *cancelled.borrow(),
+                        "sibling worker should observe cancellation"
+                    );
+                    (queue, Ok(()))
+                }
+            },
+        ));
+
+        let restored_queues = returned_queues
+            .into_iter()
+            .enumerate()
+            .map(|(shard, queue)| {
+                queue.ok_or_else(|| anyhow!("missing returned test queue for shard {shard}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        queue_pool.restore(restored_queues);
+
+        assert_eq!(queue_pool.take(), vec![10_u8, 20_u8]);
+
+        let err = result.expect_err("worker failure should surface from the supervisor");
+        assert!(err.to_string().contains("shard 0 failed"));
+        Ok(())
     }
 }
