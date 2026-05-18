@@ -21,6 +21,15 @@ PARENT_IF=""
 PARENT_IP=""
 VSOCKTUN_BIN="$(command -v vsocktun)"
 
+default_tun_tokio_worker_threads() {
+    local QUEUE_COUNT="$1"
+    if [ "$QUEUE_COUNT" -le 16 ]; then
+        echo 4
+    else
+        echo 8
+    fi
+}
+
 if [ -z "$VSOCKTUN_BIN" ]; then
     echo "start_proxies: could not resolve vsocktun in PATH"
     exit 1
