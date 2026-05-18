@@ -146,10 +146,10 @@ kmsCore:
       resources:
         requests:
           memory: 256Mi
-          cpu: 2
+          cpu: 8
         limits:
           memory: 1024Mi
-          cpu: 2
+          cpu: 16
     cid: 20
     eifPath: /app/kms/core/service/enclave.eif
     eifSignKey: 00000000-0000-0000-0000-000000000000
