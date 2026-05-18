@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::common::{TIME_TO_SLEEP_MS, assert_plaintext};
+use crate::client::tests::common::assert_plaintext;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 #[cfg(feature = "slow_tests")]
@@ -147,7 +147,6 @@ pub(crate) async fn decryption_centralized(
     parallelism: usize,
 ) -> Result<()> {
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let spec = match material_type {
         MaterialType::Testing => TestMaterialSpec::centralized_basic(),
         MaterialType::Default => TestMaterialSpec::centralized_default(),

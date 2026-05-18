@@ -21,8 +21,7 @@ use crate::vault::storage::{
     StorageType, delete_at_request_and_epoch_id, read_context_at_id, read_versioned_at_request_id,
 };
 use crate::{
-    client::tests::common::TIME_TO_SLEEP_MS, cryptography::internal_crypto_types::WrappedDKGParams,
-    engine::base::derive_request_id,
+    cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
 use kms_grpc::kms::v1::{
@@ -59,7 +58,6 @@ impl CentralizedBackupTestEnv {
         let dkg_param: WrappedDKGParams = FheParameter::Test.into();
         let req_new_cus: RequestId = derive_request_id(test_name).unwrap();
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let test_env = CentralizedTestEnv::builder()
             .with_test_name(test_name)
             .with_custodian_keychain()
