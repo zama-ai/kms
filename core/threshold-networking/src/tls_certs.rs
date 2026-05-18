@@ -64,10 +64,16 @@ pub struct Cli {
         short,
         long,
         default_value = "0",
-        allow_hyphen_values = true,
-        help = "the number of core certificates to generate for each CA. Can be set to 0 to only generate the CA certificates. Can be set to -1 to generate a single certificate that's not CA"
+        help = "the number of core certificates to generate for each CA. Can be set to 0 to only generate the CA certificates."
     )]
-    num_cores: i32,
+    num_cores: u32,
+
+    #[clap(
+        long,
+        default_value_t = false,
+        help = "Forces the generation of a self-signed certificate that is not a CA. Only compatible with num-cores set to 0. This certificate can thus be used directly as a TLS certificate for a core."
+    )]
+    force_self_signed_non_ca: bool,
 
     #[clap(long, value_enum, default_value_t = CertFileType::Pem, help = "the output file type, select between pem and der")]
     output_file_type: CertFileType,
@@ -109,20 +115,25 @@ async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
 }
 
 /// create the keypair and self-signed certificate for the CA identified by the given name
-fn create_selfsigned_ca_cert(
+fn create_selfsigned_cert(
     ca_name: &str,
     wildcard: bool,
     is_ca: bool,
 ) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    create_ca_cert_from_ca_keypair(ca_name, wildcard, is_ca, &keypair)
+    create_selfsigned_cert_from_keypair(ca_name, wildcard, is_ca, &keypair)
         .map(|(_cert_ki, cert, params)| (keypair, cert, params))
 }
 
 /// Create a self-signed certificate using the supplied keypair. The first
 /// element in the returned tuple is the certificate subject key identifier
 /// which we currently only use for logging.
-pub fn create_ca_cert_from_ca_keypair<S: rcgen::SigningKey>(
+/// Arguments:
+/// - ca_name: the name of the CA, which will be part of the certificate's common name and SAN entries
+/// - wildcard: whether to include a wildcard SAN entry for the CA certificate
+/// - is_ca: whether the generated self-signed certificate should have the CA flag set to true. If set to false, the generated certificate can be used directly as a TLS certificate for a core, without the need for generating separate core certificates.
+/// - sk: the keypair to generate the self-signed the certificate
+pub fn create_selfsigned_cert_from_keypair<S: rcgen::SigningKey>(
     ca_name: &str,
     wildcard: bool,
     is_ca: bool,
@@ -264,11 +275,20 @@ pub async fn entry_point() -> anyhow::Result<()> {
     };
 
     let mut all_certs = vec![];
+
+    let is_ca = match (args.force_self_signed_non_ca, args.num_cores) {
+        (true, 0) => false,
+        (false, _) => true,
+        (true, n) => {
+            return Err(anyhow!(
+                "Invalid arguments: --selfsigned-non-ca can only be true if --num-cores is set to 0. Current value of --num-cores: {n}"
+            ));
+        }
+    };
+
     for ca_name in ca_set {
-        // we set the CA flag to false if num_cores is set to -1, which means that the user only wants a single certificate that's not CA
-        let is_ca = args.num_cores != -1;
         let (ca_keypair, ca_cert, ca_cert_params) =
-            create_selfsigned_ca_cert(&ca_name, args.wildcard, is_ca)?;
+            create_selfsigned_cert(&ca_name, args.wildcard, is_ca)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -330,7 +350,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_core_certs, create_selfsigned_ca_cert, validate_ca_name};
+    use super::{create_core_certs, create_selfsigned_cert, validate_ca_name};
     use rcgen::{Certificate, Issuer};
     use tokio_rustls::rustls::pki_types::UnixTime;
     use webpki::{EndEntityCert, KeyUsage, anchor_from_trusted_cert};
@@ -358,7 +378,7 @@ mod tests {
     fn test_cert_chain() {
         let ca_name = "party.kms.zama.ai";
         let (ca_keypair, ca_cert, ca_cert_params) =
-            create_selfsigned_ca_cert(ca_name, false, true).unwrap();
+            create_selfsigned_cert(ca_name, false, true).unwrap();
         let issuing_ca = Issuer::from_params(&ca_cert_params, &ca_keypair);
 
         let core_certs = create_core_certs(ca_name, 2, &issuing_ca, false).unwrap();
@@ -370,7 +390,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_selfsigned_ca_cert(ca_name, false, true).unwrap();
+            create_selfsigned_cert(ca_name, false, true).unwrap();
 
         // check all core certs
         for c in core_certs {
@@ -392,7 +412,7 @@ mod tests {
         let ca_name = "p1.kms.zama.ai";
 
         let (ca_keypair, ca_cert, ca_cert_params) =
-            create_selfsigned_ca_cert(ca_name, false, true).unwrap();
+            create_selfsigned_cert(ca_name, false, true).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -401,7 +421,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_selfsigned_ca_cert(ca_name, false, true).unwrap();
+            create_selfsigned_cert(ca_name, false, true).unwrap();
 
         let issuing_ca = Issuer::from_params(&ca_cert_params, &ca_keypair);
         let core_certs = create_core_certs(ca_name, 2, &issuing_ca, false).unwrap();

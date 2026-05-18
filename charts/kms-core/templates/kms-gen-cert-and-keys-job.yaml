@@ -185,7 +185,8 @@ spec:
               /app/kms/core/service/bin/kms-gen-tls-certs \
                 --ca-names {{ $currentHostname }} \
                 --output-dir /tmp/certs \
-                --num-cores -1 \
+                --num-cores 0 \
+                --force-self-signed-non-ca \
                 --wildcard
 
               echo "Certificates generated successfully"
