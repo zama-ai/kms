@@ -10,8 +10,7 @@ set of `core/threshold-*` crates:
 
 - `core/threshold-execution` — the TFHE/BFV threshold protocols and the MPC
   endpoints used by `kms-server` in production.
-- `core/threshold-bgv` — the (experimental) BGV/BFV algebra and protocols. This
-  crate was previously called `threshold-experimental`.
+- `core/threshold-bgv` — the (experimental) BGV/BFV algebra and protocols.
 - `core/threshold-networking`, `core/threshold-types` — shared networking and
   type primitives used by the crates above.
 
@@ -105,12 +104,12 @@ Two helper binaries also live next to them:
 
 ### Feature flags
 
-The relevant features re:
+The relevant features are:
 
 - `extension_degree_3` … `extension_degree_8`: pick the algebraic extension
   degree used by the threshold computation. Default is `extension_degree_4`.
 - `measure_memory`: enables the `peak_alloc` global allocator inside the
-  parties, used by the memory benchmarks. Pair this with the
+  parties, used by the memory benchmarks.
 - `templating`: only needed when running `gen-experiment` (and reused for
   `threshold-gen-tls-certs` so the binary doesn't get rebuilt with a
   different feature set).
