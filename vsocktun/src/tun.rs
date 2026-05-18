@@ -7,7 +7,8 @@
 
 use anyhow::{Context, Result, bail};
 use std::net::Ipv4Addr;
-use tun_rs::{DeviceBuilder, Layer, SyncDevice, VIRTIO_NET_HDR_LEN};
+use std::sync::Mutex;
+use tun_rs::{AsyncDevice, DeviceBuilder, Layer, VIRTIO_NET_HDR_LEN};
 
 /// Parsed IPv4 interface address for one end of the point-to-point tunnel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,7 +52,7 @@ impl Ipv4Cidr {
 /// `vsocktun` keeps the device for the lifetime of the process and clones new
 /// queue handles for each accepted tunnel session.
 pub(crate) struct TunDevice {
-    queues: Vec<SyncDevice>,
+    queues: Mutex<Vec<AsyncDevice>>,
 }
 
 impl TunDevice {
@@ -87,32 +88,56 @@ impl TunDevice {
             .build_sync()
             .with_context(|| format!("failed to build tun-rs device '{name}'"))?;
 
-        let mut queues = Vec::with_capacity(queue_count);
-        queues.push(first);
+        let mut sync_queues = Vec::with_capacity(queue_count);
+        sync_queues.push(first);
         for _ in 1..queue_count {
-            let cloned = queues[0]
+            let cloned = sync_queues[0]
                 .try_clone()
                 .with_context(|| format!("failed to clone tun-rs queue for '{name}'"))?;
-            queues.push(cloned);
+            sync_queues.push(cloned);
         }
 
-        Ok(Self { queues })
+        let queues = sync_queues
+            .into_iter()
+            .enumerate()
+            .map(|(queue, device)| {
+                AsyncDevice::new(device)
+                    .with_context(|| format!("failed to make TUN queue {queue} asynchronous"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            queues: Mutex::new(queues),
+        })
     }
 
     pub(crate) fn queue_count(&self) -> usize {
-        self.queues.len()
+        self.queues
+            .lock()
+            .expect("TUN queue mutex should not be poisoned")
+            .len()
     }
 
-    /// Produces independent queue handles for a single tunnel session.
-    pub(crate) fn clone_queues(&self) -> Result<Vec<SyncDevice>> {
-        self.queues
-            .iter()
-            .map(|queue| {
-                queue
-                    .try_clone()
-                    .context("failed to duplicate tun-rs queue handle")
-            })
-            .collect()
+    /// Lends the queue set to one logical session.
+    pub(crate) fn take_queues(&self) -> Result<Vec<AsyncDevice>> {
+        let mut queues = self
+            .queues
+            .lock()
+            .expect("TUN queue mutex should not be poisoned");
+        if queues.is_empty() {
+            bail!("TUN queues are already in use by another session");
+        }
+
+        Ok(std::mem::take(&mut *queues))
+    }
+
+    /// Returns the queue set after one logical session finishes.
+    pub(crate) fn restore_queues(&self, queues: Vec<AsyncDevice>) {
+        let mut stored = self
+            .queues
+            .lock()
+            .expect("TUN queue mutex should not be poisoned");
+        *stored = queues;
     }
 
     pub(crate) fn max_frame_bytes(&self) -> usize {
