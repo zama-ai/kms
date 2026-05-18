@@ -1,59 +1,58 @@
 # Editing rules
 
-Rules for changing code, configuration, or documentation in this repository.
+Rules for changing code, config, or docs in this repo. Tight by design — read every line.
 
 ## Process
 
-- Always explain major changes before implementing them.
-- When uncertain about requirements, ask clarifying questions. Do not guess.
-- It is fine to iterate: make a working change in a first pass, then re-read the agent rule files and bring the result into compliance before presenting it.
-- When finishing any task, update all affected documentation — function doc comments, markdown files, deployment configs, and the relevant sections of [ARCHITECTURE.md](./ARCHITECTURE.md).
-- If you find errors or incorrect information in any documentation or markdown file you read in this project, notify your human.
-- Always review your changes — see [REVIEW.md](./REVIEW.md).
-- If you make changes that affect the architecture or protocol flows, alert your human that a parallel PR must be opened in the tech-spec repo documenting these changes.
+- State assumptions; if unsure, inspect first, then ask. Don't guess.
+- Explain major changes before implementing. Stop and name confusion rather than push through.
+- Before adding code, read exports, immediate callers, and shared utilities — "looks orthogonal" is dangerous.
+- On finish: summarize what's done, verified, and left. "Completed" / "tests pass" must be literal — never silently skip.
+- Update all affected docs, including function rustdoc and the relevant section of [ARCHITECTURE.md](./ARCHITECTURE.md).
+- If you spot errors in any doc you read, tell your human.
+- Architecture or protocol-flow changes → alert human that a parallel PR is needed in the tech-spec repo.
+- Always self-review per [REVIEW.md](./REVIEW.md).
 
 ## Scope of changes
 
-- Modify the smallest amount of code necessary.
-- Do not make large rewrites, and do not copy-paste code, unless explicitly instructed to do so or unless you are working in test code. Prefer focused changes.
-- Do not rewrite entire files unless explicitly asked.
-- Respect the existing folder structure (see [ARCHITECTURE.md](./ARCHITECTURE.md)).
-- Avoid introducing new patterns without justification.
-- Reuse existing utilities instead of duplicating logic. Check `util` (or similarly named) files for helpers before writing new ones.
-- Always try to preserve git history when possible, so prefer `git mv` to `mv` or rewriting code.
+- Smallest diff that solves the task. No extra features, no abstractions for single-use code, no drive-by cleanup or reformatting, no refactors of working code.
+- **Crypto / MPC / serialization / consensus / compat / security-sensitive code: preserve existing behavior — wire formats, parameter choices, transcript/hash inputs.** Changes here require an explicit design decision from your human.
+- No large rewrites or copy-paste except in test code.
+- Match existing style. If two patterns contradict, pick the more recent/tested one, explain why, flag the other.
+- Respect folder structure ([ARCHITECTURE.md](./ARCHITECTURE.md)). Reuse helpers from `util`-named files instead of duplicating.
+- Prefer `git mv` over `mv` to preserve history.
 
 ## Comments and docs
 
-- Preserve existing comments unless they are incorrect.
-- Sanity-check comments adjacent to code you modify, and update them if they would otherwise become inaccurate.
-- Every new public (`pub`) item must have a rustdoc comment.
+- Preserve existing comments unless wrong. Update comments adjacent to changed code if they'd become inaccurate.
+- Every `pub` item needs a rustdoc comment.
 
 ## Removing features
 
-- If removing working features or functions, explicitly notify your human about this.
+- Removing a working feature/function → explicitly notify your human.
 
 ## Error handling
 
-- Validate potential errors (e.g. malformed data) as early as possible; do not defer checks.
-- Errors caused by bad input or adversarial behavior must not panic. Log them with enough detail that the log line alone identifies where and why the error occurred.
-- Tracing of errors should happen at the point where the error gets constructed, not when it is received by the caller.
-- Errors that can only occur because of a bug should panic. For example: an out-of-bounds index on a vector of known size, or a `None` in a branch that should be unreachable.
-- Every `panic!` or `expect` must be accompanied by a comment explaining why the failure is a bug and cannot happen in correct execution — unless the reason is obvious in context.
-- Prefer `expect("...")` with a descriptive message over a bare `unwrap()` (the only exception is in tests, where unwrap is normally preferred for conciseness).
+- Validate early. Don't defer checks.
+- Bad input / adversarial errors: log with enough detail that the log line alone identifies where and why. Never panic on these.
+- Construct-time tracing — attach context where the error is built, not where it's received.
+- Bugs (unreachable branches, OOB on known-size vec, etc.) should panic.
+- Every `panic!` / `expect` needs a comment explaining why it can't fire in correct execution, unless obvious from context.
+- Prefer `expect("descriptive message")` over bare `unwrap()`. Tests may `unwrap()` for brevity.
 
 ## Backward compatibility
 
-- Always preserve backward compatibility. Any data (that is not test data) persisted to public, private, or backup storage/vaults must be versioned using `tfhe-versionable`. Read [docs/developer/backward_compatibility.md](../docs/developer/backward_compatibility.md) before touching a persisted type, and follow the freeze-and-replay harness described in the "Backward compatibility" section of [ARCHITECTURE.md](./ARCHITECTURE.md).
+- Always preserve backward compatibility. Any non-test data persisted to public/private/backup storage must be versioned with `tfhe-versionable`. Before touching a persisted type, read [docs/developer/backward_compatibility.md](../docs/developer/backward_compatibility.md) and follow the freeze-and-replay harness in [ARCHITECTURE.md](./ARCHITECTURE.md) "Backward compatibility".
 
 ## gRPC and service API changes
 
-- For gRPC endpoints, any modification, removal, or data-format change of existing fields is a breaking change. You MUST alert your human so that infra and downstream teams can be notified and tracking issues opened.
-- When changing the KMS service API, or changing data returned by any gRPC call, also update the `core-client` crate and mark the change as breaking.
-- See the "gRPC surface" section of [ARCHITECTURE.md](./ARCHITECTURE.md) for context on the surface you are touching.
+- Any modify/remove/data-format change to existing gRPC fields is breaking → alert human (infra + downstream tracking).
+- Changes to the KMS service API or gRPC return data → also update the `core-client` crate and mark the change breaking.
+- See "gRPC surface" in [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Build verification
 
-After any change, verify it compiles and lints cleanly:
+Run after any change; must be clean:
 
 ```
 cargo fmt --all --check

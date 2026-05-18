@@ -590,7 +590,6 @@ pub mod setup {
             other_fhe_key_id,
             epoch_id,
             true,
-            false,
         )
         .await;
         ensure_central_crs_exists(

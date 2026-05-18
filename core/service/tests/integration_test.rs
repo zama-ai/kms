@@ -1,12 +1,10 @@
 use assert_cmd::{Command, assert::OutputAssertExt};
-use std::path::Path;
-use std::{fs, thread, time::Duration};
+use std::fs;
 use test_utils_service::integration_test;
 use test_utils_service::persistent_traces;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
-const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
 
 #[cfg(test)]
@@ -43,7 +41,6 @@ mod kms_init_binary_test {
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
     use tempfile::tempdir;
-    use tokio::fs::read_dir;
 
     use super::*;
 
@@ -92,81 +89,6 @@ mod kms_gen_keys_binary_test {
             .success();
     }
 
-    fn gen_key(arg: &str) {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--param-test")
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg(arg)
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-    }
-
-    #[test]
-    #[integration_test]
-    #[persistent_traces]
-    fn gen_key_centralized() {
-        gen_key("centralized")
-    }
-
-    #[test]
-    #[integration_test]
-    #[persistent_traces]
-    fn gen_key_threshold() {
-        gen_key("threshold")
-    }
-
-    async fn gen_key_tempdir(arg: &str) {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--param-test")
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg(arg)
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-
-        // NOTE, it's important to take the reference here otherwise
-        // the tempdir value will be dropped and the destructor would be called
-        let mut dir_priv = read_dir(&temp_dir_priv).await.unwrap();
-        let mut dir_pub = read_dir(&temp_dir_pub).await.unwrap();
-
-        // unwrap should succeed because the directory should not be empty
-        _ = dir_priv.next_entry().await.unwrap();
-        _ = dir_pub.next_entry().await.unwrap();
-    }
-
-    #[tokio::test]
-    #[integration_test]
-    #[persistent_traces]
-    async fn gen_key_tempdir_centralized() {
-        gen_key_tempdir("centralized").await
-    }
-
-    #[tokio::test]
-    #[integration_test]
-    #[persistent_traces]
-    async fn gen_key_tempdir_threshold() {
-        gen_key_tempdir("threshold").await
-    }
-
     #[test]
     #[integration_test]
     fn central_signing_keys_overwrite() {
@@ -175,14 +97,12 @@ mod kms_gen_keys_binary_test {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
         let output = kms_gen_keys_command()
-            .arg("--param-test")
             .arg("--private-storage=file")
             .arg("--private-file-path")
             .arg(temp_dir_priv.path())
             .arg("--public-storage=file")
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
-            .arg("--cmd=signing-keys")
             .arg("--overwrite")
             .arg("centralized")
             .output()
@@ -196,14 +116,12 @@ mod kms_gen_keys_binary_test {
         ));
 
         let new_output = kms_gen_keys_command()
-            .arg("--param-test")
             .arg("--private-storage=file")
             .arg("--private-file-path")
             .arg(temp_dir_priv.path())
             .arg("--public-storage=file")
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
-            .arg("--cmd=signing-keys")
             .arg("centralized")
             .output()
             .unwrap();
@@ -218,14 +136,12 @@ mod kms_gen_keys_binary_test {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
         let output = kms_gen_keys_command()
-            .arg("--param-test")
             .arg("--private-storage=file")
             .arg("--private-file-path")
             .arg(temp_dir_priv.path())
             .arg("--public-storage=file")
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
-            .arg("--cmd=signing-keys")
             .arg("centralized")
             .output()
             .unwrap();
@@ -295,7 +211,6 @@ mod kms_gen_keys_binary_test {
             .arg("--public-storage=file")
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
-            .arg("--cmd=signing-keys")
             .arg("threshold")
             .arg("--signing-key-party-id=5")
             .output()
@@ -323,7 +238,6 @@ mod kms_gen_keys_binary_test {
             .arg("--public-storage=file")
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
-            .arg("--cmd=signing-keys")
             .arg("threshold")
             .arg("--signing-key-party-id=5")
             .arg("--num-parties=5")
@@ -356,9 +270,8 @@ mod kms_gen_keys_binary_test {
         let temp_dir_priv = tempdir().unwrap();
 
         // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=<unique> --private-storage=file --private-file-path=<tempdir> --cmd=signing-keys --overwrite --deterministic
+        // cargo run --bin kms-gen-keys -- --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=<unique> --private-storage=file --private-file-path=<tempdir> --overwrite --deterministic centralized
         let output = kms_gen_keys_command()
-            .arg("--param-test")
             .arg(format!("--aws-region={AWS_REGION}"))
             .arg(format!("--aws-s3-endpoint={AWS_S3_ENDPOINT}"))
             .arg("--public-storage=s3")
@@ -369,7 +282,6 @@ mod kms_gen_keys_binary_test {
             .arg("--private-storage=file")
             .arg("--private-file-path")
             .arg(temp_dir_priv.path())
-            .arg("--cmd=signing-keys")
             .arg("--overwrite")
             .arg("--deterministic")
             .arg("centralized")
@@ -405,110 +317,6 @@ mod kms_server_binary_test {
             .unwrap()
             .assert()
             .success();
-    }
-
-    fn run_subcommand_no_args(config_file: &Path, cwd: &Path) {
-        // Spawn the server, give it 5s to come up (and stay up), then kill the
-        // specific child PID we spawned. CWD is the per-test tempdir so the
-        // relative paths in the config (`./keys`, `./backup_vault`,
-        // `certs/...`) all resolve inside it.
-        let bin_path = assert_cmd::cargo::cargo_bin(KMS_SERVER);
-        let mut child = std::process::Command::new(&bin_path)
-            .current_dir(cwd)
-            .arg("--config-file")
-            .arg(config_file)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("failed to spawn kms-server");
-
-        thread::sleep(Duration::from_secs(5));
-
-        // Sanity: the server should still be running (it's a long-running
-        // process; it shouldn't exit on its own within 5s). If it has
-        // exited, drain stdout/stderr and panic with them so the failure
-        // is diagnosable.
-        if let Some(status) = child.try_wait().expect("try_wait failed") {
-            let output = child.wait_with_output().expect("wait_with_output failed");
-            panic!(
-                "kms-server exited within 5s with status {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
-                status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-
-        child.kill().expect("kill failed");
-        let _ = child.wait_with_output().expect("wait_with_output failed");
-    }
-
-    // All three binaries (kms-gen-keys, kms-gen-tls-certs, kms-server) share
-    // the per-test tempdir as their CWD, so the config's relative paths
-    // (`./keys`, `./backup_vault`, `certs/...`) all resolve inside it. Each
-    // test owns its own tempdir, so concurrent test runs cannot collide.
-    #[test]
-    #[integration_test]
-    #[persistent_traces]
-    fn subcommand_dev_centralized() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let config_src =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_centralized.toml");
-        let config_dst = tempdir.path().join("default_centralized.toml");
-        std::fs::copy(&config_src, &config_dst).unwrap();
-
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .current_dir(tempdir.path())
-            .arg("--param-test")
-            .arg("centralized")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-        run_subcommand_no_args(&config_dst, tempdir.path());
-    }
-
-    #[test]
-    #[integration_test]
-    #[persistent_traces]
-    fn subcommand_dev_threshold() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let config_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_1.toml");
-        let config_dst = tempdir.path().join("default_1.toml");
-        std::fs::copy(&config_src, &config_dst).unwrap();
-
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .current_dir(tempdir.path())
-            .arg("--private-file-path")
-            .arg("./keys")
-            .arg("--private-file-prefix")
-            .arg("PRIV-p1")
-            .arg("--public-file-path")
-            .arg("./keys")
-            .arg("--public-file-prefix")
-            .arg("PUB-p1")
-            .arg("--param-test")
-            .arg("threshold")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-
-        Command::cargo_bin(KMS_GEN_TLS_CERTS)
-            .unwrap()
-            .current_dir(tempdir.path())
-            .arg("-o")
-            .arg("certs")
-            .arg("--ca-prefix")
-            .arg("p")
-            .arg("--ca-count")
-            .arg("4")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-        run_subcommand_no_args(&config_dst, tempdir.path());
     }
 }
 
