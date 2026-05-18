@@ -14,7 +14,7 @@ use kms_grpc::{
 
 use crate::{
     engine::base::{KeyGenMetadata, KmsFheKeyHandles},
-    util::meta_store::{MetaStore, ensure_meta_store_request_pending},
+    util::meta_store::{MetaStore, MetaStorePermit, ensure_meta_store_request_pending},
     vault::{
         Vault,
         storage::{
@@ -69,6 +69,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner.fhe_keys_exists(key_id, epoch_id, false).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_fhe_keys(
         &self,
         key_id: &RequestId,
@@ -76,6 +77,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         central_fhe_keys: KmsFheKeyHandles,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        permit: MetaStorePermit,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         // First ensure that the meta store request is pending
@@ -102,7 +104,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             key_id,
             meta_res,
             &mut guarded_meta_store,
-            None,
+            permit,
             op_metric_tag,
         )
         .await

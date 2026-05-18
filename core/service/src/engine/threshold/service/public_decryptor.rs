@@ -860,8 +860,7 @@ mod tests {
         .unwrap();
 
         let mut key_store = MetaStore::new_unlimited();
-        key_store.insert(&key_id).unwrap();
-        // key_store.update(&key_id, Ok(info.clone())).unwrap();
+        let meta_store_permit = key_store.insert(&key_id).unwrap();
         let key_meta_store = Arc::new(RwLock::new(key_store));
 
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
@@ -878,6 +877,7 @@ mod tests {
                 threshold_fhe_keys,
                 PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                meta_store_permit,
                 "",
             )
             .await

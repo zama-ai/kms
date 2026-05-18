@@ -12,7 +12,7 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
-use crate::util::meta_store::add_req_to_meta_store;
+use crate::util::meta_store::{MetaStorePermit, add_req_to_meta_store};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
@@ -182,7 +182,7 @@ where
             }
         }
 
-        let _ = add_req_to_meta_store(
+        let meta_permit = add_req_to_meta_store(
             &mut self.custodian_meta_store.write().await,
             &custodian_context_id,
             OP_NEW_CUSTODIAN_CONTEXT,
@@ -194,7 +194,7 @@ where
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
-        self.inner_new_custodian_context(custodian_context, mpc_context_id)
+        self.inner_new_custodian_context(custodian_context, mpc_context_id, meta_permit)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
@@ -266,6 +266,7 @@ where
         &self,
         context: CustodianContext,
         mpc_context_id: ContextId,
+        meta_permit: MetaStorePermit,
     ) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
@@ -328,7 +329,11 @@ where
         );
         // Then store the results
         self.crypto_storage
-            .write_backup_keys(recovery_validation, Arc::clone(&self.custodian_meta_store))
+            .write_backup_keys(
+                recovery_validation,
+                Arc::clone(&self.custodian_meta_store),
+                meta_permit,
+            )
             .await?;
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",

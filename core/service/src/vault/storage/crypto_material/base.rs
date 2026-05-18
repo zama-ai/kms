@@ -4,8 +4,8 @@
 //! both centralized and threshold KMS variants.
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
-    MetaStorePermit, ensure_meta_store_request_pending, try_update_err_req_in_meta_store,
-    try_update_ok_req_in_meta_store, update_err_req_in_meta_store, update_ok_req_in_meta_store,
+    MetaStorePermit, ensure_meta_store_request_pending, update_err_req_in_meta_store,
+    update_ok_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
@@ -293,10 +293,6 @@ where
     /// WARNING: this method is not safe to call concurrently with the _same_ arguments.
     /// However, this should never happen, since since any `req_id` should have been added
     /// to the meta store as pending before this call, which can only be done for a fresh `req_id`.
-    ///
-    /// When `permit` is `Some`, it is consumed by the terminal meta-store
-    /// transition (enforcing the strong-permit invariant). When `None`, the
-    /// underlying `update_meta_store` falls back to `try_update_*`.
     #[allow(clippy::too_many_arguments)]
     async fn handle_persistent_and_meta_storage<
         'a,
@@ -311,7 +307,7 @@ where
         priv_data: Option<(&'a PrivData, PrivDataType)>,
         meta_data: MetaT,
         meta_store: Arc<RwLock<MetaStore<MetaT>>>,
-        permit: Option<MetaStorePermit>,
+        permit: MetaStorePermit,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError>
     where
@@ -746,10 +742,6 @@ where
     /// Write the CRS to public and private storage and update the meta
     /// store with the outcome. On a write failure the partial data is
     /// purged before the error is returned.
-    ///
-    /// When `permit` is `Some`, it is consumed by the terminal meta-store
-    /// transition (enforcing the strong-permit invariant). When `None`, the
-    /// underlying `update_meta_store` falls back to `try_update_*`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_crs(
         &self,
@@ -758,7 +750,7 @@ where
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        permit: Option<MetaStorePermit>,
+        permit: MetaStorePermit,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         self.handle_persistent_and_meta_storage(
@@ -780,6 +772,7 @@ where
         meta_data: KeyGenMetadata,
         decompression_key: DecompressionKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        permit: MetaStorePermit,
     ) -> Result<(), StorageError> {
         // First ensure that the meta store request is pending
         ensure_meta_store_request_pending(&meta_store, key_id)
@@ -801,7 +794,7 @@ where
             key_id,
             meta_data,
             &mut guarded_meta_store,
-            None,
+            permit,
             OP_DECOMPRESSION_KEYGEN,
         )
         .await
@@ -828,6 +821,7 @@ where
         &self,
         recovery_material: RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
+        permit: MetaStorePermit,
     ) -> Result<(), StorageError> {
         let req_id = recovery_material.custodian_context().context_id;
         // First ensure that the meta store request is pending
@@ -876,7 +870,7 @@ where
             &req_id,
             recovery_material,
             &mut guarded_meta_store,
-            None,
+            permit,
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
@@ -1104,47 +1098,26 @@ where
 /// Update the meta store based on the result of a storage operation, and log and update the metrics in case of an error.
 /// If the meta store is updated successfully, then the orginal storage result is returned.
 /// If the meta store update fails, then a MetaStoreError is returned, which includes the original StorageError.
-///
-/// When `permit` is `Some`, the strong-invariant variants of the meta-store
-/// helpers are used and the permit is consumed. When `None`, the `try_*`
-/// variants are used — appropriate for callers that legitimately cannot
-/// thread a permit through.
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
-    req_id: &RequestId,
+    req_id: &RequestId, // TODO remove and use from permit
     meta_data: MetaT,
     guarded_meta_store: &mut RwLockWriteGuard<'_, MetaStore<MetaT>>,
-    permit: Option<MetaStorePermit>,
+    permit: MetaStorePermit,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
-    let is_storage_err =
-        matches!(&storage_res, Err(e) if e != &StorageError::Backup);
-    let meta_store_ok = match (is_storage_err, permit) {
-        (true, Some(permit)) => update_err_req_in_meta_store(
+    let is_storage_err = matches!(&storage_res, Err(e) if e != &StorageError::Backup);
+    let meta_store_ok = if is_storage_err {
+        update_err_req_in_meta_store(
             guarded_meta_store,
             permit,
             storage_res.as_ref().err().unwrap().to_string(),
             op_metric_tag,
-        ),
-        (true, None) => try_update_err_req_in_meta_store(
-            guarded_meta_store,
-            req_id,
-            storage_res.as_ref().err().unwrap().to_string(),
-            op_metric_tag,
-        ),
-        (false, Some(permit)) => update_ok_req_in_meta_store(
-            guarded_meta_store,
-            permit,
-            meta_data,
-            op_metric_tag,
-        ),
-        (false, None) => try_update_ok_req_in_meta_store(
-            guarded_meta_store,
-            req_id,
-            meta_data,
-            op_metric_tag,
-        ),
+        )
+    } else {
+        update_ok_req_in_meta_store(guarded_meta_store, permit, meta_data, op_metric_tag)
     };
+    let _ = req_id; // kept in the signature for log clarity at the caller
     if !meta_store_ok {
         // NOTE this would indicate a bug since we have just verified that the meta can be updated in the start of this method
         // Thus the meta store update can only fail in case of a race condition, which would indicate a bug

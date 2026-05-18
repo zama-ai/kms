@@ -335,7 +335,7 @@ pub(crate) async fn crs_gen_background<
             // (Ok branch -> update_ok_req_in_meta_store, Err -> update_err).
             if let Err(e) = crypto_storage
                 .inner
-                .write_crs(req_id, epoch_id, pp, crs_info, meta_store, Some(permit), op_tag)
+                .write_crs(req_id, epoch_id, pp, crs_info, meta_store, permit, op_tag)
                 .await
             {
                 tracing::error!("Failed to write CRS to storage: {e}");

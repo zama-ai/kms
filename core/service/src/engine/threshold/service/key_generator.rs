@@ -72,8 +72,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            EntryState, MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
-            try_update_err_req_in_meta_store,
+            EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+            update_err_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -254,6 +254,7 @@ impl<
 > RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
@@ -265,6 +266,7 @@ impl<
         context_id: ContextId,
         epoch_id: EpochId,
         permit: OwnedSemaphorePermit,
+        meta_permit: MetaStorePermit,
     ) -> anyhow::Result<()> {
         //Retrieve the right metric tag
         let op_tag = match (
@@ -332,10 +334,8 @@ impl<
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let meta_store_cancelled = Arc::clone(&self.dkg_pubinfo_meta_store);
         let sk = self.base_kms.sig_key()?;
         let crypto_storage = self.crypto_storage.clone();
-        let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
         let ongoing = Arc::clone(&self.ongoing);
 
@@ -407,112 +407,106 @@ impl<
                 _ => None,
             };
 
-        let keygen_background = async move {
-            // Remove the preprocessing material
-            match &preproc_handle_w_mode {
-                PreprocHandleWithMode::Secure((preproc_id, _)) => {
-                    tracing::info!(
-                        "Deleting preprocessed material with ID {preproc_id} from meta store"
-                    );
-                    let delete_res = {
-                        let mut meta_store_guard = preproc_bucket.write().await;
-                        meta_store_guard.try_delete(preproc_id)
-                    };
-                    match delete_res {
-                        Ok(EntryState::Done(Ok(_))) => {
-                            tracing::info!(
-                                "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
-                            );
-                        }
-                        Ok(EntryState::Done(Err(e))) => {
-                            MetricedError::handle_unreturnable_error(
-                                op_tag,
-                                Some(req_id),
-                                anyhow::anyhow!("Preprocessing ID {preproc_id} finished with error: {e}"),
-                            );
-                        }
-                        Ok(_) => {
-                            MetricedError::handle_unreturnable_error(
-                                op_tag,
-                                Some(req_id),
-                                anyhow::anyhow!("Preprocessing ID {preproc_id} deleted but was not in Done state"),
-                            );
-                        }
-                        Err(e) => {
-                            MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-                        }
-                    }
-                }
-                PreprocHandleWithMode::Insecure => {
-                    // Nothing to remove
-                }
-            }
-
-            match internal_keyset_config.keyset_config() {
-                ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
-                    Self::key_gen_background(
-                        &req_id_clone,
-                        &epoch_id_clone,
-                        dkg_sessions,
-                        meta_store,
-                        crypto_storage,
-                        preproc_handle_w_mode,
-                        sk,
-                        dkg_params,
-                        inner_config.to_owned(),
-                        &internal_keyset_config,
-                        eip712_domain_copy,
-                        extra_data,
-                        permit,
-                        op_tag,
-                        existing_key_tag,
-                        existing_compact_pk,
-                    )
-                    .await
-                }
-                ddec_keyset_config::KeySetConfig::DecompressionOnly => {
-                    Self::decompression_key_gen_background(
-                        &req_id_clone,
-                        &epoch_id_clone,
-                        dkg_sessions.session_z128.base_session,
-                        meta_store,
-                        crypto_storage,
-                        preproc_handle_w_mode,
-                        sk,
-                        dkg_params,
-                        internal_keyset_config
-                            .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
-                        eip712_domain_copy,
-                        extra_data,
-                        permit,
-                    )
-                    .await
-                }
-            }
-        };
-        self.tracker
-            .spawn(async move {
+        let token_for_bg = token.clone();
+        self.tracker.spawn(
+            async move {
                 //Start the metric timer, it will end on drop
                 let _timer = timer.start();
-                tokio::select! {
-                    () = keygen_background => {
-                        tracing::info!("Key generation of request {} with preproc id {} exiting normally.", req_id, preproc_id);
-                        // Remove cancellation token since generation is now done.
-                        ongoing.lock().await.remove(&preproc_id);
-                    },
-                    () = token.cancelled() => {
-                        MetricedError::handle_unreturnable_error(
-                            OP_KEYGEN_REQUEST,
-                            Some(req_id),
-                            format!("Key generation background with preprocessing id {} failed since the task got aborted", preproc_id),
+                // Remove the preprocessing material
+                match &preproc_handle_w_mode {
+                    PreprocHandleWithMode::Secure((preproc_id, _)) => {
+                        tracing::info!(
+                            "Deleting preprocessed material with ID {preproc_id} from meta store"
                         );
-                        tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
-                        let mut guarded_meta_store = meta_store_cancelled.write().await;
-                        let _ = guarded_meta_store.try_update(&req_id, Result::Err("Key generation was aborted".to_string()));
-                        crypto_storage_cancelled.purge_fhe_keys(&req_id, &epoch_id).await;
-                    },
+                        let delete_res = {
+                            let mut meta_store_guard = preproc_bucket.write().await;
+                            meta_store_guard.try_delete(preproc_id)
+                        };
+                        match delete_res {
+                            Ok(EntryState::Done(Ok(_))) => {
+                                tracing::info!(
+                                    "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                                );
+                            }
+                            Ok(EntryState::Done(Err(e))) => {
+                                MetricedError::handle_unreturnable_error(
+                                    op_tag,
+                                    Some(req_id),
+                                    anyhow::anyhow!(
+                                        "Preprocessing ID {preproc_id} finished with error: {e}"
+                                    ),
+                                );
+                            }
+                            Ok(_) => {
+                                MetricedError::handle_unreturnable_error(
+                                    op_tag,
+                                    Some(req_id),
+                                    anyhow::anyhow!(
+                                        "Preprocessing ID {preproc_id} deleted but was not in Done state"
+                                    ),
+                                );
+                            }
+                            Err(e) => {
+                                MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+                            }
+                        }
+                    }
+                    PreprocHandleWithMode::Insecure => {
+                        // Nothing to remove
+                    }
                 }
-            }.instrument(tracing::Span::current()));
+
+                match internal_keyset_config.keyset_config() {
+                    ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
+                        Self::key_gen_background(
+                            meta_permit,
+                            token_for_bg,
+                            &req_id_clone,
+                            &epoch_id_clone,
+                            dkg_sessions,
+                            meta_store,
+                            crypto_storage,
+                            preproc_handle_w_mode,
+                            sk,
+                            dkg_params,
+                            inner_config.to_owned(),
+                            &internal_keyset_config,
+                            eip712_domain_copy,
+                            extra_data,
+                            permit,
+                            op_tag,
+                            existing_key_tag,
+                            existing_compact_pk,
+                        )
+                        .await;
+                    }
+                    ddec_keyset_config::KeySetConfig::DecompressionOnly => {
+                        Self::decompression_key_gen_background(
+                            meta_permit,
+                            token_for_bg,
+                            &req_id_clone,
+                            &epoch_id_clone,
+                            dkg_sessions.session_z128.base_session,
+                            meta_store,
+                            crypto_storage,
+                            preproc_handle_w_mode,
+                            sk,
+                            dkg_params,
+                            internal_keyset_config
+                                .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
+                            eip712_domain_copy,
+                            extra_data,
+                            permit,
+                            op_tag,
+                        )
+                        .await;
+                    }
+                }
+                // Cleanup runs on every termination.
+                ongoing.lock().await.remove(&preproc_id);
+            }
+            .instrument(tracing::Span::current()),
+        );
         Ok(())
     }
 
@@ -588,12 +582,9 @@ impl<
             ));
         }
 
-        // Permit is discarded immediately: the spawned task is the only writer
-        // for this entry, and threading the permit through the cancel arm,
-        // many error paths and into `crypto_storage.write_fhe_keys` adds
-        // significant complexity. Downstream paths use try_update which
-        // succeeds because no permit is outstanding.
-        let _ = add_req_to_meta_store(
+        // The meta-store permit is threaded into the spawned background so the
+        // strong invariant ("only the rightful holder updates") holds end-to-end.
+        let meta_permit = add_req_to_meta_store(
             &mut self.dkg_pubinfo_meta_store.write().await,
             &req_id,
             op_tag,
@@ -615,6 +606,7 @@ impl<
             context_id,
             epoch_id,
             permit,
+            meta_permit,
         )
         .await
         .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal))?;
@@ -1016,7 +1008,10 @@ impl<
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn decompression_key_gen_background(
+        meta_permit: MetaStorePermit,
+        cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,
         mut base_session: BaseSession,
@@ -1029,70 +1024,83 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
+        op_tag: &'static str,
     ) {
         let _permit = permit;
+        let _ = op_tag; // reserved for future metric tagging consistency
         let start = Instant::now();
-        let (prep_id, dkg_res) = match preproc_handle_w_mode {
-            PreprocHandleWithMode::Insecure => {
-                // sanity check to make sure we're using the insecure feature
-                #[cfg(not(feature = "insecure"))]
-                {
-                    panic!(
-                        "attempting to call insecure compression keygen when the insecure feature is not set"
-                    );
-                }
-                #[cfg(feature = "insecure")]
-                {
-                    (
-                        *INSECURE_PREPROCESSING_ID,
-                        match Self::get_glwe_and_compression_key_shares(
-                            keyset_added_info,
-                            epoch_id,
-                            crypto_storage.clone(),
-                        )
-                        .await
+        // Run the cancellable DKG phase. Neither arm of this select! owns the
+        // meta-store permit; it lives in this function scope and is consumed
+        // by one of the terminal arms below.
+        let crypto_storage_for_dkg = crypto_storage.clone();
+        let dkg_outcome: Result<(RequestId, _), String> = tokio::select! {
+            biased;
+            () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),
+            v = async {
+                match preproc_handle_w_mode {
+                    PreprocHandleWithMode::Insecure => {
+                        // sanity check to make sure we're using the insecure feature
+                        #[cfg(not(feature = "insecure"))]
                         {
-                            Ok((glwe_shares, compression_shares)) => {
-                                Self::reconstruct_glwe_and_compression_key_shares(
-                                    req_id,
-                                    &base_session,
-                                    params,
-                                    glwe_shares,
-                                    compression_shares,
+                            panic!(
+                                "attempting to call insecure compression keygen when the insecure feature is not set"
+                            );
+                        }
+                        #[cfg(feature = "insecure")]
+                        {
+                            (
+                                *INSECURE_PREPROCESSING_ID,
+                                match Self::get_glwe_and_compression_key_shares(
+                                    keyset_added_info,
+                                    epoch_id,
+                                    crypto_storage_for_dkg,
                                 )
                                 .await
-                            }
-                            Err(e) => Err(e),
-                        },
-                    )
+                                {
+                                    Ok((glwe_shares, compression_shares)) => {
+                                        Self::reconstruct_glwe_and_compression_key_shares(
+                                            req_id,
+                                            &base_session,
+                                            params,
+                                            glwe_shares,
+                                            compression_shares,
+                                        )
+                                        .await
+                                    }
+                                    Err(e) => Err(e),
+                                },
+                            )
+                        }
+                    }
+                    PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
+                        let mut preproc_handle = preproc_handle.lock().await;
+                        (
+                            prep_id,
+                            Self::decompression_key_gen_closure(
+                                epoch_id,
+                                &mut base_session,
+                                crypto_storage_for_dkg,
+                                params,
+                                keyset_added_info,
+                                preproc_handle.as_mut(),
+                            )
+                            .await,
+                        )
+                    }
                 }
-            }
-            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
-                let mut preproc_handle = preproc_handle.lock().await;
-                (
-                    prep_id,
-                    Self::decompression_key_gen_closure(
-                        epoch_id,
-                        &mut base_session,
-                        crypto_storage.clone(),
-                        params,
-                        keyset_added_info,
-                        preproc_handle.as_mut(),
-                    )
-                    .await,
-                )
-            }
+            } => match v {
+                (prep_id, Ok(k)) => Ok((prep_id, k)),
+                (_, Err(e)) => Err(format!("Failed to construct decompression key: {e}")),
+            },
         };
 
-        // Make sure the dkg ended nicely
-        let decompression_key = match dkg_res {
-            Ok(k) => k,
-            Err(e) => {
-                // If dkg errored out, update status
-                try_update_err_req_in_meta_store(
+        let (prep_id, decompression_key) = match dkg_outcome {
+            Ok(v) => v,
+            Err(msg) => {
+                let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
-                    req_id,
-                    format!("Failed to construct decompression key: {e}"),
+                    meta_permit,
+                    msg,
                     OP_DECOMPRESSION_KEYGEN,
                 );
                 return;
@@ -1111,9 +1119,9 @@ impl<
         ) {
             Ok(info) => info,
             Err(e) => {
-                try_update_err_req_in_meta_store(
+                let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
-                    req_id,
+                    meta_permit,
                     format!("Failed to compute key info: {e}"),
                     OP_DECOMPRESSION_KEYGEN,
                 );
@@ -1121,9 +1129,16 @@ impl<
             }
         };
 
+        // write_decompression_key consumes the permit via update_meta_store internally.
         if let Err(e) = crypto_storage
             .inner
-            .write_decompression_key(req_id, info, decompression_key, meta_store)
+            .write_decompression_key(
+                req_id,
+                info,
+                decompression_key,
+                meta_store,
+                meta_permit,
+            )
             .await
         {
             tracing::error!(
@@ -1241,7 +1256,10 @@ impl<
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
+        meta_permit: MetaStorePermit,
+        cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,
         mut dkg_sessions: DkgSessions,
@@ -1260,8 +1278,13 @@ impl<
         existing_compact_pk: Option<tfhe::CompactPublicKey>,
     ) {
         let _permit = permit;
+        let mut meta_permit = Some(meta_permit);
         let start = Instant::now();
-        let (prep_id, dkg_res) = match preproc_handle_w_mode {
+        // The cancellable DKG phase. Neither arm of this select! owns the
+        // meta-store permit; it stays in the surrounding scope and is consumed
+        // by one of the terminal arms below.
+        let dkg_phase = async {
+            match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -1290,7 +1313,8 @@ impl<
                                 req_id.into(),
                             )
                             .await
-                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+                            .map_err(|e| e.to_string()),
                             // Insecure compressed keygen
                             (
                                 ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
@@ -1304,11 +1328,11 @@ impl<
                             .await
                             .map(|(compressed_keyset, sk)| {
                                 ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
-                            }),
+                            })
+                            .map_err(|e| e.to_string()),
                             _ => {
                                 // insecure keygen from existing compression key is not supported
-                                try_update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),  op_tag);
-                                return;
+                                Err("insecure keygen from existing compression key is not supported".to_string())
                             }
                         },
                     )
@@ -1334,7 +1358,8 @@ impl<
                             req_id.into(),
                         )
                         .await
-                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+                        .map_err(|e| e.to_string()),
                         (
                             ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
                             ddec_keyset_config::ComputeKeyType::Cpu,
@@ -1348,7 +1373,8 @@ impl<
                         .await
                         .map(|(compressed_keyset, sk)| {
                             ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
-                        }),
+                        })
+                        .map_err(|e| e.to_string()),
                         (
                             ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
                             ddec_keyset_config::ComputeKeyType::Cpu,
@@ -1369,6 +1395,7 @@ impl<
                             )
                             .await
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+                            .map_err(|e| e.to_string())
                         }
                         (
                             ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
@@ -1392,19 +1419,32 @@ impl<
                             .map(|(compressed_keyset, sk)| {
                                 ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
                             })
+                            .map_err(|e| e.to_string())
                         }
                     },
                 )
             }
+            }
+        };
+        // Race the long-running DKG against the cancel token. On cancel
+        // the prep_id is unused (we record an error and return), so use
+        // req_id as a harmless placeholder.
+        let (prep_id, dkg_res): (RequestId, Result<ThresholdKeyGenResult, String>) = tokio::select! {
+            biased;
+            () = cancel_token.cancelled() => (
+                *req_id,
+                Err("Key generation was aborted".to_string()),
+            ),
+            v = dkg_phase => v,
         };
 
         //Make sure the dkg ended nicely
         let dkg_result = match dkg_res {
             Ok(result) => result,
             Err(e) => {
-                try_update_err_req_in_meta_store(
+                let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
-                    req_id,
+                    meta_permit.take().expect("permit must be present on dkg error"),
                     format!("Standard key generation failed: {e}"),
                     op_tag,
                 );
@@ -1427,9 +1467,11 @@ impl<
                 ) {
                     Ok(info) => info,
                     Err(e) => {
-                        try_update_err_req_in_meta_store(
+                        let _ = update_err_req_in_meta_store(
                             &mut meta_store.write().await,
-                            req_id,
+                            meta_permit.take().expect(
+                                "permit must be present on standard keygen info-compute error",
+                            ),
                             format!(
                                 "Computation of meta data in standard key generation failed: {e}"
                             ),
@@ -1477,6 +1519,7 @@ impl<
                         threshold_fhe_keys,
                         PublicKeySet::Uncompressed(Arc::new(pub_key_set)),
                         meta_store,
+                        meta_permit.take().expect("permit must be present on uncompressed success"),
                         op_tag,
                     )
                     .await
@@ -1495,9 +1538,11 @@ impl<
                     None => match compressed_keyset.decompress() {
                         Ok(ks) => ks.into_raw_parts().0,
                         Err(e) => {
-                            try_update_err_req_in_meta_store(
+                            let _ = update_err_req_in_meta_store(
                                 &mut meta_store.write().await,
-                                req_id,
+                                meta_permit
+                                    .take()
+                                    .expect("permit must be present on decompress error"),
                                 format!(
                                     "Failed to decompress freshly generated compressed keyset: {e}"
                                 ),
@@ -1521,9 +1566,11 @@ impl<
                 ) {
                     Ok(info) => info,
                     Err(e) => {
-                        try_update_err_req_in_meta_store(
+                        let _ = update_err_req_in_meta_store(
                             &mut meta_store.write().await,
-                            req_id,
+                            meta_permit.take().expect(
+                                "permit must be present on compressed keygen info-compute error",
+                            ),
                             format!(
                                 "Computation of meta data in standard compressed key generation failed: {e}"
                             ),
@@ -1551,6 +1598,9 @@ impl<
                             compressed_keyset: Arc::new(compressed_keyset),
                         },
                         Arc::clone(&meta_store),
+                        meta_permit
+                            .take()
+                            .expect("permit must be present on compressed success"),
                         op_tag,
                     )
                     .await
