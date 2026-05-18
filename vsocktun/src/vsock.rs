@@ -74,16 +74,17 @@ impl ParentSessionAcceptor {
 
         validate_hello(first_hello, self.queue_count, self.raw_tun_frames)?;
 
+        let mut session_id = first_hello.session_id;
         let mut shards = empty_shard_slots(self.queue_count);
         shards[usize::from(first_hello.shard)] = Some(first_socket);
 
-        let deadline = Instant::now() + self.accept_timeout;
+        let mut deadline = Instant::now() + self.accept_timeout;
         while shards.iter().any(Option::is_none) {
             if Instant::now() >= deadline {
                 bail!(
                     "timed out while waiting for {} vsock shards for session {}",
                     self.queue_count,
-                    first_hello.session_id,
+                    session_id,
                 );
             }
 
@@ -105,19 +106,20 @@ impl ParentSessionAcceptor {
                 read_hello_with_timeout(&mut socket, remaining, "read shard session header")
                     .await?;
 
-            if let SessionShard::IgnoredUnrelated(_socket) = record_session_shard(
-                &mut shards,
-                first_hello.session_id,
-                hello,
-                socket,
-                self.raw_tun_frames,
-            )? {
-                tracing::debug!(
-                    assembling_session_id = first_hello.session_id,
-                    ignored_session_id = hello.session_id,
+            if let SessionShard::IgnoredUnrelated(socket) =
+                record_session_shard(&mut shards, session_id, hello, socket, self.raw_tun_frames)?
+            {
+                tracing::info!(
+                    abandoned_session_id = session_id,
+                    restarted_session_id = hello.session_id,
                     shard = hello.shard,
-                    "vsocktun(parent): ignoring shard from unrelated session"
+                    "vsocktun(parent): abandoning partial session after newer session arrived"
                 );
+                validate_hello(hello, self.queue_count, self.raw_tun_frames)?;
+                session_id = hello.session_id;
+                shards = empty_shard_slots(self.queue_count);
+                shards[usize::from(hello.shard)] = Some(socket);
+                deadline = Instant::now() + self.accept_timeout;
                 continue;
             }
 
@@ -132,13 +134,13 @@ impl ParentSessionAcceptor {
         }
 
         tracing::debug!(
-            session_id = first_hello.session_id,
+            session_id,
             shards = self.queue_count,
             "vsocktun(parent): assembled session"
         );
 
         Ok(SessionSockets {
-            session_id: first_hello.session_id,
+            session_id,
             shards: collect_shards(shards)?,
         })
     }
@@ -268,6 +270,11 @@ fn validate_hello(hello: Hello, queue_count: usize, expected_raw_tun_frames: boo
     }
 
     if hello.supports_raw_tun_frames() != expected_raw_tun_frames {
+        tracing::warn!(
+            peer_raw_tun_frames = hello.supports_raw_tun_frames(),
+            expected_raw_tun_frames,
+            "vsocktun(parent): rejecting session because peer TUN offload framing does not match local capability"
+        );
         bail!(
             "peer raw-tun-frame transport is {} but this side expects it to be {}",
             if hello.supports_raw_tun_frames() {

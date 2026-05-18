@@ -7,9 +7,14 @@
 //! - length-prefixed packet framing so TUN payloads can be forwarded without
 //!   depending on any stream-level message boundaries
 
+use std::future::poll_fn;
 use std::io;
+use std::io::IoSlice;
 #[cfg(test)]
 use std::io::{Read, Write};
+use std::pin::Pin;
+use std::task::Poll;
+use tokio::io::ReadBuf;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const HELLO_MAGIC: [u8; 8] = *b"VSTUN002";
@@ -157,6 +162,7 @@ impl FrameReader {
     pub(crate) fn finish_frame(&mut self) {
         self.header = [0_u8; 4];
         self.header_read = 0;
+        self.payload.clear();
         self.payload_len = 0;
         self.payload_read = 0;
         self.frame_ready = false;
@@ -185,10 +191,40 @@ impl FrameReader {
             ));
         }
 
-        self.payload.resize(payload_len, 0);
+        self.payload.clear();
+        if self.payload.capacity() < payload_len {
+            self.payload.reserve(payload_len);
+        }
         self.payload_len = payload_len;
         self.payload_read = 0;
         Ok(())
+    }
+
+    async fn read_payload_async<R: AsyncRead + Unpin>(
+        &mut self,
+        reader: &mut R,
+    ) -> io::Result<usize> {
+        debug_assert_eq!(self.payload.len(), self.payload_read);
+
+        let remaining = self.payload_len.saturating_sub(self.payload_read);
+        let read = poll_fn(|cx| {
+            let spare = self.payload.spare_capacity_mut();
+            let mut read_buf = ReadBuf::uninit(&mut spare[..remaining]);
+            match Pin::new(&mut *reader).poll_read(cx, &mut read_buf) {
+                Poll::Ready(Ok(())) => Poll::Ready(Ok(read_buf.filled().len())),
+                Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+                Poll::Pending => Poll::Pending,
+            }
+        })
+        .await?;
+
+        // Safety: `poll_read` initialized exactly `read` bytes into the slice borrowed from
+        // `spare_capacity_mut`, and the vector length tracked initialized bytes before the call.
+        unsafe {
+            self.payload.set_len(self.payload_read + read);
+        }
+        self.payload_read += read;
+        Ok(read)
     }
 
     #[cfg(test)]
@@ -214,6 +250,7 @@ impl FrameReader {
                 }
 
                 self.begin_payload()?;
+                self.payload.resize(self.payload_len, 0);
             }
 
             match reader.read(&mut self.payload[self.payload_read..self.payload_len]) {
@@ -264,19 +301,14 @@ impl FrameReader {
             self.begin_payload()?;
         }
 
-        match reader
-            .read(&mut self.payload[self.payload_read..self.payload_len])
-            .await
-        {
+        match self.read_payload_async(reader).await {
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "vsock shard closed while reading packet payload",
                 ));
             }
-            Ok(read) => {
-                self.payload_read += read;
-            }
+            Ok(_read) => {}
             Err(err) => return Err(err),
         }
 
@@ -354,19 +386,21 @@ impl<'a> PendingFramedWrite<'a> {
         })
     }
 
-    fn remaining(&self) -> &[u8] {
-        if self.header_written < self.header.len() {
-            &self.header[self.header_written..]
-        } else {
-            &self.body[self.body_written..]
-        }
+    fn remaining_header(&self) -> &[u8] {
+        &self.header[self.header_written..]
+    }
+
+    fn remaining_body(&self) -> &[u8] {
+        &self.body[self.body_written..]
     }
 
     fn advance(&mut self, written: usize) -> bool {
-        if self.header_written < self.header.len() {
+        let header_remaining = self.header.len() - self.header_written;
+        if written < header_remaining {
             self.header_written += written;
         } else {
-            self.body_written += written;
+            self.header_written = self.header.len();
+            self.body_written += written - header_remaining;
         }
 
         self.header_written == self.header.len() && self.body_written == self.body.len()
@@ -374,7 +408,10 @@ impl<'a> PendingFramedWrite<'a> {
 
     #[cfg(test)]
     pub(crate) fn write_to<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
-        match writer.write(self.remaining()) {
+        let header = self.remaining_header();
+        let body = self.remaining_body();
+        let bytes = if !header.is_empty() { header } else { body };
+        match writer.write(bytes) {
             Ok(0) => Err(io::Error::new(
                 io::ErrorKind::WriteZero,
                 "failed to make forward progress while writing packet",
@@ -389,13 +426,23 @@ impl<'a> PendingFramedWrite<'a> {
         &mut self,
         writer: &mut W,
     ) -> io::Result<bool> {
-        match writer.write(self.remaining()).await {
-            Ok(0) => Err(io::Error::new(
+        let header = self.remaining_header();
+        let body = self.remaining_body();
+        let written = if !header.is_empty() && !body.is_empty() {
+            let bufs = [IoSlice::new(header), IoSlice::new(body)];
+            writer.write_vectored(&bufs).await?
+        } else {
+            writer
+                .write(if !header.is_empty() { header } else { body })
+                .await?
+        };
+
+        match written {
+            0 => Err(io::Error::new(
                 io::ErrorKind::WriteZero,
                 "failed to make forward progress while writing packet",
             )),
-            Ok(written) => Ok(self.advance(written)),
-            Err(err) => Err(err),
+            written => Ok(self.advance(written)),
         }
     }
 }
@@ -406,6 +453,8 @@ mod tests {
     use std::fs::File;
     use std::io::{self, Seek, SeekFrom, Write};
     use tempfile::tempfile;
+    use tokio::io::{self as tokio_io, AsyncWriteExt};
+    use tokio::runtime::Builder;
 
     struct LimitedWriter {
         chunk_size: usize,
@@ -436,6 +485,13 @@ mod tests {
     fn reset_file(file: &mut File) -> io::Result<()> {
         file.seek(SeekFrom::Start(0))?;
         Ok(())
+    }
+
+    fn test_runtime() -> tokio::runtime::Runtime {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should be created")
     }
 
     #[test]
@@ -529,5 +585,58 @@ mod tests {
         {}
 
         assert_eq!(writer.bytes, [0, 0, 0, 5, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn async_frame_reader_grows_buffer_after_smaller_frame() {
+        test_runtime().block_on(async {
+            let small_packet = [1_u8, 2, 3, 4, 5];
+            let large_packet = vec![7_u8; 72];
+            let (mut writer, mut reader) = tokio_io::duplex(256);
+
+            writer
+                .write_all(
+                    &u32::try_from(small_packet.len())
+                        .expect("small frame len fits")
+                        .to_be_bytes(),
+                )
+                .await
+                .expect("small frame header should write");
+            writer
+                .write_all(&small_packet)
+                .await
+                .expect("small frame payload should write");
+
+            let mut frame_reader = FrameReader::new(4096);
+            let first_len = frame_reader
+                .read_frame_async(&mut reader)
+                .await
+                .expect("first frame should decode")
+                .expect("first frame should be complete");
+            assert_eq!(first_len, small_packet.len());
+            assert_eq!(frame_reader.current_payload(), small_packet);
+            frame_reader.finish_frame();
+
+            writer
+                .write_all(
+                    &u32::try_from(large_packet.len())
+                        .expect("large frame len fits")
+                        .to_be_bytes(),
+                )
+                .await
+                .expect("large frame header should write");
+            writer
+                .write_all(&large_packet)
+                .await
+                .expect("large frame payload should write");
+
+            let second_len = frame_reader
+                .read_frame_async(&mut reader)
+                .await
+                .expect("larger second frame should decode")
+                .expect("second frame should be complete");
+            assert_eq!(second_len, large_packet.len());
+            assert_eq!(frame_reader.current_payload(), large_packet);
+        });
     }
 }
