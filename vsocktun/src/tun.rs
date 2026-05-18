@@ -53,6 +53,7 @@ impl Ipv4Cidr {
 /// queue handles for each accepted tunnel session.
 pub(crate) struct TunDevice {
     queues: Mutex<Vec<AsyncDevice>>,
+    uses_vnet_hdr: bool,
 }
 
 impl TunDevice {
@@ -106,8 +107,14 @@ impl TunDevice {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let uses_vnet_hdr = queues
+            .first()
+            .expect("TunDevice::create should always build at least one queue")
+            .tcp_gso();
+
         Ok(Self {
             queues: Mutex::new(queues),
+            uses_vnet_hdr,
         })
     }
 
@@ -142,6 +149,10 @@ impl TunDevice {
 
     pub(crate) fn max_frame_bytes(&self) -> usize {
         VIRTIO_NET_HDR_LEN + 65535
+    }
+
+    pub(crate) fn uses_vnet_hdr(&self) -> bool {
+        self.uses_vnet_hdr
     }
 }
 

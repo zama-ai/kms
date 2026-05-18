@@ -28,10 +28,10 @@ use tokio::time::{Duration, sleep};
 use tokio_vsock::{OwnedReadHalf, OwnedWriteHalf, VsockStream};
 use tracing::Level;
 use tun::{Ipv4Cidr, TunDevice};
-use tun_rs::{AsyncDevice, IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
+use tun_rs::AsyncDevice;
+#[cfg(test)]
+use tun_rs::VIRTIO_NET_HDR_LEN;
 use vsock::{ParentSessionAcceptor, SessionSockets, connect_session};
-
-const MAX_TUN_FRAME_BYTES: usize = 1024 * 1024;
 
 fn log_level_from_count(count: u8) -> Level {
     match count {
@@ -284,6 +284,15 @@ fn packet_summary(packet: &[u8]) -> String {
     }
 }
 
+#[cfg(test)]
+fn packet_summary_bytes(tun_payload: &[u8], raw_tun_frames: bool) -> &[u8] {
+    if raw_tun_frames {
+        tun_payload.get(VIRTIO_NET_HDR_LEN..).unwrap_or(tun_payload)
+    } else {
+        tun_payload
+    }
+}
+
 impl Cli {
     fn tokio_worker_threads(&self) -> usize {
         match &self.mode {
@@ -346,6 +355,7 @@ where
         prefix_len = common.tun_address.prefix_len(),
         queues = common.queues,
         mtu = ?common.mtu,
+        raw_tun_frames = tun.uses_vnet_hdr(),
         tokio_worker_threads = common.tokio_worker_threads,
         "vsocktun(parent): configured tunnel"
     );
@@ -353,6 +363,7 @@ where
         common.vsock_port,
         tun.queue_count(),
         Duration::from_secs(args.session_timeout_secs),
+        tun.uses_vnet_hdr(),
     )?;
 
     tracing::info!(
@@ -413,6 +424,7 @@ where
         prefix_len = common.tun_address.prefix_len(),
         queues = common.queues,
         mtu = ?common.mtu,
+        raw_tun_frames = tun.uses_vnet_hdr(),
         tokio_worker_threads = common.tokio_worker_threads,
         "vsocktun(enclave): configured tunnel"
     );
@@ -426,11 +438,12 @@ where
     );
 
     let queue_count = tun.queue_count();
+    let raw_tun_frames = tun.uses_vnet_hdr();
     tokio::pin!(shutdown);
     loop {
         match tokio::select! {
             _ = shutdown.as_mut() => return Ok(()),
-            session = connect_session(args.parent_cid, common.vsock_port, queue_count) => session,
+            session = connect_session(args.parent_cid, common.vsock_port, queue_count, raw_tun_frames) => session,
         } {
             Ok(session) => {
                 tracing::info!(
@@ -614,7 +627,6 @@ async fn pump_shard(
 
     shard_log.debug(format_args!("starting"));
 
-    let socket_frame_bytes = MAX_TUN_FRAME_BYTES.max(max_tun_frame_bytes);
     let (socket_reader, socket_writer) = socket.into_split();
     let (local_cancel_tx, _) = watch::channel(false);
 
@@ -626,14 +638,14 @@ async fn pump_shard(
             shard_log,
             socket_reader,
             &tun_queue,
-            socket_frame_bytes,
+            max_tun_frame_bytes,
             local_cancel_tx.subscribe(),
         );
         let tun_to_socket = forward_tun_to_socket(
             shard_log,
             &tun_queue,
             socket_writer,
-            socket_frame_bytes,
+            max_tun_frame_bytes,
             local_cancel_tx.subscribe(),
         );
         tokio::pin!(socket_to_tun);
@@ -685,8 +697,9 @@ async fn pump_shard(
 /// Moves framed packets from the shard's VSOCK stream into the matching TUN
 /// queue.
 ///
-/// This direction is intentionally agnostic to the inner TCP or gRPC protocol;
-/// it only restores packet boundaries established by the tunnel framing.
+/// This direction is intentionally agnostic to the inner TCP or gRPC protocol.
+/// When the local TUN uses virtio-net headers, the framed payload is a raw TUN
+/// frame; otherwise it is a plain L3 packet.
 async fn forward_socket_to_tun(
     shard_log: ShardLogContext,
     mut socket_reader: OwnedReadHalf,
@@ -695,7 +708,8 @@ async fn forward_socket_to_tun(
     mut cancelled: watch::Receiver<bool>,
 ) -> Result<()> {
     let mut frame_reader = FrameReader::new(max_tun_frame_bytes);
-    let tun_offload = tun_queue.tcp_gso() || tun_queue.udp_gso();
+    #[cfg(test)]
+    let raw_tun_frames = tun_queue.tcp_gso();
 
     loop {
         if *cancelled.borrow() {
@@ -719,40 +733,6 @@ async fn forward_socket_to_tun(
             continue;
         };
         let packet_len = packet.len();
-
-        if tun_offload {
-            let mut pending_tun_write = OutgoingBuffer::raw({
-                let mut tun_packet = vec![0_u8; VIRTIO_NET_HDR_LEN];
-                tun_packet.extend_from_slice(&packet);
-                tun_packet
-            });
-            loop {
-                if *cancelled.borrow() {
-                    return Ok(());
-                }
-
-                let finished = tokio::select! {
-                    changed = cancelled.changed() => {
-                        match changed {
-                            Ok(()) if *cancelled.borrow() => return Ok(()),
-                            Ok(()) => continue,
-                            Err(_) => return Ok(()),
-                        }
-                    }
-                    result = write_to_tun(&mut pending_tun_write, tun_queue) => {
-                        result.with_context(|| format!("failed to inject packet into TUN queue {}", shard_log.shard))?
-                    }
-                };
-
-                if finished {
-                    shard_log.trace(format_args!("forwarded {packet_len} bytes vsock->tun"));
-                    #[cfg(test)]
-                    record_test_vsock_to_tun(shard_log.role, &packet);
-                    break;
-                }
-            }
-            continue;
-        }
 
         let mut pending_tun_write = OutgoingBuffer::raw(packet);
         loop {
@@ -778,7 +758,7 @@ async fn forward_socket_to_tun(
                 #[cfg(test)]
                 record_test_vsock_to_tun(
                     shard_log.role,
-                    &pending_tun_write.bytes[VIRTIO_NET_HDR_LEN..],
+                    packet_summary_bytes(&pending_tun_write.bytes, raw_tun_frames),
                 );
                 break;
             }
@@ -788,9 +768,9 @@ async fn forward_socket_to_tun(
 
 /// Moves packets from the shard's TUN queue into the matching VSOCK stream.
 ///
-/// The TUN device may surface offloaded or coalesced traffic, so this path is
-/// responsible for preserving whatever packet representation the local kernel
-/// exposes rather than normalizing it back to one frame per inner segment.
+/// The TUN device may surface raw virtio-net frames carrying offload metadata.
+/// This path preserves whatever packet representation the local kernel exposes
+/// rather than normalizing it back to one frame per inner segment.
 async fn forward_tun_to_socket(
     shard_log: ShardLogContext,
     tun_queue: &AsyncDevice,
@@ -798,19 +778,16 @@ async fn forward_tun_to_socket(
     max_tun_frame_bytes: usize,
     mut cancelled: watch::Receiver<bool>,
 ) -> Result<()> {
-    let tun_offload = tun_queue.tcp_gso() || tun_queue.udp_gso();
+    #[cfg(test)]
+    let raw_tun_frames = tun_queue.tcp_gso();
     let mut tun_buf = vec![0_u8; max_tun_frame_bytes];
-    let mut tun_packet_bufs = (0..IDEAL_BATCH_SIZE)
-        .map(|_| vec![0_u8; max_tun_frame_bytes])
-        .collect::<Vec<_>>();
-    let mut tun_packet_sizes = vec![0_usize; IDEAL_BATCH_SIZE];
 
     loop {
         if *cancelled.borrow() {
             return Ok(());
         }
 
-        let packets = tokio::select! {
+        let packet_len = tokio::select! {
             changed = cancelled.changed() => {
                 match changed {
                     Ok(()) if *cancelled.borrow() => return Ok(()),
@@ -818,60 +795,45 @@ async fn forward_tun_to_socket(
                     Err(_) => return Ok(()),
                 }
             }
-            result = async {
-                if tun_offload {
-                    tun_queue
-                        .recv_multiple(&mut tun_buf, &mut tun_packet_bufs, &mut tun_packet_sizes, 0)
-                        .await
-                } else {
-                    tun_queue.recv(&mut tun_buf).await.map(|read| {
-                        tun_packet_sizes[0] = read;
-                        1
-                    })
-                }
-            } => {
+            result = tun_queue.recv(&mut tun_buf) => {
                 result.with_context(|| format!("failed to read packet from TUN queue {}", shard_log.shard))?
             }
         };
 
-        if packets == 0 || tun_packet_sizes[0] == 0 {
+        if packet_len == 0 {
             bail!("TUN queue {} closed unexpectedly", shard_log.shard);
         }
 
-        for packet_index in 0..packets {
-            let packet_len = tun_packet_sizes[packet_index];
-            let packet = if tun_offload {
-                &tun_packet_bufs[packet_index][..packet_len]
-            } else {
-                &tun_buf[..packet_len]
+        let packet = &tun_buf[..packet_len];
+        let mut pending_socket_write = OutgoingBuffer::framed(packet).with_context(|| {
+            format!("failed to frame TUN payload from queue {}", shard_log.shard)
+        })?;
+        loop {
+            if *cancelled.borrow() {
+                return Ok(());
+            }
+
+            let finished = tokio::select! {
+                changed = cancelled.changed() => {
+                    match changed {
+                        Ok(()) if *cancelled.borrow() => return Ok(()),
+                        Ok(()) => continue,
+                        Err(_) => return Ok(()),
+                    }
+                }
+                result = pending_socket_write.write_to_async(&mut socket_writer) => {
+                    result.with_context(|| format!("failed to forward packet on VSOCK shard {}", shard_log.shard))?
+                }
             };
-            let mut pending_socket_write = OutgoingBuffer::framed(packet).with_context(|| {
-                format!("failed to frame TUN packet from queue {}", shard_log.shard)
-            })?;
-            loop {
-                if *cancelled.borrow() {
-                    return Ok(());
-                }
 
-                let finished = tokio::select! {
-                    changed = cancelled.changed() => {
-                        match changed {
-                            Ok(()) if *cancelled.borrow() => return Ok(()),
-                            Ok(()) => continue,
-                            Err(_) => return Ok(()),
-                        }
-                    }
-                    result = pending_socket_write.write_to_async(&mut socket_writer) => {
-                        result.with_context(|| format!("failed to forward packet on VSOCK shard {}", shard_log.shard))?
-                    }
-                };
-
-                if finished {
-                    shard_log.trace(format_args!("forwarded {packet_len} bytes tun->vsock"));
-                    #[cfg(test)]
-                    record_test_tun_to_vsock(shard_log.role, packet);
-                    break;
-                }
+            if finished {
+                shard_log.trace(format_args!("forwarded {packet_len} bytes tun->vsock"));
+                #[cfg(test)]
+                record_test_tun_to_vsock(
+                    shard_log.role,
+                    packet_summary_bytes(packet, raw_tun_frames),
+                );
+                break;
             }
         }
     }
