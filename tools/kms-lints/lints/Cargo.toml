@@ -17,13 +17,14 @@ serde_json = { workspace = true }
 [dev-dependencies]
 dylint_testing = "6.0.0" # Dylint UI test helper; test-only lint tooling.
 serde_json = { workspace = true }
+tfhe-safe-serialize = { path = "tests/tfhe-safe-serialize" }
 
 [package.metadata.rust-analyzer]
 rustc_private = true
 
 [[example]]
-name = "bc2wrap_type_inventory"
-path = "tests/bc2wrap_type_inventory/main.rs"
+name = "versioned_codec_inventory"
+path = "tests/versioned_codec_inventory/main.rs"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

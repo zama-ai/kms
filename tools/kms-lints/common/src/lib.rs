@@ -17,7 +17,7 @@ use rustc_middle::ty::{Ty, TyKind};
 use rustc_span::Span;
 
 /// Name of the environment variable used to override the inventory output directory.
-pub const INVENTORY_DIR_ENV: &str = "KMS_BC2WRAP_INVENTORY_DIR";
+pub const INVENTORY_DIR_ENV: &str = "KMS_VERSIONED_CODEC_INVENTORY_DIR";
 
 /// Source position of a linted expression.
 #[derive(Clone, Debug)]
@@ -92,7 +92,7 @@ pub fn def_crate_name(cx: &LateContext<'_>, def_id: DefId) -> String {
 pub fn inventory_dir() -> PathBuf {
     std::env::var(INVENTORY_DIR_ENV)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("target/kms-lints/bc2wrap-type-inventory"))
+        .unwrap_or_else(|_| PathBuf::from("target/kms-lints/versioned-codec-inventory"))
 }
 
 /// Returns the workspace crate names, normalized to rustc crate-name spelling.

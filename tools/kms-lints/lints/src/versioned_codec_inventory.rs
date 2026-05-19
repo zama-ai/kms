@@ -1,28 +1,28 @@
-//! Compile-time inventory of types passed to serialization / storage sinks.
+//! Compile-time inventory of types passed to versioned safe-serialization sinks.
 //!
 //! ## What this is
 //!
 //! A Dylint lint plugin (a Rust compiler plugin loaded by Dylint). Despite the
 //! word "lint", its primary job is **not** to flag bad code: it observes every
-//! call to a curated list of serialization and storage functions in the crate
+//! call to a curated list of TFHE safe-serialization functions in the crate
 //! being compiled, figures out which *root type* flows through each call, and
 //! writes a JSON report to
-//! `target/kms-lints/bc2wrap-type-inventory/<crate>.json`. Downstream tooling
-//! reads that report to check that every persisted type is covered by
+//! `target/kms-lints/versioned-codec-inventory/<crate>.json`. Downstream tooling
+//! reads that report to check that every versioned codec root is covered by
 //! backward-compatibility tests.
 //!
 //! Why a compiler plugin? Because we need **post-monomorphization** information.
 //! Plain text-search and HIR linting can't tell you that a generic helper is
 //! monomorphized to `MyKey` at one call site and `Vec<u8>` at another. Hooking
-//! into rustc as a `LateLintPass` lets us ask rustc for the concrete instances
-//! it will codegen, then inspect those instances' MIR.
+//! into rustc as a `LateLintPass` lets us inspect local MIR while substituting
+//! concrete caller instances into generic helper calls.
 //!
 //! ## Vocabulary
 //!
 //! - **Sink** — a function whose call sites we care about. Sinks are listed in
-//!   `SINK_SPECS`. The current set covers the raw encode / decode helpers in
-//!   the `bc2wrap` crate and the canonical vault storage reader / writer trait
-//!   methods in this workspace.
+//!   `SINK_SPECS`. The current set covers the TFHE safe-serialization encode /
+//!   decode helpers re-exported by `tfhe::safe_serialization` and defined in
+//!   `tfhe_safe_serialize`.
 //! - **Root type** — the top of the type tree handed to a sink. Fields are
 //!   *not* recursed into: if a sink receives `&MyStruct { … }`, the root is
 //!   `MyStruct`, full stop.
@@ -44,9 +44,9 @@
 //!
 //! ## Pipeline (per crate)
 //!
-//! 1. `check_crate_post` seeds a local worklist with codegen-reachable
-//!    non-generic MIR roots, then follows local monomorphized calls and
-//!    closure / coroutine bodies.
+//! 1. `check_crate_post` seeds a local worklist with every local non-generic
+//!    MIR root, then follows local monomorphized calls and closure / coroutine
+//!    bodies.
 //! 2. The lint deduplicates local function instances and scans each instance's
 //!    MIR call terminators. For every call, it substitutes the caller
 //!    instance's concrete args into the callee and argument types.
@@ -68,19 +68,19 @@
 //!
 //! ```ignore
 //! let payload = LocalPayload { _value: 7 };
-//! let _ = bc2wrap::serialize(&payload);
+//! let _ = tfhe_safe_serialize::safe_serialize(&payload, Vec::<u8>::new(), 1024);
 //! ```
 //!
 //! 1. rustc monomorphizes the caller containing the call.
 //! 2. `collect_mono_calls` scans that caller's MIR and sees a call terminator
-//!    whose callee resolves to `bc2wrap::serialize`.
+//!    whose callee resolves to `tfhe_safe_serialize::safe_serialize`.
 //! 3. `extract_mono_root_type` runs `Arg(0)`: it reads arg 0's monomorphized
 //!    type (`&LocalPayload`), peels the reference, and returns
 //!    `Root(LocalPayload)`.
 //! 4. `classify_root` sees an ADT defined in a workspace crate and returns
 //!    `RootCategory::Local`.
-//! 5. `record` pushes a `CallRecord` with `function = "serialize"`,
-//!    `sink_path = "bc2wrap::serialize"`, `type_display = "LocalPayload"`,
+//! 5. `record` pushes a `CallRecord` with `function = "safe_serialize"`,
+//!    `sink_path = "tfhe_safe_serialize::safe_serialize"`, `type_display = "LocalPayload"`,
 //!    `category = Local`, and the source file / line / column of the matched
 //!    lower-level sink call.
 //! 6. After every mono item has been scanned, `check_crate_post` collapses
@@ -93,20 +93,18 @@
 //!
 //! ## How to add a new sink
 //!
-//! 1. Append an entry to `SINK_SPECS`: the function name, a `path_contains`
-//!    substring that disambiguates same-named functions or traits, and one or
-//!    more extractors. The sink only matches functions defined in a workspace
-//!    crate (via `is_workspace_def`) — there is no separate "owner" knob.
+//! 1. Append an entry to `SINK_SPECS`: the function name, the trusted defining
+//!    crate, and one or more extractors.
 //! 2. If none of the existing `RootExtractor` variants captures where the
 //!    root lives in your signature, add a variant and handle it in
 //!    `extract_mono_root_type`.
-//! 3. Extend the UI fixture in `tests/bc2wrap_type_inventory/main.rs` and add
+//! 3. Extend the UI fixture in `tests/versioned_codec_inventory/main.rs` and add
 //!    an assertion in the `ui` test at the bottom of this file so the new
 //!    sink is exercised by `cargo test`.
 //!
 //! ## Configuration
 //!
-//! Set `KMS_BC2WRAP_INVENTORY_DIR` to override the output directory. The
+//! Set `KMS_VERSIONED_CODEC_INVENTORY_DIR` to override the output directory. The
 //! workspace crate set is always auto-detected via `cargo metadata`.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
@@ -127,46 +125,23 @@ use rustc_span::def_id::{DefId, LOCAL_CRATE};
 use rustc_span::{Span, Spanned};
 use serde::Serialize;
 
+const TFHE_SAFE_SERIALIZE_CRATE: &str = "tfhe_safe_serialize";
+
 const SINK_SPECS: &[SinkSpec] = &[
     SinkSpec {
-        function: "serialize",
-        path_contains: Some("bc2wrap"),
+        function: "safe_serialize",
+        crate_name: TFHE_SAFE_SERIALIZE_CRATE,
         extractors: &[RootExtractor::Arg(0)],
     },
     SinkSpec {
-        function: "serialize_into",
-        path_contains: Some("bc2wrap"),
-        extractors: &[RootExtractor::Arg(0)],
+        function: "safe_deserialize",
+        crate_name: TFHE_SAFE_SERIALIZE_CRATE,
+        extractors: &[RootExtractor::FnGenericArg(0)],
     },
     SinkSpec {
-        function: "deserialize_safe",
-        path_contains: Some("bc2wrap"),
-        extractors: &[RootExtractor::LastFnGenericArg],
-    },
-    SinkSpec {
-        function: "deserialize_unsafe",
-        path_contains: Some("bc2wrap"),
-        extractors: &[RootExtractor::LastFnGenericArg],
-    },
-    SinkSpec {
-        function: "store_data",
-        path_contains: Some("vault::storage::Storage"),
-        extractors: &[RootExtractor::Arg(1)],
-    },
-    SinkSpec {
-        function: "store_data_at_epoch",
-        path_contains: Some("vault::storage::StorageExt"),
-        extractors: &[RootExtractor::Arg(1)],
-    },
-    SinkSpec {
-        function: "read_data",
-        path_contains: Some("vault::storage::StorageReader"),
-        extractors: &[RootExtractor::LastFnGenericArg],
-    },
-    SinkSpec {
-        function: "read_data_at_epoch",
-        path_contains: Some("vault::storage::StorageReaderExt"),
-        extractors: &[RootExtractor::LastFnGenericArg],
+        function: "safe_deserialize_conformant",
+        crate_name: TFHE_SAFE_SERIALIZE_CRATE,
+        extractors: &[RootExtractor::FnGenericArg(0)],
     },
 ];
 
@@ -236,26 +211,21 @@ struct SummaryEntry {
 #[derive(Clone, Copy, Debug)]
 struct SinkSpec {
     function: &'static str,
-    path_contains: Option<&'static str>,
+    crate_name: &'static str,
     extractors: &'static [RootExtractor],
 }
 
 /// Where in a monomorphized sink call the root type lives.
 ///
-/// The convention for `LastFnGenericArg` is that the inventoried type is always the *last* type
-/// generic of the callee. For trait methods this works because the implicit `Self` precedes the
-/// method's own type params, so `T` in `read_data<T>(&self, ...)` is the last entry in the
-/// monomorphized `GenericArgsRef`. For free functions with a single type param (`deserialize_safe<T>`)
-/// "last" is equivalently "only".
+/// Decode sinks use `FnGenericArg(0)` because `safe_deserialize<T>(reader: impl Read, ...)`
+/// has an anonymous reader generic after `T` in monomorphized rustc args.
 #[derive(Clone, Copy, Debug)]
 enum RootExtractor {
     /// Read the type of the call's positional argument at `index` (after monomorphization and
     /// reference peeling). Arg 0 is the receiver for trait methods.
     Arg(usize),
-    /// Read the last type generic of the callee. Used for sinks that take the root by `T` in the
-    /// signature (e.g. `deserialize_safe<T>(bytes: &[u8]) -> Result<T, _>`,
-    /// `StorageReader::read_data<T>`).
-    LastFnGenericArg,
+    /// Read the type generic of the callee at `index`.
+    FnGenericArg(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -287,29 +257,29 @@ enum ExtractedRoot<'tcx> {
     Unresolved,
 }
 
-/// Late pass lint collecting bc2wrap root type inventory data.
+/// Late pass lint collecting versioned codec root type inventory data.
 #[derive(Default)]
-pub struct Bc2wrapTypeInventory {
+pub struct VersionedCodecInventory {
     calls: Vec<CallRecord>,
 }
 
 declare_lint! {
     /// ### What it does
-    /// Collects an inventory of workspace-local root types used by `bc2wrap` call sites.
+    /// Collects an inventory of workspace-local root types used by versioned codec call sites.
     ///
     /// ### Why is this useful?
-    /// Types serialized through `bc2wrap` are compatibility-sensitive. A compiler-aware
-    /// inventory makes these roots visible without requiring marker traits on foreign types.
-    pub BC2WRAP_TYPE_INVENTORY,
+    /// Types serialized through TFHE safe serialization are compatibility-sensitive. A
+    /// compiler-aware inventory makes these roots visible after monomorphization.
+    pub VERSIONED_CODEC_INVENTORY,
     Warn,
-    "Collects root types used by bc2wrap serialization and deserialization"
+    "Collects root types used by versioned safe serialization and deserialization"
 }
 
-impl_lint_pass!(Bc2wrapTypeInventory => [BC2WRAP_TYPE_INVENTORY]);
+impl_lint_pass!(VersionedCodecInventory => [VERSIONED_CODEC_INVENTORY]);
 
-impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
+impl<'tcx> LateLintPass<'tcx> for VersionedCodecInventory {
     // Write one inventory file per crate target. Dylint also checks build scripts, but those do
-    // not represent production bc2wrap call sites for this inventory.
+    // not represent production versioned codec call sites for this inventory.
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         let crate_name = cx.tcx.crate_name(LOCAL_CRATE).to_string();
         if crate_name == "build_script_build" {
@@ -324,7 +294,7 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
         let dir = inventory_dir();
         if let Err(error) = std::fs::create_dir_all(&dir) {
             eprintln!(
-                "bc2wrap_type_inventory: failed to create {}: {error}",
+                "versioned_codec_inventory: failed to create {}: {error}",
                 dir.display()
             );
             return;
@@ -335,7 +305,7 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
             Ok(json) => {
                 if let Err(error) = std::fs::write(&path, json) {
                     eprintln!(
-                        "bc2wrap_type_inventory: failed to write {}: {error}",
+                        "versioned_codec_inventory: failed to write {}: {error}",
                         path.display()
                     );
                     return;
@@ -343,7 +313,7 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
             }
             Err(error) => {
                 eprintln!(
-                    "bc2wrap_type_inventory: failed to encode JSON for {crate_name}: {error}"
+                    "versioned_codec_inventory: failed to encode JSON for {crate_name}: {error}"
                 );
                 return;
             }
@@ -364,7 +334,7 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
             });
 
             eprintln!(
-                "bc2wrap_type_inventory: wrote {} calls, {} local types, {} generic sinks, {} skipped roots for {}",
+                "versioned_codec_inventory: wrote {} calls, {} local types, {} generic sinks, {} skipped roots for {}",
                 inventory.calls.len(),
                 local_types,
                 generic_sinks,
@@ -375,7 +345,7 @@ impl<'tcx> LateLintPass<'tcx> for Bc2wrapTypeInventory {
     }
 }
 
-impl Bc2wrapTypeInventory {
+impl VersionedCodecInventory {
     fn collect_mono_calls<'tcx>(&mut self, cx: &LateContext<'tcx>) {
         let tcx = cx.tcx;
         let mut pending = VecDeque::new();
@@ -385,12 +355,7 @@ impl Bc2wrapTypeInventory {
             if tcx.generics_of(def_id).requires_monomorphization(tcx) {
                 continue;
             }
-            let def_id = def_id.to_def_id();
-            let is_root = tcx.entry_fn(()).is_some_and(|(entry, _)| entry == def_id)
-                || tcx.is_reachable_non_generic(def_id);
-            if is_root {
-                pending.push_back(Instance::mono(tcx, def_id));
-            }
+            pending.push_back(Instance::mono(tcx, def_id.to_def_id()));
         }
 
         while let Some(instance) = pending.pop_front() {
@@ -476,7 +441,7 @@ impl Bc2wrapTypeInventory {
             RootCategory::Generic | RootCategory::Unknown
         ) {
             cx.emit_span_lint(
-                BC2WRAP_TYPE_INVENTORY,
+                VERSIONED_CODEC_INVENTORY,
                 span,
                 rustc_errors::DiagDecorator(|diag| {
                     diag.primary_message(format!(
@@ -523,10 +488,9 @@ fn resolve_mono_callee<'tcx>(
     let resolved_def_id = instance
         .map(|instance| instance.def_id())
         .unwrap_or(*def_id);
-    // Canonicalize impl-method calls back to the trait item so the sink lookup matches the trait
-    // path (e.g. `<MemoryStorage as Storage>::store_data` → `Storage::store_data`). We try the
-    // resolved (impl) DefId first, then fall back to the unresolved one — the latter fires when
-    // `Instance::try_resolve` failed and the original call is already against a trait item.
+    // Canonicalize impl-method calls back to the trait item before sink lookup. The current sink
+    // set is made of free functions, but keeping this normalization makes the matcher safe for
+    // future trait-method sinks.
     let canonical_def_id = cx
         .tcx
         .trait_item_of(resolved_def_id)
@@ -570,13 +534,11 @@ impl SinkSpec {
             return false;
         }
 
-        if let Some(path_contains) = self.path_contains
-            && !cx.tcx.def_path_str(def_id).contains(path_contains)
-        {
+        if def_crate_name(cx, def_id) != self.crate_name {
             return false;
         }
 
-        is_workspace_def(cx, def_id, workspace_crates())
+        true
     }
 }
 
@@ -606,10 +568,10 @@ fn extract_mono_root_type<'tcx>(
 ) -> ExtractedRoot<'tcx> {
     match extractor {
         RootExtractor::Arg(index) => extract_mono_arg(cx, caller, body, args, index),
-        RootExtractor::LastFnGenericArg => sink
+        RootExtractor::FnGenericArg(index) => sink
             .generic_args
             .types()
-            .last()
+            .nth(index)
             .map(ExtractedRoot::Root)
             .unwrap_or(ExtractedRoot::Unresolved),
     }
@@ -845,7 +807,7 @@ fn count_types(summaries: &[TypeSummary], predicate: impl Fn(&RootCategory) -> b
 #[test]
 fn ui() {
     let output_dir = std::env::temp_dir().join(format!(
-        "kms_lints_bc2wrap_type_inventory_ui_{}",
+        "kms_lints_versioned_codec_inventory_ui_{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&output_dir);
@@ -856,7 +818,7 @@ fn ui() {
         std::env::set_var(kms_lints_common::INVENTORY_DIR_ENV, output_dir.as_os_str());
     }
 
-    dylint_testing::ui_test_example(env!("CARGO_PKG_NAME"), "bc2wrap_type_inventory");
+    dylint_testing::ui_test_example(env!("CARGO_PKG_NAME"), "versioned_codec_inventory");
 
     let json_path = output_dir.join("main.json");
     let json = std::fs::read_to_string(&json_path)
@@ -867,12 +829,16 @@ fn ui() {
     let types = inventory["types"]
         .as_array()
         .expect("types should be an array");
-    assert!(
-        types.iter().any(
-            |entry| entry["type_display"].as_str() == Some("LocalPayload")
-                && entry["category"].as_str() == Some("local")
-        ),
-        "LocalPayload should be inventoried as a local root"
+    assert_local_with_sink(types, "LocalPayload", "tfhe_safe_serialize::safe_serialize");
+    assert_local_with_sink(
+        types,
+        "LocalPayload",
+        "tfhe_safe_serialize::safe_deserialize",
+    );
+    assert_local_with_sink(
+        types,
+        "ConformantPayload",
+        "tfhe_safe_serialize::safe_deserialize_conformant",
     );
 
     assert!(
@@ -886,32 +852,24 @@ fn ui() {
     assert!(
         types
             .iter()
+            .any(|entry| entry["type_display"].as_str() == Some("(u64, u64)")
+                && entry["category"].as_str() == Some("compound")),
+        "tuple roots should still be recorded as compound"
+    );
+
+    assert!(
+        types
+            .iter()
+            .any(|entry| entry["type_display"].as_str() == Some("u64")
+                && entry["category"].as_str() == Some("primitive")),
+        "primitive roots should still be recorded as primitive"
+    );
+
+    assert!(
+        types
+            .iter()
             .all(|entry| entry["category"].as_str() != Some("generic")),
         "generic roots should be resolved by post-monomorphization analysis"
-    );
-
-    assert!(
-        types.iter().any(
-            |entry| entry["type_display"].as_str() == Some("LocalStoragePayload")
-                && entry["category"].as_str() == Some("local")
-                && sink_paths_contains(entry, "vault::storage::Storage::store_data")
-                && sink_paths_contains(entry, "vault::storage::StorageExt::store_data_at_epoch")
-                && sink_paths_contains(
-                    entry,
-                    "vault::storage::StorageReaderExt::read_data_at_epoch"
-                )
-        ),
-        "LocalStoragePayload should be inventoried through canonical storage trait sinks"
-    );
-
-    assert!(
-        types.iter().any(
-            |entry| entry["type_display"].as_str() == Some("LocalPayload")
-                && entry["category"].as_str() == Some("local")
-                && sink_paths_contains(entry, "bc2wrap::serialize")
-                && sink_paths_contains(entry, "vault::storage::StorageReader::read_data")
-        ),
-        "LocalPayload should include concrete generic bc2wrap and storage-reader roots"
     );
 
     let calls = inventory["calls"]
@@ -920,11 +878,23 @@ fn ui() {
     assert!(
         calls.iter().all(|entry| {
             let sink_path = entry["sink_path"].as_str().unwrap_or_default();
-            !sink_path.contains("store_versioned")
-                && !sink_path.contains("read_versioned")
-                && !sink_path.contains("write_all")
+            !sink_path.contains("bc2wrap")
+                && !sink_path.contains("Storage")
+                && !sink_path.contains("safe_serialized_size")
         }),
-        "wrapper functions should not be matched as storage sinks"
+        "only TFHE safe-serialization encode/decode sinks should be matched"
+    );
+}
+
+#[cfg(test)]
+fn assert_local_with_sink(types: &[serde_json::Value], type_display: &str, sink_path: &str) {
+    assert!(
+        types
+            .iter()
+            .any(|entry| entry["type_display"].as_str() == Some(type_display)
+                && entry["category"].as_str() == Some("local")
+                && sink_paths_contains(entry, sink_path)),
+        "{type_display} should be inventoried through {sink_path}"
     );
 }
 

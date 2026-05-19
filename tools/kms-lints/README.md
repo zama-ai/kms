@@ -16,29 +16,24 @@ examples.
 
 ## Lints
 
-### `bc2wrap_type_inventory`
+### `versioned_codec_inventory`
 
-Collects the root workspace-local types used at curated serialization sink call
-sites in codegen-reachable monomorphized MIR, including:
+Collects the root workspace-local types used at TFHE safe-serialization
+encode/decode sink call sites in checked local MIR, including:
 
-- `bc2wrap::serialize`
-- `bc2wrap::serialize_into`
-- `bc2wrap::deserialize_safe`
-- `bc2wrap::deserialize_unsafe`
-- `Storage::store_data`
-- `StorageExt::store_data_at_epoch`
-- `StorageReader::read_data`
-- `StorageReaderExt::read_data_at_epoch`
+- `tfhe_safe_serialize::safe_serialize`
+- `tfhe_safe_serialize::safe_deserialize`
+- `tfhe_safe_serialize::safe_deserialize_conformant`
 
 The lint writes one JSON file per checked crate target under
-`target/kms-lints/bc2wrap-type-inventory` by default. Set
-`KMS_BC2WRAP_INVENTORY_DIR` to override the output directory.
+`target/kms-lints/versioned-codec-inventory` by default. Set
+`KMS_VERSIONED_CODEC_INVENTORY_DIR` to override the output directory.
 
 The inventory records only root types. It does not recursively expand fields.
 Each file contains full `calls` plus a `types` summary categorized as `local`,
 `foreign`, `generic`, `compound`, `primitive`, or `unknown` for auditability.
 Call records include `sink_path` (the rustc def path of the matched sink),
 and type summaries aggregate every distinct sink path each root flowed through.
-Storage wrapper functions are intentionally not listed as sinks; their concrete
-types are recovered from the canonical storage trait calls reached after
-monomorphization.
+Storage wrapper and trait functions are intentionally not listed as sinks; a
+storage-backed value is recorded only when the scanner reaches the concrete
+TFHE safe-serialization encode/decode call.
