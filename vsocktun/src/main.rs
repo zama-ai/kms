@@ -14,18 +14,25 @@ mod vsock;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use protocol::{FrameReader, PendingFramedWrite, PendingSliceWrite};
+use route_manager::{Route, RouteManager};
 use std::fmt::Arguments;
+use std::fs;
 use std::future::Future;
 use std::io;
+use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 use tokio::runtime::Builder;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, sleep, timeout};
 use tokio_vsock::{OwnedReadHalf, OwnedWriteHalf, VsockStream};
 use tracing::Level;
 use tun::{Ipv4Cidr, TunDevice};
 use tun_rs::AsyncDevice;
-use vsock::{ParentSessionAcceptor, SessionSockets, connect_session};
+use vsock::{ParentSessionAcceptor, SessionSockets, connect_session, fetch_bootstrap_config};
+
+const RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
+const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn log_level_from_count(count: u8) -> Level {
     match count {
@@ -53,17 +60,19 @@ enum Mode {
     Enclave(EnclaveArgs),
 }
 
-/// Common tunnel parameters shared by both ends of the relay.
+/// Parent-side tunnel parameters.
 ///
-/// The surrounding shell scripts still own addressing, routing, NAT, and DNS.
-/// `vsocktun` only needs enough information to create the local TUN queues and
-/// connect them to the matching VSOCK session.
+/// The parent is the source of truth for the tunnel CIDR, enclave address, MTU,
+/// and shard count. It serves those values to the enclave over the same VSOCK
+/// port that later carries shard traffic.
 #[derive(Args, Debug, Clone)]
-struct CommonArgs {
+struct ParentCommonArgs {
     #[arg(long)]
     tun_name: String,
     #[arg(long)]
     tun_address: String,
+    #[arg(long)]
+    enclave_address: String,
     #[arg(long)]
     vsock_port: u32,
     #[arg(long, default_value_t = 8)]
@@ -77,15 +86,24 @@ struct CommonArgs {
 #[derive(Args, Debug)]
 struct ParentArgs {
     #[command(flatten)]
-    common: CommonArgs,
+    common: ParentCommonArgs,
     #[arg(long, default_value_t = 5)]
     session_timeout_secs: u64,
 }
 
+/// Enclave-side bootstrap parameters.
+///
+/// The enclave still chooses its local interface name and Tokio worker count,
+/// but it fetches the actual tunnel CIDR, MTU, queue count, and resolver file
+/// from the parent before it creates the TUN device.
 #[derive(Args, Debug)]
 struct EnclaveArgs {
-    #[command(flatten)]
-    common: CommonArgs,
+    #[arg(long)]
+    tun_name: String,
+    #[arg(long)]
+    vsock_port: u32,
+    #[arg(long, default_value_t = 4)]
+    tokio_worker_threads: usize,
     #[arg(long, default_value_t = 3)]
     parent_cid: u32,
     #[arg(long, default_value_t = 1_000)]
@@ -181,7 +199,7 @@ impl Cli {
     fn tokio_worker_threads(&self) -> usize {
         match &self.mode {
             Mode::Parent(args) => args.common.tokio_worker_threads,
-            Mode::Enclave(args) => args.common.tokio_worker_threads,
+            Mode::Enclave(args) => args.tokio_worker_threads,
         }
     }
 }
@@ -225,7 +243,7 @@ async fn run_parent<Shutdown>(args: ParentArgs, shutdown: Shutdown) -> Result<()
 where
     Shutdown: Future<Output = ()>,
 {
-    let common = ParsedCommon::parse(args.common)?;
+    let common = ParsedParentCommon::parse(args.common)?;
     let tun = TunDevice::create(
         &common.tun_name,
         &common.tun_address,
@@ -248,6 +266,9 @@ where
         tun.queue_count(),
         Duration::from_secs(args.session_timeout_secs),
         tun.uses_vnet_hdr(),
+        common.parent_tun_cidr(),
+        common.enclave_tun_cidr(),
+        common.mtu,
     )?;
 
     tracing::info!(
@@ -286,48 +307,95 @@ where
 
 /// Enclave-side entry point.
 ///
-/// The enclave creates its local TUN device once and then repeatedly attempts
-/// to establish a complete multi-shard session to the parent. Reconnect policy
-/// lives here so shard workers can stay focused on packet forwarding.
+/// The enclave first fetches its tunnel configuration from the parent, creates
+/// the local TUN device, installs routes and resolver state, and then
+/// repeatedly attempts to establish a complete multi-shard session.
+/// Reconnect policy lives here so shard workers can stay focused on packet
+/// forwarding.
 async fn run_enclave<Shutdown>(args: EnclaveArgs, shutdown: Shutdown) -> Result<()>
 where
     Shutdown: Future<Output = ()>,
 {
-    let common = ParsedCommon::parse(args.common)?;
-    let tun = TunDevice::create(
-        &common.tun_name,
-        &common.tun_address,
-        common.queues,
-        common.mtu,
-    )
-    .with_context(|| format!("failed to create TUN interface '{}'", common.tun_name))?;
     let reconnect_delay = Duration::from_millis(args.reconnect_delay_ms);
+    tokio::pin!(shutdown);
+
+    let bootstrap = loop {
+        match tokio::select! {
+            _ = shutdown.as_mut() => return Ok(()),
+            bootstrap = timeout(
+                BOOTSTRAP_TIMEOUT,
+                fetch_bootstrap_config(args.parent_cid, args.vsock_port),
+            ) => match bootstrap {
+                Ok(result) => result,
+                Err(_elapsed) => Err(anyhow!(
+                    "timed out after {} ms while fetching bootstrap configuration",
+                    BOOTSTRAP_TIMEOUT.as_millis(),
+                )),
+            },
+        } {
+            Ok(bootstrap) => break bootstrap,
+            Err(err) => {
+                tracing::error!(error = %err, "vsocktun(enclave): failed to fetch bootstrap configuration");
+                tracing::info!(
+                    reconnect_delay_ms = reconnect_delay.as_millis(),
+                    "vsocktun(enclave): retrying bootstrap"
+                );
+                tokio::select! {
+                    _ = shutdown.as_mut() => return Ok(()),
+                    _ = sleep(reconnect_delay) => {}
+                }
+            }
+        }
+    };
+
+    let parent_tun_address = Ipv4Cidr::parse(&bootstrap.parent_tun_address).with_context(|| {
+        format!(
+            "failed to parse parent tunnel address '{}' received from bootstrap",
+            bootstrap.parent_tun_address
+        )
+    })?;
+    let enclave_tun_address =
+        Ipv4Cidr::parse(&bootstrap.enclave_tun_address).with_context(|| {
+            format!(
+                "failed to parse enclave tunnel address '{}' received from bootstrap",
+                bootstrap.enclave_tun_address
+            )
+        })?;
+    let queue_count = usize::from(bootstrap.queues);
+    let tun = TunDevice::create(
+        &args.tun_name,
+        &enclave_tun_address,
+        queue_count,
+        bootstrap.mtu,
+    )
+    .with_context(|| format!("failed to create TUN interface '{}'", args.tun_name))?;
+    write_bootstrapped_resolv_conf(&bootstrap.resolv_conf)?;
+    configure_enclave_routes(&args.tun_name, &parent_tun_address, &enclave_tun_address)?;
     tracing::debug!(
-        tun_name = %common.tun_name,
-        tun_address = %common.tun_address.address(),
-        prefix_len = common.tun_address.prefix_len(),
-        queues = common.queues,
-        mtu = ?common.mtu,
+        tun_name = %args.tun_name,
+        tun_address = %enclave_tun_address.address(),
+        prefix_len = enclave_tun_address.prefix_len(),
+        parent_tun_address = %parent_tun_address.address(),
+        queues = queue_count,
+        mtu = ?bootstrap.mtu,
         raw_tun_frames = tun.uses_vnet_hdr(),
-        tokio_worker_threads = common.tokio_worker_threads,
+        tokio_worker_threads = args.tokio_worker_threads,
         "vsocktun(enclave): configured tunnel"
     );
 
     tracing::info!(
         parent_cid = args.parent_cid,
-        vsock_port = common.vsock_port,
+        vsock_port = args.vsock_port,
         queues = tun.queue_count(),
-        tun_name = %common.tun_name,
+        tun_name = %args.tun_name,
         "vsocktun(enclave): dialing parent"
     );
 
-    let queue_count = tun.queue_count();
     let raw_tun_frames = tun.uses_vnet_hdr();
-    tokio::pin!(shutdown);
     loop {
         match tokio::select! {
             _ = shutdown.as_mut() => return Ok(()),
-            session = connect_session(args.parent_cid, common.vsock_port, queue_count, raw_tun_frames) => session,
+            session = connect_session(args.parent_cid, args.vsock_port, queue_count, raw_tun_frames) => session,
         } {
             Ok(session) => {
                 tracing::info!(
@@ -740,20 +808,110 @@ async fn write_to_tun(
     }
 }
 
+fn write_bootstrapped_resolv_conf(contents: &[u8]) -> Result<()> {
+    let path = enclave_resolv_conf_target_path();
+    fs::write(&path, contents).with_context(|| {
+        format!(
+            "failed to write enclave resolver config to '{}'",
+            path.display()
+        )
+    })
+}
+
+fn configure_enclave_routes(
+    tun_name: &str,
+    parent_tun_address: &Ipv4Cidr,
+    enclave_tun_address: &Ipv4Cidr,
+) -> Result<()> {
+    let mut route_manager = RouteManager::new().context("failed to create route manager")?;
+
+    let subnet_route = Route::new(
+        IpAddr::V4(enclave_tun_address.network_address()),
+        enclave_tun_address.prefix_len(),
+    )
+    .with_if_name(tun_name.to_owned());
+    let default_route = Route::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
+        .with_if_name(tun_name.to_owned())
+        .with_gateway(IpAddr::V4(parent_tun_address.address()));
+
+    ensure_subnet_route(&mut route_manager, &subnet_route)
+        .context("failed to install enclave tunnel subnet route")?;
+    replace_default_route(&mut route_manager, &default_route)
+        .context("failed to install enclave default route")?;
+    Ok(())
+}
+
+fn ensure_subnet_route(route_manager: &mut RouteManager, route: &Route) -> Result<()> {
+    for existing in route_manager
+        .list()
+        .context("failed to list existing routes")?
+    {
+        if routes_share_destination(&existing, route) {
+            return Ok(());
+        }
+    }
+
+    route_manager
+        .add(route)
+        .with_context(|| format!("failed to add route {route}"))?;
+    Ok(())
+}
+
+fn replace_default_route(route_manager: &mut RouteManager, route: &Route) -> Result<()> {
+    let existing_routes = route_manager
+        .list()
+        .context("failed to list existing routes")?;
+    if existing_routes
+        .iter()
+        .any(|existing| routes_match(existing, route))
+    {
+        return Ok(());
+    }
+
+    for existing in existing_routes {
+        if routes_share_destination(&existing, route)
+            && let Err(err) = route_manager.delete(&existing)
+            && err.raw_os_error() != Some(3)
+        {
+            return Err(err)
+                .with_context(|| format!("failed to remove conflicting route {existing}"));
+        }
+    }
+
+    route_manager
+        .add(route)
+        .with_context(|| format!("failed to add route {route}"))?;
+    Ok(())
+}
+
+fn routes_share_destination(existing: &Route, desired: &Route) -> bool {
+    existing.destination().is_ipv4()
+        && desired.destination().is_ipv4()
+        && existing.network() == desired.network()
+        && existing.prefix() == desired.prefix()
+}
+
+fn routes_match(existing: &Route, desired: &Route) -> bool {
+    routes_share_destination(existing, desired)
+        && existing.gateway() == desired.gateway()
+        && existing.if_name() == desired.if_name()
+}
+
 #[derive(Debug)]
-struct ParsedCommon {
+struct ParsedParentCommon {
     tun_name: String,
     tun_address: Ipv4Cidr,
+    enclave_address: Ipv4Addr,
     vsock_port: u32,
     queues: usize,
     mtu: Option<u32>,
     tokio_worker_threads: usize,
 }
 
-impl ParsedCommon {
+impl ParsedParentCommon {
     /// Parses CLI parameters into the validated runtime configuration used by
-    /// both parent and enclave session setup.
-    fn parse(args: CommonArgs) -> Result<Self> {
+    /// the parent-side listener and bootstrap responder.
+    fn parse(args: ParentCommonArgs) -> Result<Self> {
         if args.queues == 0 {
             bail!("--queues must be at least one");
         }
@@ -762,17 +920,47 @@ impl ParsedCommon {
             tun_name: args.tun_name,
             tun_address: Ipv4Cidr::parse(&args.tun_address)
                 .with_context(|| format!("failed to parse --tun-address '{}'", args.tun_address))?,
+            enclave_address: args.enclave_address.parse::<Ipv4Addr>().with_context(|| {
+                format!(
+                    "failed to parse --enclave-address '{}'",
+                    args.enclave_address
+                )
+            })?,
             vsock_port: args.vsock_port,
             queues: usize::from(args.queues),
             mtu: args.mtu,
             tokio_worker_threads: args.tokio_worker_threads,
         })
     }
+
+    fn parent_tun_cidr(&self) -> String {
+        format!(
+            "{}/{}",
+            self.tun_address.address(),
+            self.tun_address.prefix_len()
+        )
+    }
+
+    fn enclave_tun_cidr(&self) -> String {
+        format!("{}/{}", self.enclave_address, self.tun_address.prefix_len())
+    }
+}
+
+#[cfg(not(test))]
+fn enclave_resolv_conf_target_path() -> PathBuf {
+    PathBuf::from(RESOLV_CONF_PATH)
+}
+
+#[cfg(test)]
+fn enclave_resolv_conf_target_path() -> PathBuf {
+    test_support::enclave_resolv_conf_target_path()
+        .unwrap_or_else(|| PathBuf::from(RESOLV_CONF_PATH))
 }
 
 #[cfg(test)]
 mod test_support {
     use std::collections::VecDeque;
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use tun_rs::VIRTIO_NET_HDR_LEN;
 
@@ -789,6 +977,7 @@ mod test_support {
     }
 
     static TEST_FLOW_COUNTERS: OnceLock<Mutex<TestFlowCounters>> = OnceLock::new();
+    static TEST_ENCLAVE_RESOLV_CONF_TARGET: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
     pub(super) fn reset_test_flow_counters() {
         *TEST_FLOW_COUNTERS
@@ -814,6 +1003,21 @@ mod test_support {
             counters.enclave_tun_to_vsock_samples,
             counters.enclave_vsock_to_tun_samples,
         )
+    }
+
+    pub(super) fn set_test_enclave_resolv_conf_target(path: PathBuf) {
+        *TEST_ENCLAVE_RESOLV_CONF_TARGET
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("test resolv.conf target mutex should not be poisoned") = Some(path);
+    }
+
+    pub(super) fn enclave_resolv_conf_target_path() -> Option<PathBuf> {
+        TEST_ENCLAVE_RESOLV_CONF_TARGET
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("test resolv.conf target mutex should not be poisoned")
+            .clone()
     }
 
     fn push_sample(samples: &mut VecDeque<String>, summary: String) {
@@ -1037,8 +1241,10 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     mod integration_tests {
-        use super::super::test_support::{reset_test_flow_counters, test_flow_summary};
-        use super::super::{CommonArgs, EnclaveArgs, ParentArgs, run_enclave, run_parent};
+        use super::super::test_support::{
+            reset_test_flow_counters, set_test_enclave_resolv_conf_target, test_flow_summary,
+        };
+        use super::super::{EnclaveArgs, ParentArgs, ParentCommonArgs, run_enclave, run_parent};
         use anyhow::{Context, Result, anyhow, bail};
         use etherparse::{NetSlice, SlicedPacket, TransportSlice};
         use netns_rs::NetNs;
@@ -1056,6 +1262,7 @@ mod tests {
         use std::sync::mpsc::{self, Receiver as StdReceiver};
         use std::thread;
         use std::time::{SystemTime, UNIX_EPOCH};
+        use tempfile::NamedTempFile;
         use tokio::io::unix::AsyncFd;
         use tokio::net::UdpSocket;
         use tokio::runtime::Builder;
@@ -1129,9 +1336,10 @@ mod tests {
 
         fn parent_args(config: &TestConfig) -> ParentArgs {
             ParentArgs {
-                common: CommonArgs {
+                common: ParentCommonArgs {
                     tun_name: config.parent_tun_name.clone(),
                     tun_address: format!("{}/24", config.parent_ip),
+                    enclave_address: config.enclave_ip.to_string(),
                     vsock_port: config.vsock_port,
                     queues: 1,
                     mtu: Some(1500),
@@ -1143,14 +1351,9 @@ mod tests {
 
         fn enclave_args(config: &TestConfig) -> EnclaveArgs {
             EnclaveArgs {
-                common: CommonArgs {
-                    tun_name: config.enclave_tun_name.clone(),
-                    tun_address: format!("{}/24", config.enclave_ip),
-                    vsock_port: config.vsock_port,
-                    queues: 1,
-                    mtu: Some(1500),
-                    tokio_worker_threads: 1,
-                },
+                tun_name: config.enclave_tun_name.clone(),
+                vsock_port: config.vsock_port,
+                tokio_worker_threads: 1,
                 // Use the Linux VSOCK loopback CID so the test reaches the parent listener on
                 // the same host after entering the enclave network namespace.
                 parent_cid: 1,
@@ -1406,6 +1609,9 @@ mod tests {
             //    TUN capture to observe it, then send a UDP reply back and require the enclave
             //    TUN capture to observe that reply.
             reset_test_flow_counters();
+            let enclave_resolv_conf =
+                NamedTempFile::new().context("failed to create temporary enclave resolv.conf")?;
+            set_test_enclave_resolv_conf_target(enclave_resolv_conf.path().to_path_buf());
             let config = TestConfig::new();
             let _namespaces = NetNamespaceGuard::new(&[&config.enclave_ns_name])?;
 
@@ -1444,15 +1650,19 @@ mod tests {
                     let shutdown = async move {
                         let _ = parent_stop_rx.await;
                     };
-                    let mut run_future = pin!(run_parent(parent_args(&parent_config), shutdown));
+                    let mut run_task = pin!(tokio::spawn(run_parent(
+                        parent_args(&parent_config),
+                        shutdown,
+                    )));
                     // Wait until the parent TUN exists and can be monitored before allowing the
                     // enclave side to start sending traffic.
                     let request_capture = tokio::select! {
                         capture = wait_for_packet_capture(&parent_config.parent_tun_name) => capture?,
-                        result = &mut run_future => {
+                        result = &mut run_task => {
                             match result {
-                                Ok(()) => bail!("parent entry point exited before test setup completed"),
-                                Err(err) => Err(err).context("parent entry point failed before test setup completed")?,
+                                Ok(Ok(())) => bail!("parent entry point exited before test setup completed"),
+                                Ok(Err(err)) => Err(err).context("parent entry point failed before test setup completed")?,
+                                Err(err) => Err(anyhow!("parent entry point task failed before test setup completed: {err}"))?,
                             }
                         }
                     };
@@ -1463,10 +1673,11 @@ mod tests {
                             SocketAddrV4::new(parent_config.parent_ip, 0),
                             &parent_config.parent_tun_name,
                         ) => sender?,
-                        result = &mut run_future => {
+                        result = &mut run_task => {
                             match result {
-                                Ok(()) => bail!("parent entry point exited before reply socket setup completed"),
-                                Err(err) => Err(err).context("parent entry point failed before reply socket setup completed")?,
+                                Ok(Ok(())) => bail!("parent entry point exited before reply socket setup completed"),
+                                Ok(Err(err)) => Err(err).context("parent entry point failed before reply socket setup completed")?,
+                                Err(err) => Err(anyhow!("parent entry point task failed before reply socket setup completed: {err}"))?,
                             }
                         }
                     };
@@ -1491,10 +1702,11 @@ mod tests {
                         result = &mut request_capture => {
                             result.context("failed to capture enclave request on parent TUN")?
                         }
-                        result = &mut run_future => {
+                        result = &mut run_task => {
                             match result {
-                                Ok(()) => bail!("parent entry point exited before enclave request"),
-                                Err(err) => Err(err).context("parent entry point failed before enclave request")?,
+                                Ok(Ok(())) => bail!("parent entry point exited before enclave request"),
+                                Ok(Err(err)) => Err(err).context("parent entry point failed before enclave request")?,
+                                Err(err) => Err(anyhow!("parent entry point task failed before enclave request: {err}"))?,
                             }
                         }
                     };
@@ -1508,11 +1720,14 @@ mod tests {
                         .context("failed to send parent reply")?;
                     parent_reply_sent.store(true, Ordering::SeqCst);
 
-                    match run_future.await {
-                        Ok(()) => Ok(()),
-                        Err(err) => {
+                    match run_task.await {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(err)) => {
                             Err(err).context("parent entry point failed before test shutdown")
                         }
+                        Err(err) => Err(anyhow!(
+                            "parent entry point task failed before test shutdown: {err}"
+                        )),
                     }
                 })
             });
@@ -1541,27 +1756,22 @@ mod tests {
                     let shutdown = async move {
                         let _ = enclave_stop_rx.await;
                     };
-                    let mut run_future = pin!(run_enclave(enclave_args(&enclave_config), shutdown));
-                    // Wait until the enclave TUN exists and can be monitored before triggering
-                    // the request/reply exchange.
-                    let reply_capture = tokio::select! {
-                        capture = wait_for_packet_capture(&enclave_config.enclave_tun_name) => capture?,
-                        result = &mut run_future => {
-                            match result {
-                                Ok(()) => bail!("enclave entry point exited before test setup completed"),
-                                Err(err) => Err(err).context("enclave entry point failed before test setup completed")?,
-                            }
-                        }
-                    };
+                    let mut run_task = pin!(tokio::spawn(run_enclave(
+                        enclave_args(&enclave_config),
+                        shutdown,
+                    )));
+                    // Readiness should reflect that the enclave tunnel can actually source
+                    // traffic, not merely that a packet capture socket managed to bind early.
                     let sender = tokio::select! {
                         sender = wait_for_device_bound_udp_socket(
                             SocketAddrV4::new(enclave_config.enclave_ip, 0),
                             &enclave_config.enclave_tun_name,
                         ) => sender?,
-                        result = &mut run_future => {
+                        result = &mut run_task => {
                             match result {
-                                Ok(()) => bail!("enclave entry point exited before request socket setup completed"),
-                                Err(err) => Err(err).context("enclave entry point failed before request socket setup completed")?,
+                                Ok(Ok(())) => bail!("enclave entry point exited before test setup completed"),
+                                Ok(Err(err)) => Err(err).context("enclave entry point failed before test setup completed")?,
+                                Err(err) => Err(anyhow!("enclave entry point task failed before test setup completed: {err}"))?,
                             }
                         }
                     };
@@ -1571,6 +1781,17 @@ mod tests {
                     enclave_start_rx
                         .await
                         .map_err(|_| anyhow!("enclave start signal dropped"))?;
+
+                    let reply_capture = tokio::select! {
+                        capture = wait_for_packet_capture(&enclave_config.enclave_tun_name) => capture?,
+                        result = &mut run_task => {
+                            match result {
+                                Ok(Ok(())) => bail!("enclave entry point exited before packet capture setup completed"),
+                                Ok(Err(err)) => Err(err).context("enclave entry point failed before packet capture setup completed")?,
+                                Err(err) => Err(anyhow!("enclave entry point task failed before packet capture setup completed: {err}"))?,
+                            }
+                        }
+                    };
 
                     let mut reply_capture =
                         pin!(reply_capture.recv_matching(ExpectedCapturedPacket {
@@ -1599,10 +1820,11 @@ mod tests {
                                 result.context("failed to capture parent reply on enclave TUN")?;
                                 Some(())
                             }
-                            result = &mut run_future => {
+                            result = &mut run_task => {
                                 match result {
-                                    Ok(()) => bail!("enclave entry point exited before parent reply"),
-                                    Err(err) => Err(err).context("enclave entry point failed before parent reply")?,
+                                    Ok(Ok(())) => bail!("enclave entry point exited before parent reply"),
+                                    Ok(Err(err)) => Err(err).context("enclave entry point failed before parent reply")?,
+                                    Err(err) => Err(anyhow!("enclave entry point task failed before parent reply: {err}"))?,
                                 }
                             }
                             _ = sleep(TEST_RETRY_DELAY) => None,
@@ -1623,11 +1845,14 @@ mod tests {
                         }
                     }
 
-                    match run_future.await {
-                        Ok(()) => Ok(()),
-                        Err(err) => {
+                    match run_task.await {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(err)) => {
                             Err(err).context("enclave entry point failed before test shutdown")
                         }
+                        Err(err) => Err(anyhow!(
+                            "enclave entry point task failed before test shutdown: {err}"
+                        )),
                     }
                 })
             });
@@ -1701,6 +1926,8 @@ mod tests {
             "vsocktun",
             "--tun-address",
             "10.118.0.1/24",
+            "--enclave-address",
+            "10.118.0.2",
             "--vsock-port",
             "2100",
         ])
@@ -1722,8 +1949,6 @@ mod tests {
             "3",
             "--tun-name",
             "vsocktun",
-            "--tun-address",
-            "10.118.0.2/24",
             "--vsock-port",
             "2100",
         ])

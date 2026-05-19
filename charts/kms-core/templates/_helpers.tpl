@@ -101,14 +101,14 @@ args:
 {{- end -}}
 
 {{/* takes a (dict "image" kms-core-image-values
-                    "networkTunnel" nitro-network-tunnel-values
-                    "ingressPorts" list-of-tcp-ports
-                    "queueCount" int
-                    "workerThreads" int)
-       and renders the pod-local parent-side TUN bridge and DNS proxy used for
-      enclave egress as a native Kubernetes sidecar. When ingressPorts is not
-      empty, TCP ingress is DNATed into the enclave over the TUN. The vsock port
-      must match init_enclave.sh. */}}
+                     "networkTunnel" nitro-network-tunnel-values
+                     "ingressPorts" list-of-tcp-ports
+                     "queueCount" int
+                     "workerThreads" int)
+        and renders the pod-local parent-side TUN bridge and DNS proxy used for
+       enclave egress as a native Kubernetes sidecar. When ingressPorts is not
+       empty, TCP ingress is DNATed into the enclave over the TUN. The tunnel
+       VSOCK port is fixed to 2100 and must match init_enclave.sh. */}}
 {{- define "enclaveNetworkTunnelContainer" -}}
 name: enclave-network-tunnel
 image: {{ .image.name }}:{{ .image.tag }}
@@ -136,7 +136,7 @@ args:
     TUN_HOST="${TUN_ADDR%/*}"
     ENCLAVE_TUN_IP={{ .networkTunnel.enclaveAddress | quote }}
     TUN_SUBNET={{ .networkTunnel.subnet | quote }}
-    VSOCK_PORT={{ .networkTunnel.vsockPort | quote }}
+    VSOCK_PORT=2100
     QUEUE_COUNT={{ .queueCount | quote }}
     TOKIO_WORKER_THREADS={{ .workerThreads | quote }}
     UPSTREAM_DNS=""

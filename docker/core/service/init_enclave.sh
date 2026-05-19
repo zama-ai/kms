@@ -9,6 +9,8 @@ TUN_IF=vsocktun
 # communicating with the enclave.
 LOG_PORT=3000
 CONFIG_PORT=4000
+NETWORK_TUNNEL_PORT=2100
+TUN_TOKIO_WORKER_THREADS=4
 
 KMS_SERVER_CONFIG_FILE="config.toml"
 AWS_WEB_IDENTITY_TOKEN_FILE="token"
@@ -57,34 +59,6 @@ socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
 
 # extract bootstrap settings from the received config
 TOKEN_PORT="$(get_value "enclave_bootstrap.web_identity_token_port")"
-RESOLVCONF_PORT="$(get_value "enclave_bootstrap.resolv_conf_port")"
-TUN_NET="$(get_value "enclave_bootstrap.network_tunnel.subnet" | tr -d '"')"
-PARENT_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
-ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
-NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
-TUN_QUEUE_COUNT="8"
-has_value "enclave_bootstrap.network_tunnel.queue_count" && \
-    TUN_QUEUE_COUNT="$(get_value "enclave_bootstrap.network_tunnel.queue_count")"
-TUN_TOKIO_WORKER_THREADS="4"
-has_value "enclave_bootstrap.network_tunnel.tokio_worker_threads" && \
-    TUN_TOKIO_WORKER_THREADS="$(get_value "enclave_bootstrap.network_tunnel.tokio_worker_threads")"
-GW_ADDR="${PARENT_TUN_ADDR%/*}"
-CIDR_PREFIX="${PARENT_TUN_ADDR#*/}"
-[ "$GW_ADDR" != "$PARENT_TUN_ADDR" ] || fail "parent tunnel address missing CIDR prefix: $PARENT_TUN_ADDR"
-case "$ENCLAVE_TUN_IP" in
-    */*) fail "enclave tunnel address must not contain CIDR prefix: $ENCLAVE_TUN_IP" ;;
-esac
-TUN_ADDR="${ENCLAVE_TUN_IP}/${CIDR_PREFIX}"
-
-# receive /etc/resolv.conf from the parent
-log "requesting /etc/resolv.conf"
-socat -u VSOCK-CONNECT:$PARENT_CID:"$RESOLVCONF_PORT" \
-      CREATE:resolv.conf \
-    |& logger || fail "cannot receive /etc/resolv.conf"
-[ -f "resolv.conf" ] || fail "did not receive /etc/resolv.conf"
-cp -f resolv.conf /etc/resolv.conf |& logger
-log "enclave /etc/resolv.conf:"
-cat /etc/resolv.conf |& logger
 
 # we are relaying raw IP packets from the enclave networking stack to the parent
 # networking stack over vsock so we don't have to make tokio and hyper in
@@ -96,9 +70,7 @@ log "starting enclave-side network tunnel"
 vsocktun enclave \
     --parent-cid "$PARENT_CID" \
     --tun-name "$TUN_IF" \
-    --tun-address "$TUN_ADDR" \
-    --vsock-port "$NET_PORT" \
-    --queues "$TUN_QUEUE_COUNT" \
+    --vsock-port "$NETWORK_TUNNEL_PORT" \
     --tokio-worker-threads "$TUN_TOKIO_WORKER_THREADS" |& logger &
 for _ in $(seq 1 30);
 do
@@ -108,14 +80,7 @@ do
     sleep 1
 done
 ifconfig "$TUN_IF" |& logger || fail "cannot setup tunnel interface"
-route add -net "$TUN_NET" dev $TUN_IF |& logger || fail "cannot add route to gateway"
-route add default gw "$GW_ADDR" |& logger || fail "cannot add default route"
-
-# DNS runs on the parent side of the tunnel, so point the enclave resolver at
-# the tunnel gateway while preserving the search domains and options copied from
-# the parent.
-log "enclave /etc/resolv.conf with parent-side dnsproxy:"
-sed -i "s/nameserver.*$/nameserver $GW_ADDR/" /etc/resolv.conf |& logger
+log "enclave /etc/resolv.conf from vsocktun bootstrap:"
 cat /etc/resolv.conf |& logger
 
 # keep receiving fresh web identity tokens from the parent
