@@ -1,7 +1,4 @@
 rules:
-  github-env:
-    ignore:
-      - action.yml:44
   use-trusted-publishing:
     ignore:
       # ignore line 61 in workflow-pr-dockerfile.yml, any column

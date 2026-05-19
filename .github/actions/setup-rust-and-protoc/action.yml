@@ -42,9 +42,10 @@ runs:
         PROTOC_SHA256: af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
       shell: bash
       run: |
+        echo "$PATH"
         set -euo pipefail
         PROTOC_ARCHIVE="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
         curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ARCHIVE}"
         echo "${PROTOC_SHA256}  ${PROTOC_ARCHIVE}" | sha256sum --check --strict
-        unzip "${PROTOC_ARCHIVE}" -d "/bin"
-        echo "$PATH"
+        unzip -o "${PROTOC_ARCHIVE}" -d /usr/local
+        protoc --version
