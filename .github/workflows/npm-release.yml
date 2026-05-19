@@ -41,8 +41,6 @@ jobs:
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           setup-rust: "false"
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # WASM handling
       - name: Install
