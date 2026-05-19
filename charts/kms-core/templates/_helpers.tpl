@@ -185,6 +185,7 @@ args:
     vsocktun parent \
       --tun-name "$TUN_IF" \
       --tun-address "$TUN_ADDR" \
+      --enclave-address "$ENCLAVE_TUN_IP" \
       --vsock-port "$VSOCK_PORT" \
       --queues "$QUEUE_COUNT" \
       --tokio-worker-threads "$TOKIO_WORKER_THREADS" &
