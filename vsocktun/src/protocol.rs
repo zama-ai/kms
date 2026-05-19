@@ -1,9 +1,11 @@
-//! Session handshake and packet framing used by `vsocktun`.
+//! Bootstrap, session handshake, and packet framing used by `vsocktun`.
 //!
 //! The tunnel transport itself is stream-oriented, so this module provides the
-//! two pieces of structure the relay needs on top of raw bytes:
-//! - a small session header that lets both sides assemble shard streams into
-//!   one logical tunnel session and agree on the framing mode
+//! three pieces of structure the relay needs on top of raw bytes:
+//! - a small bootstrap exchange that lets the parent tell the enclave which TUN
+//!   CIDR, queue count, MTU, and resolver file to install locally
+//! - a small session header that lets both sides assemble shard streams into one
+//!   logical tunnel session and agree on the framing mode
 //! - length-prefixed packet framing so TUN payloads can be forwarded without
 //!   depending on any stream-level message boundaries
 
@@ -18,6 +20,333 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 const HELLO_MAGIC: [u8; 8] = *b"VSTUN002";
 const HELLO_RESERVED_BYTES: usize = 4;
 const HELLO_CAP_RAW_TUN_FRAMES: u32 = 1;
+const BOOTSTRAP_REQUEST_MAGIC: [u8; 8] = *b"VSTCFG01";
+const BOOTSTRAP_RESPONSE_MAGIC: [u8; 8] = *b"VSTCFG02";
+const BOOTSTRAP_RESPONSE_FLAG_HAS_MTU: u16 = 1;
+
+fn check_magic(bytes: &[u8], expected: &[u8], error: &'static str) -> io::Result<()> {
+    if bytes.get(..expected.len()) == Some(expected) {
+        Ok(())
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+}
+
+fn read_be_u16(bytes: &[u8], start: usize, error: &'static str) -> io::Result<u16> {
+    let end = start + 2;
+    let slice = bytes
+        .get(start..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(u16::from_be_bytes(
+        slice
+            .try_into()
+            .expect("slice length should match u16 width"),
+    ))
+}
+
+fn read_be_u32(bytes: &[u8], start: usize, error: &'static str) -> io::Result<u32> {
+    let end = start + 4;
+    let slice = bytes
+        .get(start..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(u32::from_be_bytes(
+        slice
+            .try_into()
+            .expect("slice length should match u32 width"),
+    ))
+}
+
+fn read_be_u64(bytes: &[u8], start: usize, error: &'static str) -> io::Result<u64> {
+    let end = start + 8;
+    let slice = bytes
+        .get(start..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(u64::from_be_bytes(
+        slice
+            .try_into()
+            .expect("slice length should match u64 width"),
+    ))
+}
+
+fn read_utf8(bytes: &[u8], error: &'static str) -> io::Result<String> {
+    String::from_utf8(bytes.to_vec()).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn checked_add_len(total: usize, add: usize, error: &'static str) -> io::Result<usize> {
+    total
+        .checked_add(add)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn write_be_u16(bytes: &mut [u8], start: usize, value: u16) {
+    bytes[start..start + 2].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_be_u32(bytes: &mut [u8], start: usize, value: u32) {
+    bytes[start..start + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_be_u64(bytes: &mut [u8], start: usize, value: u64) {
+    bytes[start..start + 8].copy_from_slice(&value.to_be_bytes());
+}
+
+/// First message accepted on a newly connected VSOCK stream.
+///
+/// The parent uses this to distinguish one-off enclave bootstrap requests from
+/// normal shard handshakes on the shared listener port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InitialRequest {
+    Bootstrap(BootstrapRequest),
+    Hello(Hello),
+}
+
+impl InitialRequest {
+    /// Reads one fixed-width initial request from a newly connected stream.
+    pub(crate) async fn read_from_async<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
+        let mut bytes = [0_u8; Hello::ENCODED_LEN];
+        reader.read_exact(&mut bytes).await?;
+
+        if bytes[..BOOTSTRAP_REQUEST_MAGIC.len()] == BOOTSTRAP_REQUEST_MAGIC {
+            Ok(Self::Bootstrap(BootstrapRequest::decode(bytes)?))
+        } else if bytes[..HELLO_MAGIC.len()] == HELLO_MAGIC {
+            Ok(Self::Hello(Hello::decode(bytes)?))
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received unrecognized vsocktun initial request magic",
+            ))
+        }
+    }
+}
+
+/// Fixed-width request sent by the enclave before it creates its TUN device.
+///
+/// The parent answers with the effective tunnel configuration and the
+/// `resolv.conf` contents the enclave should install locally.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BootstrapRequest;
+
+impl BootstrapRequest {
+    /// Number of bytes in the fixed-width bootstrap request.
+    pub(crate) const ENCODED_LEN: usize = Hello::ENCODED_LEN;
+
+    /// Builds the bootstrap request sent before enclave-side TUN setup.
+    pub(crate) fn new() -> Self {
+        Self
+    }
+
+    /// Encodes the request into the exact on-the-wire byte layout.
+    pub(crate) fn encode(self) -> [u8; Self::ENCODED_LEN] {
+        let mut bytes = [0_u8; Self::ENCODED_LEN];
+        bytes[..BOOTSTRAP_REQUEST_MAGIC.len()].copy_from_slice(&BOOTSTRAP_REQUEST_MAGIC);
+        bytes
+    }
+
+    fn decode(bytes: [u8; Self::ENCODED_LEN]) -> io::Result<Self> {
+        check_magic(
+            &bytes,
+            &BOOTSTRAP_REQUEST_MAGIC,
+            "received invalid vsocktun bootstrap request magic",
+        )?;
+
+        Ok(Self)
+    }
+
+    /// Writes the fixed-width bootstrap request to an asynchronous byte stream.
+    pub(crate) async fn write_to_async<W: AsyncWrite + Unpin>(
+        self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        writer.write_all(&self.encode()).await
+    }
+}
+
+/// Parent-provided enclave bootstrap data returned before the tunnel session is
+/// assembled.
+///
+/// The response carries the enclave-side TUN address, the parent gateway
+/// address, the negotiated shard count, optional MTU override, and the exact
+/// `resolv.conf` contents the enclave should install.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BootstrapResponse {
+    /// Parent-side TUN address with prefix, used as the enclave's default
+    /// gateway.
+    pub(crate) parent_tun_address: String,
+    /// Enclave-side TUN address with prefix, used to create the local TUN.
+    pub(crate) enclave_tun_address: String,
+    /// Shard count chosen by the parent for this tunnel deployment.
+    pub(crate) queues: u16,
+    /// Optional MTU override propagated from the parent-side deployment.
+    pub(crate) mtu: Option<u32>,
+    /// Rewritten `resolv.conf` contents that point DNS at the parent tunnel IP.
+    pub(crate) resolv_conf: Vec<u8>,
+}
+
+impl BootstrapResponse {
+    const HEADER_LEN: usize = 24;
+    const FLAGS_OFFSET: usize = 8;
+    const QUEUES_OFFSET: usize = 10;
+    const MTU_OFFSET: usize = 12;
+    const PARENT_LEN_OFFSET: usize = 16;
+    const ENCLAVE_LEN_OFFSET: usize = 18;
+    const RESOLV_LEN_OFFSET: usize = 20;
+
+    /// Reads a bootstrap response from an asynchronous byte stream.
+    pub(crate) async fn read_from_async<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
+        let mut header = [0_u8; Self::HEADER_LEN];
+        reader.read_exact(&mut header).await?;
+
+        check_magic(
+            &header,
+            &BOOTSTRAP_RESPONSE_MAGIC,
+            "received invalid vsocktun bootstrap response magic",
+        )?;
+
+        let flags = read_be_u16(
+            &header,
+            Self::FLAGS_OFFSET,
+            "received truncated vsocktun bootstrap flags",
+        )?;
+        let queues = read_be_u16(
+            &header,
+            Self::QUEUES_OFFSET,
+            "received truncated vsocktun bootstrap queue count",
+        )?;
+        let mtu = read_be_u32(
+            &header,
+            Self::MTU_OFFSET,
+            "received truncated vsocktun bootstrap MTU",
+        )?;
+        let parent_len = usize::from(read_be_u16(
+            &header,
+            Self::PARENT_LEN_OFFSET,
+            "received truncated vsocktun bootstrap parent address length",
+        )?);
+        let enclave_len = usize::from(read_be_u16(
+            &header,
+            Self::ENCLAVE_LEN_OFFSET,
+            "received truncated vsocktun bootstrap enclave address length",
+        )?);
+        let resolv_len = usize::try_from(read_be_u32(
+            &header,
+            Self::RESOLV_LEN_OFFSET,
+            "received truncated vsocktun bootstrap resolv.conf length",
+        )?)
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received vsocktun bootstrap resolv.conf length that does not fit in usize",
+            )
+        })?;
+
+        let total_len = checked_add_len(
+            checked_add_len(
+                parent_len,
+                enclave_len,
+                "received vsocktun bootstrap body length overflow",
+            )?,
+            resolv_len,
+            "received vsocktun bootstrap body length overflow",
+        )?;
+        let mut body = vec![0_u8; total_len];
+        reader.read_exact(&mut body).await?;
+
+        let parent_end = parent_len;
+        let enclave_end = parent_end + enclave_len;
+        let parent_tun_address = read_utf8(
+            &body[..parent_end],
+            "received non-UTF-8 vsocktun bootstrap parent address",
+        )?;
+        let enclave_tun_address = read_utf8(
+            &body[parent_end..enclave_end],
+            "received non-UTF-8 vsocktun bootstrap enclave address",
+        )?;
+
+        if queues == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received vsocktun bootstrap response with zero queues",
+            ));
+        }
+        if parent_tun_address.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received empty vsocktun bootstrap parent address",
+            ));
+        }
+        if enclave_tun_address.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received empty vsocktun bootstrap enclave address",
+            ));
+        }
+
+        Ok(Self {
+            parent_tun_address,
+            enclave_tun_address,
+            queues,
+            mtu: if flags & BOOTSTRAP_RESPONSE_FLAG_HAS_MTU != 0 {
+                Some(mtu)
+            } else {
+                None
+            },
+            resolv_conf: body[enclave_end..].to_vec(),
+        })
+    }
+
+    /// Writes the bootstrap response to an asynchronous byte stream.
+    pub(crate) async fn write_to_async<W: AsyncWrite + Unpin>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        if self.queues == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bootstrap response queue count must be at least one",
+            ));
+        }
+
+        let parent = self.parent_tun_address.as_bytes();
+        let enclave = self.enclave_tun_address.as_bytes();
+        let parent_len = u16::try_from(parent.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bootstrap parent address exceeds maximum encoded length of 65535 bytes",
+            )
+        })?;
+        let enclave_len = u16::try_from(enclave.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bootstrap enclave address exceeds maximum encoded length of 65535 bytes",
+            )
+        })?;
+        let resolv_len = u32::try_from(self.resolv_conf.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bootstrap resolv.conf exceeds maximum encoded length of 4294967295 bytes",
+            )
+        })?;
+
+        let mut header = [0_u8; Self::HEADER_LEN];
+        header[..BOOTSTRAP_RESPONSE_MAGIC.len()].copy_from_slice(&BOOTSTRAP_RESPONSE_MAGIC);
+        let flags = if self.mtu.is_some() {
+            BOOTSTRAP_RESPONSE_FLAG_HAS_MTU
+        } else {
+            0
+        };
+        write_be_u16(&mut header, Self::FLAGS_OFFSET, flags);
+        write_be_u16(&mut header, Self::QUEUES_OFFSET, self.queues);
+        write_be_u32(&mut header, Self::MTU_OFFSET, self.mtu.unwrap_or_default());
+        write_be_u16(&mut header, Self::PARENT_LEN_OFFSET, parent_len);
+        write_be_u16(&mut header, Self::ENCLAVE_LEN_OFFSET, enclave_len);
+        write_be_u32(&mut header, Self::RESOLV_LEN_OFFSET, resolv_len);
+
+        writer.write_all(&header).await?;
+        writer.write_all(parent).await?;
+        writer.write_all(enclave).await?;
+        writer.write_all(&self.resolv_conf).await
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Handshake header sent once on each shard stream before packet forwarding.
@@ -38,6 +367,10 @@ pub(crate) struct Hello {
 impl Hello {
     /// Number of bytes in the fixed-width handshake header.
     pub(crate) const ENCODED_LEN: usize = HELLO_MAGIC.len() + 8 + 2 + 2 + HELLO_RESERVED_BYTES;
+    const SESSION_ID_OFFSET: usize = HELLO_MAGIC.len();
+    const QUEUES_OFFSET: usize = Self::SESSION_ID_OFFSET + 8;
+    const SHARD_OFFSET: usize = Self::QUEUES_OFFSET + 2;
+    const CAPABILITIES_OFFSET: usize = Self::SHARD_OFFSET + 2;
 
     /// Builds the handshake header for one shard connection.
     pub(crate) fn new(session_id: u64, queues: u16, shard: u16, raw_tun_frames: bool) -> Self {
@@ -63,54 +396,40 @@ impl Hello {
     pub(crate) fn encode(self) -> [u8; Self::ENCODED_LEN] {
         let mut bytes = [0_u8; Self::ENCODED_LEN];
         bytes[..HELLO_MAGIC.len()].copy_from_slice(&HELLO_MAGIC);
-        bytes[8..16].copy_from_slice(&self.session_id.to_be_bytes());
-        bytes[16..18].copy_from_slice(&self.queues.to_be_bytes());
-        bytes[18..20].copy_from_slice(&self.shard.to_be_bytes());
-        bytes[20..24].copy_from_slice(&self.capabilities.to_be_bytes());
+        write_be_u64(&mut bytes, Self::SESSION_ID_OFFSET, self.session_id);
+        write_be_u16(&mut bytes, Self::QUEUES_OFFSET, self.queues);
+        write_be_u16(&mut bytes, Self::SHARD_OFFSET, self.shard);
+        write_be_u32(&mut bytes, Self::CAPABILITIES_OFFSET, self.capabilities);
         bytes
     }
 
-    /// Reads and decodes one complete handshake from an asynchronous byte
-    /// stream.
-    pub(crate) async fn read_from_async<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
-        let mut bytes = [0_u8; Self::ENCODED_LEN];
-        reader.read_exact(&mut bytes).await?;
-
-        Self::decode(bytes)
-    }
-
     fn decode(bytes: [u8; Self::ENCODED_LEN]) -> io::Result<Self> {
-        if bytes[..HELLO_MAGIC.len()] != HELLO_MAGIC {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "received invalid vsocktun session header magic",
-            ));
-        }
+        check_magic(
+            &bytes,
+            &HELLO_MAGIC,
+            "received invalid vsocktun session header magic",
+        )?;
 
-        let session_id = u64::from_be_bytes(bytes[8..16].try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "received truncated vsocktun session identifier",
-            )
-        })?);
-        let queues = u16::from_be_bytes(bytes[16..18].try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "received truncated vsocktun queue count",
-            )
-        })?);
-        let shard = u16::from_be_bytes(bytes[18..20].try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "received truncated vsocktun shard identifier",
-            )
-        })?);
-        let capabilities = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "received truncated vsocktun capability flags",
-            )
-        })?);
+        let session_id = read_be_u64(
+            &bytes,
+            Self::SESSION_ID_OFFSET,
+            "received truncated vsocktun session identifier",
+        )?;
+        let queues = read_be_u16(
+            &bytes,
+            Self::QUEUES_OFFSET,
+            "received truncated vsocktun queue count",
+        )?;
+        let shard = read_be_u16(
+            &bytes,
+            Self::SHARD_OFFSET,
+            "received truncated vsocktun shard identifier",
+        )?;
+        let capabilities = read_be_u32(
+            &bytes,
+            Self::CAPABILITIES_OFFSET,
+            "received truncated vsocktun capability flags",
+        )?;
 
         Ok(Self {
             session_id,
@@ -393,7 +712,10 @@ impl<'a> PendingFramedWrite<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameReader, Hello, PendingFramedWrite, PendingSliceWrite};
+    use super::{
+        BootstrapRequest, BootstrapResponse, FrameReader, Hello, InitialRequest,
+        PendingFramedWrite, PendingSliceWrite,
+    };
     use std::fs::File;
     use std::io::{self, Read, Seek, SeekFrom, Write};
     use tempfile::tempfile;
@@ -545,6 +867,49 @@ mod tests {
         let decoded = read_hello(&mut file).expect("hello bytes should decode");
         assert_eq!(decoded, hello);
         assert!(decoded.supports_raw_tun_frames());
+    }
+
+    #[test]
+    fn bootstrap_request_is_distinct_from_hello() {
+        // The parent listener multiplexes bootstrap and shard traffic on one
+        // port, so the first fixed-width message must distinguish them.
+        test_runtime().block_on(async {
+            let (mut writer, mut reader) = tokio_io::duplex(BootstrapRequest::ENCODED_LEN);
+            BootstrapRequest::new()
+                .write_to_async(&mut writer)
+                .await
+                .expect("bootstrap request should write");
+
+            let request = InitialRequest::read_from_async(&mut reader)
+                .await
+                .expect("bootstrap request should decode");
+            assert_eq!(request, InitialRequest::Bootstrap(BootstrapRequest::new()));
+        });
+    }
+
+    #[test]
+    fn bootstrap_response_round_trip() {
+        // The enclave now learns its tunnel CIDR, queue count, and resolver
+        // contents from the parent before it creates the TUN device.
+        test_runtime().block_on(async {
+            let (mut writer, mut reader) = tokio_io::duplex(4096);
+            let expected = BootstrapResponse {
+                parent_tun_address: "10.118.0.1/24".to_owned(),
+                enclave_tun_address: "10.118.0.2/24".to_owned(),
+                queues: 8,
+                mtu: Some(1400),
+                resolv_conf: b"search svc.cluster.local\nnameserver 10.118.0.1\n".to_vec(),
+            };
+            expected
+                .write_to_async(&mut writer)
+                .await
+                .expect("bootstrap response should write");
+
+            let decoded = BootstrapResponse::read_from_async(&mut reader)
+                .await
+                .expect("bootstrap response should decode");
+            assert_eq!(decoded, expected);
+        });
     }
 
     #[test]

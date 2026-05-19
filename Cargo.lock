@@ -8685,6 +8685,7 @@ dependencies = [
  "etherparse",
  "netns-rs",
  "nix 0.30.1",
+ "route_manager",
  "tempfile",
  "tokio",
  "tokio-vsock",

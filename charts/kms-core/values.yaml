@@ -119,7 +119,6 @@ kmsCore:
     signed: false
     # Enclave bootstrap support sockets.
     webIdentityTokenPort: 4100
-    resolvConfPort: 4200
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
     cpuCount: 48
     # Enclave Memory in GiB
@@ -128,9 +127,8 @@ kmsCore:
       enabled: true
       # interfaceName is local to the parent-side network namespace, so it does
       # not need to match the enclave-side TUN_IF constant. The address values
-      # and vsockPort are propagated to the enclave through the generated
-      # config file.
-      vsockPort: 2100
+      # are served to the enclave by the parent-side vsocktun bootstrap over the
+      # fixed tunnel VSOCK port used by the deployment scripts.
       # If unset, queueCount defaults to a heuristic based on the threshold
       # party topology: 8 queues minimum, or the next power of two above the
       # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
@@ -141,7 +139,7 @@ kmsCore:
       interfaceName: vsocktun
       subnet: 10.118.0.0/24
       parentAddress: 10.118.0.1/24
-      # Must match the host portion of init_enclave.sh TUN_ADDR.
+      # Served to the enclave by parent-side vsocktun during bootstrap.
       enclaveAddress: 10.118.0.2
       resources:
         requests:
