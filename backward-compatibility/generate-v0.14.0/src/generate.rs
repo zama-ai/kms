@@ -160,7 +160,7 @@ pub trait KMSCoreVersion {
     /// The metadata for the generated tests should be returned in the same order that the tests will be run.
     fn gen_kms_data() -> Vec<TestMetadataKMS>;
 
-    /// Generates data for the KMG grpc module for this version.
+    /// Generates data for the KMS grpc module for this version.
     /// This should create types from kms-grpc,
     /// versionize them and store them into the version specific directory.
     /// The metadata for the generated tests should be returned in the same order that the tests will be run.
