@@ -22,6 +22,28 @@ make test-backward-compatibility
 
 This will load existing objects from git LFS versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
 
+## Usage - Checking versioned type snapshots
+
+The freeze-and-replay tests are complemented by a Dylint snapshot check for types that derive `VersionsDispatch`.
+The snapshot check compares the current branch against a base ref and reports:
+- removed version variants as errors, because old serialized data could no longer be deserialized;
+- removed versioned enums, changed versioned type layouts, changed upgrade bodies, and removed upgrades as warnings for review;
+- new versioned enums, variants, and upgrades as neutral changes.
+
+At the repo's root, run:
+
+```shell
+make backward-snapshot-check BASE_REF=origin/main
+```
+
+To generate a markdown report:
+
+```shell
+make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
+```
+
+Snapshots are generated into temporary directories from `BASE_REF` and the current checkout. They are not committed to the repository.
+
 ## Versioning this module
 
 The tests in this module are by definition forward compatible (they should run on any future kms-core release). They are also backward compatible (allowing tests to be run on past kms-core versions, for example to bisect a bug), mostly because the kms-core test driver will simply ignore any unknown test types and only load tests for versions inferior to its own.

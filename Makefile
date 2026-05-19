@@ -25,6 +25,18 @@ start-compose-threshold-telemetry:
 stop-compose-threshold-telemetry:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml down --volumes --remove-orphans
 
+TFHE_LINTS_GIT := https://github.com/zama-ai/tfhe-rs
+TFHE_LINTS_TAG := tfhe-rs-1.6.1
+TFHE_LINTS_TOOLCHAIN := nightly-2026-01-22
+SNAPSHOT_PACKAGES ?= kms kms-grpc threshold-execution threshold-algebra threshold-networking threshold-types
+TFHE_SNAPSHOT_PATTERN := utils/tfhe-lints/snapshot
+
+ifeq ($(SKIP_TFHE_SNAPSHOT_TOOL_INSTALL),1)
+TFHE_SNAPSHOT_TOOL_DEP :=
+else
+TFHE_SNAPSHOT_TOOL_DEP := install-tfhe-snapshot-tools
+endif
+
 # Test backwards compatibility with LFS files. This will pull the LFS files from git before running the tests.
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
@@ -65,6 +77,84 @@ generate-backward-compatibility-v0.14.0:
 
 generate-backward-compatibility-all: clean-backward-compatibility-data $(addprefix generate-backward-compatibility-v,$(DETERMINISTIC_BWC_VERSIONS))
 	@echo "Generated backward compatibility data for deterministic versions: $(DETERMINISTIC_BWC_VERSIONS)"
+
+install-tfhe-snapshot-tools:
+	cargo install cargo-dylint dylint-link --locked
+	rustup toolchain install $(TFHE_LINTS_TOOLCHAIN) --component llvm-tools-preview,rustc-dev
+	cargo install --force --git $(TFHE_LINTS_GIT) --tag $(TFHE_LINTS_TAG) tfhe-backward-compat-checker --locked
+
+backward-snapshot: $(TFHE_SNAPSHOT_TOOL_DEP)
+	@if [ -z "$(SNAPSHOT_OUTPUT_DIR)" ]; then \
+		echo "Error: SNAPSHOT_OUTPUT_DIR is not set. Usage: make backward-snapshot SNAPSHOT_OUTPUT_DIR=<dir>"; \
+		exit 1; \
+	fi
+	@mkdir -p "$(abspath $(SNAPSHOT_OUTPUT_DIR))"
+	@rm -f "$(abspath $(SNAPSHOT_OUTPUT_DIR))"/lint_enum_snapshots_*.json
+	@for package in $(SNAPSHOT_PACKAGES); do \
+		echo "Generating backward compatibility snapshot for $$package"; \
+		CARGO_TARGET_DIR="$(abspath $(SNAPSHOT_OUTPUT_DIR))/cargo-target" cargo clean -p "$$package" --profile dev; \
+		CARGO_TARGET_DIR="$(abspath $(SNAPSHOT_OUTPUT_DIR))/cargo-target" TFHE_BACKWARD_COMPAT_DATA_DIR="$(abspath $(SNAPSHOT_OUTPUT_DIR))" cargo dylint \
+			--git $(TFHE_LINTS_GIT) \
+			--tag $(TFHE_LINTS_TAG) \
+			--pattern $(TFHE_SNAPSHOT_PATTERN) \
+			--all \
+			--no-deps \
+			-p "$$package" -- --all-features; \
+	done
+
+backward-snapshot-worktree: $(TFHE_SNAPSHOT_TOOL_DEP)
+	@if [ -z "$(BASE_REF)" ]; then \
+		echo "Error: BASE_REF is not set. Usage: make backward-snapshot-worktree BASE_REF=<ref> SNAPSHOT_OUTPUT_DIR=<dir>"; \
+		exit 1; \
+	fi
+	@if [ -z "$(SNAPSHOT_OUTPUT_DIR)" ]; then \
+		echo "Error: SNAPSHOT_OUTPUT_DIR is not set. Usage: make backward-snapshot-worktree BASE_REF=<ref> SNAPSHOT_OUTPUT_DIR=<dir>"; \
+		exit 1; \
+	fi
+	@tmp_parent="$$(mktemp -d)"; \
+	worktree_dir="$$tmp_parent/worktree"; \
+	trap 'git worktree remove --force "$$worktree_dir" >/dev/null 2>&1 || true; rm -rf "$$tmp_parent"' EXIT; \
+	git worktree add --detach "$$worktree_dir" "$(BASE_REF)"; \
+	mkdir -p "$(abspath $(SNAPSHOT_OUTPUT_DIR))"; \
+	rm -f "$(abspath $(SNAPSHOT_OUTPUT_DIR))"/lint_enum_snapshots_*.json; \
+	for package in $(SNAPSHOT_PACKAGES); do \
+		echo "Generating base backward compatibility snapshot for $$package at $(BASE_REF)"; \
+		(cd "$$worktree_dir" && CARGO_TARGET_DIR="$(abspath $(SNAPSHOT_OUTPUT_DIR))/cargo-target" cargo clean -p "$$package" --profile dev && CARGO_TARGET_DIR="$(abspath $(SNAPSHOT_OUTPUT_DIR))/cargo-target" TFHE_BACKWARD_COMPAT_DATA_DIR="$(abspath $(SNAPSHOT_OUTPUT_DIR))" cargo dylint \
+			--git $(TFHE_LINTS_GIT) \
+			--tag $(TFHE_LINTS_TAG) \
+			--pattern $(TFHE_SNAPSHOT_PATTERN) \
+			--all \
+			--no-deps \
+			-p "$$package" -- --all-features); \
+	done
+
+backward-snapshot-check: $(TFHE_SNAPSHOT_TOOL_DEP)
+	@if [ -z "$(BASE_REF)" ]; then \
+		echo "Error: BASE_REF is not set. Usage: make backward-snapshot-check BASE_REF=<ref>"; \
+		exit 1; \
+	fi
+	@base_dir="$$(mktemp -d)"; \
+	head_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$base_dir" "$$head_dir"' EXIT; \
+	$(MAKE) backward-snapshot-worktree BASE_REF="$(BASE_REF)" SNAPSHOT_OUTPUT_DIR="$$base_dir" SNAPSHOT_PACKAGES="$(SNAPSHOT_PACKAGES)" SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1; \
+	$(MAKE) backward-snapshot SNAPSHOT_OUTPUT_DIR="$$head_dir" SNAPSHOT_PACKAGES="$(SNAPSHOT_PACKAGES)" SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1; \
+	tfhe-backward-compat-checker check --base-dir "$$base_dir" --head-dir "$$head_dir"
+
+backward-snapshot-report: $(TFHE_SNAPSHOT_TOOL_DEP)
+	@if [ -z "$(BASE_REF)" ]; then \
+		echo "Error: BASE_REF is not set. Usage: make backward-snapshot-report BASE_REF=<ref> OUTPUT_FILE=<path>"; \
+		exit 1; \
+	fi
+	@if [ -z "$(OUTPUT_FILE)" ]; then \
+		echo "Error: OUTPUT_FILE is not set. Usage: make backward-snapshot-report BASE_REF=<ref> OUTPUT_FILE=<path>"; \
+		exit 1; \
+	fi
+	@base_dir="$$(mktemp -d)"; \
+	head_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$base_dir" "$$head_dir"' EXIT; \
+	$(MAKE) backward-snapshot-worktree BASE_REF="$(BASE_REF)" SNAPSHOT_OUTPUT_DIR="$$base_dir" SNAPSHOT_PACKAGES="$(SNAPSHOT_PACKAGES)" SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1; \
+	$(MAKE) backward-snapshot SNAPSHOT_OUTPUT_DIR="$$head_dir" SNAPSHOT_PACKAGES="$(SNAPSHOT_PACKAGES)" SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1; \
+	tfhe-backward-compat-checker diff-report --base-dir "$$base_dir" --head-dir "$$head_dir" --output "$(abspath $(OUTPUT_FILE))"
 
 # Test material generation targets
 generate-test-material-all:
