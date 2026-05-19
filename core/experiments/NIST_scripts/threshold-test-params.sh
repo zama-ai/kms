@@ -13,7 +13,7 @@
 # - (For tfhe only) a resharing of the key generated during DKG
 # - A bunch of decryptons
 #
-# We note that the key generation and the CRS and resahre (when applicable) are checked against a
+# We note that the key generation and the CRS and reshare (when applicable) are checked against a
 # known hash to ensure they were done correctly.
 #
 # At the end of the scripts, the timing resulsts are parsed and put in the threshold folder with the tag "TestParams".

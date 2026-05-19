@@ -132,7 +132,7 @@ struct ThresholdDecryptFromFileArgs {
     #[clap(long = "sid")]
     session_id: Option<u128>,
 
-    /// Number of Ciphertexts to decrypt per session (Note the provided ctxt will be copied this many times on the server side)
+    /// Number of ciphertexts to decrypt per session (Note the provided ctxt will be copied this many times on the server side)
     #[clap(long = "num-ctxt-per-session")]
     num_ctxt_per_session: u128,
 
@@ -142,7 +142,7 @@ struct ThresholdDecryptFromFileArgs {
 
     /// Optional argument to set the master seed used by the parties.
     /// Parties will then add their party index to the seed.
-    /// Sampled at random if nothing is given
+    /// Sampled at random if not provided
     #[clap(long = "seed")]
     seed: Option<u64>,
 }

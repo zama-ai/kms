@@ -2520,7 +2520,7 @@ where
     }
 
     // NOTE: Integrated here means we are doing both the preprocessing and online phase
-    // in the same call. This denotes a bit with how DKG or DDec is done, but makes it easier
+    // in the same call. This differs a bit with how DKG or DDec is done, but makes it easier
     // to use.
     #[instrument(
         name = "RESHARE-INTEGRATED",

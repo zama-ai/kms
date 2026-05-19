@@ -17,13 +17,12 @@ set of `core/threshold-*` crates:
 The protocols are designed to be both secure and robust when a fraction of the
 parties are malicious.
 
-The crate at `core/experiments` is **not** a
-production crate: it is the testing/benchmarking harness that wires the
-`threshold-*` crates together, ships the MPC party and choreographer binaries
-used to drive end-to-end runs, and contains the benchmark suite. This page
-describes how to run those benchmarks in a wide range of configurations.
-For the rest of this page, we assume the user is working under the
-`core/experiments` directory.
+The crate at `core/experiments` is **not** a production crate: it is the
+testing/benchmarking harness that wires the `threshold-*` crates together, ships
+the MPC party and choreographer binaries used to drive end-to-end runs, and
+contains the benchmark suite. This page describes how to run those benchmarks in
+a wide range of configurations.  For the rest of this page, we assume the user
+is working under the `core/experiments` directory.
 
 ## Directory overview
 
@@ -314,12 +313,12 @@ results:
 
   Between each phase it tears the docker containers down via
   `cleanup_docker`, so each cluster starts from a clean slate.
-- `non-threshold-tfhe-bench.sh` — runs the speed and memory non-threshold
-  benchmarks for `tfhe-rs` and `bgv` (`cargo-criterion` for speed,
+- `non-threshold-tfhe-bench.sh` — runs the execution time and memory non-threshold
+  benchmarks for `tfhe-rs` and `bgv` (`cargo-criterion` for execution time,
   `cargo bench --features=measure_memory` for memory), then parses the output
   with `non-threshold-parser.py`.
 - `non-threshold-zk-pok-bench.sh` — same idea for the `tfhe-zk-pok`
-  benchmarks (speed, memory, and the size benchmark).
+  benchmarks (execution time, memory, and the size benchmark).
 - `non-threshold-kat.sh` — runs the `non-threshold-tfhe-kat` and
   `non-threshold-zk-pok-kat` binaries used for the NIST KAT coverage.
 - `non-threshold-parser.py` / `session-stats-parser.py` — post-process the
