@@ -410,11 +410,11 @@ The data is stored using git-lfs, so be sure to clone the kms-core repo with lfs
 
 When some breaking changes are added to a versionized type, you should update several things. Let's say that the type only had a `V0` version, then you should:
 
-- add a new version `v1` to the `XXXVersioned` enum associated to the type `XXX` (ex: `PrivateSigKeyVersioned` for `PrivateSigKey`)
+- add a new version `v1` to the `XXXVersions` enum associated to the type `XXX` (ex: `PrivateSigKeyVersions` for `PrivateSigKey`)
 - **keep** the `PrivateSigKey` old definition and rename it to `PrivateSigKeyV0`
 - replace the `Versionize` derive trait with the `Version` one (import if from `tfhe-versionable` if needed)
-- remove the `#[versionize(XXXVersioned)]` attribute
-- add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersioned)]` attribute to it
+- remove the `#[versionize(XXXVersions)]` attribute
+- add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersions)]` attribute to it
 - implement the `Upgrade` trait for the old definition (ex: `PrivateSigKeyV0`)
 
 It is important to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
@@ -423,7 +423,7 @@ It should look like the following:
 
 ```rust
 #[derive(..., VersionsDispatch)]
-pub enum PrivateSigKeyVersioned {
+pub enum PrivateSigKeyVersions {
     V0(PrivateSigKeyV0),
     V1(PrivateSigKey),
 }
@@ -436,7 +436,7 @@ pub struct PrivateSigKeyV0 {
 
 // New definition
 #[derive(..., Versionize)]
-#[versionize(PrivateSigKeyVersioned)]
+#[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     // New definition
 }

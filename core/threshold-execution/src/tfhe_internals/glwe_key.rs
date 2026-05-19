@@ -20,7 +20,7 @@ use algebra::{
 use super::lwe_key::LweSecretKeyShare;
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum GlweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
+pub enum GlweSecretKeyShareVersions<Z: Clone, const EXTENSION_DEGREE: usize> {
     V0(GlweSecretKeyShare<Z, EXTENSION_DEGREE>),
 }
 
@@ -30,7 +30,7 @@ pub enum GlweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
 ///   shares are in the galois extension domain but the underlying secret is really a bit in the underlying [`BaseRing`]
 /// - polynomial_size is the total number of coefficients in the above polynomials
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(GlweSecretKeyShareVersioned)]
+#[versionize(GlweSecretKeyShareVersions)]
 pub struct GlweSecretKeyShare<Z: Clone, const EXTENSION_DEGREE: usize> {
     pub data: Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
     pub polynomial_size: PolynomialSize,

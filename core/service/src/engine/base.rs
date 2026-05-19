@@ -22,7 +22,7 @@ use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
+use kms_grpc::rpc_types::CrsGenMetadataV0;
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
@@ -77,7 +77,7 @@ pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum KmsFheKeyHandlesVersioned {
+pub enum KmsFheKeyHandlesVersions {
     V0(KmsFheKeyHandlesV0),
     V1(KmsFheKeyHandles),
 }
@@ -98,7 +98,7 @@ impl Upgrade<KmsFheKeyHandles> for KmsFheKeyHandlesV0 {
 /// This structure securely holds sensitive key material used by the KMS,
 /// including the client key, optional decompression key, and public key metadata.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(KmsFheKeyHandlesVersioned)]
+#[versionize(KmsFheKeyHandlesVersions)]
 pub struct KmsFheKeyHandles {
     /// Client's private key for FHE operations
     pub client_key: FhePrivateKey,
@@ -938,13 +938,13 @@ pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParam
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum KeyGenMetadataInnerVersioned {
-    V0(KeyGenMetadataInnerQ126),
+pub enum KeyGenMetadataInnerVersions {
+    V0(KeyGenMetadataInnerV0),
     V1(KeyGenMetadataInner),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(KeyGenMetadataInnerVersioned)]
+#[versionize(KeyGenMetadataInnerVersions)]
 pub struct KeyGenMetadataInner {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
@@ -953,7 +953,7 @@ pub struct KeyGenMetadataInner {
     pub external_signature: Vec<u8>,
 }
 
-impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
+impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV0 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
@@ -967,7 +967,7 @@ impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
     }
 }
 #[derive(Clone, Serialize, Deserialize, Version)]
-pub struct KeyGenMetadataInnerQ126 {
+pub struct KeyGenMetadataInnerV0 {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
     pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
@@ -975,13 +975,13 @@ pub struct KeyGenMetadataInnerQ126 {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum KeyGenMetadataVersioned {
+pub enum KeyGenMetadataVersions {
     V0(KeyGenMetadata),
 }
 
 // Values that need to be stored temporarily as part of an async key generation call.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(KeyGenMetadataVersioned)]
+#[versionize(KeyGenMetadataVersions)]
 pub enum KeyGenMetadata {
     Current(KeyGenMetadataInner),
     LegacyV0(HashMap<PubDataType, SignedPubDataHandleInternal>),
@@ -1038,13 +1038,13 @@ impl KeyGenMetadata {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CrsGenMetadataInnerVersioned {
-    V0(CrsGenMetadataInnerQ126),
+pub enum CrsGenMetadataInnerVersions {
+    V0(CrsGenMetadataInnerV0),
     V1(CrsGenMetadataInner),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(CrsGenMetadataInnerVersioned)]
+#[versionize(CrsGenMetadataInnerVersions)]
 pub struct CrsGenMetadataInner {
     pub(crate) crs_id: RequestId,
     pub(crate) crs_digest: Vec<u8>,
@@ -1053,7 +1053,7 @@ pub struct CrsGenMetadataInner {
     pub(crate) external_signature: Vec<u8>,
 }
 
-impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerQ126 {
+impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV0 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
@@ -1068,7 +1068,7 @@ impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerQ126 {
 }
 
 #[derive(Clone, Serialize, Deserialize, Version)]
-pub struct CrsGenMetadataInnerQ126 {
+pub struct CrsGenMetadataInnerV0 {
     pub crs_id: RequestId,
     pub crs_digest: Vec<u8>,
     pub max_num_bits: u32,
@@ -1076,19 +1076,19 @@ pub struct CrsGenMetadataInnerQ126 {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CrsGenMetadataVersioned {
-    V0(CrsGenSignedPubDataHandleInternalWrapper),
+pub enum CrsGenMetadataVersions {
+    V0(CrsGenMetadataV0),
     V1(CrsGenMetadata),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(CrsGenMetadataVersioned)]
+#[versionize(CrsGenMetadataVersions)]
 pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),
     LegacyV0(SignedPubDataHandleInternal),
 }
 
-impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
+impl Upgrade<CrsGenMetadata> for CrsGenMetadataV0 {
     type Error = std::convert::Infallible;
     fn upgrade(self) -> Result<CrsGenMetadata, Self::Error> {
         Ok(CrsGenMetadata::LegacyV0(self.0))
@@ -1150,7 +1150,7 @@ pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        CrsGenMetadataInner, CrsGenMetadataInnerQ126, KeyGenMetadataInner, KeyGenMetadataInnerQ126,
+        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadataInner, KeyGenMetadataInnerV0,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
@@ -2088,7 +2088,7 @@ pub(crate) mod tests {
         key_digest_map.insert(PubDataType::ServerKey, server_key_digest.clone());
         key_digest_map.insert(PubDataType::PublicKey, public_key_digest.clone());
 
-        let q126 = KeyGenMetadataInnerQ126 {
+        let q126 = KeyGenMetadataInnerV0 {
             key_id,
             preprocessing_id,
             key_digest_map: key_digest_map.clone(),
@@ -2130,7 +2130,7 @@ pub(crate) mod tests {
             CrsgenVerificationQ126::new(&crs_id, max_num_bits as usize, crs_digest.clone());
         let external_signature = compute_eip712_signature(&sig_key, &legacy_sol, &domain).unwrap();
 
-        let q126 = CrsGenMetadataInnerQ126 {
+        let q126 = CrsGenMetadataInnerV0 {
             crs_id,
             crs_digest: crs_digest.clone(),
             max_num_bits,

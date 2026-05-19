@@ -32,13 +32,13 @@ pub(crate) const HEADER: &str = "ZAMA TKMS SETUP TEST OPERATORS-CUSTODIAN";
 pub(crate) const DSEP_BACKUP_CUSTODIAN: DomainSep = *b"BKUPCUST";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianRecoveryOutputVersioned {
+pub enum InternalCustodianRecoveryOutputVersions {
     V0(InternalCustodianRecoveryOutput),
 }
 
 /// This is the message that a custodian sends to an operator after starting recovery.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianRecoveryOutputVersioned)]
+#[versionize(InternalCustodianRecoveryOutputVersions)]
 pub struct InternalCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
@@ -107,13 +107,13 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CustodianSetupMessagePayloadVersioned {
+pub enum CustodianSetupMessagePayloadVersions {
     V0(CustodianSetupMessagePayload),
 }
 
 /// This is payload in the setup message that the custodian sends to the operators.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(CustodianSetupMessagePayloadVersioned)]
+#[versionize(CustodianSetupMessagePayloadVersions)]
 pub struct CustodianSetupMessagePayload {
     pub header: String,
     pub random_value: [u8; 32],
@@ -127,7 +127,7 @@ impl Named for CustodianSetupMessagePayload {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianSetupMessageVersioned {
+pub enum InternalCustodianSetupMessageVersions {
     V0(InternalCustodianSetupMessage),
 }
 
@@ -138,7 +138,7 @@ pub enum InternalCustodianSetupMessageVersioned {
 /// The operators need to persist this message in their storage
 /// so that they can run the backup procedure when needed.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianSetupMessageVersioned)]
+#[versionize(InternalCustodianSetupMessageVersions)]
 pub struct InternalCustodianSetupMessage {
     pub header: String,
     pub custodian_role: Role,
@@ -195,13 +195,13 @@ impl TryFrom<InternalCustodianSetupMessage> for CustodianSetupMessage {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianContextVersioned {
+pub enum InternalCustodianContextVersions {
     V0(InternalCustodianContext),
 }
 
 /// This is the internal representation of the custodian context.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianContextVersioned)]
+#[versionize(InternalCustodianContextVersions)]
 pub struct InternalCustodianContext {
     /// The custodian threshold for recovery
     pub threshold: u32,

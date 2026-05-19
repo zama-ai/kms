@@ -109,7 +109,7 @@ use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecure
 /// Versioned envelope for PublicKeyMaterial.
 /// V0 is the fat variant (with decompressed keys), V1 is the slim variant.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum PublicKeyMaterialVersioned {
+pub enum PublicKeyMaterialVersions {
     V0(PublicKeyMaterialV0),
     V1(PublicKeyMaterial),
 }
@@ -133,7 +133,7 @@ pub enum PublicKeyMaterialV0 {
 /// Enum to hold either compressed or uncompressed public key material.
 /// This allows a single [`ThresholdFheKeys`] type to support both modes.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(PublicKeyMaterialVersioned)]
+#[versionize(PublicKeyMaterialVersions)]
 pub enum PublicKeyMaterial {
     Uncompressed {
         integer_server_key: Arc<ServerKey>,
@@ -198,7 +198,7 @@ struct UncompressedKeys {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum ThresholdFheKeysVersioned {
+pub enum ThresholdFheKeysVersions {
     V0(ThresholdFheKeysV0),
     V1(ThresholdFheKeysV1),
     V2(ThresholdFheKeysV2),
@@ -209,7 +209,7 @@ pub enum ThresholdFheKeysVersioned {
 /// These are the internal key materials (public and private)
 /// needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(ThresholdFheKeysVersioned)]
+#[versionize(ThresholdFheKeysVersions)]
 pub struct ThresholdFheKeys {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub public_material: PublicKeyMaterial,
@@ -223,7 +223,7 @@ pub struct ThresholdFheKeys {
 /// V2: Unified key storage supporting both compressed and uncompressed keys.
 /// Note: the field type is `PublicKeyMaterial` (the latest version), not a frozen V2-era copy.
 /// This is a consequence of `Versionize`: nested fields are serialized via their current dispatch
-/// type, so current code reads old nested `PublicKeyMaterialVersioned::V0` values by upgrading
+/// type, so current code reads old nested `PublicKeyMaterialVersions::V0` values by upgrading
 /// them during unversionizing, but cannot itself re-emit that old nested shape.
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct ThresholdFheKeysV2 {
@@ -915,12 +915,12 @@ mod tests {
         use super::*;
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-        pub enum PublicKeyMaterialVersioned {
+        pub enum PublicKeyMaterialVersions {
             V0(PublicKeyMaterial),
         }
 
         #[derive(Clone, Serialize, Deserialize, Versionize)]
-        #[versionize(PublicKeyMaterialVersioned)]
+        #[versionize(PublicKeyMaterialVersions)]
         pub enum PublicKeyMaterial {
             Uncompressed {
                 integer_server_key: Arc<ServerKey>,
@@ -958,14 +958,14 @@ mod tests {
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-        pub enum ThresholdFheKeysVersioned {
+        pub enum ThresholdFheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
             V2(ThresholdFheKeys),
         }
 
         #[derive(Clone, Serialize, Deserialize, Versionize)]
-        #[versionize(ThresholdFheKeysVersioned)]
+        #[versionize(ThresholdFheKeysVersions)]
         pub struct ThresholdFheKeys {
             pub private_keys: Arc<
                 PrivateKeySet<

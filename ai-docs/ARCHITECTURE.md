@@ -219,8 +219,8 @@ enum whose variants are its historical layouts (`V0`, `V1`, …).
 `Unversionize` dispatches to the right variant by tag on read. On-disk and
 on-wire encoding goes through the pinned-`bincode` wrapper
 [bc2wrap](bc2wrap/) so the binary layout is deterministic. Examples of
-versioned types: `BackupCiphertextVersioned`,
-`InternalCustodianContextVersioned`, `AppKeyBlobVersioned`.
+versioned types: `BackupCiphertextVersions`,
+`InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
 **Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
 is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
