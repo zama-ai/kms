@@ -74,7 +74,6 @@ async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn secure_threshold_crs() -> anyhow::Result<()> {
     use crate::consts::DEFAULT_PARAM;
@@ -120,7 +119,6 @@ async fn secure_threshold_crs() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
