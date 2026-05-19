@@ -157,14 +157,19 @@ class MetricLine:
 class AggregatedOperation:
     """Cross-party averaged metrics for one operation in one run.
 
-    ``avg_time_active_ms`` is already divided by ``num_ctxts_for_label(label)``
-    so it is per-ciphertext for DDEC/PREPROC labels and per-operation for
-    everything else.  ``avg_network_sent_B`` and ``avg_network_received_B`` are
-    batch totals (the existing parser does not divide them by num_ctxts).
+    ``avg_time_active_ms``, ``avg_num_rounds``, ``avg_network_sent_B`` and
+    ``avg_network_received_B`` are all divided by
+    ``num_ctxts_for_label(label)``, so they are per-ciphertext for DDEC/PREPROC
+    labels (``NUM_CTXTS = 10`` divisor) and per-operation for everything else
+    (``1`` divisor, i.e. unchanged).  ``avg_num_sessions`` is intentionally
+    left as a batch count because session count is not linear in batch size
+    (e.g. ``BIT_DEC_SMALL_u32_*`` reports 16 sessions for a batch of 10 u32
+    ctxts).
 
     ``max_peak_mem_B`` and ``avg_peak_mem_B`` are populated only when every
     party file for this operation reported a ``peak_mem(B)`` field — i.e. only
-    for ``-mem`` runs. Both are ``None`` for non-mem runs.
+    for ``-mem`` runs. Both are ``None`` for non-mem runs.  They are not
+    divided by num_ctxts: memory is not a cumulative quantity wrt NUM_CTXTS.
     """
 
     label: str
@@ -516,11 +521,13 @@ def aggregate_run(
             AggregatedOperation(
                 label=operation_labels[op_idx],
                 reported_name=per_party_metrics[0][1].name,
+                # num_sessions is intentionally NOT divided.
                 avg_num_sessions=average(num_sessions_values),
-                avg_num_rounds=average(num_rounds_values),
-                avg_network_sent_B=average(network_sent_values),
-                avg_network_received_B=average(network_received_values),
+                avg_num_rounds=average(num_rounds_values) / num_ctxts,
+                avg_network_sent_B=average(network_sent_values) / num_ctxts,
+                avg_network_received_B=average(network_received_values) / num_ctxts,
                 avg_time_active_ms=average(time_active_values) / num_ctxts,
+                # Peak memory is intentionally NOT divided.
                 max_peak_mem_B=max_peak_mem_B,
                 avg_peak_mem_B=avg_peak_mem_B,
             )
