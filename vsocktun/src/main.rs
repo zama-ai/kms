@@ -1395,6 +1395,9 @@ mod tests {
         #[test]
         #[ignore = "requires /dev/net/tun, VSOCK loopback support, CAP_NET_ADMIN, and iproute2 network namespaces (usually root)"]
         fn relays_packets_between_parent_and_enclave_tuns() -> Result<()> {
+            // This is the strongest regression test in the crate: it proves a real
+            // packet crosses TUN -> VSOCK -> TUN in both directions instead of
+            // only showing that helper sockets can exchange bytes locally.
             // End-to-end shape of the test:
             // 1. Start a parent-side vsocktun worker in the initial network namespace.
             // 2. Start an enclave-side worker in a separate namespace so Linux cannot shortcut
@@ -1688,6 +1691,8 @@ mod tests {
 
     #[test]
     fn parses_single_verbose_flag() {
+        // Logging is the main observability tool for tunnel bring-up, so this
+        // keeps the CLI contract for the first verbosity increment stable.
         let cli = Cli::try_parse_from([
             "vsocktun",
             "-v",
@@ -1707,6 +1712,8 @@ mod tests {
 
     #[test]
     fn parses_double_verbose_flag() {
+        // The second verbosity increment unlocks packet-flow tracing, so the CLI
+        // needs to keep accepting the compact `-vv` spelling reviewers will use.
         let cli = Cli::try_parse_from([
             "vsocktun",
             "-vv",
@@ -1728,6 +1735,8 @@ mod tests {
 
     #[test]
     fn maps_verbose_levels_to_expected_outputs() {
+        // This guards the translation from CLI verbosity counts to tracing
+        // levels so runtime logging matches the documented flags.
         assert_eq!(log_level_from_count(0), Level::INFO);
         assert_eq!(log_level_from_count(1), Level::DEBUG);
         assert_eq!(log_level_from_count(2), Level::TRACE);
@@ -1736,6 +1745,8 @@ mod tests {
 
     #[test]
     fn queue_return_guard_returns_queue_when_dropped() {
+        // Session cleanup depends on dropped shard workers returning their TUN
+        // queues automatically, even when they exit through error paths.
         let (return_tx, mut return_rx) = mpsc::unbounded_channel();
         {
             let _guard = QueueReturnGuard::new(3, 9_u8, return_tx);
@@ -1751,6 +1762,8 @@ mod tests {
 
     #[test]
     fn queue_return_guard_does_not_return_taken_queue() {
+        // The guard must not duplicate ownership once the supervisor has already
+        // taken the queue back explicitly.
         let (return_tx, mut return_rx) = mpsc::unbounded_channel();
         let mut guard = QueueReturnGuard::new(3, 9_u8, return_tx);
 
@@ -1762,6 +1775,8 @@ mod tests {
 
     #[test]
     fn session_supervisor_restores_all_queues_after_worker_error() -> Result<()> {
+        // This protects the reconnect path: one failed shard should still return
+        // every queue so the next tunnel session can start cleanly.
         let mut queue_pool = TestQueuePool::new(vec![10_u8, 20_u8]);
         let work_items = queue_pool.take();
 

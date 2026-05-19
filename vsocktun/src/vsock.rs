@@ -19,7 +19,9 @@ enum SessionShard<T> {
 
 /// The set of VSOCK streams that make up one logical tunnel session.
 pub(crate) struct SessionSockets {
+    /// Identifier shared by every shard in this assembled session.
     pub(crate) session_id: u64,
+    /// One connected VSOCK stream per shard, ordered by shard index.
     pub(crate) shards: Vec<VsockStream>,
 }
 
@@ -34,6 +36,10 @@ pub(crate) struct ParentSessionAcceptor {
 
 impl ParentSessionAcceptor {
     /// Binds the parent-side listener used by enclaves to open tunnel shards.
+    ///
+    /// The acceptor keeps just enough configuration to reject sessions whose
+    /// shard count or framing mode does not match the already-created local TUN
+    /// device.
     pub(crate) fn bind(
         vsock_port: u32,
         queue_count: usize,
@@ -52,6 +58,11 @@ impl ParentSessionAcceptor {
     }
 
     /// Accepts a full tunnel session by collecting one stream per shard.
+    ///
+    /// The parent observes shard connections one stream at a time, so it uses
+    /// the handshake header on each connection to group related shards, reject
+    /// duplicates, and restart assembly if a newer reconnect attempt overtakes a
+    /// partial older one.
     pub(crate) async fn accept_session(&self) -> Result<SessionSockets> {
         let mut first_socket = self
             .listener
@@ -148,6 +159,9 @@ impl ParentSessionAcceptor {
 
 /// Enclave-side connector that opens all shard streams for one logical tunnel
 /// session.
+///
+/// The enclave dials the parent once per shard and immediately sends the
+/// per-shard handshake so the parent can place each stream into the right slot.
 pub(crate) async fn connect_session(
     parent_cid: u32,
     vsock_port: u32,
@@ -312,6 +326,8 @@ mod tests {
 
     #[test]
     fn read_hello_timeout_is_enforced() {
+        // A stalled shard handshake must time out so the parent cannot wait
+        // forever on a half-open session.
         test_runtime().block_on(async {
             let (_writer, mut reader) = io::duplex(Hello::ENCODED_LEN);
             let err = read_hello_with_timeout(
@@ -331,6 +347,8 @@ mod tests {
 
     #[test]
     fn read_hello_succeeds_before_timeout() {
+        // This is the happy path companion to the timeout test: valid shard
+        // handshakes should still pass through the same timeout wrapper.
         test_runtime().block_on(async {
             let (mut writer, mut reader) = io::duplex(Hello::ENCODED_LEN);
             let expected = Hello::new(7, 2, 1, true);
@@ -353,6 +371,8 @@ mod tests {
 
     #[test]
     fn record_session_shard_ignores_unrelated_sessions() -> Result<()> {
+        // Reconnects can interleave on the listener, so this verifies assembly of
+        // one session does not accidentally consume a shard from another one.
         let mut shards = vec![None];
         let disposition =
             record_session_shard(&mut shards, 9, Hello::new(10, 1, 0, true), 42_u8, true)?;
@@ -364,6 +384,8 @@ mod tests {
 
     #[test]
     fn record_session_shard_rejects_duplicates() {
+        // Duplicate shard indexes would wire two streams to the same TUN queue,
+        // so the acceptor must fail loudly instead of guessing.
         let mut shards = vec![Some(11_u8)];
         let err = record_session_shard(&mut shards, 9, Hello::new(9, 1, 0, true), 42_u8, true)
             .expect_err("duplicate shard should be rejected");
@@ -373,6 +395,8 @@ mod tests {
 
     #[test]
     fn validate_hello_rejects_wrong_queue_count() {
+        // This keeps both endpoints from building different shard topologies for
+        // what they think is the same logical tunnel session.
         let err = validate_hello(Hello::new(1, 2, 0, true), 1, true)
             .expect_err("queue mismatch should be rejected");
 
@@ -381,6 +405,8 @@ mod tests {
 
     #[test]
     fn validate_hello_rejects_out_of_range_shard() {
+        // Shard indexes must map to real queue slots; otherwise later packet I/O
+        // would address nonexistent queues.
         let err = validate_hello(Hello::new(1, 2, 2, true), 2, true)
             .expect_err("out-of-range shard should be rejected");
 
@@ -389,6 +415,8 @@ mod tests {
 
     #[test]
     fn validate_hello_rejects_raw_tun_frame_mismatch() {
+        // The relay must agree on whether framed payloads contain virtio-net
+        // headers, or one side would misparse every forwarded packet.
         let err = validate_hello(Hello::new(1, 2, 1, false), 2, true)
             .expect_err("capability mismatch should be rejected");
 
