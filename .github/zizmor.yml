@@ -1,4 +1,7 @@
 rules:
+  github-env:
+    ignore:
+      - actions/setup-rust-and-protoc/action.yml:50
   use-trusted-publishing:
     ignore:
       # ignore line 61 in workflow-pr-dockerfile.yml, any column
