@@ -112,15 +112,8 @@ spec:
                (dict "name" "enclave-web-identity-token"
                      "image" .Values.kubeUtils.image
                      "vsockPort" .Values.kmsCore.nitroEnclave.webIdentityTokenPort
-           "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
-           ) | indent 10 | trim }}
-        {{- /* Init Enclave resolv.conf Socket */}}
-        - {{ include "proxyFromEnclave"
-               (dict "name" "enclave-resolv-conf"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.resolvConfPort
-                     "to" "OPEN:/etc/resolv.conf,rdonly"
-                   ) | indent 10 | trim }}
+            "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+            ) | indent 10 | trim }}
         {{- if .Values.kmsCore.nitroEnclave.networkTunnel.enabled }}
         {{- $queueCount := include "kmsNetworkTunnelQueueCount" . | int }}
         {{- $workerThreads := include "kmsNetworkTunnelTokioWorkerThreads" . | int }}

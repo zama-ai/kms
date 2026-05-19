@@ -38,18 +38,19 @@ same offload preservation.
 
 `vsocktun` owns:
 - creating the local multiqueue TUN device
+- serving bootstrap tunnel configuration from the parent to the enclave
 - connecting or accepting the VSOCK shard streams
 - grouping the shard streams into one logical session
 - forwarding packets between TUN queues and VSOCK streams
+- installing enclave-side routes through the parent tunnel IP
+- writing the enclave `/etc/resolv.conf` received from the parent bootstrap
 - reconnecting from the enclave side when a session breaks
 
 `vsocktun` does **not** own:
 - IP address allocation policy
-- route management outside the local TUN interface
 - NAT / masquerading
 - ingress DNAT
 - DNS forwarding
-- copying `/etc/resolv.conf`
 
 Those pieces are intentionally left to the surrounding shell scripts and Helm
 templates used by the KMS deployment.
@@ -67,6 +68,7 @@ the enclave.
 vsocktun parent \
   --tun-name vsocktun \
   --tun-address 10.118.0.1/24 \
+  --enclave-address 10.118.0.2 \
   --vsock-port 2100 \
   --queues 32 \
   --tokio-worker-threads 8
@@ -81,25 +83,25 @@ until a full session is established.
 vsocktun enclave \
   --parent-cid 3 \
   --tun-name vsocktun \
-  --tun-address 10.118.0.2/24 \
   --vsock-port 2100 \
-  --queues 32 \
   --tokio-worker-threads 8
 ```
 
 ## Key flags
 
 - `--tun-name`: local TUN interface name
-- `--tun-address`: local IPv4 address and prefix for the tunnel interface
-- `--vsock-port`: parent-side VSOCK port used for the tunnel session
-- `--queues`: number of shards / TUN queues / VSOCK streams in the session
+- `--vsock-port`: parent-side VSOCK port used first for bootstrap and then for
+  shard sessions
 - `--tokio-worker-threads`: number of Tokio runtime worker threads used to
   drive all shard tasks in the process
-- `--mtu`: optional TUN MTU override
 - `-v, --verbose`: raise log level from `info` to `debug`
 - `-vv`: raise log level to `trace` and include per-packet forwarding summaries
 
 Parent-only:
+- `--tun-address`: parent-side IPv4 address and prefix for the tunnel interface
+- `--enclave-address`: enclave-side IPv4 address without the CIDR prefix
+- `--queues`: number of shards / TUN queues / VSOCK streams in the session
+- `--mtu`: optional TUN MTU override propagated to the enclave bootstrap
 - `--session-timeout-secs`: how long the parent waits for all shards of a new
   session to arrive and complete their initial session headers
 
@@ -109,7 +111,9 @@ Enclave-only:
 
 ## Operational notes
 
-- Both sides must agree on `--queues` and `--vsock-port`.
+- Both sides must use the same `--vsock-port`.
+- The parent is the source of truth for enclave tunnel addressing, shard count,
+  MTU, and resolver contents.
 - Both sides must run compatible `vsocktun` protocol versions. Newer binaries
   reject older handshake versions during session setup.
 - If peer TUN offload framing support differs between parent and enclave,
@@ -119,8 +123,8 @@ Enclave-only:
   subnet.
 - The parent-side runtime still needs IP forwarding and NAT configured outside
   `vsocktun`.
-- The enclave-side runtime still needs routes and DNS wiring configured outside
-  `vsocktun`.
+- The parent-side runtime still needs `dnsproxy` (or equivalent) configured
+  outside `vsocktun`.
 
 ## Debugging
 
@@ -148,10 +152,9 @@ The current KMS deployment uses `vsocktun` like this:
   - run `dnsproxy`
 
 - enclave side:
-  - receive config and resolver data from the parent
   - bring up `vsocktun`
-  - add local routes through the parent tunnel IP
-  - point resolver settings at the parent-side DNS bridge
+  - fetch tunnel config and rewritten `resolv.conf` from the parent
+  - let `vsocktun` install the local routes and resolver settings
 
 This keeps `vsocktun` focused on one job: carrying packet traffic efficiently
 between the enclave and its parent over VSOCK.
