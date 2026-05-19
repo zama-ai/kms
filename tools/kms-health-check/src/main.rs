@@ -57,10 +57,10 @@ enum Commands {
         #[arg(short, long)]
         config: PathBuf,
     },
-    /// Runs a bandwidth benchmark against the KMS endpoint
-    /// NOTE: It makes more sense to run it on all the parties at the same time to emulate real bandwidth usage, but it can be run on a single party as well.
+    /// Runs a bandwidth benchmark against a lit of KMS endpoints.
+    /// NOTE: It makes more sense to run it on all the parties at the same time to emulate real bandwidth usage, but it can be run on a subset of parties as well.
     BandwidthBench {
-        /// KMS endpoint
+        /// KMS endpoints to test (e.g., --endpoints host1:50100 --endpoints host2:50100)
         #[arg(short, long)]
         endpoints: Vec<String>,
 
