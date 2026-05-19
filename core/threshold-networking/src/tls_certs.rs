@@ -132,7 +132,7 @@ fn create_selfsigned_cert(
 /// - ca_name: the name of the CA, which will be part of the certificate's common name and SAN entries
 /// - wildcard: whether to include a wildcard SAN entry for the CA certificate
 /// - is_ca: whether the generated self-signed certificate should have the CA flag set to true. If set to false, the generated certificate can be used directly as a TLS certificate for a core, without the need for generating separate core certificates.
-/// - sk: the keypair to generate the self-signed the certificate
+/// - sk: the keypair to generate the self-signed certificate
 pub fn create_selfsigned_cert_from_keypair<S: rcgen::SigningKey>(
     ca_name: &str,
     wildcard: bool,
