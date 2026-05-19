@@ -52,8 +52,6 @@ jobs:
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          protoc-version: '34.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # WASM handling
       - name: Install

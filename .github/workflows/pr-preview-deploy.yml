@@ -183,8 +183,6 @@ jobs:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           rust-cache: "false"
-          protoc-version: '34.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # ======================================================================
       # KUBERNETES & HELM SETUP
