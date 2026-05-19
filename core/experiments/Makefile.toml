@@ -60,6 +60,10 @@ args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=
 command = "docker"
 args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=measure_memory,extension_degree_8", "-t", "tfhe-core-degree-8-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
+# Build all the images for TFHE parties with memory measurement feature
+[tasks.tfhe-docker-images-all-degrees-mem]
+run_task = { name = ["tfhe-docker-image-degree-3-mem", "tfhe-docker-image-degree-4-mem", "tfhe-docker-image-degree-5-mem", "tfhe-docker-image-degree-6-mem", "tfhe-docker-image-degree-7-mem", "tfhe-docker-image-degree-8-mem"]}
+
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
