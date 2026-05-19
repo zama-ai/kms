@@ -281,7 +281,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
         (false, _) => true,
         (true, n) => {
             return Err(anyhow!(
-                "Invalid arguments: --selfsigned-non-ca can only be true if --num-cores is set to 0. Current value of --num-cores: {n}"
+                "Invalid arguments: --force-self-signed-non-ca can only be true if --num-cores is set to 0. Current value of --num-cores: {n}"
             ));
         }
     };
