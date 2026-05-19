@@ -325,7 +325,7 @@ impl TestedModule for KMS {
 A test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) runs as part of the `core/service` test suite, but its scan is workspace-wide: it uses `cargo metadata` to enumerate every workspace member and statically inspects each one for `#[derive(VersionsDispatch)]` enums, enforcing two invariants:
 
 1. **Contiguous variants** — variants must be named `V0`, `V1`, `V2`, … in order.
-2. **Fixture coverage** — every dispatch type (with its `Versioned` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
+2. **Fixture coverage** — every dispatch type (with its `Versions` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
 
 The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is to add a direct `.ron` fixture for it, as described in [Adding a test for a new type](#adding-a-test-for-a-new-type). `ALLOW_UNCOVERED` is for inner types that are only reachable as fields of a parent type that already has a fixture.
 

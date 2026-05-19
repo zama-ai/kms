@@ -45,12 +45,11 @@ To format the code and check for issues the following commands are used:
 ```
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
-cargo install cargo-dylint dylint-link --locked
-rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev
-cargo dylint --all
+make install-dylint
+make linting-dylint
 ```
 
-`cargo dylint --all` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. During the initial warn-only rollout, this command may report existing warnings.
+`make linting-dylint` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. During the initial warn-only rollout, this command may report existing warnings.
 
 ### 3.2 Testing
 

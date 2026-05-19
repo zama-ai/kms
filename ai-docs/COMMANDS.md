@@ -20,14 +20,6 @@ cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Project-specific Dylint lints. These currently run warn-only and include upstream tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency:
-
-```
-cargo install cargo-dylint dylint-link --locked
-rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev
-cargo dylint --all
-```
-
 All-features clippy as a Makefile target:
 
 ```
@@ -39,6 +31,14 @@ Lint a single crate:
 ```
 make linting-package PACKAGE=<crate-name>
 ```
+
+Installing and running dylint:
+
+```
+make install-dylint
+make linting-dylint
+```
+
 
 ## Testing
 

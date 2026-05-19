@@ -54,17 +54,12 @@ jobs:
           echo "EXECUTING: cargo clippy --workspace --all-targets --all-features -- -D warnings"
           cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Install cargo-dylint
+      - name: Install Dylint
         run: |
-          echo "EXECUTING: cargo install cargo-dylint dylint-link --locked"
-          cargo install cargo-dylint dylint-link --locked
-
-      - name: Install tfhe-rs Dylint toolchain
-        run: |
-          echo "EXECUTING: rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev"
-          rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev
+          echo "EXECUTING: make install-dylint"
+          make install-dylint
 
       - name: Dylint
         run: |
-          echo "EXECUTING: cargo dylint --all"
-          cargo dylint --all
+          echo "EXECUTING: make linting-dylint"
+          make linting-dylint

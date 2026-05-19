@@ -55,7 +55,7 @@ generate-backward-compatibility-v0.13.0:
 
 generate-backward-compatibility-v0.13.10:
 	cd backward-compatibility/generate-v0.13.10 && cargo run --release
-	
+
 generate-backward-compatibility-v0.13.20:
 	cd backward-compatibility/generate-v0.13.20 && cargo run --release
 
@@ -95,6 +95,22 @@ check-git-lfs:
 pull-lfs-files: check-git-lfs
 	git lfs pull
 
+
+# `DYLINT_RUSTFLAGS` is consumed by `cargo-dylint` and forwarded to the `rustc`
+# driver that runs each Dylint library. Here it keeps the tfhe-rs
+# `invalid_versionize_dispatch` lint active while disabling
+# `serialize_without_versionize`, which is intentionally too broad for this
+# workspace. `-Aunknown-lints` is paired with it because `cargo dylint --all`
+# loads multiple lint libraries/toolchains; libraries that do not define
+# `serialize_without_versionize` would otherwise emit an "unknown lint" warning
+# for the command-line allow.
+DYLINT_RUSTFLAGS ?= -Aunknown-lints -Aserialize_without_versionize
+
+# To be safe, the toolchain should match what is used in the tfhe-rs repo.
+# Check the file utils/tfhe-lints/rust-toolchain on what toolchain to use
+# using the version tag defined in dylint.toml.
+DYLINT_TOOLCHAIN ?= nightly-2026-01-22
+
 linting-all:
 	cargo clippy --all-targets --all-features -- -D warnings
 
@@ -104,3 +120,10 @@ linting-package:
 		exit 1; \
 	fi
 	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
+
+install-dylint:
+	cargo install cargo-dylint dylint-link --locked
+	rustup toolchain install $(DYLINT_TOOLCHAIN) --component llvm-tools-preview,rustc-dev
+
+linting-dylint:
+	DYLINT_RUSTFLAGS="$(DYLINT_RUSTFLAGS)" cargo dylint --all
