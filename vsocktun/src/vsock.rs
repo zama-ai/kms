@@ -3,7 +3,9 @@
 //! This module owns the parent/enclave control plane for the outer transport:
 //! serving enclave bootstrap configuration, creating the shard streams,
 //! grouping them into one logical session, and validating that both sides agree
-//! on the shard layout and framing mode.
+//! on the shard layout and framing mode. Bootstrap and shard handshakes share a
+//! single listener port, so every accepted connection starts with one fixed-size
+//! discriminator message.
 
 use crate::RESOLV_CONF_PATH;
 use crate::protocol::{BootstrapRequest, BootstrapResponse, Hello, InitialRequest};
@@ -81,7 +83,8 @@ impl ParentSessionAcceptor {
     /// The parent observes shard connections one stream at a time, so it uses
     /// the handshake header on each connection to group related shards, reject
     /// duplicates, and restart assembly if a newer reconnect attempt overtakes a
-    /// partial older one.
+    /// partial older one. Bootstrap requests can interleave with that assembly
+    /// on the same listener and are served inline before waiting for more shards.
     pub(crate) async fn accept_session(&self) -> Result<SessionSockets> {
         let (first_socket, first_hello) = loop {
             match self
@@ -282,6 +285,10 @@ pub(crate) async fn connect_session(
 
 /// Enclave-side bootstrap request that fetches tunnel configuration from the
 /// parent before the local TUN device exists.
+///
+/// This one-off exchange runs on the same VSOCK port later reused for shard
+/// streams so the enclave can learn its CIDR, queue count, MTU, and rewritten
+/// resolver file before any packet relay workers start.
 pub(crate) async fn fetch_bootstrap_config(
     parent_cid: u32,
     vsock_port: u32,
@@ -357,6 +364,8 @@ fn parse_tun_gateway(value: &str) -> Result<Ipv4Addr> {
         .with_context(|| format!("invalid IPv4 gateway address '{address}'"))
 }
 
+/// Rewrites the parent's resolver file so all nameserver entries point at the
+/// parent-side tunnel IP while preserving the rest of the file verbatim.
 fn rewrite_resolv_conf_for_gateway(contents: &[u8], gateway: Ipv4Addr) -> Result<Vec<u8>> {
     let text = std::str::from_utf8(contents).context("parent resolv.conf is not valid UTF-8")?;
     let mut rewritten = String::with_capacity(text.len());
