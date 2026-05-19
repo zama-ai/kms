@@ -25,7 +25,7 @@ inputs:
   protoc-version:
     description: Protoc version selector
     required: false
-    default: "26.1"
+    default: "34.1"
   protoc-repo-token:
     description: Token used by setup-protoc to avoid API rate limit
     required: false
@@ -46,8 +46,12 @@ runs:
       if: ${{ inputs.setup-protoc == 'true' }}
       env:
         PROTOC_VERSION: ${{ inputs.protoc-version }}
-        PROTOC_REPO_TOKEN: ${{ inputs.protoc-repo-token }}
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-      with:
-        version: ${{ env.PROTOC_VERSION }}
-        repo-token: ${{ env.PROTOC_REPO_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
+        PROTOC_SHA256: af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
+      shell: bash
+      run: |
+        set -euo pipefail
+        PROTOC_ARCHIVE="protoc-${{ env.PROTOC_VERSION }}-linux-x86_64.zip"
+        curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${{ env.PROTOC_VERSION }}/${PROTOC_ARCHIVE}"
+        echo "${{ env.PROTOC_SHA256 }}  ${PROTOC_ARCHIVE}" | sha256sum --check --strict
+        unzip "${PROTOC_ARCHIVE}" -d "$HOME/.local"
+        export PATH="$PATH:$HOME/.local/bin"
