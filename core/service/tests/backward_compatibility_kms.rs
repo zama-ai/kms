@@ -723,7 +723,7 @@ fn test_context_info(
     let original_versionized: ContextInfo = load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
     let node_info = NodeInfo {
-        mpc_identity: "Satoshi Nakamoto".to_string(),
+        mpc_identity: "Staoshi Nakamoto".to_string(),
         party_id: 42,
         verification_key: None,
         external_url: "https://node42.example.com".to_string(),
