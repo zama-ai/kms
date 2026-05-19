@@ -222,15 +222,10 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
-    #[cfg(feature = "extension_degree_3")]
     use crate::galois_fields::gf8::GF8;
-    #[cfg(feature = "extension_degree_5")]
     use crate::galois_fields::gf32::GF32;
-    #[cfg(feature = "extension_degree_6")]
     use crate::galois_fields::gf64::GF64;
-    #[cfg(feature = "extension_degree_7")]
     use crate::galois_fields::gf128::GF128;
-    #[cfg(feature = "extension_degree_8")]
     use crate::galois_fields::gf256::GF256;
     use crate::{
         base_ring::Z64,
@@ -254,31 +249,26 @@ mod tests {
         test_divisibility_fail::<4>();
     }
 
-    #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_divisibility_fail_f3() {
         test_divisibility_fail::<3>();
     }
 
-    #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_divisibility_fail_f5() {
         test_divisibility_fail::<5>();
     }
 
-    #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_divisibility_fail_f6() {
         test_divisibility_fail::<6>();
     }
 
-    #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_divisibility_fail_f7() {
         test_divisibility_fail::<7>();
     }
 
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_divisibility_fail_f8() {
         test_divisibility_fail::<8>();
@@ -337,31 +327,26 @@ mod tests {
         test_error_correction::<GF16>();
     }
 
-    #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_error_correction_f3() {
         test_error_correction::<GF8>();
     }
 
-    #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_error_correction_f5() {
         test_error_correction::<GF32>();
     }
 
-    #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_error_correction_f6() {
         test_error_correction::<GF64>();
     }
 
-    #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_error_correction_f7() {
         test_error_correction::<GF128>();
     }
 
-    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_error_correction_f8() {
         test_error_correction::<GF256>();

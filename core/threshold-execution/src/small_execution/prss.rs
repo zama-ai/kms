@@ -1138,8 +1138,10 @@ pub(crate) fn create_sets(all_roles: &[Role], t: usize) -> Vec<Vec<Role>> {
 mod tests {
     use super::*;
     use crate::endpoints::decryption::RadixOrBoolCiphertext;
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::small_execution::malicious_prss::MaliciousPrssHonestInitLieAll;
     use crate::malicious_execution::small_execution::malicious_prss::{
-        MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
+        MaliciousPrssDrop, MaliciousPrssHonestInitRobustThenRandom,
     };
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::small_session::SmallSessionHandles;
@@ -2129,6 +2131,7 @@ mod tests {
     // Test PRSS robust init with actively malicious parties that
     // follow the [`MaliciousPrssHonestInitLieAll`] strategy.
     // We expect to catch it because it lies in checks.
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None))]
