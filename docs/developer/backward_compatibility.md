@@ -316,6 +316,40 @@ impl TestedModule for KMS {
 
 ```
 
+## Coverage gate for `VersionsDispatch` enums
+
+A workspace-level test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) statically scans every `#[derive(VersionsDispatch)]` enum in the workspace and enforces two invariants:
+
+1. **Contiguous variants** — variants must be named `V0`, `V1`, `V2`, … in order.
+2. **Fixture coverage** — every dispatch type (with its `Versioned` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
+
+The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is to add a direct `.ron` fixture for it, as described in [Adding a test for a new type](#adding-a-test-for-a-new-type). `ALLOW_UNCOVERED` is for inner types that are only reachable as fields of a parent type that already has a fixture.
+
+### Updating `ALLOW_UNCOVERED`
+
+Each entry must carry a comment that records:
+
+- **Who uses it** — the parent struct/enum that contains the type as a field, or the precise way the type is otherwise reached (e.g. as a signcrypted payload).
+- **Who covers it** — the `*Test` fixture(s) in `backward-compatibility/src/lib.rs` whose serialized output transitively exercises the type.
+
+Example:
+
+```rust
+// Field of ThresholdFheKeys.public_material.
+// Covered via ThresholdFheKeysTest.
+"PublicKeyMaterial",
+```
+
+⚠️ **The list is manually curated and not self-verifying.** If a developer later starts serializing one of these types directly — or removes the parent field that used to carry it — the coverage gate keeps passing (the type is still on the allowlist) while no `.ron` fixture actually exercises it. The result is a silent backward-compatibility gap.
+
+**Whenever you touch a type listed in `ALLOW_UNCOVERED`, re-audit its entry:**
+
+- If the type is now serialized at a top level (e.g. as a stored object, a gRPC field body, or the root of a new fixture), **remove it from `ALLOW_UNCOVERED` and add a direct fixture** following [Adding a test for a new type](#adding-a-test-for-a-new-type).
+- If the parent named in the comment no longer carries the type, rewrite the comment to point at the current parent — or, if no parent remains, remove the entry.
+- If the type is deleted, remove the entry: stale allowlist names go unmatched and silently rot.
+
+Tracking ticket for replacing this manual list with structural reachability checks: [zama-ai/kms-internal#3028](https://github.com/zama-ai/kms-internal/issues/3028).
+
 ## Adding a new kms-core release
 
 ⚠️ **Important**: Before adding a new version, check for dependency compatibility. See [`backward-compatibility/ADDING_NEW_VERSIONS.md`](../../backward-compatibility/ADDING_NEW_VERSIONS.md) for detailed instructions.

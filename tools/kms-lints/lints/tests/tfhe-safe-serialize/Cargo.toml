@@ -1,0 +1,9 @@
+[package]
+name = "tfhe-safe-serialize"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "tfhe_safe_serialize"
+path = "src/lib.rs"
