@@ -113,7 +113,7 @@ pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
 // arriving under the destination key
 pub const NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
-    ks_level: DecompositionLevelCount(7),
+    ks_level: DecompositionLevelCount(6),
     ks_base_log: DecompositionBaseLog(3),
     destination_key: EncryptionKeyChoice::Small,
 };
@@ -232,7 +232,7 @@ pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
 pub const NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(1),
-    ks_base_log: DecompositionBaseLog(19),
+    ks_base_log: DecompositionBaseLog(18),
     destination_key: EncryptionKeyChoice::Big,
 };
 
