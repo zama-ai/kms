@@ -1,8 +1,10 @@
 [workspace.metadata.dylint]
 libraries = [
     { git = "https://github.com/trailofbits/dylint", rev = "2c20d164e06c446de2cecadff0c55e16a877c006", pattern = "examples/general/non_local_effect_before_error_return" },
+    # NOTE: when updating the tag/revision of tfhe-lints, ensure the toolchain is also updated in .github/workflows/rust-lint.yml
+    # In the tfhe-rs repo, check the file utils/tfhe-lints/rust-toolchain on what toolchain to use.
+    { git = "https://github.com/zama-ai/tfhe-rs", tag = "tfhe-rs-1.6.1", pattern = "utils/tfhe-lints/lints" },
 ]
 
 [non_local_effect_before_error_return]
 work_limit = 100000000
-

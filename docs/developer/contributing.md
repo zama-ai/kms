@@ -38,14 +38,19 @@ git checkout -b feat/1337/new_feature_X
 
 Each commit to **TKMS** should conform to the standards of the project. In particular, every source code, docker or workflows file should be linted to prevent programmatic and stylistic errors.
 
-- Rust source code linters: `cargo-fmt` and `clippy`
+- Rust source code linters: `cargo-fmt`, `clippy`, and `dylint`
 
 To format the code and check for issues the following commands are used:
 
 ```
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
+cargo install cargo-dylint dylint-link --locked
+rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev
+cargo dylint --all
 ```
+
+`cargo dylint --all` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. During the initial warn-only rollout, this command may report existing warnings.
 
 ### 3.2 Testing
 
@@ -100,7 +105,7 @@ We have certain rules about dependencies and how we manage them, mostly related 
 
 1. *Never* update a version of a dependency as part of a regular PR. Such updates must be done in a separate PR.
 2. Do not update a dependency unless the update is really needed because of new features, or to fix a bug we have encountered or to fix a known security issue.
-3. Do not add new dependencies without previous discussion with the TKMS team.
+3. Do not add new dependencies without previous discussion with the KMS team.
 
 ## 6. Merging
 

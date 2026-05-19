@@ -59,6 +59,11 @@ jobs:
           echo "EXECUTING: cargo install cargo-dylint dylint-link --locked"
           cargo install cargo-dylint dylint-link --locked
 
+      - name: Install tfhe-rs Dylint toolchain
+        run: |
+          echo "EXECUTING: rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev"
+          rustup toolchain install nightly-2026-01-22 --component llvm-tools-preview,rustc-dev
+
       - name: Dylint
         run: |
           echo "EXECUTING: cargo dylint --all"
