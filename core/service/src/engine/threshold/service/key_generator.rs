@@ -112,6 +112,16 @@ enum ThresholdKeyGenResult {
     ),
 }
 
+/// Post-DKG, pre-storage bundle produced by `prepare_threshold_keys`. The
+/// `migration_copy_target` is set only on the compressed UseExisting path,
+/// which triggers a post-write copy of the new compressed keyset to the
+/// original key id.
+struct PreparedThresholdKeys {
+    threshold_fhe_keys: ThresholdFheKeys,
+    pub_key_set: PublicKeySet,
+    migration_copy_target: Option<RequestId>,
+}
+
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
 use crate::engine::base::INSECURE_PREPROCESSING_ID;
@@ -369,43 +379,10 @@ impl<
         // we must validate the parameter before passing it into the background process
         internal_keyset_config.validate()?;
 
-        // Read existing key tag from public storage if needed
-        let existing_key_tag: Option<tfhe::Tag> = if internal_keyset_config.use_existing_key_tag() {
-            let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()?;
-            Some(Self::read_existing_key_tag(&crypto_storage, &existing_keyset_id).await?)
-        } else {
-            None
-        };
-
-        // For compressed keygen that recycles an existing private keyset, load the OLD
-        // CompactPublicKey so we can sign and store it instead of the new one derived from
-        // the newly-generated CompressedXofKeySet. Keeps the externally-visible public key
-        // stable for clients that already cached it. The digest of the loaded pk is
-        // verified against the old ThresholdFheKeys.meta_data; generation from existing
-        // shares stays within the same epoch, so the current epoch_id is used.
-        let existing_compact_pk: Option<tfhe::CompactPublicKey> =
-            match internal_keyset_config.keyset_config() {
-                ddec_keyset_config::KeySetConfig::Standard(inner)
-                    if matches!(
-                        inner.secret_key_config,
-                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
-                    ) && matches!(
-                        inner.compressed_key_config,
-                        ddec_keyset_config::CompressedKeyConfig::All
-                    ) =>
-                {
-                    let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()?;
-                    Some(
-                        Self::read_existing_compact_public_key(
-                            &crypto_storage,
-                            &existing_keyset_id,
-                            &epoch_id,
-                        )
-                        .await?,
-                    )
-                }
-                _ => None,
-            };
+        // Existing-keyset reads (tag + compact public key) used by the
+        // UseExisting paths are loaded lazily inside `key_gen_background` so
+        // their failures surface via the meta store, mirroring how DKG
+        // failures are handled. This also matches the centralized analogue.
 
         let token_for_bg = token.clone();
         self.tracker.spawn(
@@ -475,8 +452,6 @@ impl<
                             extra_data,
                             permit,
                             op_tag,
-                            existing_key_tag,
-                            existing_compact_pk,
                         )
                         .await;
                     }
@@ -1246,13 +1221,12 @@ impl<
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
         meta_permit: MetaStorePermit,
         cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,
-        mut dkg_sessions: DkgSessions,
+        dkg_sessions: DkgSessions,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
@@ -1262,275 +1236,54 @@ impl<
         internal_keyset_config: &InternalKeySetConfig,
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
-        permit: OwnedSemaphorePermit,
+        rate_limiter_permit: OwnedSemaphorePermit,
         op_tag: &'static str,
-        existing_key_tag: Option<tfhe::Tag>,
-        existing_compact_pk: Option<tfhe::CompactPublicKey>,
     ) {
-        let _permit = permit;
+        let _rate_limiter_permit = rate_limiter_permit;
         let start = Instant::now();
-        // The cancellable DKG phase. Neither arm of this select! owns the
-        // meta-store permit; it stays in the surrounding scope and is consumed
-        // by one of the terminal arms below.
-        let dkg_phase = async {
-            match preproc_handle_w_mode {
-                PreprocHandleWithMode::Insecure => {
-                    // sanity check to make sure we're using the insecure feature
-                    #[cfg(not(feature = "insecure"))]
-                    {
-                        panic!(
-                            "attempting to call insecure keygen when the insecure feature is not set"
-                        );
-                    }
-                    #[cfg(feature = "insecure")]
-                    {
-                        (
-                            *INSECURE_PREPROCESSING_ID,
-                            match (
-                                keyset_config.secret_key_config,
-                                keyset_config.computation_key_type,
-                                keyset_config.compressed_key_config,
-                            ) {
-                                // Insecure standard keygen
-                                (
-                                    ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
-                                    ddec_keyset_config::ComputeKeyType::Cpu,
-                                    ddec_keyset_config::CompressedKeyConfig::None,
-                                ) => insecure_initialize_key_material(
-                                    &mut dkg_sessions.session_z128,
-                                    params,
-                                    req_id.into(),
-                                )
-                                .await
-                                .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
-                                .map_err(|e| e.to_string()),
-                                // Insecure compressed keygen
-                                (
-                                    ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
-                                    ddec_keyset_config::ComputeKeyType::Cpu,
-                                    ddec_keyset_config::CompressedKeyConfig::All,
-                                ) => initialize_compressed_key_material(
-                                    &mut dkg_sessions.session_z128,
-                                    params,
-                                    req_id.into(),
-                                )
-                                .await
-                                .map(|(compressed_keyset, sk)| {
-                                    ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
-                                })
-                                .map_err(|e| e.to_string()),
-                                _ => {
-                                    // insecure keygen from existing compression key is not supported
-                                    Err("insecure keygen from existing compression key is not supported".to_string())
-                                }
-                            },
-                        )
-                    }
-                }
-                PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
-                    let mut preproc_handle = preproc_handle.lock().await;
-                    (
-                        prep_id,
-                        match (
-                            keyset_config.secret_key_config,
-                            keyset_config.computation_key_type,
-                            keyset_config.compressed_key_config,
-                        ) {
-                            (
-                                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
-                                ddec_keyset_config::ComputeKeyType::Cpu,
-                                ddec_keyset_config::CompressedKeyConfig::None,
-                            ) => KG::keygen(
-                                &mut dkg_sessions.session_z128,
-                                preproc_handle.as_mut(),
-                                params,
-                                req_id.into(),
-                            )
-                            .await
-                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
-                            .map_err(|e| e.to_string()),
-                            (
-                                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
-                                ddec_keyset_config::ComputeKeyType::Cpu,
-                                ddec_keyset_config::CompressedKeyConfig::All,
-                            ) => KG::compressed_keygen(
-                                &mut dkg_sessions.session_z128,
-                                preproc_handle.as_mut(),
-                                params,
-                                req_id.into(),
-                            )
-                            .await
-                            .map(|(compressed_keyset, sk)| {
-                                ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
-                            })
-                            .map_err(|e| e.to_string()),
-                            (
-                                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
-                                ddec_keyset_config::ComputeKeyType::Cpu,
-                                ddec_keyset_config::CompressedKeyConfig::None,
-                            ) => {
-                                let existing_keyset_id = internal_keyset_config
-                                .get_existing_keyset_id()
-                                .expect("Standard UseExisting keygen must have a validated keyset_added_info.existing_keyset_id");
-                                let tag: tfhe::Tag =
-                                    existing_key_tag.unwrap_or_else(|| req_id.into());
-                                Self::key_gen_from_existing_private_keyset(
-                                    &mut dkg_sessions,
-                                    crypto_storage.clone(),
-                                    params,
-                                    existing_keyset_id,
-                                    *epoch_id,
-                                    preproc_handle.as_mut(),
-                                    tag,
-                                )
-                                .await
-                                .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
-                                .map_err(|e| e.to_string())
-                            }
-                            (
-                                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
-                                ddec_keyset_config::ComputeKeyType::Cpu,
-                                ddec_keyset_config::CompressedKeyConfig::All,
-                            ) => {
-                                let existing_keyset_id = internal_keyset_config
-                                .get_existing_keyset_id()
-                                .expect("Standard UseExisting compressed keygen must have a validated keyset_added_info.existing_keyset_id");
-                                let tag: tfhe::Tag =
-                                    existing_key_tag.unwrap_or_else(|| req_id.into());
-                                Self::compressed_key_gen_from_existing_private_keyset(
-                                    &mut dkg_sessions,
-                                    crypto_storage.clone(),
-                                    params,
-                                    existing_keyset_id,
-                                    *epoch_id,
-                                    preproc_handle.as_mut(),
-                                    tag,
-                                )
-                                .await
-                                .map(|(compressed_keyset, sk)| {
-                                    ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
-                                })
-                                .map_err(|e| e.to_string())
-                            }
-                        },
-                    )
-                }
-            }
-        };
-        // Race the long-running DKG against the cancel token. On cancel
-        // the prep_id is unused (we record an error and return), so use
-        // req_id as a harmless placeholder.
-        let (prep_id, dkg_res): (RequestId, Result<ThresholdKeyGenResult, String>) = tokio::select! {
+
+        let outcome: Result<(RequestId, ThresholdKeyGenResult), String> = tokio::select! {
             biased;
-            () = cancel_token.cancelled() => (
-                *req_id,
-                Err("Key generation was aborted".to_string()),
-            ),
-            v = dkg_phase => v,
+            () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),
+            v = Self::run_dkg(
+                dkg_sessions,
+                preproc_handle_w_mode,
+                &crypto_storage,
+                params,
+                req_id,
+                epoch_id,
+                keyset_config,
+                internal_keyset_config,
+            ) => v,
         };
 
-        // Funnel the per-variant post-processing into a single
-        // Result<PreparedThresholdKeys, String>.
-        struct PreparedThresholdKeys {
-            threshold_fhe_keys: ThresholdFheKeys,
-            pub_key_set: PublicKeySet,
-            // Set on the compressed-UseExisting path; triggers the post-write copy.
-            migration_copy_target: Option<RequestId>,
-        }
-
-        let prepared: Result<PreparedThresholdKeys, String> = match dkg_res {
-            Err(e) => Err(format!("Standard key generation failed: {e}")),
-            Ok(ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys)) => {
-                compute_info_uncompressed_keygen(
-                    &sk,
-                    &DSEP_PUBDATA_KEY,
-                    &prep_id,
-                    req_id,
-                    &pub_key_set,
-                    &eip712_domain,
-                    extra_data,
-                )
-                .map_err(|e| {
-                    format!("Computation of meta data in standard key generation failed: {e}")
-                })
-                .map(|info| {
-                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
-                        pub_key_set.server_key.clone().into_raw_parts();
-                    let threshold_fhe_keys = ThresholdFheKeys::new(
-                        Arc::new(private_keys),
-                        PublicKeyMaterial::new_uncompressed(
-                            Arc::new(integer_server_key),
-                            sns_key.map(Arc::new),
-                            decompression_key.map(Arc::new),
-                        ),
-                        info,
-                    );
-                    PreparedThresholdKeys {
-                        threshold_fhe_keys,
-                        pub_key_set: PublicKeySet::Uncompressed(Arc::new(pub_key_set)),
-                        migration_copy_target: None,
-                    }
-                })
-            }
-            Ok(ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys)) => {
-                // When migrating from an existing keyset (UseExisting), preserve
-                // the OLD CompactPublicKey so signatures + stored bytes stay
-                // stable for clients that already hold it. For a fresh keygen
-                // we use the public key derived from the new compressed keyset.
-                let compact_public_key_res = match existing_compact_pk {
-                    Some(old_pk) => Ok(old_pk),
-                    None => compressed_keyset
-                        .decompress()
-                        .map(|ks| ks.into_raw_parts().0)
-                        .map_err(|e| {
-                            format!("Failed to decompress freshly generated compressed keyset: {e}")
-                        }),
-                };
-                compact_public_key_res.and_then(|compact_public_key| {
-                    compute_info_compressed_keygen(
-                        &sk,
-                        &DSEP_PUBDATA_KEY,
-                        &prep_id,
-                        req_id,
-                        &compressed_keyset,
-                        &compact_public_key,
-                        &eip712_domain,
-                        extra_data,
-                    )
-                    .map_err(|e| format!(
-                        "Computation of meta data in standard compressed key generation failed: {e}"
-                    ))
-                    .map(|info| {
-                        let threshold_fhe_keys = ThresholdFheKeys::new(
-                            Arc::new(private_keys),
-                            PublicKeyMaterial::new(compressed_keyset.clone()),
-                            info,
-                        );
-                        let migration_copy_target = if matches!(
-                            keyset_config.secret_key_config,
-                            ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
-                        ) && internal_keyset_config.copy_compressed_key_to_original()
-                        {
-                            Some(internal_keyset_config
-                                .get_existing_keyset_id()
-                                .expect("copy_compressed_key_to_original requires the validated UseExisting keyset_added_info.existing_keyset_id"))
-                        } else {
-                            None
-                        };
-                        PreparedThresholdKeys {
-                            threshold_fhe_keys,
-                            pub_key_set: PublicKeySet::Compressed {
-                                compact_public_key: Arc::new(compact_public_key),
-                                compressed_keyset: Arc::new(compressed_keyset),
-                            },
-                            migration_copy_target,
-                        }
-                    })
-                })
+        let (prep_id, dkg_res) = match outcome {
+            Ok(v) => v,
+            Err(msg) => {
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    meta_permit,
+                    format!("Standard key generation failed: {msg}"),
+                    op_tag,
+                );
+                return;
             }
         };
 
-        let prepared = match prepared {
+        let prepared = match Self::prepare_threshold_keys(
+            dkg_res,
+            &sk,
+            &prep_id,
+            req_id,
+            epoch_id,
+            &eip712_domain,
+            extra_data,
+            &keyset_config,
+            internal_keyset_config,
+            &crypto_storage,
+        )
+        .await
+        {
             Ok(p) => p,
             Err(msg) => {
                 let _ = update_err_req_in_meta_store(
@@ -1598,6 +1351,349 @@ impl<
             "DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+    }
+
+    /// Dispatches the DKG over (preproc mode × keyset configuration) and
+    /// returns the produced material paired with the preprocessing id that
+    /// was actually used. Stringifies errors for the meta-store path.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_dkg(
+        dkg_sessions: DkgSessions,
+        preproc_handle_w_mode: PreprocHandleWithMode,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        params: DKGParams,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+        keyset_config: ddec_keyset_config::StandardKeySetConfig,
+        internal_keyset_config: &InternalKeySetConfig,
+    ) -> Result<(RequestId, ThresholdKeyGenResult), String> {
+        match preproc_handle_w_mode {
+            PreprocHandleWithMode::Insecure => {
+                #[cfg(feature = "insecure")]
+                {
+                    let res = Self::run_insecure_dkg(dkg_sessions, params, req_id, keyset_config).await?;
+                    Ok((*INSECURE_PREPROCESSING_ID, res))
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                   panic!("attempting to call insecure keygen when the insecure feature is not set");
+                }
+            }
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
+                let mut preproc_handle = preproc_handle.lock().await;
+                let res = Self::run_secure_dkg(
+                    dkg_sessions,
+                    preproc_handle.as_mut(),
+                    crypto_storage,
+                    params,
+                    req_id,
+                    epoch_id,
+                    keyset_config,
+                    internal_keyset_config,
+                )
+                .await?;
+                Ok((prep_id, res))
+            }
+        }
+    }
+
+    /// Insecure DKG path: deterministic key material generation, no
+    /// preprocessing. Panics if compiled without the `insecure` feature.
+    #[cfg(feature = "insecure")]
+    async fn run_insecure_dkg(
+        mut dkg_sessions: DkgSessions,
+        params: DKGParams,
+        req_id: &RequestId,
+        keyset_config: ddec_keyset_config::StandardKeySetConfig,
+    ) -> Result<ThresholdKeyGenResult, String> {
+        match (
+            keyset_config.secret_key_config,
+            keyset_config.computation_key_type,
+            keyset_config.compressed_key_config,
+        ) {
+            (
+                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
+                ddec_keyset_config::ComputeKeyType::Cpu,
+                ddec_keyset_config::CompressedKeyConfig::None,
+            ) => insecure_initialize_key_material(
+                &mut dkg_sessions.session_z128,
+                params,
+                req_id.into(),
+            )
+            .await
+            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+            .map_err(|e| e.to_string()),
+            (
+                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
+                ddec_keyset_config::ComputeKeyType::Cpu,
+                ddec_keyset_config::CompressedKeyConfig::All,
+            ) => initialize_compressed_key_material(
+                &mut dkg_sessions.session_z128,
+                params,
+                req_id.into(),
+            )
+            .await
+            .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
+            .map_err(|e| e.to_string()),
+            _ => Err("insecure keygen from existing compression key is not supported".to_string()),
+        }
+    }
+
+    #[cfg(not(feature = "insecure"))]
+    async fn run_insecure_dkg(
+        _dkg_sessions: DkgSessions,
+        _params: DKGParams,
+        _req_id: &RequestId,
+        _keyset_config: ddec_keyset_config::StandardKeySetConfig,
+    ) -> Result<ThresholdKeyGenResult, String> {
+        panic!("attempting to call insecure keygen when the insecure feature is not set");
+    }
+
+    /// Secure DKG path: dispatches over `(secret_key_config, compressed_key_config)`,
+    /// fetching the existing keyset tag inline for the UseExisting arms.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_secure_dkg<P>(
+        mut dkg_sessions: DkgSessions,
+        preproc_handle: &mut P,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        params: DKGParams,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+        keyset_config: ddec_keyset_config::StandardKeySetConfig,
+        internal_keyset_config: &InternalKeySetConfig,
+    ) -> Result<ThresholdKeyGenResult, String>
+    where
+        P: DKGPreprocessing<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>
+            + Send
+            + ?Sized,
+    {
+        match (
+            keyset_config.secret_key_config,
+            keyset_config.computation_key_type,
+            keyset_config.compressed_key_config,
+        ) {
+            (
+                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
+                ddec_keyset_config::ComputeKeyType::Cpu,
+                ddec_keyset_config::CompressedKeyConfig::None,
+            ) => KG::keygen(
+                &mut dkg_sessions.session_z128,
+                preproc_handle,
+                params,
+                req_id.into(),
+            )
+            .await
+            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+            .map_err(|e| e.to_string()),
+            (
+                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
+                ddec_keyset_config::ComputeKeyType::Cpu,
+                ddec_keyset_config::CompressedKeyConfig::All,
+            ) => KG::compressed_keygen(
+                &mut dkg_sessions.session_z128,
+                preproc_handle,
+                params,
+                req_id.into(),
+            )
+            .await
+            .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
+            .map_err(|e| e.to_string()),
+            (
+                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                ddec_keyset_config::ComputeKeyType::Cpu,
+                ddec_keyset_config::CompressedKeyConfig::None,
+            ) => {
+                let existing_keyset_id = internal_keyset_config
+                    .get_existing_keyset_id()
+                    .expect("Standard UseExisting keygen must have a validated keyset_added_info.existing_keyset_id");
+                let tag = Self::existing_key_tag_or_default(
+                    crypto_storage,
+                    internal_keyset_config,
+                    req_id,
+                    &existing_keyset_id,
+                )
+                .await?;
+                Self::key_gen_from_existing_private_keyset(
+                    &mut dkg_sessions,
+                    crypto_storage.clone(),
+                    params,
+                    existing_keyset_id,
+                    *epoch_id,
+                    preproc_handle,
+                    tag,
+                )
+                .await
+                .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
+                .map_err(|e| e.to_string())
+            }
+            (
+                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                ddec_keyset_config::ComputeKeyType::Cpu,
+                ddec_keyset_config::CompressedKeyConfig::All,
+            ) => {
+                let existing_keyset_id = internal_keyset_config
+                    .get_existing_keyset_id()
+                    .expect("Standard UseExisting compressed keygen must have a validated keyset_added_info.existing_keyset_id");
+                let tag = Self::existing_key_tag_or_default(
+                    crypto_storage,
+                    internal_keyset_config,
+                    req_id,
+                    &existing_keyset_id,
+                )
+                .await?;
+                Self::compressed_key_gen_from_existing_private_keyset(
+                    &mut dkg_sessions,
+                    crypto_storage.clone(),
+                    params,
+                    existing_keyset_id,
+                    *epoch_id,
+                    preproc_handle,
+                    tag,
+                )
+                .await
+                .map(|(compressed_keyset, sk)| {
+                    ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                })
+                .map_err(|e| e.to_string())
+            }
+        }
+    }
+
+    // TODO simpler inline
+    /// Returns the tag to use for the freshly generated key material on the
+    /// UseExisting paths: the existing keyset's tag if `use_existing_key_tag`
+    /// is set, otherwise a tag derived from `req_id`.
+    async fn existing_key_tag_or_default(
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        internal_keyset_config: &InternalKeySetConfig,
+        req_id: &RequestId,
+        existing_keyset_id: &RequestId,
+    ) -> Result<tfhe::Tag, String> {
+        if internal_keyset_config.use_existing_key_tag() {
+            Self::read_existing_key_tag(crypto_storage, existing_keyset_id)
+                .await
+                .map_err(|e| e.to_string())
+        } else {
+            Ok(req_id.into())
+        }
+    }
+
+    /// Post-DKG processing: signs metadata, packs the public key material,
+    /// and decides whether a compressed-UseExisting run needs the follow-up
+    /// migration copy. On the compressed-UseExisting path this loads the OLD
+    /// `CompactPublicKey` from storage so signatures + stored bytes stay
+    /// stable for clients that already hold it.
+    #[allow(clippy::too_many_arguments)]
+    async fn prepare_threshold_keys(
+        dkg_res: ThresholdKeyGenResult,
+        sk: &PrivateSigKey,
+        prep_id: &RequestId,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
+        keyset_config: &ddec_keyset_config::StandardKeySetConfig,
+        internal_keyset_config: &InternalKeySetConfig,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    ) -> Result<PreparedThresholdKeys, String> {
+        match dkg_res {
+            ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys) => {
+                let info = compute_info_uncompressed_keygen(
+                    sk,
+                    &DSEP_PUBDATA_KEY,
+                    prep_id,
+                    req_id,
+                    &pub_key_set,
+                    eip712_domain,
+                    extra_data,
+                )
+                .map_err(|e| {
+                    format!("Computation of meta data in standard key generation failed: {e}")
+                })?;
+                let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+                    pub_key_set.server_key.clone().into_raw_parts();
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    Arc::new(private_keys),
+                    PublicKeyMaterial::new_uncompressed(
+                        Arc::new(integer_server_key),
+                        sns_key.map(Arc::new),
+                        decompression_key.map(Arc::new),
+                    ),
+                    info,
+                );
+                Ok(PreparedThresholdKeys {
+                    threshold_fhe_keys,
+                    pub_key_set: PublicKeySet::Uncompressed(Arc::new(pub_key_set)),
+                    migration_copy_target: None,
+                })
+            }
+            ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
+                let is_use_existing = matches!(
+                    keyset_config.secret_key_config,
+                    ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
+                );
+                // When migrating from an existing keyset, load the OLD compact
+                // public key so signatures + stored bytes stay stable for
+                // clients that already cached it. For a fresh keygen we use
+                // the public key derived from the new compressed keyset.
+                let compact_public_key = if is_use_existing {
+                    let existing_keyset_id = internal_keyset_config
+                        .get_existing_keyset_id()
+                        .expect("Standard UseExisting compressed keygen must have a validated keyset_added_info.existing_keyset_id");
+                    Self::read_existing_compact_public_key(
+                        crypto_storage,
+                        &existing_keyset_id,
+                        epoch_id,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?
+                } else {
+                    compressed_keyset
+                        .decompress()
+                        .map(|ks| ks.into_raw_parts().0)
+                        .map_err(|e| {
+                            format!("Failed to decompress freshly generated compressed keyset: {e}")
+                        })?
+                };
+                let info = compute_info_compressed_keygen(
+                    sk,
+                    &DSEP_PUBDATA_KEY,
+                    prep_id,
+                    req_id,
+                    &compressed_keyset,
+                    &compact_public_key,
+                    eip712_domain,
+                    extra_data,
+                )
+                .map_err(|e| {
+                    format!(
+                        "Computation of meta data in standard compressed key generation failed: {e}"
+                    )
+                })?;
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    Arc::new(private_keys),
+                    PublicKeyMaterial::new(compressed_keyset.clone()),
+                    info,
+                );
+                let migration_copy_target = if is_use_existing
+                    && internal_keyset_config.copy_compressed_key_to_original()
+                {
+                    Some(internal_keyset_config
+                        .get_existing_keyset_id()
+                        .expect("copy_compressed_key_to_original requires the validated UseExisting keyset_added_info.existing_keyset_id"))
+                } else {
+                    None
+                };
+                Ok(PreparedThresholdKeys {
+                    threshold_fhe_keys,
+                    pub_key_set: PublicKeySet::Compressed {
+                        compact_public_key: Arc::new(compact_public_key),
+                        compressed_keyset: Arc::new(compressed_keyset),
+                    },
+                    migration_copy_target,
+                })
+            }
+        }
     }
 
     /// Reads the tag from an existing keyset in public storage.
@@ -2133,8 +2229,9 @@ mod tests {
     #[tokio::test]
     async fn use_existing_key_tag_with_wrong_keyset_id() {
         // When use_existing_key_tag is true but existing_keyset_id points to a
-        // non-existent key in storage, launch_dkg should fail with Internal
-        // because read_existing_key_tag cannot find any key material.
+        // non-existent key in storage, the request itself is accepted (Empty
+        // is returned); the failure is reported via the meta store and
+        // surfaces from get_result.
         let (prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
@@ -2171,13 +2268,21 @@ mod tests {
             extra_data: vec![],
         });
 
-        let res = kg.key_gen(request).await.unwrap_err();
-        assert_eq!(res.code(), tonic::Code::Internal);
+        // The request itself is accepted: the existing-keyset read happens in
+        // the background after the response.
+        kg.key_gen(request).await.unwrap();
 
+        // get_result returns the failure recorded in the meta store.
+        let res = kg
+            .get_result(tonic::Request::new(key_id.into()))
+            .await
+            .unwrap_err();
         assert!(
             res.internal_err()
                 .to_string()
-                .contains(ERR_FAILED_TO_READ_EXISTING_TAG)
+                .contains(ERR_FAILED_TO_READ_EXISTING_TAG),
+            "expected meta-store error to mention {ERR_FAILED_TO_READ_EXISTING_TAG}, got: {}",
+            res.internal_err()
         );
     }
 
