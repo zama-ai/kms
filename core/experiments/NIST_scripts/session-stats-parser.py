@@ -166,6 +166,12 @@ class AggregatedOperation:
     (e.g. ``BIT_DEC_SMALL_u32_*`` reports 16 sessions for a batch of 10 u32
     ctxts).
 
+    ``avg_num_rounds`` is rounded to the nearest integer.  Rounds are always
+    whole numbers in practice — the parties emit integer counts, every party
+    reports the same value (the parser errors on a mismatch), and the result
+    either maps cleanly through ``num_ctxts`` or is extremely close.  Rounding
+    here keeps the CSV "rounds" cells integer for offline and online alike.
+
     ``max_peak_mem_B`` and ``avg_peak_mem_B`` are populated only when every
     party file for this operation reported a ``peak_mem(B)`` field — i.e. only
     for ``-mem`` runs. Both are ``None`` for non-mem runs.  They are not
@@ -175,7 +181,7 @@ class AggregatedOperation:
     label: str
     reported_name: str
     avg_num_sessions: float
-    avg_num_rounds: float
+    avg_num_rounds: int
     avg_network_sent_B: float
     avg_network_received_B: float
     avg_time_active_ms: float
@@ -523,7 +529,9 @@ def aggregate_run(
                 reported_name=per_party_metrics[0][1].name,
                 # num_sessions is intentionally NOT divided.
                 avg_num_sessions=average(num_sessions_values),
-                avg_num_rounds=average(num_rounds_values) / num_ctxts,
+                # Rounds are integer-valued in practice; round to the nearest
+                # int so the CSV "rounds" cells stay integer in offline/online.
+                avg_num_rounds=int(round(average(num_rounds_values) / num_ctxts)),
                 avg_network_sent_B=average(network_sent_values) / num_ctxts,
                 avg_network_received_B=average(network_received_values) / num_ctxts,
                 avg_time_active_ms=average(time_active_values) / num_ctxts,
