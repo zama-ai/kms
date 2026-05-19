@@ -1,6 +1,7 @@
 rules:
   github-env:
     ignore:
+      - .github/actions/setup-rust-and-protoc/action.yml:50
       - actions/setup-rust-and-protoc/action.yml:50
   use-trusted-publishing:
     ignore:
