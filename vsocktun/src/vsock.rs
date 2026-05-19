@@ -5,6 +5,7 @@
 //! grouping them into one logical session, and validating that both sides agree
 //! on the shard layout and framing mode.
 
+use crate::RESOLV_CONF_PATH;
 use crate::protocol::{BootstrapRequest, BootstrapResponse, Hello, InitialRequest};
 use anyhow::{Context, Result, anyhow, bail};
 use std::fs;
@@ -13,8 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncRead;
 use tokio::time::{Instant, timeout};
 use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
-
-const RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
 
 #[derive(Debug)]
 enum SessionShard<T> {

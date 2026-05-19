@@ -21,6 +21,7 @@ use std::future::Future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::process;
 use tokio::runtime::Builder;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
@@ -31,7 +32,7 @@ use tun::{Ipv4Cidr, TunDevice};
 use tun_rs::AsyncDevice;
 use vsock::{ParentSessionAcceptor, SessionSockets, connect_session, fetch_bootstrap_config};
 
-const RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
+pub(crate) const RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn log_level_from_count(count: u8) -> Level {
@@ -810,10 +811,36 @@ async fn write_to_tun(
 
 fn write_bootstrapped_resolv_conf(contents: &[u8]) -> Result<()> {
     let path = enclave_resolv_conf_target_path();
-    fs::write(&path, contents).with_context(|| {
-        format!(
-            "failed to write enclave resolver config to '{}'",
+    let Some(parent) = path.parent() else {
+        bail!(
+            "failed to write enclave resolver config to '{}': parent directory is missing",
             path.display()
+        );
+    };
+    let file_name = path.file_name().ok_or_else(|| {
+        anyhow!(
+            "failed to write enclave resolver config to '{}': file name is missing",
+            path.display()
+        )
+    })?;
+    let temp_path = parent.join(format!(
+        ".{}.vsocktun-{}.tmp",
+        file_name.to_string_lossy(),
+        process::id()
+    ));
+
+    fs::write(&temp_path, contents).with_context(|| {
+        format!(
+            "failed to write temporary enclave resolver config to '{}'",
+            temp_path.display()
+        )
+    })?;
+
+    fs::rename(&temp_path, &path).with_context(|| {
+        format!(
+            "failed to replace enclave resolver config at '{}' with '{}'",
+            path.display(),
+            temp_path.display()
         )
     })
 }
