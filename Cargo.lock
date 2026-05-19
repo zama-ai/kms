@@ -8539,6 +8539,7 @@ name = "vsocktun"
 version = "0.13.20-0"
 dependencies = [
  "anyhow",
+ "ciborium",
  "clap",
  "etherparse",
  "netns-rs",

@@ -9,8 +9,10 @@
 //! - length-prefixed packet framing so TUN payloads can be forwarded without
 //!   depending on any stream-level message boundaries
 
+use ciborium::{de::from_reader, ser::into_writer};
 use std::future::poll_fn;
 use std::io;
+use std::io::Cursor;
 use std::io::IoSlice;
 use std::pin::Pin;
 use std::task::Poll;
@@ -22,7 +24,6 @@ const HELLO_RESERVED_BYTES: usize = 4;
 const HELLO_CAP_RAW_TUN_FRAMES: u32 = 1;
 const BOOTSTRAP_REQUEST_MAGIC: [u8; 8] = *b"VSTCFG01";
 const BOOTSTRAP_RESPONSE_MAGIC: [u8; 8] = *b"VSTCFG02";
-const BOOTSTRAP_RESPONSE_FLAG_HAS_MTU: u16 = 1;
 
 fn check_magic(bytes: &[u8], expected: &[u8], error: &'static str) -> io::Result<()> {
     if bytes.get(..expected.len()) == Some(expected) {
@@ -66,16 +67,6 @@ fn read_be_u64(bytes: &[u8], start: usize, error: &'static str) -> io::Result<u6
             .try_into()
             .expect("slice length should match u64 width"),
     ))
-}
-
-fn read_utf8(bytes: &[u8], error: &'static str) -> io::Result<String> {
-    String::from_utf8(bytes.to_vec()).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, error))
-}
-
-fn checked_add_len(total: usize, add: usize, error: &'static str) -> io::Result<usize> {
-    total
-        .checked_add(add)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn write_be_u16(bytes: &mut [u8], start: usize, value: u16) {
@@ -166,7 +157,8 @@ impl BootstrapRequest {
 ///
 /// The response carries the enclave-side TUN address, the parent gateway
 /// address, the negotiated shard count, optional MTU override, and the exact
-/// `resolv.conf` contents the enclave should install.
+/// `resolv.conf` contents the enclave should install. The outer message keeps a
+/// fixed magic and payload length, while the body itself is CBOR.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BootstrapResponse {
     /// Parent-side TUN address with prefix, used as the enclave's default
@@ -183,13 +175,8 @@ pub(crate) struct BootstrapResponse {
 }
 
 impl BootstrapResponse {
-    const HEADER_LEN: usize = 24;
-    const FLAGS_OFFSET: usize = 8;
-    const QUEUES_OFFSET: usize = 10;
-    const MTU_OFFSET: usize = 12;
-    const PARENT_LEN_OFFSET: usize = 16;
-    const ENCLAVE_LEN_OFFSET: usize = 18;
-    const RESOLV_LEN_OFFSET: usize = 20;
+    const HEADER_LEN: usize = BOOTSTRAP_RESPONSE_MAGIC.len() + 4;
+    const PAYLOAD_LEN_OFFSET: usize = BOOTSTRAP_RESPONSE_MAGIC.len();
 
     /// Reads a bootstrap response from an asynchronous byte stream.
     pub(crate) async fn read_from_async<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
@@ -202,65 +189,38 @@ impl BootstrapResponse {
             "received invalid vsocktun bootstrap response magic",
         )?;
 
-        let flags = read_be_u16(
+        let payload_len = usize::try_from(read_be_u32(
             &header,
-            Self::FLAGS_OFFSET,
-            "received truncated vsocktun bootstrap flags",
-        )?;
-        let queues = read_be_u16(
-            &header,
-            Self::QUEUES_OFFSET,
-            "received truncated vsocktun bootstrap queue count",
-        )?;
-        let mtu = read_be_u32(
-            &header,
-            Self::MTU_OFFSET,
-            "received truncated vsocktun bootstrap MTU",
-        )?;
-        let parent_len = usize::from(read_be_u16(
-            &header,
-            Self::PARENT_LEN_OFFSET,
-            "received truncated vsocktun bootstrap parent address length",
-        )?);
-        let enclave_len = usize::from(read_be_u16(
-            &header,
-            Self::ENCLAVE_LEN_OFFSET,
-            "received truncated vsocktun bootstrap enclave address length",
-        )?);
-        let resolv_len = usize::try_from(read_be_u32(
-            &header,
-            Self::RESOLV_LEN_OFFSET,
-            "received truncated vsocktun bootstrap resolv.conf length",
+            Self::PAYLOAD_LEN_OFFSET,
+            "received truncated vsocktun bootstrap response body length",
         )?)
         .map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "received vsocktun bootstrap resolv.conf length that does not fit in usize",
+                "received vsocktun bootstrap response body length that does not fit in usize",
             )
         })?;
-
-        let total_len = checked_add_len(
-            checked_add_len(
-                parent_len,
-                enclave_len,
-                "received vsocktun bootstrap body length overflow",
-            )?,
-            resolv_len,
-            "received vsocktun bootstrap body length overflow",
-        )?;
-        let mut body = vec![0_u8; total_len];
-        reader.read_exact(&mut body).await?;
-
-        let parent_end = parent_len;
-        let enclave_end = parent_end + enclave_len;
-        let parent_tun_address = read_utf8(
-            &body[..parent_end],
-            "received non-UTF-8 vsocktun bootstrap parent address",
-        )?;
-        let enclave_tun_address = read_utf8(
-            &body[parent_end..enclave_end],
-            "received non-UTF-8 vsocktun bootstrap enclave address",
-        )?;
+        let mut payload = vec![0_u8; payload_len];
+        reader.read_exact(&mut payload).await?;
+        let mut payload_reader = Cursor::new(payload.as_slice());
+        let (parent_tun_address, enclave_tun_address, queues, mtu, resolv_conf): (
+            String,
+            String,
+            u16,
+            Option<u32>,
+            Vec<u8>,
+        ) = from_reader(&mut payload_reader).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to decode vsocktun bootstrap response body: {err}"),
+            )
+        })?;
+        if payload_reader.position() as usize != payload.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received trailing bytes after vsocktun bootstrap response body",
+            ));
+        }
 
         if queues == 0 {
             return Err(io::Error::new(
@@ -285,12 +245,8 @@ impl BootstrapResponse {
             parent_tun_address,
             enclave_tun_address,
             queues,
-            mtu: if flags & BOOTSTRAP_RESPONSE_FLAG_HAS_MTU != 0 {
-                Some(mtu)
-            } else {
-                None
-            },
-            resolv_conf: body[enclave_end..].to_vec(),
+            mtu,
+            resolv_conf,
         })
     }
 
@@ -306,45 +262,33 @@ impl BootstrapResponse {
             ));
         }
 
-        let parent = self.parent_tun_address.as_bytes();
-        let enclave = self.enclave_tun_address.as_bytes();
-        let parent_len = u16::try_from(parent.len()).map_err(|_| {
+        let body = (
+            self.parent_tun_address.as_str(),
+            self.enclave_tun_address.as_str(),
+            self.queues,
+            self.mtu,
+            self.resolv_conf.as_slice(),
+        );
+        let mut payload = Vec::new();
+        into_writer(&body, &mut payload).map_err(|err| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "bootstrap parent address exceeds maximum encoded length of 65535 bytes",
+                format!("failed to encode vsocktun bootstrap response body: {err}"),
             )
         })?;
-        let enclave_len = u16::try_from(enclave.len()).map_err(|_| {
+        let payload_len = u32::try_from(payload.len()).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "bootstrap enclave address exceeds maximum encoded length of 65535 bytes",
-            )
-        })?;
-        let resolv_len = u32::try_from(self.resolv_conf.len()).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "bootstrap resolv.conf exceeds maximum encoded length of 4294967295 bytes",
+                "bootstrap response body exceeds maximum encoded length of 4294967295 bytes",
             )
         })?;
 
         let mut header = [0_u8; Self::HEADER_LEN];
         header[..BOOTSTRAP_RESPONSE_MAGIC.len()].copy_from_slice(&BOOTSTRAP_RESPONSE_MAGIC);
-        let flags = if self.mtu.is_some() {
-            BOOTSTRAP_RESPONSE_FLAG_HAS_MTU
-        } else {
-            0
-        };
-        write_be_u16(&mut header, Self::FLAGS_OFFSET, flags);
-        write_be_u16(&mut header, Self::QUEUES_OFFSET, self.queues);
-        write_be_u32(&mut header, Self::MTU_OFFSET, self.mtu.unwrap_or_default());
-        write_be_u16(&mut header, Self::PARENT_LEN_OFFSET, parent_len);
-        write_be_u16(&mut header, Self::ENCLAVE_LEN_OFFSET, enclave_len);
-        write_be_u32(&mut header, Self::RESOLV_LEN_OFFSET, resolv_len);
+        write_be_u32(&mut header, Self::PAYLOAD_LEN_OFFSET, payload_len);
 
         writer.write_all(&header).await?;
-        writer.write_all(parent).await?;
-        writer.write_all(enclave).await?;
-        writer.write_all(&self.resolv_conf).await
+        writer.write_all(&payload).await
     }
 }
 
