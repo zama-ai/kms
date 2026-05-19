@@ -238,20 +238,6 @@ pub async fn abort_crs_gen_impl<
     }
 }
 
-/// Outcome of the cancellable CRS-generation phase inside [`crs_gen_background`].
-///
-/// `Generated` is heap-boxed so the success variant doesn't dominate the
-/// enum size (it carries a `CompactPkeCrs` of a few hundred bytes).
-enum CrsOutcome {
-    /// Generation completed successfully — proceed to write_crs.
-    Generated(Box<(tfhe::zk::CompactPkeCrs, CrsGenMetadata)>),
-    /// Generation returned an error — mark the entry as failed.
-    GenError(String),
-    /// Cancellation token fired while generation was still running —
-    /// purge any partial material and mark the entry as aborted.
-    Aborted,
-}
-
 /// Background task for CRS generation.
 ///
 /// Owns the meta-store permit for the entire lifetime of the request. The
@@ -281,22 +267,18 @@ pub(crate) async fn crs_gen_background<
 ) {
     let start = tokio::time::Instant::now();
 
-    // Only the generation is cancellable. Neither arm of this select! owns
-    // the permit — it lives in the surrounding function scope and is consumed
-    // by exactly one of the match arms below.
-    let outcome = tokio::select! {
+    // Race the long-running generation against cancellation.
+    let outcome: Result<(tfhe::zk::CompactPkeCrs, CrsGenMetadata), String> = tokio::select! {
         biased;
-        () = cancel_token.cancelled() => CrsOutcome::Aborted,
+        () = cancel_token.cancelled() => Err(format!("CRS generation aborted for request {req_id}")),
         result = async_generate_crs(
             &sk, params, max_number_bits, eip712_domain, extra_data, req_id, rng,
-        ) => match result {
-            Ok(v) => CrsOutcome::Generated(Box::new(v)),
-            Err(e) => CrsOutcome::GenError(e.to_string()),
-        },
+        ) => result.map_err(|e| e.to_string()),
     };
 
     match outcome {
-        CrsOutcome::Aborted => {
+        Err(msg) => {
+            tracing::error!("{msg}");
             let del_res = crypto_storage
                 .inner
                 .purge_crs_material(req_id, epoch_id)
@@ -314,25 +296,13 @@ pub(crate) async fn crs_gen_background<
                 tracing::error!(m);
                 m
             };
-            let _ = update_err_req_in_meta_store(
-                &mut meta_store.write().await,
-                permit,
-                msg,
-                op_tag,
-            );
+
+            let _ =
+                update_err_req_in_meta_store(&mut meta_store.write().await, permit, msg, op_tag);
         }
-        CrsOutcome::GenError(msg) => {
-            let _ = update_err_req_in_meta_store(
-                &mut meta_store.write().await,
-                permit,
-                msg,
-                op_tag,
-            );
-        }
-        CrsOutcome::Generated(boxed) => {
-            let (pp, crs_info) = *boxed;
+        Ok((pp, crs_info)) => {
             // write_crs consumes the permit via update_meta_store internally
-            // (Ok branch -> update_ok_req_in_meta_store, Err -> update_err).
+            // (Ok → update_ok_req_in_meta_store, Err → update_err).
             if let Err(e) = crypto_storage
                 .inner
                 .write_crs(req_id, epoch_id, pp, crs_info, meta_store, permit, op_tag)

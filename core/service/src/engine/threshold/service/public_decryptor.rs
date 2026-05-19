@@ -563,7 +563,9 @@ impl<
                 };
                 let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
-                    meta_permit.take().expect("permit must still be present on first error"),
+                    meta_permit
+                        .take()
+                        .expect("permit must still be present on first error"),
                     err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
                 );
@@ -602,7 +604,9 @@ impl<
 
             update_req_in_meta_store(
                 &mut meta_store.write().await,
-                meta_permit.take().expect("permit must still be present on success path"),
+                meta_permit
+                    .take()
+                    .expect("permit must still be present on success path"),
                 res,
                 OP_PUBLIC_DECRYPT_REQUEST,
             );

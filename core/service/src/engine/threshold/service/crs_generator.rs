@@ -362,39 +362,6 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        // Helper to record the aborted state by purging partial CRS material
-        // and consuming the permit with an error result.
-        async fn record_aborted<
-            PubS: Storage + Send + Sync + 'static,
-            PrivS: StorageExt + Send + Sync + 'static,
-        >(
-            permit: MetaStorePermit,
-            req_id: &RequestId,
-            epoch_id: &EpochId,
-            meta_store: &Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-            crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-            op_tag: &'static str,
-        ) {
-            let del_res = crypto_storage
-                .inner
-                .purge_crs_material(req_id, epoch_id)
-                .await;
-            let msg = if del_res {
-                let m = format!(
-                    "CRS generation aborted and crs material deleted successfully for request {req_id}"
-                );
-                tracing::info!(m);
-                m
-            } else {
-                let m = format!(
-                    "CRS generation aborted but failed to delete crs material for request {req_id}"
-                );
-                tracing::error!(m);
-                m
-            };
-            let _ =
-                update_err_req_in_meta_store(&mut meta_store.write().await, permit, msg, op_tag);
-        }
 
         let crs_start_timer = Instant::now();
         let pke_params = params
@@ -457,52 +424,35 @@ impl<
             }
         };
 
-        // The inner select! arms don't own `permit`; it stays in this scope
-        // and is consumed in exactly one of the match arms below.
-        enum CrsOutcome {
-            Generated(Box<(tfhe::zk::CompactPkeCrs, CrsGenMetadata)>),
-            GenError(String),
-            Aborted,
-        }
-        let outcome = tokio::select! {
+        // Race the long-running generation against cancellation.
+        let outcome: Result<(tfhe::zk::CompactPkeCrs, CrsGenMetadata), String> = tokio::select! {
             biased;
-            () = cancel_token.cancelled() => CrsOutcome::Aborted,
-            pp = generate_pp => match pp.and_then(|pp| {
-                compute_info_crs(
+            () = cancel_token.cancelled() => Err(format!(
+                "CRS generation of request {req_id} aborted before completion because of a cancellation event"
+            )),
+            pp = generate_pp => pp
+                .and_then(|pp| compute_info_crs(
                     &sk,
                     &DSEP_PUBDATA_CRS,
                     req_id,
                     &pp,
                     &domain_for_compute,
                     extra_data_for_compute,
-                )
-                .map(|info| (pp, info))
-            }) {
-                Ok(v) => CrsOutcome::Generated(Box::new(v)),
-                Err(e) => CrsOutcome::GenError(e.to_string()),
-            },
+                ).map(|info| (pp, info)))
+                .map_err(|e| e.to_string()),
         };
 
         match outcome {
-            CrsOutcome::Aborted => {
+            Err(msg) => {
                 MetricedError::handle_unreturnable_error(
                     op_tag,
                     Some(*req_id),
-                    anyhow::anyhow!(
-                        "CRS generation of request {req_id} exiting before completion because of a cancellation event"
-                    ),
+                    anyhow::anyhow!(msg.clone()),
                 );
-                record_aborted(
-                    permit,
-                    req_id,
-                    epoch_id,
-                    &meta_store,
-                    &crypto_storage,
-                    op_tag,
-                )
-                .await;
-            }
-            CrsOutcome::GenError(msg) => {
+                let _ = crypto_storage
+                    .inner
+                    .purge_crs_material(req_id, epoch_id)
+                    .await;
                 let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     permit,
@@ -510,27 +460,23 @@ impl<
                     op_tag,
                 );
             }
-            CrsOutcome::Generated(boxed) => {
-                let (pp, crs_info) = *boxed;
+            Ok((pp, crs_info)) => {
                 tracing::info!(
                     "CRS generation completed for req_id={req_id} with digest={}, storing the CRS.",
                     hex::encode(crs_info.digest())
                 );
-
                 // write_crs consumes the permit via update_meta_store internally
-                // (Ok branch -> update_ok_req_in_meta_store, Err -> update_err).
                 let res = crypto_storage
                     .inner
                     .write_crs(req_id, epoch_id, pp, crs_info, meta_store, permit, op_tag)
                     .await;
-                let crs_stop_timer = Instant::now();
-                let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+                let elapsed_time = Instant::now().duration_since(crs_start_timer);
                 if let Err(e) = res {
                     tracing::error!("Failed to write CRS for request {req_id}: {e}");
                 } else {
                     tracing::info!(
-                        "CRS stored. CRS ceremony time was {:?} ms",
-                        (elapsed_time).as_millis()
+                        "CRS stored. CRS ceremony time was {} ms",
+                        elapsed_time.as_millis()
                     );
                 }
             }

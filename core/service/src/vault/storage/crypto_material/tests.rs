@@ -1382,7 +1382,9 @@ async fn write_backup_keys_no_vault() {
     let permit =
         add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
     assert_eq!(
-        storage.write_backup_keys(recovery, meta_store, permit).await,
+        storage
+            .write_backup_keys(recovery, meta_store, permit)
+            .await,
         Err(StorageError::Backup),
     );
 }
@@ -1407,9 +1409,16 @@ async fn update_meta_store_storage_outcomes() {
         let permit_writing =
             add_req_to_meta_store(&mut write_guard, &req_writing, TEST_METRIC).unwrap();
         assert!(
-            update_meta_store(Ok(()), &req_ok, 42_u32, &mut write_guard, permit_ok, TEST_METRIC)
-                .await
-                .is_ok()
+            update_meta_store(
+                Ok(()),
+                &req_ok,
+                42_u32,
+                &mut write_guard,
+                permit_ok,
+                TEST_METRIC
+            )
+            .await
+            .is_ok()
         );
         assert_eq!(
             update_meta_store(

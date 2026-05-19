@@ -338,6 +338,7 @@ pub async fn abort_key_gen_impl<
 
 /// Background task for key generation. Owns the meta-store permit for the
 /// entire lifetime of the request.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
