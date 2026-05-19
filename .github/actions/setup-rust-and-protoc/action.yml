@@ -22,10 +22,6 @@ inputs:
     description: Whether to install Protoc
     required: false
     default: "true"
-  protoc-version:
-    description: Protoc version selector
-    required: false
-    default: "34.1"
 
 
 runs:
@@ -42,7 +38,7 @@ runs:
     - name: Install Protoc
       if: ${{ inputs.setup-protoc == 'true' }}
       env:
-        PROTOC_VERSION: ${{ inputs.protoc-version }}
+        PROTOC_VERSION: "34.1"
         PROTOC_SHA256: af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
       shell: bash
       run: |
@@ -51,4 +47,4 @@ runs:
         curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ARCHIVE}"
         echo "${PROTOC_SHA256}  ${PROTOC_ARCHIVE}" | sha256sum --check --strict
         unzip "${PROTOC_ARCHIVE}" -d "$HOME/.local"
-        export PATH="$PATH:$HOME/.local/bin"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
