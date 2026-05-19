@@ -79,14 +79,6 @@ data:
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     [enclave_bootstrap]
     web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
-    resolv_conf_port = {{ int .Values.kmsCore.nitroEnclave.resolvConfPort }}
-    [enclave_bootstrap.network_tunnel]
-    subnet = {{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
-    parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
-    enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
-    vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
-    queue_count = {{ include "kmsNetworkTunnelQueueCount" . | int }}
-    tokio_worker_threads = {{ include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
     {{- end }}
   kms-server.toml: |
     [service]
@@ -98,14 +90,6 @@ data:
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     [enclave_bootstrap]
     web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
-    resolv_conf_port = {{ int .Values.kmsCore.nitroEnclave.resolvConfPort }}
-    [enclave_bootstrap.network_tunnel]
-    subnet = {{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
-    parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
-    enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
-    vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
-    queue_count = {{ include "kmsNetworkTunnelQueueCount" . | int }}
-    tokio_worker_threads = {{ include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
     {{- end }}
 
     {{ if .Values.kmsCore.thresholdMode.enabled }}

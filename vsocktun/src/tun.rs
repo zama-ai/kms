@@ -2,7 +2,8 @@
 //!
 //! This module is intentionally narrow: it turns the CLI-facing tunnel
 //! configuration into a multiqueue `tun-rs` device and hands queue handles back
-//! to the session runner. Route setup, NAT, and DNS stay outside this crate in
+//! to the session runner. Route setup and resolver installation happen in the
+//! main session runner, while NAT and DNS forwarding stay outside this crate in
 //! the surrounding shell scripts.
 
 use anyhow::{Context, Result, bail};
@@ -51,6 +52,16 @@ impl Ipv4Cidr {
     pub(crate) fn prefix_len(&self) -> u8 {
         self.prefix_len
     }
+
+    /// Returns the network address covered by this CIDR.
+    pub(crate) fn network_address(&self) -> Ipv4Addr {
+        let mask = if self.prefix_len == 0 {
+            0
+        } else {
+            u32::MAX << (32 - u32::from(self.prefix_len))
+        };
+        Ipv4Addr::from(u32::from(self.address) & mask)
+    }
 }
 
 /// The long-lived local TUN interface together with its queue handles.
@@ -78,49 +89,23 @@ impl TunDevice {
             bail!("queue count must be at least one");
         }
 
-        let mtu = match mtu {
-            Some(mtu) => u16::try_from(mtu).context("MTU must fit in u16 for tun-rs")?,
-            None => 1500,
-        };
-
-        let mut builder = DeviceBuilder::new()
-            .name(name)
-            .layer(Layer::L3)
-            .ipv4(cidr.address(), cidr.prefix_len(), None)
-            .mtu(mtu)
-            .offload(true)
-            .packet_information(false);
-
-        if queue_count > 1 {
-            builder = builder.multi_queue(true);
+        if let Some(mtu) = mtu {
+            let _ = u16::try_from(mtu).context("MTU must fit in u16 for tun-rs")?;
         }
 
+        let builder = base_builder(name, Some(cidr), mtu, queue_count > 1);
         let first = builder
             .build_sync()
             .with_context(|| format!("failed to build tun-rs device '{name}'"))?;
-
-        let mut sync_queues = Vec::with_capacity(queue_count);
-        sync_queues.push(first);
-        for _ in 1..queue_count {
-            let cloned = sync_queues[0]
+        let uses_vnet_hdr = first.tcp_gso();
+        let mut queues = Vec::with_capacity(queue_count);
+        queues.push(AsyncDevice::new(first).context("failed to make TUN queue 0 asynchronous")?);
+        for queue in 1..queue_count {
+            let cloned = queues[0]
                 .try_clone()
-                .with_context(|| format!("failed to clone tun-rs queue for '{name}'"))?;
-            sync_queues.push(cloned);
+                .with_context(|| format!("failed to clone tun-rs queue {queue} for '{name}'"))?;
+            queues.push(cloned);
         }
-
-        let queues = sync_queues
-            .into_iter()
-            .enumerate()
-            .map(|(queue, device)| {
-                AsyncDevice::new(device)
-                    .with_context(|| format!("failed to make TUN queue {queue} asynchronous"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let uses_vnet_hdr = queues
-            .first()
-            .expect("TunDevice::create should always build at least one queue")
-            .tcp_gso();
 
         Ok(Self {
             queues: Mutex::new(queues),
@@ -183,6 +168,32 @@ impl TunDevice {
     }
 }
 
+fn base_builder(
+    name: &str,
+    cidr: Option<&Ipv4Cidr>,
+    mtu: Option<u32>,
+    multi_queue: bool,
+) -> DeviceBuilder {
+    let mtu = match mtu {
+        Some(mtu) => u16::try_from(mtu).expect("MTU should fit in u16 before builder creation"),
+        None => 1500,
+    };
+
+    let mut builder = DeviceBuilder::new()
+        .name(name)
+        .layer(Layer::L3)
+        .mtu(mtu)
+        .offload(true)
+        .packet_information(false);
+    if let Some(cidr) = cidr {
+        builder = builder.ipv4(cidr.address(), cidr.prefix_len(), None);
+    }
+    if multi_queue {
+        builder = builder.multi_queue(true);
+    }
+    builder
+}
+
 #[cfg(test)]
 mod tests {
     use super::Ipv4Cidr;
@@ -204,5 +215,13 @@ mod tests {
         let err =
             Ipv4Cidr::parse("10.118.0.2/33").expect_err("CIDR should reject prefixes over 32");
         assert!(err.to_string().contains("at most 32"));
+    }
+
+    #[test]
+    fn computes_network_address() {
+        // Route installation needs the subnet destination, not just the host IP,
+        // so this verifies we derive it consistently from the configured CIDR.
+        let cidr = Ipv4Cidr::parse("10.118.0.2/24").expect("CIDR should parse");
+        assert_eq!(cidr.network_address(), Ipv4Addr::new(10, 118, 0, 0));
     }
 }

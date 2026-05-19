@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+route_manager.workspace = true
 tokio.workspace = true
 tokio-vsock.workspace = true
 tracing.workspace = true
