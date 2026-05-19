@@ -260,13 +260,9 @@ The reproducible test scripts use a `cleanup_docker` helper to shutdown the expe
 
 The `test_scripts/` folder contains the bash scripts that drive a cluster
 through a full PRSS (if applicable) → preproc → DKG → (CRS, reshare) → decryption pipeline.
-Two flavours are shipped:
-
-- The legacy `tfhe_test_small_session.sh` / `tfhe_test_large_session.sh` and
-  `bgv_test_script_{fake,real}_dkg.sh` scripts — kept around for ad-hoc use.
-- The reproducible scripts that pin a fixed RNG seed and check generated keys
-  / CRS against known SHA-256 hashes. These are the ones used by the NIST
-  flow:
+It contains the reproducible scripts that pin a fixed RNG seed and check
+generated keys / CRS against known SHA-256 hashes. These are the ones used by
+the NIST flow:
 
   - `tfhe_reproducible_common.sh` — shared logic, sourced by the wrappers.
   - `tfhe_reproducible_small_session.sh` (4 parties, t = 1, test parameters,
