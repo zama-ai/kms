@@ -175,7 +175,7 @@ class AggregatedOperation:
     ``max_peak_mem_B`` and ``avg_peak_mem_B`` are populated only when every
     party file for this operation reported a ``peak_mem(B)`` field — i.e. only
     for ``-mem`` runs. Both are ``None`` for non-mem runs.  They are not
-    divided by num_ctxts: memory is not a cumulative quantity wrt NUM_CTXTS.
+    divided by num_ctxts: memory runs are always done with 1 ctxt as they are super slow.
     """
 
     label: str
@@ -604,62 +604,6 @@ def _peak_mem_kb_for(
     if mem_op is None:
         return -1, -1
     return _b_to_kb(mem_op.max_peak_mem_B), _b_to_kb(mem_op.avg_peak_mem_B)
-
-
-# ---------------------------------------------------------------------------
-# Legacy per-run CSV emission
-# ---------------------------------------------------------------------------
-#
-# The functions below were used by the previous entry point to write one CSV
-# per run-name (e.g. ``tfhe-bench-run-4p_4p_TestParams.csv``).  The current
-# entry point produces the new per-iteration aggregated CSVs and does NOT call
-# these helpers, but they are kept here as building blocks in case a caller
-# wants the per-run shape back.
-
-
-def aggregated_to_per_run_rows(
-    aggregated: List[AggregatedOperation],
-    complete_run_index: int,
-    source_run_index: int,
-) -> List[List[object]]:
-    """Build the rows of the legacy per-run CSV from one run's aggregated metrics."""
-    return [
-        [
-            complete_run_index,
-            source_run_index + 1,
-            op_idx + 1,
-            op.label,
-            op.reported_name,
-            op.avg_num_sessions,
-            op.avg_num_rounds,
-            op.avg_network_sent_B,
-            op.avg_network_received_B,
-            op.avg_time_active_ms,
-        ]
-        for op_idx, op in enumerate(aggregated)
-    ]
-
-
-def write_per_run_csv(path: str, rows: List[List[object]]) -> None:
-    """Legacy per-run CSV writer (not called by ``main``)."""
-    with open(path, "w", encoding="utf-8", newline="") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(
-            [
-                "run_index",
-                "source_run_index",
-                "operation_index",
-                "operation_label",
-                "reported_name",
-                "avg_num_sessions",
-                "avg_num_rounds",
-                "avg_network_sent_B",
-                "avg_network_received_B",
-                "avg_time_active_ms",
-            ]
-        )
-        for row in rows:
-            writer.writerow(row)
 
 
 # ---------------------------------------------------------------------------
