@@ -5,7 +5,9 @@ and one or more VSOCK streams.
 
 It is designed for the Nitro Enclave deployment in this repository, where the
 enclave gets an IP address on a private point-to-point subnet and all of its
-traffic is forwarded through the parent instance over VSOCK.
+traffic is forwarded through the parent instance over VSOCK. The parent now
+also serves the enclave's tunnel CIDR, shard count, MTU, and rewritten
+resolver config over an initial bootstrap exchange on that same VSOCK port.
 
 ## Architecture
 
@@ -61,8 +63,10 @@ templates used by the KMS deployment.
 
 ### Parent mode
 
-The parent side creates the TUN device once and listens for shard streams from
-the enclave.
+The parent side creates the TUN device once, serves bootstrap requests on the
+shared VSOCK port, and then listens for shard streams from the enclave. The
+parent derives the enclave-side CIDR from `--tun-address` and
+`--enclave-address` before returning it in bootstrap.
 
 ```bash
 vsocktun parent \
@@ -76,8 +80,9 @@ vsocktun parent \
 
 ### Enclave mode
 
-The enclave side creates its TUN device once and repeatedly dials the parent
-until a full session is established.
+The enclave side first bootstraps its TUN address, queue count, MTU, routes,
+and resolver config from the parent, then creates its TUN device once and
+repeatedly dials the parent until a full session is established.
 
 ```bash
 vsocktun enclave \

@@ -1,6 +1,10 @@
 //! `vsocktun` is a point-to-point packet relay between a Linux TUN device and
 //! a set of VSOCK connections.
 //!
+//! Before packet forwarding starts, the enclave performs a one-shot bootstrap
+//! exchange on the same VSOCK port to learn the parent-chosen tunnel CIDR,
+//! queue count, MTU, and resolver contents it should install locally.
+//!
 //! The relay is organized around two concepts:
 //! - a *session*, which is one logical tunnel between enclave and parent
 //! - a set of *shards*, where each shard pairs one TUN queue with one VSOCK
@@ -122,6 +126,8 @@ struct SupervisedWorkersOutcome<ReturnedQueue> {
     result: Result<()>,
 }
 
+/// Ensures a shard's TUN queue is returned to the session supervisor even if
+/// that worker exits early during cancellation or error handling.
 struct QueueReturnGuard<ReturnedQueue> {
     shard: usize,
     returned_queue: Option<ReturnedQueue>,
@@ -310,9 +316,9 @@ where
 ///
 /// The enclave first fetches its tunnel configuration from the parent, creates
 /// the local TUN device, installs routes and resolver state, and then
-/// repeatedly attempts to establish a complete multi-shard session.
-/// Reconnect policy lives here so shard workers can stay focused on packet
-/// forwarding.
+/// repeatedly attempts to establish a complete multi-shard session using that
+/// bootstrapped configuration. Reconnect policy lives here so shard workers can
+/// stay focused on packet forwarding.
 async fn run_enclave<Shutdown>(args: EnclaveArgs, shutdown: Shutdown) -> Result<()>
 where
     Shutdown: Future<Output = ()>,
@@ -809,6 +815,11 @@ async fn write_to_tun(
     }
 }
 
+/// Replaces the enclave resolver file with the parent-rewritten bootstrap
+/// payload.
+///
+/// A temporary sibling file plus `rename` keeps the handoff atomic so the
+/// enclave does not observe a partially written `resolv.conf` during startup.
 fn write_bootstrapped_resolv_conf(contents: &[u8]) -> Result<()> {
     let path = enclave_resolv_conf_target_path();
     let Some(parent) = path.parent() else {
@@ -845,6 +856,11 @@ fn write_bootstrapped_resolv_conf(contents: &[u8]) -> Result<()> {
     })
 }
 
+/// Installs the enclave-side routes implied by the bootstrapped tunnel CIDR.
+///
+/// The connected subnet route keeps the tunnel prefix local to the TUN device,
+/// while the default route points all other traffic at the parent-side tunnel
+/// IP that the bootstrap response designated as the enclave gateway.
 fn configure_enclave_routes(
     tun_name: &str,
     parent_tun_address: &Ipv4Cidr,
