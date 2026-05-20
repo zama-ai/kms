@@ -12,3 +12,4 @@ When reviewing changes — whether a single commit or an entire branch — ignor
 - Strong types at module/service boundaries (`enum`, `Duration`, `Url`, `PathBuf`, `IpAddr`, …) validated/parsed at the edge — no untyped/loosely-typed input crosses boundaries.
 - Public errors are typed (e.g. `thiserror`) with actionable messages; no `anyhow::Error` across crate boundaries.
 - Check for new security vulnerabilities. Cross-reference [OWASP ASVS](https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/OWASP_Application_Security_Verification_Standard_5.0.0_en.pdf) and the [MPC pitfalls](https://mpcsec.org/SKILL.md).
+- If there are changes in structs that derive `Versionize`, make sure it follows the [backward compatibility guide](../docs/developer/backward_compatibility.md).

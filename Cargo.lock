@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.13.20"
+version = "0.14.0"
 dependencies = [
  "bincode 1.3.3",
  "ron 0.10.1",
@@ -2081,6 +2081,39 @@ dependencies = [
  "libc",
  "once_cell",
  "serde",
+]
+
+[[package]]
+name = "camino"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "cargo-platform"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "semver 1.0.27",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -3030,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "error-utils"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "tracing",
@@ -3065,7 +3098,7 @@ dependencies = [
 
 [[package]]
 name = "experiments"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "aes-prng",
  "anyhow",
@@ -3386,7 +3419,7 @@ checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
 
 [[package]]
 name = "generate-test-material"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4217,7 +4250,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4243,6 +4276,7 @@ dependencies = [
  "bc2wrap",
  "bincode 2.0.1",
  "bip39",
+ "cargo_metadata",
  "cbc",
  "cfg-if",
  "ciborium",
@@ -4279,6 +4313,7 @@ dependencies = [
  "signature 2.2.0",
  "strum",
  "strum_macros",
+ "syn 2.0.114",
  "sysinfo",
  "tempfile",
  "test-utils",
@@ -4306,6 +4341,7 @@ dependencies = [
  "trait-variant",
  "url",
  "validator",
+ "walkdir",
  "wasm-bindgen",
  "x509-parser",
  "zeroize",
@@ -4313,7 +4349,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-client"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -4359,7 +4395,7 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4387,7 +4423,7 @@ dependencies = [
 
 [[package]]
 name = "kms-health-check"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4912,7 +4948,7 @@ dependencies = [
 
 [[package]]
 name = "observability"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "axum",
@@ -6740,6 +6776,10 @@ name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "semver-parser"
@@ -7358,7 +7398,7 @@ dependencies = [
 
 [[package]]
 name = "test-utils"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -7369,11 +7409,11 @@ dependencies = [
 
 [[package]]
 name = "test-utils-cc"
-version = "0.13.20-0"
+version = "0.14.0-0"
 
 [[package]]
 name = "test-utils-service"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -7544,7 +7584,7 @@ dependencies = [
 
 [[package]]
 name = "thread-handles"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "error-utils",
@@ -7574,7 +7614,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-algebra"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "aes-prng",
  "anyhow",
@@ -7601,7 +7641,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-bgv"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "aes-prng",
  "anyhow",
@@ -7629,7 +7669,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-execution"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "aes",
  "aes-prng",
@@ -7677,7 +7717,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-hashing"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -7687,7 +7727,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-networking"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7724,7 +7764,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-types"
-version = "0.13.20-0"
+version = "0.14.0-0"
 dependencies = [
  "anyhow",
  "async-trait",
