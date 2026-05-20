@@ -140,6 +140,7 @@ jobs:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: llvm-tools-preview, llvm-tools
           rust-cache: "false"
+          setup-cargo-nextest: "true"
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -153,9 +154,9 @@ jobs:
           # save on main and on internal PRs (not forks).
           save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
-      - name: Install nextest
-        run: |
-          cargo install cargo-nextest@0.9.133 --locked --force
+      # - name: Install nextest
+      #   run: |
+      #     cargo install cargo-nextest@0.9.133 --locked --force
 
       # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
       - name: Setup Redis
@@ -249,7 +250,7 @@ jobs:
           rm -rf ./test-material
           ln -s "${EFS_TEST_MATERIAL_PATH}" ./test-material
           echo "Linked ./test-material -> ${EFS_TEST_MATERIAL_PATH}"
-          du -sh ./test-material || true
+          du -shL ./test-material || true
 
       # Build kms-custodian binary required by integration tests.
       # TODO(dp): retire this step. Only two test files use the binary:

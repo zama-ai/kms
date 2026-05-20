@@ -22,7 +22,10 @@ inputs:
     description: Whether to install Protoc
     required: false
     default: "true"
-
+  setup-cargo-nextest:
+    description: Whether to install cargo-nextest
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -50,3 +53,9 @@ runs:
         mkdir -p "${HOME}/.local"
         unzip -o "${PROTOC_ARCHIVE}" -d "${HOME}/.local"
         protoc --version
+
+    - name: Install cargo-nextest
+      if: ${{ inputs.setup-cargo-nextest == 'true' }}
+      uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
+      with:
+        tool: cargo-nextest@0.9.133
