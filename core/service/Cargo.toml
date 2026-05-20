@@ -149,7 +149,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile"]
+testing = ["dep:tempfile", "threshold-execution/testing"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",
@@ -183,8 +183,8 @@ slow_tests = ["testing"]
 wasm_tests = ["testing"]
 s3_tests = ["testing"]
 insecure = [
+    "testing",
     "kms-grpc/insecure",
-    "threshold-execution/testing",
     "threshold-networking/testing",
-    "dep:nsm-nitro-enclave-utils"
+    "dep:nsm-nitro-enclave-utils",
 ]
