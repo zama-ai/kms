@@ -27,6 +27,8 @@ jobs:
       pull-requests: write
       actions: read
       contents: read
+    outputs:
+      efs-test-material-path: ${{ steps.generate-test-material.outputs.efs-test-material-path }}
     runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache+efs
     steps:
       - name: Setup Runs-on
@@ -69,6 +71,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
       - name: Generate Test Material
+        id: generate-test-material
         env:
           EFS_ROOT: /mnt/efs/test-material
         run: |
@@ -85,7 +88,7 @@ jobs:
           fi
 
           du -sh "${EFS_ROOT}" || true
-          echo "efs_test_material_path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
+          echo "efs-test-material-path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
 
   test-matrix:
     name: new_main/${{ matrix.job_name }}
