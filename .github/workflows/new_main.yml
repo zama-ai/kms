@@ -18,8 +18,78 @@ permissions:
   packages: read
 
 jobs:
+  generate-test-material:
+    name: new_main/generate-test-material
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache+efs
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      ############################################################################
+      # Rust toolchain setup
+      #
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: llvm-tools-preview, llvm-tools
+          rust-cache: "false"
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          # Keep a stable workspace->target mapping for this monorepo layout.
+          workspaces: |
+            . -> target
+          # Share cache across jobs/workflows that build the same dependency set.
+          shared-key: kms-rust
+          # Temporary policy for cache validation:
+          # save on main and on internal PRs (not forks).
+          save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+
+      - name: Generate Test Material
+        env:
+          EFS_ROOT: /mnt/efs/test-material
+        run: |
+          READY_FILE="${EFS_ROOT}/ready"
+          mkdir -p "${EFS_ROOT}"
+          if [ -f "${READY_FILE}" ]; then
+            echo "Reusing existing test material at ${EFS_ROOT}"
+          else
+            # Build the generator in Cargo's built-in `test` profile so later
+            # test jobs can reuse more compiled artifacts from the rust cache.
+            echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ${EFS_ROOT} --verbose --profile insecure,secure --parties 4,13"
+            cargo run --profile test -p generate-test-material -- --output "${EFS_ROOT}" --verbose --profile insecure,secure --parties 4,13
+            touch "${READY_FILE}"
+          fi
+
+          du -sh "${EFS_ROOT}" || true
+          echo "efs_test_material_path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
+
   test-matrix:
     name: new_main/${{ matrix.job_name }}
+    needs: [generate-test-material]
     permissions:
       checks: write
       packages: read
@@ -43,6 +113,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-threshold-p2
             crate_names: '-p kms-core-client'
             args_tests: '--features threshold_tests --partition count:2/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
@@ -54,6 +125,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-threshold-p3
             crate_names: '-p kms-core-client'
             args_tests: '--features threshold_tests --partition count:3/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
@@ -65,6 +137,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-centralized-p1
             crate_names: '-p kms-core-client'
             args_tests: '--features testing --partition count:1/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
@@ -76,6 +149,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-centralized-p2
             crate_names: '-p kms-core-client'
             args_tests: '--features testing --partition count:2/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
@@ -87,6 +161,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-centralized-p3
             crate_names: '-p kms-core-client'
             args_tests: '--features testing --partition count:3/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
@@ -98,6 +173,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-unit-p1
             crate_names: '-p kms-core-client'
             args_tests: '--features testing --partition count:1/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
@@ -109,6 +185,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-unit-p2
             crate_names: '-p kms-core-client'
             args_tests: '--features testing --partition count:2/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
@@ -120,6 +197,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-unit-p3
             crate_names: '-p kms-core-client'
             args_tests: '--features testing --partition count:3/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
@@ -131,6 +209,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-client-insecure
             crate_names: '-p kms-core-client'
             args_tests: '--features threshold_tests --partition count:1/1 -- test_threshold_insecure --skip test_threshold_insecure_default_keygen --skip test_threshold_mpc_context_switch_6_docker'
@@ -142,6 +221,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '1'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
 
           # Core service - aggressively sharded by family and partition.
           - job_name: core-service-lib-p1
@@ -155,6 +235,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p2
             crate_names: '-p kms'
             args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:2/6 --lib -- --skip nightly'
@@ -166,6 +247,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p3
             crate_names: '-p kms'
             args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:3/6 --lib -- --skip nightly'
@@ -177,6 +259,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p4
             crate_names: '-p kms'
             args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:4/6 --lib -- --skip nightly'
@@ -188,6 +271,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p5
             crate_names: '-p kms'
             args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:5/6 --lib -- --skip nightly'
@@ -199,6 +283,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p6
             crate_names: '-p kms'
             args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:6/6 --lib -- --skip nightly'
@@ -210,6 +295,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-test-p1
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:1/4 -- --skip threshold --skip nightly'
@@ -221,6 +307,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-test-p2
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:2/4 -- --skip threshold --skip nightly'
@@ -232,6 +319,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-test-p3
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:3/4 -- --skip threshold --skip nightly'
@@ -243,6 +331,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-test-p4
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:4/4 -- --skip threshold --skip nightly'
@@ -254,6 +343,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-threshold-p1
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:1/3 -- threshold -- --skip default_user_decryption_threshold --skip nightly'
@@ -265,6 +355,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '6'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-threshold-p2
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:2/3 -- threshold -- --skip default_user_decryption_threshold --skip nightly'
@@ -276,6 +367,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '6'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-threshold-p3
             crate_names: '-p kms'
             args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:3/3 -- threshold -- --skip default_user_decryption_threshold --skip nightly'
@@ -287,6 +379,7 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '6'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
 
           # Core threshold.
           - job_name: core-threshold-lib-p1
@@ -300,6 +393,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '3'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-threshold-lib-p2
             crate_names: '-p experiments'
             args_tests: '--partition count:2/3 --lib'
@@ -311,6 +405,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '3'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-threshold-lib-p3
             crate_names: '-p experiments'
             args_tests: '--partition count:3/3 --lib'
@@ -322,6 +417,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '3'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-threshold-redis
             crate_names: '-p experiments'
             args_tests: '--partition count:1/1 --test integration_redis'
@@ -333,6 +429,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '1'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
 
           # Core gRPC.
           - job_name: core-grpc-p1
@@ -346,6 +443,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '3'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-grpc-p2
             crate_names: '-p kms-grpc'
             args_tests: '--partition count:2/3 --all-features'
@@ -357,6 +455,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '3'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-grpc-p3
             crate_names: '-p kms-grpc'
             args_tests: '--partition count:3/3 --all-features'
@@ -368,6 +467,7 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '3'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: ${{ matrix.crate_names }}
@@ -380,6 +480,7 @@ jobs:
       runner-volume: ${{ matrix.runner_volume }}
       rust-log-level: ${{ matrix.rust_log_level }}
       nextest-test-threads: ${{ matrix.nextest_threads }}
+      efs-test-material-path: ${{ matrix.efs-test-material-path }}
     secrets: inherit
 
   test-reporter:

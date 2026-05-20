@@ -40,6 +40,13 @@ on:
         type: boolean
         required: false
         default: false
+      efs-test-material-path:
+        # Optional absolute path to pre-generated test material on EFS.
+        # Example: /mnt/efs/kms-test-material/<run-id>/insecure_secure_4_13
+        # When provided, this workflow links ./test-material to that path.
+        type: string
+        required: false
+        default: ''
       lfs:
         # When true, pull LFS objects on checkout. Only `-p kms`
         # backward_compatibility_*.rs tests need them (~24MB).
@@ -88,7 +95,7 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=${{ inputs.runner-volume }}/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=${{ inputs.runner-volume }}/extras=s3-cache+efs
 
     steps:
       - name: Setup Runs-on
@@ -194,35 +201,55 @@ jobs:
       # Generate the full insecure+secure test material set for parties 4, 13.
       # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
       # into per-test tempdirs as reflinks (CoW) instead of byte copies.
-      - name: Generate Test Material
-        if: ${{ ! inputs.skip-test-material }}
+      # - name: Generate Test Material
+      #   if: ${{ ! inputs.skip-test-material }}
+      #   run: |
+      #     sudo apt-get update -qq
+      #     sudo apt-get install -y -qq btrfs-progs
+      #     sudo truncate -s 110G /tmp/cow-scratch.img
+      #     sudo mkfs.btrfs -q /tmp/cow-scratch.img
+      #     sudo mkdir -p /mnt/cow-scratch
+      #     sudo mount -o loop /tmp/cow-scratch.img /mnt/cow-scratch
+      #     sudo chown "$USER" /mnt/cow-scratch
+      #     mkdir -p /mnt/cow-scratch/test-material /mnt/cow-scratch/tmp
+      #     rm -rf ./test-material
+      #     ln -s /mnt/cow-scratch/test-material ./test-material
+      #     echo "TMPDIR=/mnt/cow-scratch/tmp" >> "$GITHUB_ENV"
+
+      #     # TODO(dp): keep?
+      #     # Confirms btrfs is mounted at /mnt/cow-scratch (vs falling back to ext4
+      #     # silently). If this line is missing or shows a non-btrfs FS, the
+      #     # preamble didn't take effect.
+      #     findmnt /mnt/cow-scratch
+
+      #     # Build the generator in Cargo's built-in `test` profile so nextest
+      #     # can reuse more of the same optimized artifacts later in the job.
+      #     echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,13"
+      #     cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,13
+
+      #     # TODO(dp): keep?
+      #     # Confirms material landed on the btrfs mount (via the symlink). Expect ~20-80GB.
+      #     du -sh /mnt/cow-scratch/test-material
+
+      - name: EFS test material path not provided
+        if: ${{ ! inputs.skip-test-material && inputs.efs-test-material-path == '' }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq btrfs-progs
-          sudo truncate -s 110G /tmp/cow-scratch.img
-          sudo mkfs.btrfs -q /tmp/cow-scratch.img
-          sudo mkdir -p /mnt/cow-scratch
-          sudo mount -o loop /tmp/cow-scratch.img /mnt/cow-scratch
-          sudo chown "$USER" /mnt/cow-scratch
-          mkdir -p /mnt/cow-scratch/test-material /mnt/cow-scratch/tmp
+          echo "::warning::efs-test-material-path not provided; this job will not link test material from EFS."
+
+      - name: Link pre-generated test material from EFS
+        if: ${{ ! inputs.skip-test-material && inputs.efs-test-material-path != '' }}
+        env:
+          EFS_TEST_MATERIAL_PATH: ${{ inputs.efs-test-material-path }}
+        run: |
+          if [ ! -d "${EFS_TEST_MATERIAL_PATH}" ]; then
+            echo "::error::EFS test material path does not exist: ${EFS_TEST_MATERIAL_PATH}"
+            exit 1
+          fi
+
           rm -rf ./test-material
-          ln -s /mnt/cow-scratch/test-material ./test-material
-          echo "TMPDIR=/mnt/cow-scratch/tmp" >> "$GITHUB_ENV"
-
-          # TODO(dp): keep?
-          # Confirms btrfs is mounted at /mnt/cow-scratch (vs falling back to ext4
-          # silently). If this line is missing or shows a non-btrfs FS, the
-          # preamble didn't take effect.
-          findmnt /mnt/cow-scratch
-
-          # Build the generator in Cargo's built-in `test` profile so nextest
-          # can reuse more of the same optimized artifacts later in the job.
-          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,13"
-          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,13
-
-          # TODO(dp): keep?
-          # Confirms material landed on the btrfs mount (via the symlink). Expect ~20-80GB.
-          du -sh /mnt/cow-scratch/test-material
+          ln -s "${EFS_TEST_MATERIAL_PATH}" ./test-material
+          echo "Linked ./test-material -> ${EFS_TEST_MATERIAL_PATH}"
+          du -sh ./test-material || true
 
       # Build kms-custodian binary required by integration tests.
       # TODO(dp): retire this step. Only two test files use the binary:
@@ -293,13 +320,13 @@ jobs:
       # tempdirs (apparent) against the disk blocks used on the btrfs mount.
       # If reflinks worked, apparent >> used (e.g., 200 GB logical / 25 GB used).
       # If they didn't, apparent ≈ used and we got byte copies for nothing.
-      - name: Verify CoW reflinks
-        if: ${{ always() && ! inputs.skip-test-material }}
-        run: |
-          echo "--- logical size of per-test tempdirs (apparent) ---"
-          du -sh --apparent-size /mnt/cow-scratch/tmp 2>/dev/null || echo "no tempdirs (tests didn't run?)"
-          echo "--- actual blocks used on the btrfs mount ---"
-          df -h /mnt/cow-scratch
+      # - name: Verify CoW reflinks
+      #   if: ${{ always() && ! inputs.skip-test-material }}
+      #   run: |
+      #     echo "--- logical size of per-test tempdirs (apparent) ---"
+      #     du -sh --apparent-size /mnt/cow-scratch/tmp 2>/dev/null || echo "no tempdirs (tests didn't run?)"
+      #     echo "--- actual blocks used on the btrfs mount ---"
+      #     df -h /mnt/cow-scratch
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
