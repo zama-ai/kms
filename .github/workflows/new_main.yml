@@ -1,0 +1,375 @@
+name: new_main
+
+on:
+  schedule:
+    - cron: '0 0 * * 1-5'
+  pull_request:
+  push:
+    branches: ['main', 'release/*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  packages: read
+
+jobs:
+  test-matrix:
+    name: new_main/${{ matrix.job_name }}
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Core client - aggressively sharded.
+          - job_name: core-client-threshold-p1
+            crate_names: '-p kms-core-client'
+            args_tests: '--features threshold_tests --partition count:1/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-threshold-p2
+            crate_names: '-p kms-core-client'
+            args_tests: '--features threshold_tests --partition count:2/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-threshold-p3
+            crate_names: '-p kms-core-client'
+            args_tests: '--features threshold_tests --partition count:3/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-centralized-p1
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:1/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-centralized-p2
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:2/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-centralized-p3
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:3/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-unit-p1
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:1/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-unit-p2
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:2/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-unit-p3
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:3/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-insecure
+            crate_names: '-p kms-core-client'
+            args_tests: '--features threshold_tests --partition count:1/1 -- test_threshold_insecure --skip test_threshold_insecure_default_keygen --skip test_threshold_mpc_context_switch_6_docker'
+            run_minio: false
+            run_redis: false
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '1'
+
+          # Core service - aggressively sharded by family and partition.
+          - job_name: core-service-lib-p1
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:1/4 --lib -- --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p2
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:2/4 --lib -- --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p3
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:3/4 --lib -- --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p4
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:4/4 --lib -- --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p1
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:1/4 -- --skip threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p2
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:2/4 -- --skip threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p3
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:3/4 -- --skip threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p4
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:4/4 -- --skip threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-threshold-p1
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:1/3 -- threshold -- --skip default_user_decryption_threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '6'
+          - job_name: core-service-threshold-p2
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:2/3 -- threshold -- --skip default_user_decryption_threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '6'
+          - job_name: core-service-threshold-p3
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure --partition count:3/3 -- threshold -- --skip default_user_decryption_threshold --skip nightly'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '6'
+
+          # Core threshold.
+          - job_name: core-threshold-lib-p1
+            crate_names: '-p experiments'
+            args_tests: '--partition count:1/3 --lib'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-threshold-lib-p2
+            crate_names: '-p experiments'
+            args_tests: '--partition count:2/3 --lib'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-threshold-lib-p3
+            crate_names: '-p experiments'
+            args_tests: '--partition count:3/3 --lib'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-threshold-redis
+            crate_names: '-p experiments'
+            args_tests: '--partition count:1/1 --test integration_redis'
+            run_minio: false
+            run_redis: true
+            skip_test_material: true
+            lfs: false
+            runs_on: '8cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '1'
+
+          # Core gRPC.
+          - job_name: core-grpc-p1
+            crate_names: '-p kms-grpc'
+            args_tests: '--partition count:1/3 --all-features'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-grpc-p2
+            crate_names: '-p kms-grpc'
+            args_tests: '--partition count:2/3 --all-features'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-grpc-p3
+            crate_names: '-p kms-grpc'
+            args_tests: '--partition count:3/3 --all-features'
+            run_minio: false
+            run_redis: false
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      crate-names: ${{ matrix.crate_names }}
+      args-tests: ${{ matrix.args_tests }}
+      run-minio: ${{ matrix.run_minio }}
+      run-redis: ${{ matrix.run_redis }}
+      skip-test-material: ${{ matrix.skip_test_material }}
+      lfs: ${{ matrix.lfs }}
+      runs-on: ${{ matrix.runs_on }}
+      runner-volume: ${{ matrix.runner_volume }}
+      rust-log-level: ${{ matrix.rust_log_level }}
+      nextest-test-threads: ${{ matrix.nextest_threads }}
+    secrets: inherit
+
+  test-reporter:
+    name: new_main/test-reporter
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: [test-matrix]
+    uses: ./.github/workflows/test-reporter.yml
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    secrets: inherit
