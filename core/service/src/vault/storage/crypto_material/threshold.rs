@@ -15,7 +15,7 @@ use crate::{
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
         utils::verify_public_key_digest_from_bytes,
     },
-    util::meta_store::{MetaStore, MetaStorePermit, ensure_meta_store_request_pending},
+    util::meta_store::{MetaStore, MetaStorePermit},
     vault::{
         Vault,
         storage::{
@@ -171,10 +171,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         permit: MetaStorePermit,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, key_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let meta_res = threshold_fhe_keys.meta_data.clone();
         let res = self
             .inner

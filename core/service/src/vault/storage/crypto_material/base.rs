@@ -4,8 +4,7 @@
 //! both centralized and threshold KMS variants.
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
-    MetaStorePermit, ensure_meta_store_request_pending, update_err_req_in_meta_store,
-    update_ok_req_in_meta_store,
+    MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
@@ -314,10 +313,6 @@ where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, req_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
             .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
@@ -773,10 +768,6 @@ where
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         permit: MetaStorePermit,
     ) -> Result<(), StorageError> {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, key_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
             .write_all::<DecompressionKey, DecompressionKey>(
                 key_id,
@@ -822,14 +813,6 @@ where
         permit: MetaStorePermit,
     ) -> Result<(), StorageError> {
         let req_id = recovery_material.custodian_context().context_id;
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, &req_id)
-            .await
-            .map_err(|e| {
-                StorageError::MetaStore(format!(
-                    "Meta store is not ready for request ID {req_id}: {e}"
-                ))
-            })?;
         // Ensure we have a backup vault before starting
         let vault = match self.backup_vault.as_ref() {
             Some(vault) => vault,

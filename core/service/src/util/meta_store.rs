@@ -519,23 +519,6 @@ pub(crate) fn update_err_req_in_meta_store<T>(
     }
 }
 
-#[cfg(feature = "non-wasm")]
-pub(crate) async fn ensure_meta_store_request_pending<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
-    req_id: &RequestId,
-) -> anyhow::Result<()> {
-    let guarded = meta_store.read().await;
-    match guarded.retrieve(req_id) {
-        Some(EntryState::Pending(_)) => Ok(()),
-        Some(EntryState::Done(_)) => anyhow::bail!(
-            "Error while updating meta store for {req_id}: request is already completed"
-        ),
-        Some(EntryState::Deleted) | None => {
-            anyhow::bail!("Error while updating meta store for {req_id}: request is missing")
-        }
-    }
-}
-
 /// Helper for retrieving the result of a request from a meta store.
 ///
 /// Polls the meta store every [`META_STORE_POLL_INTERVAL`] until either the
