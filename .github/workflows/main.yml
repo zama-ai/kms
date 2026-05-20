@@ -245,19 +245,21 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      # PR matrix has two disjoint entries:
-      #   threshold   : threshold-named tests (skip full_gen_tests, nightly,
-      #                 k8s_, centralized, isolated_test_example, and the
-      #                 docker-tls test).
+      # PR matrix has three disjoint entries:
+      #   threshold-x : threshold-named tests (skip full_gen_tests, nightly,
+      #                 k8s_, centralized, isolated_test_example, the
+      #                 docker-tls test, and the long-running insecure test),
+      #                 split into two nextest partitions.
       #   centralized : centralized-named tests (skip the same nightly/k8s
       #                 family plus threshold).
-      # The docker-tls test runs in its own dedicated job — skip it here.
+      # The docker-tls test and long insecure test run in dedicated jobs.
       - name: Set matrix
         id: set-matrix
         run: |
           MATRIX_JSON=$(jq -nc '{
             include: [
-              { "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker" },
+              { "args-tests": "--features threshold_tests --partition count:2/1 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure" },
+              { "args-tests": "--features threshold_tests --partition count:2/2 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure" },
               { "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example" }
             ]
           }')
@@ -304,6 +306,39 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '64cpu-linux-x64'
+    secrets: inherit
+
+  # Dedicated lane for the longest threshold test to reduce critical-path time.
+  # Run only `test_threshold_insecure` (and skip similarly named tests) in
+  # parallel with the rest of the threshold suite.
+  test-core-client-threshold-insecure:
+    name: main/test-core-client-threshold-insecure
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-client == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
+      github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      crate-names: '-p kms-core-client'
+      args-tests: >-
+        --features threshold_tests -- test_threshold_insecure
+        --skip test_threshold_insecure_default_keygen
+        --skip test_threshold_mpc_context_switch_6_docker
+      nextest-test-threads: "1"
       runs-on: '64cpu-linux-x64'
     secrets: inherit
 
