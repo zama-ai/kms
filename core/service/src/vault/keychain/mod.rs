@@ -285,7 +285,7 @@ pub mod tests {
         let mut buf1 = plaintext.clone();
         let tag_1 = encrypt_under_data_key(&mut buf1, &key, &iv1).expect("encryption must succeed");
         let mut buf2 = plaintext.clone();
-        let tag_2 =encrypt_under_data_key(&mut buf2, &key, &iv2).expect("encryption must succeed");
+        let tag_2 = encrypt_under_data_key(&mut buf2, &key, &iv2).expect("encryption must succeed");
 
         assert_ne!(
             buf1, buf2,
@@ -329,7 +329,8 @@ pub mod tests {
         let plaintext = b"sensitive payload that must not be tampered with".to_vec();
 
         let mut buf = plaintext.clone();
-        let auth_tag = encrypt_under_data_key(&mut buf, &key, &iv).expect("encryption must succeed");
+        let auth_tag =
+            encrypt_under_data_key(&mut buf, &key, &iv).expect("encryption must succeed");
 
         // Flip a single bit in the first ciphertext byte.
         buf[0] ^= 0x01;
