@@ -1,59 +1,58 @@
-cfg_if::cfg_if! {
-    if #[cfg(feature = "insecure")] {
-        use crate::backup::custodian::Custodian;
-        use crate::backup::seed_phrase::custodian_from_seed_phrase;
-        use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
-        use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
-        use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
-        use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use crate::cryptography::signatures::PrivateSigKey;
-        use crate::cryptography::signatures::PublicSigKey;
-        use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned, CrsGenMetadata, INSECURE_PREPROCESSING_ID};
-        use crate::engine::context::ContextInfo;
-        use crate::util::key_setup::test_tools::purge_priv;
-        use crate::util::key_setup::test_tools::EncryptionConfig;
-        use crate::util::key_setup::test_tools::TestingPlaintext;
-        use crate::vault::storage::file::FileStorage;
-        use crate::vault::storage::read_context_at_id;
-        use crate::vault::storage::read_versioned_at_request_and_epoch_id;
-        use crate::vault::storage::read_versioned_at_request_id;
-        use crate::vault::storage::StorageType;
-        use aes_prng::AesRng;
-        use rand::SeedableRng;
-        use kms_grpc::identifiers::EpochId;
-        use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest, CrsInfo, KeyInfo, PreviousEpochInfo, CustodianRecoveryOutput, CustodianRecoveryInitRequest, };
-        use tfhe::safe_serialization::safe_deserialize;
-        use threshold_types::role::Role;
-    }
-}
 use crate::backup::BackupCiphertext;
+use crate::backup::custodian::Custodian;
+use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-#[cfg(feature = "insecure")]
 use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
+use crate::client::tests::threshold::crs_gen_tests::run_crs;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
+use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
+use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 use crate::consts::DEFAULT_EPOCH_ID;
-#[cfg(feature = "insecure")]
+use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     SIGNING_KEY_ID,
 };
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+use crate::cryptography::signatures::PrivateSigKey;
+use crate::cryptography::signatures::PublicSigKey;
+use crate::engine::base::{
+    CrsGenMetadata, DSEP_PUBDATA_KEY, INSECURE_PREPROCESSING_ID,
+    safe_serialize_hash_element_versioned,
+};
+use crate::engine::context::ContextInfo;
+use crate::util::key_setup::test_tools::EncryptionConfig;
+use crate::util::key_setup::test_tools::TestingPlaintext;
+use crate::util::key_setup::test_tools::purge_priv;
 use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
+use crate::vault::storage::StorageType;
+use crate::vault::storage::file::FileStorage;
+use crate::vault::storage::read_context_at_id;
+use crate::vault::storage::read_versioned_at_request_and_epoch_id;
+use crate::vault::storage::read_versioned_at_request_id;
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     client::tests::threshold::common::threshold_handles_custodian_backup,
     engine::base::derive_request_id,
 };
-#[cfg(feature = "insecure")]
+use aes_prng::AesRng;
 use alloy_primitives::Address;
+use kms_grpc::identifiers::EpochId;
+use kms_grpc::kms::v1::{
+    CrsInfo, CustodianRecoveryInitRequest, CustodianRecoveryOutput, CustodianRecoveryRequest,
+    Empty, KeyInfo, PreviousEpochInfo, RecoveryRequest,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
+use rand::SeedableRng;
 use std::collections::HashMap;
+use tfhe::safe_serialization::safe_deserialize;
+use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -192,8 +191,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
 }
-
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -201,8 +198,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     backup_after_crs(custodians, threshold).await;
 }
-
-#[cfg(feature = "insecure")]
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let mut env = ThresholdBackupTestEnv::new(
@@ -309,8 +304,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     // Shut down the servers
     shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
 }
-
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -318,8 +311,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     decrypt_after_recovery(custodians, threshold).await;
 }
-
-#[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let mut env = ThresholdBackupTestEnv::new(
@@ -401,13 +392,10 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 
 /// Same intent as centralized negative test: corrupt signcryption for two custodians; invalid
 /// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
-#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
 }
-
-#[cfg(feature = "insecure")]
 fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecoveryRequest)>) {
     // Change a bit in two of the custodians contribution to the recover requests to make them invalid
     for (_, cur_payload) in cus_out.values_mut() {
@@ -435,8 +423,6 @@ fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecov
             });
     }
 }
-
-#[cfg(feature = "insecure")]
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let mut env = ThresholdBackupTestEnv::new(
@@ -509,7 +495,6 @@ async fn test_prss_in_custodian_backup_threshold() {
 
 /// Test that FHE key material is present in the custodian backup vault
 /// immediately after key generation (not just after recovery).
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_keygen_backup_presence_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence_threshold", 3, 1).await;
@@ -557,7 +542,6 @@ async fn test_keygen_backup_presence_threshold() {
 
 /// Test that re-creating a custodian context with pre-existing key material
 /// results in re-encrypted backup entries (different ciphertexts).
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_custodian_reencryption_with_existing_data_threshold() {
     // env already creates the first custodian context (env.req_new_cus)
@@ -635,7 +619,6 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
 
 /// Test that creating a new MPC context results in the ContextInfo
 /// being backed up in the custodian backup vault (threshold mode).
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_mpc_context_backup_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_mpc_context_backup_threshold", 3, 1).await;
@@ -725,7 +708,6 @@ async fn test_mpc_context_backup_threshold() {
 /// Test that backup contains reshared key material and CRS after an epoch
 /// transition (reshare). This validates that `update_backup_vault` is called
 /// after `store_reshared_keys` completes.
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backup_after_reshare_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_backup_after_reshare_threshold", 3, 1).await;
@@ -913,8 +895,6 @@ async fn shutdown_servers_and_client(
     }
     // here we will drop kms_clients and internal_client
 }
-
-#[cfg(feature = "insecure")]
 #[allow(clippy::type_complexity)]
 async fn run_full_custodian_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -934,8 +914,6 @@ async fn run_full_custodian_recovery(
     let res = run_restore_from_backup(kms_clients).await;
     assert_eq!(res.len(), amount_parties);
 }
-
-#[cfg(feature = "insecure")]
 async fn read_signing_keys(
     test_path: Option<&std::path::Path>,
     priv_storage_prefixes: &[Option<String>],
@@ -957,7 +935,6 @@ async fn read_signing_keys(
 }
 
 // Right now only used by insecure tests
-#[cfg(feature = "insecure")]
 async fn run_custodian_recovery_init(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<(u32, RecoveryRequest)> {
@@ -991,7 +968,6 @@ async fn run_custodian_recovery_init(
 }
 
 // Right now only used by insecure tests
-#[cfg(feature = "insecure")]
 async fn run_custodian_backup_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     reqs: &HashMap<Address, (u32, CustodianRecoveryRequest)>,
@@ -1023,7 +999,6 @@ async fn run_custodian_backup_recovery(
 }
 
 // Right now only used by insecure tests
-#[cfg(feature = "insecure")]
 async fn run_restore_from_backup(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<Empty> {
@@ -1052,7 +1027,6 @@ async fn run_restore_from_backup(
 }
 
 // Right now only used by insecure tests
-#[cfg(feature = "insecure")]
 async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_requests: Vec<(u32, RecoveryRequest)>,

@@ -3,7 +3,6 @@ use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::{ServerHandle, centralized_custodian_handles};
-#[cfg(feature = "insecure")]
 use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
 use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
@@ -136,14 +135,10 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
 }
-
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backup_after_crs_central() {
     backup_after_crs(5, 2).await;
 }
-
-#[cfg(feature = "insecure")]
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let mut env = CentralizedBackupTestEnv::new(
         &format!("backup_after_crs_central_{amount_custodians}_{threshold}"),
@@ -406,7 +401,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 
 /// Test that FHE key material is present in the custodian backup vault
 /// immediately after key generation (centralized mode).
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_keygen_backup_presence_central() {
     let mut env = CentralizedBackupTestEnv::new("test_keygen_backup_presence_central", 3, 1).await;
