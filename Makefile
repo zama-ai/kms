@@ -1,8 +1,11 @@
+build-compose-kms-binaries:
+	docker buildx build -t ghcr.io/zama-ai/kms/kms-binaries:latest-dev -f docker/kms-binaries/Dockerfile --build-arg RUST_IMAGE_VERSION=$${RUST_IMAGE_VERSION:-1.95} . --load
+
 build-compose-base:
 	docker compose -vvv -f docker-compose-core-base.yml build
 
-build-compose-threshold:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
+build-compose-threshold: build-compose-kms-binaries
+	KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest-dev docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
 
 start-compose-threshold:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up -d --wait
@@ -10,8 +13,8 @@ start-compose-threshold:
 stop-compose-threshold:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml down --volumes --remove-orphans
 
-build-compose-centralized:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
+build-compose-centralized: build-compose-kms-binaries
+	KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest-dev docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
 
 start-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml up -d --wait

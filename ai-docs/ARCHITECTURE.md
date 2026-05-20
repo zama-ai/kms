@@ -271,10 +271,15 @@ exact commands.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
-- **Container images** — [docker/core/service/Dockerfile](docker/core/service/Dockerfile)
-  is a multi-stage build producing the `core-service` image (published as
-  `ghcr.io/zama-ai/kms/core-service`). Its entrypoint generates signing
-  keys and TLS certs on first boot, then runs `kms-server`.
+- **Container images** — local developer builds still use
+  [docker/core/service/Dockerfile](docker/core/service/Dockerfile) and
+  [docker/core-client/Dockerfile](docker/core-client/Dockerfile). Both package
+  Dockerfiles always consume a shared `kms-binaries` image via
+  `KMS_BINARIES_IMAGE`. Local scripts/compose targets build that image with
+  [docker/kms-binaries/Dockerfile](docker/kms-binaries/Dockerfile) and pass the
+  desired tag explicitly; CI builds the same image and retags it as `:latest`
+  before packaging `core-service` and `core-client`. The published runtime image
+  for the service remains `ghcr.io/zama-ai/kms/core-service`.
 - **Kubernetes** — a Helm chart is provided at
   [charts/kms-core/](charts/kms-core/) for both centralized and threshold
   deployments, including Nitro Enclaves when configured.

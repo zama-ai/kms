@@ -156,6 +156,10 @@ make build-compose-threshold
 make build-compose-centralized
 ```
 
+`make build-compose-threshold` and `make build-compose-centralized` now build a
+shared `kms-binaries:latest-dev` image first, then point the package Dockerfiles
+at it via `KMS_BINARIES_IMAGE` so the expensive Rust compile is reused locally.
+
 Start / stop a 4-party threshold cluster (detached, waits for readiness; `stop` removes volumes and orphans):
 
 ```

@@ -174,19 +174,24 @@ Coordinated build of all KMS images.
 
 ```mermaid
 graph LR
-    A[golden-image] --> B[core-client]
-    A --> C[core-service]
-    C --> D[enclave]
+    A[golden-image] --> B[kms-binaries]
+    B --> C[core-client]
+    B --> D[core-service]
+    D --> E[enclave]
 ```
 
 | Job | Image | Runner |
 |-----|-------|--------|
 | `golden-image` | `kms/rust-golden-image` | 64cpu (x64/arm64) |
+| `kms-binaries` | `kms/kms-binaries` | 64cpu (x64/arm64) |
 | `core-client` | `kms/core-client` | 64cpu (x64/arm64) |
 | `core-service` | `kms/core-service` | 64cpu (x64/arm64) |
 | `enclave` | `kms/core-service-enclave` | AMD64 only |
 
-Multi-arch builds, OIDC auth, GHCR + CGR publishing, S3-backed cache. Outputs `image_tag` plus enclave PCR values.
+`kms-binaries` performs the single Rust compilation pass for the deployable
+service/client images; the downstream jobs only assemble runtime layers around
+those binaries. Multi-arch builds use OIDC auth, GHCR + CGR publishing, and an
+S3-backed cache. Outputs `image_tag` plus enclave PCR values.
 
 ---
 

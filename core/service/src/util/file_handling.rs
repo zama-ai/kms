@@ -50,33 +50,12 @@ pub async fn safe_read_element_versioned<
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Writing a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the safe and versioned writing method
-/// is used in production code.
+/// Legacy compatibility path for generic file IO used by tests.
+///
+/// Keeping this behind the testing gate ensures production service code keeps
+/// using the explicit safe/versioned helpers above.
 #[cfg(any(test, feature = "testing"))]
-pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
-    file_path: P,
-    element: &T,
-) -> anyhow::Result<()> {
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.as_ref().parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
-    let serialized_data = bc2wrap::serialize(element)?;
-    tokio::fs::write(file_path, serialized_data.as_slice()).await?;
-    Ok(())
-}
-
-/// Reading a generic element to a file. This is hidden behind the testing flag to ensure only the safe and versioned reading method
-/// is used in production code.
-#[cfg(any(test, feature = "testing"))]
-pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
-    file_path: P,
-) -> anyhow::Result<T> {
-    let read_element = tokio::fs::read(file_path).await?;
-    // This is gated behind a testing flag, so we can use the unsafe deserialization here
-    // (Might be useful to deserialize keys which may be huge)
-    Ok(bc2wrap::deserialize_unsafe(read_element.as_slice())?)
-}
+pub use crate::client::local_files::{read_element, write_element};
 
 #[cfg(test)]
 mod tests {

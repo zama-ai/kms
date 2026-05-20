@@ -13,6 +13,7 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms/core-service:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     env_file:
@@ -58,6 +59,7 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms/core-service:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -102,6 +104,7 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms/core-service:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -146,6 +149,7 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms/core-service:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -190,6 +194,7 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms/core-service:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -234,6 +239,7 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms/core-service:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     depends_on:
