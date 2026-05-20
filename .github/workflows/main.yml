@@ -223,7 +223,7 @@ jobs:
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     container:
-      image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
+      image: python:3.14-slim-bookworm@sha256:a9bee15510a364124aa24692899d269835683b883de42f7ebec8c293cf679ccb
     steps:
       # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
       - name: Workaround CVE-2026-31431 (copy.fail)
@@ -559,7 +559,7 @@ jobs:
           elif modinfo algif_aead 2>/dev/null | grep -q builtin; then
             echo "WARNING: algif_aead built-in - modprobe.d blacklist has no effect"
           fi
-          
+
       # TODO(dp): this is very problematic. We can't live with this manual feature-juggling
       # long-term. We need a cleaner split that is maintainable long term. The below split
       # is the outcome of custom-tooling running `cargo nextest list` for all jobs in the pipeline
