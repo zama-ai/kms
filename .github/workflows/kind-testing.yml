@@ -1,8 +1,6 @@
 name: kind-testing
 
 on:
-  schedule:
-    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
   workflow_call:
     inputs:
       image_tag:
