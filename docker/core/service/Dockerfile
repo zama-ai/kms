@@ -1,70 +1,18 @@
 # syntax=docker/dockerfile:1
 
+ARG KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest
+
 ################################################################
-## First stage builds the kms-core binaries
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
-
-# By default, cargo build --release.
-# But you can provide --build-arg LTO_RELEASE="release-lto-thin" locally to build locally
-ARG LTO_RELEASE=release-lto-thin
-ARG SCCACHE_BUCKET
-ARG SCCACHE_REGION=eu-west-3
-ARG SCCACHE_S3_PREFIX
-# Only enable the sccache S3 cache when a bucket is provided (CI passes one via
-# the SCCACHE_BUCKET build-arg). Local builds (e.g. docker compose) leave it
-# unset, so RUSTC_WRAPPER stays empty and the build compiles without the remote
-# cache instead of failing to authenticate to S3.
-ENV RUSTC_WRAPPER=${SCCACHE_BUCKET:+sccache}
-ENV SCCACHE_IDLE_TIMEOUT=0
-ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
-ENV SCCACHE_REGION=${SCCACHE_REGION}
-ENV SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_PREFIX}
-ENV AWS_REGION=${SCCACHE_REGION}
-
-# Fetch dependencies and build binaries
-WORKDIR /app/kms
-# Copy only what is needed to build kms binaries
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY backward-compatibility ./backward-compatibility
-COPY bc2wrap ./bc2wrap
-COPY core ./core
-COPY core-client ./core-client
-COPY observability ./observability
-COPY tools ./tools
-
-RUN mkdir -p /app/kms/core/service/bin
-
-# `cargo fetch` only downloads dependencies; it does not compile. The global
-# `RUSTC_WRAPPER=sccache` is still consulted for cargo's `rustc -vV` probe,
-# which would make sccache start up and hit S3 (and thus need AWS creds). Unset
-# the wrapper for this step so the fetch stays credential-free.
-RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    RUSTC_WRAPPER= cargo fetch --locked
-RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=secret,id=sccache_aws_access_key_id \
-    --mount=type=secret,id=sccache_aws_secret_access_key \
-    set -eu && \
-    # The sccache S3 cache and its AWS credentials are only used in CI, where
-    # SCCACHE_BUCKET is set. Local builds provide neither the bucket nor the
-    # secrets, so skip the credential setup and remote cache there.
-    if [ -n "${SCCACHE_BUCKET}" ]; then \
-      export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)"; \
-      export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)"; \
-    fi && \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms \
-      --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
-      --bin kms-custodian --bin kms-gen-keys \
-      -F insecure -F threshold-execution/testing && \
-    if [ -n "${SCCACHE_BUCKET}" ]; then sccache --show-stats; fi && \
-    cp /app/kms/target/${LTO_RELEASE}/kms-server \
-       /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
-       /app/kms/target/${LTO_RELEASE}/kms-init \
-       /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
-       /app/kms/target/${LTO_RELEASE}/kms-custodian \
-     ./core/service/bin
+## Resolve the prebuilt shared binaries image
+##
+## Build callers should pass the matching immutable secure or insecure image.
+## The default keeps direct production builds on the secure published tag.
+FROM --platform=$BUILDPLATFORM ${KMS_BINARIES_IMAGE} AS kms-binaries-source
 
 # Second stage: build raw IP proxies for enclave
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
+
+RUN mkdir -p /out/enclave-utils/bin
 
 ARG DNSPROXY_VERSION=v0.81.1
 # Overridable arg to allow building for different architectures
@@ -72,22 +20,22 @@ ARG TARGETARCH=amd64
 WORKDIR /tmp
 RUN wget -qO dnsproxy.tar.gz https://github.com/AdGuardTeam/dnsproxy/releases/download/${DNSPROXY_VERSION}/dnsproxy-linux-${TARGETARCH}-${DNSPROXY_VERSION}.tar.gz && \
     tar xzf dnsproxy.tar.gz && \
-    cp linux-${TARGETARCH}/dnsproxy /usr/bin/dnsproxy && \
-    chmod +x /usr/bin/dnsproxy
+    cp linux-${TARGETARCH}/dnsproxy /out/enclave-utils/bin/dnsproxy && \
+    chmod +x /out/enclave-utils/bin/dnsproxy
 
 ARG VSOCKTUN_VERSION=v0.1.0
 RUN git clone --depth 1 --branch ${VSOCKTUN_VERSION} https://github.com/zama-ai/vsocktun && \
     cd vsocktun && \
     cargo build --locked --release && \
-    cp target/release/vsocktun /usr/bin/vsocktun
+    cp target/release/vsocktun /out/enclave-utils/bin/vsocktun
 
 ################################################################
-## Third stage: Copy the binaries from preceding stages
-# This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:16-dev AS prod
+## Shared runtime image
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:16-dev AS runtime
 
 USER root
-# Install required runtime dependencies
+# Install required runtime dependencies.
+# `yq` is used by the startup scripts to query TOML config at runtime.
 RUN apk update && apk add --no-cache \
     libssl3 \
     socat \
@@ -101,12 +49,16 @@ WORKDIR /app/kms/core/service
 
 COPY ./core/service/config/ /app/kms/core/service/config
 
-# Set the path to include the binaries and not just the default /usr/local/bin
+# Set the path to include the packaged binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
-# Copy the binaries from the kms-core and enclave-utils stages
-COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
-COPY --from=enclave-utils /usr/bin/dnsproxy /usr/bin/dnsproxy
-COPY --from=enclave-utils /usr/bin/vsocktun /usr/bin/vsocktun
+# Copy the enclave utilities shared by both runtime flavors.
+COPY --from=enclave-utils /out/enclave-utils/bin/dnsproxy /usr/bin/dnsproxy
+COPY --from=enclave-utils /out/enclave-utils/bin/vsocktun /usr/bin/vsocktun
+
+# Copy the selected secure or insecure binary set. The final target validates
+# that the caller supplied the matching flavor.
+COPY --from=kms-binaries-source /out/core-service/bin/ ./bin/
+COPY --from=kms-binaries-source /out/kms-build-flavor ./kms-build-flavor
 
 # Copy parent-side and enclave-side init scripts
 COPY ./docker/core/service/start_parent_proxies.sh ./bin/
@@ -115,15 +67,23 @@ COPY ./docker/core/service/init_enclave.sh ./bin/
 # Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \
     adduser -D -s /bin/sh --uid 10003 -G kms kms
-# pre-create mount points for rights
+# Pre-create mount points and hand ownership to the non-root runtime user
 RUN mkdir -p /app/kms/core/service/certs /app/kms/core/service/config
 RUN chown -R kms:kms /app/kms
+
 USER kms
 
-# This is only meaningful when the image is used to build the EIF that runs
-# inside of a Nitro enclave. During deployment on k8s, containers are started
-# with commands defined in Helm charts.
+# nitro-cli preserves the source image command when building an EIF, so every
+# service flavor that can be used as an enclave source must inherit this command.
 CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave.sh"]
+
+
+################################################################
+## Production image with secure binaries
+FROM runtime AS prod
+
+RUN test "$(cat ./kms-build-flavor)" = "secure"
+LABEL org.zama.kms.flavor="secure"
 
 
 ################################################################
@@ -140,10 +100,9 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 
 
 ################################################################
-## Fourth stage: Build and install grpc_health_probe -- For development only with extra tools
-FROM --platform=$BUILDPLATFORM prod AS dev
+## Development image with insecure binaries and extra tools
+FROM runtime AS dev
 
-USER root
-COPY --from=go-builder /out/grpc_health_probe /bin/grpc_health_probe
-
-CMD ["kms-server", "centralized"]
+RUN test "$(cat ./kms-build-flavor)" = "insecure"
+COPY --chown=kms:kms --from=go-builder /out/grpc_health_probe /bin/grpc_health_probe
+LABEL org.zama.kms.flavor="insecure"
