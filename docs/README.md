@@ -3,12 +3,12 @@ KMS-core is an open-source framework for Key Management System, to be used with 
 
 ### References & Explanations
 
-Refer to the API, review product architecture, and access additional resources for in-depth explanations while working with the Zama TKMS.
+Refer to the API, review product architecture, and access additional resources for in-depth explanations while working with the Zama KMS.
 
-- [API](references/api/): Specification of the gRPC end-points of the TKMS.
-- [fhevm Whitepaper](https://github.com/zama-ai/fhevm-whitepaper): The whitepaper of the fhevm system and how the TKMS integrates into this.
-- [NIST specification](https://github.com/zama-ai/NIST-Threshold): The detailed technical specification of all the cryptography implemented in the TKMS.
-- [Noah's Ark paper](https://eprint.iacr.org/2023/815): The academic paper describing the protocols implemented in the TKMS.
+- [API](references/api/): Specification of the gRPC end-points of the KMS.
+- [fhevm Whitepaper](https://github.com/zama-ai/fhevm-whitepaper): The whitepaper of the fhevm system and how the KMS integrates into this.
+- [NIST specification](https://github.com/zama-ai/NIST-Threshold): The detailed technical specification of all the cryptography implemented in the KMS.
+- [Noah's Ark paper](https://eprint.iacr.org/2023/815): The academic paper describing the protocols implemented in the KMS.
 
 ### Support channels
 
