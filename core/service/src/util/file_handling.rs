@@ -277,11 +277,11 @@ pub async fn safe_read_element_versioned<
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Write a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the
+/// Write a generic element to a file by serializing it. This is hidden behind the insecure flag to ensure only the
 /// versioned writing method is used in production code.
 ///
-/// Thin async wrapper around [`test_utils::write_element`] (blocking IO, fine under the testing flag).
-#[cfg(any(test, feature = "testing"))]
+/// Thin async wrapper around [`test_utils::write_element`] (blocking IO, fine under the insecure flag).
+#[cfg(any(test, feature = "insecure"))]
 pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     file_path: P,
     element: &T,
@@ -289,11 +289,11 @@ pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     test_utils::write_element(file_path, element)
 }
 
-/// Read a generic element from a file. This is hidden behind the testing flag to ensure only the versioned reading
+/// Read a generic element from a file. This is hidden behind the insecure flag to ensure only the versioned reading
 /// method is used in production code.
 ///
-/// Thin async wrapper around [`test_utils::read_element`] (blocking IO, fine under the testing flag).
-#[cfg(any(test, feature = "testing"))]
+/// Thin async wrapper around [`test_utils::read_element`] (blocking IO, fine under the insecure flag).
+#[cfg(any(test, feature = "insecure"))]
 pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
