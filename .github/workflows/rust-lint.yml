@@ -42,7 +42,13 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Keep a stable workspace->target mapping for this monorepo layout.
+          workspaces: |
+            . -> target
+          # Share cache across jobs/workflows that build the same dependency set.
+          shared-key: kms-rust
+          # This workflow only runs on PRs; skip saves for forked PRs.
+          save-if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
       - name: Formatting
         run: |

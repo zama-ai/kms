@@ -412,7 +412,14 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2  # zizmor: ignore[cache-poisoning]
         with:
-          save-if: false
+          # Keep a stable workspace->target mapping for this monorepo layout.
+          workspaces: |
+            . -> target
+          # Share cache across jobs/workflows that build the same dependency set.
+          shared-key: kms-rust
+          # Temporary policy for cache validation:
+          # save on main and on internal PRs (not forks).
+          save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
       - name: Install nextest
         run: cargo install cargo-nextest@0.9.133 --locked --force
