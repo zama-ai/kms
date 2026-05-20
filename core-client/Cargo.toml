@@ -50,7 +50,6 @@ hex.workspace = true
 k256.workspace = true
 kms = { workspace = true, features = [
     "default",
-    "testing",
     "insecure",
 ] }
 kms-grpc.workspace = true

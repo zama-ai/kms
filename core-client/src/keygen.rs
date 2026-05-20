@@ -11,12 +11,12 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
-use kms_lib::client::client_wasm::Client;
+use kms_lib::client::{
+    client_wasm::Client,
+    local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
+};
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
-use kms_lib::util::key_setup::test_tools::{
-    load_material_from_pub_storage, load_pk_from_pub_storage,
-};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::{CompactPublicKey, ServerKey};

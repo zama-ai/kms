@@ -94,8 +94,8 @@ The service crate is the main surface area. Key subdirectories under
   hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
   chain verification).
 - [client/](core/service/src/client/) and
-  [testing/](core/service/src/testing/) — client-side helpers and
-  test-only wiring.
+  [testing/](core/service/src/testing/) — client-side helpers (including
+  local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
 ### Binaries

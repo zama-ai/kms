@@ -7,10 +7,12 @@ use kms_grpc::{
     rpc_types::protobuf_to_alloy_domain,
 };
 use kms_lib::{
-    client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest},
+    client::{
+        client_wasm::Client, local_crypto::TestingPlaintext,
+        user_decryption_wasm::ParsedUserDecryptionRequest,
+    },
     cryptography::signatures::recover_address_from_ext_signature,
     engine::base::compute_public_decryption_message,
-    util::key_setup::test_tools::TestingPlaintext,
 };
 use rand::{CryptoRng, Rng};
 use std::{collections::HashMap, sync::Arc};
