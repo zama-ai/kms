@@ -225,15 +225,6 @@ jobs:
     container:
       image: python:3.14-slim-bookworm@sha256:a9bee15510a364124aa24692899d269835683b883de42f7ebec8c293cf679ccb
     steps:
-      # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
-      - name: Check for CVE-2026-31431 (copy.fail)
-        run: |
-          if lsmod | grep -q algif_aead; then
-            echo "WARNING: algif_aead module may be in use"
-          elif modinfo algif_aead 2>/dev/null | grep -q builtin; then
-            echo "WARNING: algif_aead built-in - modprobe.d blacklist has no effect"
-          fi
-
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
