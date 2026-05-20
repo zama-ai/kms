@@ -48,7 +48,7 @@ runs:
     - name: Install Protoc
       if: ${{ inputs.setup-protoc == 'true' }}
       env:
-        PROTOC_VERSION: "35.0"
+        PROTOC_VERSION: "34.1"
         PROTOC_SHA256: af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
       shell: bash
       run: |
