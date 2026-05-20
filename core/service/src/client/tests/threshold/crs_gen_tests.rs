@@ -339,13 +339,14 @@ pub async fn wait_for_crsgen_result(
     let mut futs = Vec::new();
     for req in reqs {
         let req_id: ProtoRequestId = req.request_id.clone().unwrap();
-        for i in 1..=amount_parties as u32 {
-            if let Some(client) = kms_clients.get(&i) {
-                let client: CoreServiceEndpointClient<Channel> = client.clone();
-                futs.push(poll_with_retries(client, i, req_id.clone(), |c, req| {
-                    Box::pin(c.get_crs_gen_result(req))
-                }));
-            }
+        for (server_id, client) in kms_clients.iter() {
+            let client = client.clone();
+            futs.push(poll_with_retries(
+                client,
+                *server_id,
+                req_id.clone(),
+                |c, req| Box::pin(c.get_crs_gen_result(req)),
+            ))
         }
     }
     let joined_responses = join_all(futs).await;
