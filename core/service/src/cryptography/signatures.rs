@@ -483,10 +483,10 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     );
 
     let hash = data.eip712_signing_hash(domain);
-    tracing::info!("Public Data EIP-712 Message hash: {:?}", hash);
+    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
 
     let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("Reconstructed address: {}", addr);
+    tracing::debug!("Reconstructed address: {}", addr);
 
     Ok(addr)
 }

@@ -199,7 +199,6 @@ fn compute_next_batch<Z: Ring>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    #[cfg(feature = "slow_tests")]
     use super::init_vdm;
     use crate::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
@@ -210,7 +209,6 @@ pub(crate) mod tests {
         runtime::sessions::large_session::LargeSession,
     };
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_8::ResiduePolyF8;
     use algebra::{
         sharing::{
@@ -219,11 +217,9 @@ pub(crate) mod tests {
         },
         structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
-    #[cfg(feature = "slow_tests")]
     use ndarray::Ix2;
     use num_integer::div_ceil;
     use rstest::rstest;
-    #[cfg(feature = "slow_tests")]
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
@@ -369,7 +365,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_vdm() {
         let vdm = init_vdm(4, 4).unwrap();
