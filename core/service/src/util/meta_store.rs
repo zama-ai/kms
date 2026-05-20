@@ -57,15 +57,30 @@ impl Drop for MetaStorePermit {
     }
 }
 
+/// Public-facing snapshot of an entry's state.
 pub enum EntryState<T> {
-    /// Inserted but not yet completed. The `Arc<()>` is the permit-tracking
-    /// token: its strong count is `1 + (number of live permits for this entry)`.
-    Pending(Arc<()>),
-    /// Completed with a successful or error result. The success value is
-    /// wrapped in `Arc` so retrievers can share it cheaply.
+    /// Entry exists, but is being worked on (either being computed or being deleted)
+    Pending,
+    /// Entry finished processing with either a success or error result.
     Done(Result<Arc<T>, String>),
-    /// Tombstone after deletion.
+    /// The entry has been deleted.
     Deleted,
+}
+
+enum StoredEntry<T> {
+    Pending(Arc<()>),
+    Done(Result<Arc<T>, String>, Arc<()>),
+    Deleted,
+}
+
+impl<T> From<StoredEntry<T>> for EntryState<T> {
+    fn from(stored: StoredEntry<T>) -> Self {
+        match stored {
+            StoredEntry::Pending(_claim) => EntryState::Pending,
+            StoredEntry::Done(res, _claim) => EntryState::Done(res),
+            StoredEntry::Deleted => EntryState::Deleted,
+        }
+    }
 }
 
 /// Data structure that stores elements that are being processed and their status (Pending, Done, Deleted).
@@ -76,7 +91,7 @@ pub struct MetaStore<T> {
     // The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
     min_cache: usize,
     // Storage of all elements in the system
-    storage: HashMap<RequestId, EntryState<T>>,
+    storage: HashMap<RequestId, StoredEntry<T>>,
     // Queue of all elements that have been completed
     complete_queue: VecDeque<RequestId>,
 }
@@ -181,9 +196,9 @@ impl<T> MetaStore<T> {
                 )?;
                 if self.storage.remove(&old_request_id).is_none() {
                     self.complete_queue.push_front(old_request_id);
-                    return Err(anyhow_error_and_log(format!(
+                    return Err(anyhow::bail!(
                         "Failed to remove old element {old_request_id} from storage, invariant preserved"
-                    )));
+                    ));
                 }
             }
         }
@@ -192,8 +207,46 @@ impl<T> MetaStore<T> {
             req_id: *request_id,
             _claim: Arc::clone(&claim),
         };
-        self.storage.insert(*request_id, EntryState::Pending(claim));
+        self.storage
+            .insert(*request_id, StoredEntry::Pending(claim));
         Ok(permit)
+    }
+
+    pub fn lock_entry(&mut self, request_id: &RequestId) -> anyhow::Result<MetaStorePermit> {
+        let claim = {
+            let entry = self.storage.get(request_id).ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "The element with ID {request_id} does not exist, locking is not allowed"
+                ))
+            })?;
+            match entry {
+                StoredEntry::Pending(arc) => {
+                    if Arc::strong_count(arc) > 1 {
+                        anyhow::bail!(
+                            "The element with ID {request_id} is currently already locked"
+                        );
+                    }
+                    Arc::clone(arc)
+                }
+                StoredEntry::Done(_, arc) => {
+                    if Arc::strong_count(arc) > 1 {
+                        anyhow::bail!(
+                            "The element with ID {request_id} is currently already locked"
+                        );
+                    }
+                    Arc::clone(arc)
+                }
+                StoredEntry::Deleted => {
+                    return Err(anyhow_error_and_log(format!(
+                        "The element with ID {request_id} has been deleted, locking is not allowed"
+                    )));
+                }
+            }
+        };
+        Ok(MetaStorePermit {
+            req_id: *request_id,
+            _claim: claim,
+        })
     }
 
     /// Sets the value of an already existing element. Consumes the permit.
@@ -215,12 +268,12 @@ impl<T> MetaStore<T> {
                 "The element with ID {req_id} does not exist, update is not allowed"
             ))
         })?;
-        if !matches!(cell, EntryState::Pending(_)) {
+        if !matches!(cell, StoredEntry::Pending(_)) {
             return Err(anyhow_error_and_log(format!(
                 "The element with ID {req_id} is not in a pending state, update is not allowed"
             )));
         }
-        *cell = EntryState::Done(update.map(Arc::new));
+        *cell = StoredEntry::Done(update.map(Arc::new));
         self.complete_queue.push_back(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
@@ -241,7 +294,8 @@ impl<T> MetaStore<T> {
                 ))
             })?;
             match entry {
-                EntryState::Pending(arc) => {
+                StoredEntry::Pending(arc) => {
+                    // TODO I am not sure this makes sense, because if it is already pending then it should be locked. alhtough ref might be dropped but why do we need arc count >1 instead of >0
                     if Arc::strong_count(arc) > 1 {
                         anyhow::bail!(
                             "The element with ID {request_id} is currently locked for update"
@@ -249,12 +303,12 @@ impl<T> MetaStore<T> {
                     }
                     Arc::clone(arc)
                 }
-                EntryState::Done(_) => {
+                StoredEntry::Done(_) => {
                     return Err(anyhow_error_and_log(format!(
                         "The element with ID {request_id} is not in a pending state, update is not allowed"
                     )));
                 }
-                EntryState::Deleted => {
+                StoredEntry::Deleted => {
                     return Err(anyhow_error_and_log(format!(
                         "The element with ID {request_id} has been deleted, update is not allowed"
                     )));
@@ -282,25 +336,25 @@ impl<T> MetaStore<T> {
     /// fresh inserts via this path are explicitly admin-scoped.
     pub(crate) fn replace_done(&mut self, request_id: &RequestId, value: T) -> anyhow::Result<()> {
         match self.storage.get(request_id) {
-            Some(EntryState::Pending(_)) => {
+            Some(StoredEntry::Pending(_)) => {
                 return Err(anyhow_error_and_log(format!(
                     "The element with ID {request_id} is currently pending, replace_done is not allowed"
                 )));
             }
-            Some(EntryState::Deleted) => {
+            Some(StoredEntry::Deleted) => {
                 return Err(anyhow_error_and_log(format!(
                     "The element with ID {request_id} has been deleted, replace_done is not allowed"
                 )));
             }
-            Some(EntryState::Done(_)) => {
+            Some(StoredEntry::Done(_)) => {
                 // Existing Done entry — overwrite in place, keep complete_queue slot.
                 self.storage
-                    .insert(*request_id, EntryState::Done(Ok(Arc::new(value))));
+                    .insert(*request_id, StoredEntry::Done(Ok(Arc::new(value))));
             }
             None => {
                 // Fresh insert — record completion.
                 self.storage
-                    .insert(*request_id, EntryState::Done(Ok(Arc::new(value))));
+                    .insert(*request_id, StoredEntry::Done(Ok(Arc::new(value))));
                 self.complete_queue.push_back(*request_id);
             }
         }
@@ -309,7 +363,7 @@ impl<T> MetaStore<T> {
 
     /// Retrieve the state of an element and return None if it does not exist.
     pub fn retrieve(&self, request_id: &RequestId) -> Option<&EntryState<T>> {
-        self.storage.get(request_id)
+        self.storage.get(request_id).into()
     }
 
     /// Mark an existing entry as deleted, regardless of whether it was Pending
@@ -320,14 +374,15 @@ impl<T> MetaStore<T> {
         let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
             anyhow::anyhow!("The element with ID {req_id} does not exist, deletion is not allowed")
         })?;
-        if matches!(cell, EntryState::Deleted) {
+        if matches!(cell, StoredEntry::Deleted) {
             anyhow::bail!("The element with ID {req_id} has already been deleted");
         }
-        let old = std::mem::replace(cell, EntryState::Deleted);
-        if matches!(old, EntryState::Done(_)) {
+        // TODO don't use mem replace
+        let old = std::mem::replace(cell, StoredEntry::Deleted);
+        if matches!(old, StoredEntry::Done(_, _),) {
             self.complete_queue.retain(|id| id != &req_id);
         }
-        Ok(old)
+        Ok(old.into())
     }
 
     /// Like [`delete`], but for callers that do not hold a permit. Succeeds
@@ -341,15 +396,15 @@ impl<T> MetaStore<T> {
                 ))
             })?;
             match entry {
-                EntryState::Pending(arc) => {
+                StoredEntry::Pending(arc) => {
                     if Arc::strong_count(arc) > 1 {
                         anyhow::bail!(
                             "The element with ID {request_id} is currently locked and cannot be deleted"
                         );
                     }
                 }
-                EntryState::Done(_) => { /* no permit possible on Done */ }
-                EntryState::Deleted => {
+                StoredEntry::Done(_, _) => { /* no permit possible on Done */ }
+                StoredEntry::Deleted => {
                     anyhow::bail!("The element with ID {request_id} has already been deleted");
                 }
             }
@@ -357,11 +412,11 @@ impl<T> MetaStore<T> {
         // Safe: we just verified the entry exists and is not Deleted.
         let cell = self.storage.get_mut(request_id).unwrap();
         // TODO ensure we can just clone the old entry
-        let old = std::mem::replace(cell, EntryState::Deleted);
-        if matches!(old, EntryState::Done(_)) {
+        let old = std::mem::replace(cell, StoredEntry::Deleted);
+        if matches!(old, StoredEntry::Done(_)) {
             self.complete_queue.retain(|id| id != request_id);
         }
-        Ok(old)
+        Ok(old.into())
     }
 
     /// Get the maximum capacity of this MetaStore

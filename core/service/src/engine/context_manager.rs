@@ -225,6 +225,7 @@ where
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
         let mut cus_meta_store = self.custodian_meta_store.write().await;
+        // todo flow should depend on the error type
         if cus_meta_store.try_delete(&context_id).is_err() {
             tracing::warn!(
                 "Custodian context with id {context_id} to be deleted does not exist in meta store, or is still locked"

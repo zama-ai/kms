@@ -563,7 +563,7 @@ impl<
             &mut self.dkg_pubinfo_meta_store.write().await,
             &req_id,
             op_tag,
-        )?;
+        )?; // TODO should have specific error we can react to and then disc should be checked later. I think that is also how it is in centralized
 
         tracing::info!(
             "Keygen starting with request_id={:?}, insecure={}",
