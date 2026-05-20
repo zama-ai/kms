@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     mkdir -p /app/kms-core-client/bin && \
     cargo install --locked --path core/service --root tools/service --bin kms-custodian && \
-    cargo install --locked --path core-client --root core-client --bins && \
+    cargo install --locked --path core-client --root core-client --bins -F threshold-execution/testing && \
     cargo install --locked --path tools/kms-health-check --root tools/kms-health-check --bins
 
 
