@@ -103,6 +103,7 @@ const ALLOW_UNCOVERED: &[&str] = &[
 
 fn cargo_metadata() -> Metadata {
     MetadataCommand::new()
+        .no_deps()
         .exec()
         .expect("failed to run `cargo metadata`")
 }
