@@ -328,7 +328,7 @@ The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is
 ### Updating `ALLOW_UNCOVERED`
 
 The `ALLOW_UNCOVERED` list is found in [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs)
-where entry must carry a comment that records:
+where each entry must carry a comment that records:
 
 - **Who uses it** — one parent struct/enum that contains the type as a field, or the precise way the type is otherwise reached (e.g. as a signcrypted payload). One example is enough — you don't need to enumerate every parent.
 - **Who covers it** — one `*Test` fixture in `backward-compatibility/src/lib.rs` whose serialized output transitively exercises the type.
