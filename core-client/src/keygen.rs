@@ -2,8 +2,8 @@
 use crate::PartialKeyGenPreprocParameters;
 use crate::s3_operations::fetch_public_elements;
 use crate::{
-    CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, SigVerificationMaterial, dummy_domain,
+    CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
+    SigVerificationMaterial, dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -678,9 +678,18 @@ pub(crate) async fn do_preproc(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             if insecure {
-                cur_client
-                    .insecure_key_gen_preproc(tonic::Request::new(req_cloned))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    return cur_client
+                        .insecure_key_gen_preproc(tonic::Request::new(req_cloned))
+                        .await;
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!(
+                        "insecure preprocessing requires the kms-core-client insecure feature"
+                    );
+                }
             } else {
                 cur_client
                     .key_gen_preproc(tonic::Request::new(req_cloned))
@@ -817,7 +826,16 @@ pub(crate) async fn get_preproc_keygen_responses(
     ) -> Result<tonic::Response<KeyGenPreprocResult>, tonic::Status> {
         let req = tonic::Request::new(request_id.into());
         if insecure {
-            client.get_insecure_key_gen_preproc_result(req).await
+            #[cfg(feature = "insecure")]
+            {
+                client.get_insecure_key_gen_preproc_result(req).await
+            }
+            #[cfg(not(feature = "insecure"))]
+            {
+                unreachable!(
+                    "insecure preprocessing polling requires the kms-core-client insecure feature"
+                );
+            }
         } else {
             client.get_key_gen_preproc_result(req).await
         }

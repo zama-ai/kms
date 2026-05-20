@@ -42,12 +42,12 @@ use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::{
     client_wasm::Client,
     local_crypto::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
+    local_files::{read_element, write_element},
 };
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
-use kms_lib::util::file_handling::{read_element, write_element};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::vault::Vault;
 use kms_lib::vault::storage::{StorageType, file::FileStorage};
@@ -2441,6 +2441,7 @@ pub async fn execute_cmd(
                 get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, false).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecurePreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
             let _ =

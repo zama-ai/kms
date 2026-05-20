@@ -92,7 +92,7 @@ ignored = ["kms", "strum"]
 
 [features]
 # Enable CLI commands that call the insecure keygen/CRS RPCs.
-insecure = ["kms-grpc/insecure"]
+insecure = ["kms-grpc/insecure", "kms/insecure"]
 # Bundle test helpers plus insecure-only CLI commands for e2e coverage.
 e2e = ["testing", "insecure"]
 # Compiles + runs the handful of threshold integration tests that are too slow
