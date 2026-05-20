@@ -451,7 +451,7 @@ pub async fn threshold_key_gen_secure(
     Ok(responses)
 }
 
-/// Helper to  retry a single poll call until it succeeds or we exhaust [`crate::consts::MAX_TRIES`].
+/// Helper to retry a single poll call until it succeeds or we exhaust [`crate::consts::MAX_TRIES`].
 pub async fn poll_with_retries<R: Send>(
     mut client: CoreServiceEndpointClient<Channel>,
     server_id: u32,
