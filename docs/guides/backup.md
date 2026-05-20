@@ -172,7 +172,7 @@ Notes:
 
 ### Phase 3 — Ongoing backup (whenever the operator writes private material)
 
-When the operator writes any `PrivDataType` (signing key, threshold FHE keys, custodian context itself, etc.) into private storage, the `SecretSharing` keychain wraps the bytes under `pk^{B}` and stores the resulting `BackupCiphertext` in the backup vault, tagged with the originating `RequestId` and `PrivDataType`. The custodians never see this material — only `pk^{B}` matters here.
+When the operator writes any `PrivDataType` (signing key, threshold FHE keys, custodian context itself, etc.) to private storage, the `SecretSharing` keychain encrypts the data under `pk^{B}` and stores the resulting `BackupCiphertext` in the backup vault, tagged with the originating `RequestId` and `PrivDataType`. The custodians never see this material — only `pk^{B}` matters here.
 
 This phase is invisible to custodians and to the core-client. It runs continuously for the life of the operator.
 
