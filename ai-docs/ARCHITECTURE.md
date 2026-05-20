@@ -131,8 +131,8 @@ The service crate is the main surface area. Key subdirectories under
   removal and nothing new should read them. Both copies are validated against the
   signing key when backfilling.
 - [client/](core/service/src/client/) and
-  [testing/](core/service/src/testing/) — client-side helpers and
-  test-only wiring.
+  [testing/](core/service/src/testing/) — client-side helpers (including
+  local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
 ### Binaries

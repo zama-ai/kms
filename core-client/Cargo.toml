@@ -50,7 +50,6 @@ hex.workspace = true
 k256.workspace = true
 kms = { workspace = true, features = [
     "default",
-    "testing",
     "insecure",
 ] }
 kms-grpc.workspace = true
@@ -108,4 +107,4 @@ ignored = ["kms", "strum"]
 slow_tests = ["testing"]
 # Enable tests that require a running Kind/Kubernetes cluster.
 kind_tests = ["testing"]
-testing = ["threshold-execution/testing"]
+testing = ["threshold-execution/testing", "kms/testing"]

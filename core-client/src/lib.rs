@@ -37,17 +37,16 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, EpochId, KeyId};
 use kms_lib::backup::custodian::InternalCustodianSetupMessage;
-use kms_lib::client::client_wasm::Client;
+use kms_lib::client::{
+    client_wasm::Client,
+    local_crypto::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
+};
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
 use kms_lib::util::file_handling::{read_element, write_element};
-
-use kms_lib::util::key_setup::{
-    ensure_client_keys_exist,
-    test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
-};
+use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::vault::Vault;
 use kms_lib::vault::storage::{StorageType, file::FileStorage};
 use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
@@ -2938,8 +2937,8 @@ fn print_phased_timings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_lib::client::local_crypto::load_pk_from_pub_storage;
     use kms_lib::engine::base::derive_request_id;
-    use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
     use kms_lib::vault::storage::{StorageType, file::FileStorage, store_versioned_at_request_id};
     use std::env;
     use tempfile::tempdir;

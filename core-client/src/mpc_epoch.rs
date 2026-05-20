@@ -10,9 +10,9 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
 };
-use kms_lib::{
-    client::client_wasm::Client,
-    util::key_setup::test_tools::{load_material_from_pub_storage, load_pk_from_pub_storage},
+use kms_lib::client::{
+    client_wasm::Client,
+    local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
 };
 use std::{collections::HashMap, path::Path};
 use tokio::task::JoinSet;
