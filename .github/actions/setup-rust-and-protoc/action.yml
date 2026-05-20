@@ -30,13 +30,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install mold
-      shell: bash
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq mold
-        mold --version
-
     - name: Set up Rust
       if: ${{ inputs.setup-rust == 'true' }}
       uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2

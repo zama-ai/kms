@@ -285,7 +285,7 @@ jobs:
             runs_on: '64cpu-linux-x64'
             runner_volume: '400gb'
             rust_log_level: 'info'
-            nextest_threads: '4'
+            nextest_threads: '8'
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p6
             crate_names: '-p kms'
