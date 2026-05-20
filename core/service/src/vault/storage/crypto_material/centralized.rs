@@ -101,7 +101,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
-            key_id,
             meta_res,
             &mut guarded_meta_store,
             permit,

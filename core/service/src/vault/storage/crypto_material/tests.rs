@@ -1411,7 +1411,6 @@ async fn update_meta_store_storage_outcomes() {
         assert!(
             update_meta_store(
                 Ok(()),
-                &req_ok,
                 42_u32,
                 &mut write_guard,
                 permit_ok,
@@ -1423,7 +1422,6 @@ async fn update_meta_store_storage_outcomes() {
         assert_eq!(
             update_meta_store(
                 Err(StorageError::Backup),
-                &req_backup,
                 7_u32,
                 &mut write_guard,
                 permit_backup,
@@ -1435,7 +1433,6 @@ async fn update_meta_store_storage_outcomes() {
         assert_eq!(
             update_meta_store(
                 Err(StorageError::Writing),
-                &req_writing,
                 0_u32,
                 &mut write_guard,
                 permit_writing,

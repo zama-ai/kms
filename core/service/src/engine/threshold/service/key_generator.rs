@@ -1371,12 +1371,15 @@ impl<
             PreprocHandleWithMode::Insecure => {
                 #[cfg(feature = "insecure")]
                 {
-                    let res = Self::run_insecure_dkg(dkg_sessions, params, req_id, keyset_config).await?;
+                    let res =
+                        Self::run_insecure_dkg(dkg_sessions, params, req_id, keyset_config).await?;
                     Ok((*INSECURE_PREPROCESSING_ID, res))
                 }
                 #[cfg(not(feature = "insecure"))]
                 {
-                   panic!("attempting to call insecure keygen when the insecure feature is not set");
+                    panic!(
+                        "attempting to call insecure keygen when the insecure feature is not set"
+                    );
                 }
             }
             PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {

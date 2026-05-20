@@ -324,7 +324,6 @@ where
         let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
-            req_id,
             meta_data,
             &mut guarded_meta_store,
             permit,
@@ -791,7 +790,6 @@ where
         let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
-            key_id,
             meta_data,
             &mut guarded_meta_store,
             permit,
@@ -867,7 +865,6 @@ where
         let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
-            &req_id,
             recovery_material,
             &mut guarded_meta_store,
             permit,
@@ -1100,12 +1097,12 @@ where
 /// If the meta store update fails, then a MetaStoreError is returned, which includes the original StorageError.
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
-    req_id: &RequestId, // TODO remove and use from permit
     meta_data: MetaT,
     guarded_meta_store: &mut RwLockWriteGuard<'_, MetaStore<MetaT>>,
     permit: MetaStorePermit,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
+    let req_id = *permit.req_id();
     let is_storage_err = matches!(&storage_res, Err(e) if e != &StorageError::Backup);
     let meta_store_ok = if is_storage_err {
         update_err_req_in_meta_store(
@@ -1117,7 +1114,6 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
     } else {
         update_ok_req_in_meta_store(guarded_meta_store, permit, meta_data, op_metric_tag)
     };
-    let _ = req_id; // kept in the signature for log clarity at the caller
     if !meta_store_ok {
         // NOTE this would indicate a bug since we have just verified that the meta can be updated in the start of this method
         // Thus the meta store update can only fail in case of a race condition, which would indicate a bug
