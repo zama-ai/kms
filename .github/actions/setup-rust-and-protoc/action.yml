@@ -30,6 +30,13 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install mold
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq mold
+        mold --version
+
     - name: Set up Rust
       if: ${{ inputs.setup-rust == 'true' }}
       uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
@@ -38,24 +45,24 @@ runs:
         components: ${{ inputs.rust-components }}
         cache: ${{ inputs.rust-cache }}
 
-    - name: Install Protoc
-      if: ${{ inputs.setup-protoc == 'true' }}
-      env:
-        PROTOC_VERSION: "34.1"
-        PROTOC_SHA256: af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
-      shell: bash
-      run: |
-        echo "$PATH"
-        set -euo pipefail
-        PROTOC_ARCHIVE="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-        curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ARCHIVE}"
-        echo "${PROTOC_SHA256}  ${PROTOC_ARCHIVE}" | sha256sum --check --strict
-        mkdir -p "${HOME}/.local"
-        unzip -o "${PROTOC_ARCHIVE}" -d "${HOME}/.local"
-        protoc --version
+    # - name: Install Protoc
+    #   if: ${{ inputs.setup-protoc == 'true' }}
+    #   env:
+    #     PROTOC_VERSION: "34.1"
+    #     PROTOC_SHA256: af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
+    #   shell: bash
+    #   run: |
+    #     echo "$PATH"
+    #     set -euo pipefail
+    #     PROTOC_ARCHIVE="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+    #     curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ARCHIVE}"
+    #     echo "${PROTOC_SHA256}  ${PROTOC_ARCHIVE}" | sha256sum --check --strict
+    #     mkdir -p "${HOME}/.local"
+    #     unzip -o "${PROTOC_ARCHIVE}" -d "${HOME}/.local"
+    #     protoc --version
 
     - name: Install cargo-nextest
       if: ${{ inputs.setup-cargo-nextest == 'true' }}
       uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
       with:
-        tool: cargo-nextest@0.9.133
+        tool: cargo-nextest@0.9.133, protoc@34.1
