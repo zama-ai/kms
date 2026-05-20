@@ -277,7 +277,7 @@ jobs:
         run: |
           MATRIX_JSON=$(jq -nc '{
             include: [
-              { "args-tests": "--features threshold_tests --partition count:2/1 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure" },
+              { "args-tests": "--features threshold_tests --partition count:1/2 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure" },
               { "args-tests": "--features threshold_tests --partition count:2/2 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure" },
               { "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example" }
             ]
