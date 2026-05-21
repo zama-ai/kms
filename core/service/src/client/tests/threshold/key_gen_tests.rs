@@ -79,8 +79,8 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 use tonic::{Response, Status};
-#[allow(dead_code)]
-#[allow(clippy::large_enum_variant)]
+
+#[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
@@ -93,7 +93,7 @@ pub(crate) enum TestKeyGenResult {
         ),
     ),
 }
-#[allow(dead_code)]
+
 impl TestKeyGenResult {
     fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
         match self {
