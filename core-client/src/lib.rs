@@ -2195,20 +2195,13 @@ pub async fn execute_cmd(
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
 
-            let backup_id = res[0].backup_id();
-
             // no ordering of results and paths here
             for (cur_res, cur_path) in res.into_iter().zip(operator_recovery_resp_paths) {
-                assert_eq!(
-                    backup_id,
-                    cur_res.backup_id(),
-                    "All recovery responses must belong to the same backup ID"
-                );
                 safe_write_element_versioned(cur_path, &cur_res).await?;
             }
 
             vec![(
-                Some(backup_id),
+                None,
                 "custodian recovery init queried and recovery request stored".to_string(),
             )]
         }
@@ -2225,7 +2218,6 @@ pub async fn execute_cmd(
             }
             do_custodian_backup_recovery(
                 &core_endpoints_req,
-                &cc_conf,
                 *custodian_context_id,
                 custodian_outputs,
             )

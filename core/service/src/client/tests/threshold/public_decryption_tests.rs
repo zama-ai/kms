@@ -10,7 +10,7 @@ use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -212,16 +212,14 @@ pub async fn decryption_threshold(
         new_epoch: 1,
     };
 
-    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus
-    // signing keys + PRSS. Material type follows the DKG params.
-    let spec = {
-        let mut s = if dkg_params == TEST_PARAM {
-            TestMaterialSpec::threshold_basic(amount_parties)
-        } else {
-            TestMaterialSpec::threshold_default(amount_parties)
-        };
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing
+    // keys. PRSS is bootstrapped at runtime via `.with_prss()` below — not pre-staged,
+    // since `generate-test-material` doesn't produce PRSS fixtures.
+    // TODO(dp): broader PrssSetup cleanup is stashed for a separate PR.
+    let spec = if dkg_params == TEST_PARAM {
+        TestMaterialSpec::threshold_basic(amount_parties)
+    } else {
+        TestMaterialSpec::threshold_default(amount_parties)
     };
 
     let mut builder = ThresholdTestEnv::builder()

@@ -58,7 +58,6 @@ pub(crate) fn default_isolated_extra_data() -> Vec<u8> {
 /// Returns the default keygen config.
 ///
 /// The default is compressed public key material.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) fn keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
@@ -76,7 +75,6 @@ pub(crate) fn keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>)
 /// Returns a keygen config explicitly requesting uncompressed keys.
 ///
 /// Use this when a test specifically needs uncompressed keys.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) fn uncompressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
