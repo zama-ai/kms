@@ -22,6 +22,8 @@ pub struct CoreConfig {
     #[validate(nested)]
     pub service: ServiceEndpoint,
     #[validate(nested)]
+    pub enclave_bootstrap: Option<EnclaveBootstrapConfig>,
+    #[validate(nested)]
     pub telemetry: Option<TelemetryConfig>,
     #[validate(nested)]
     pub aws: Option<AWSConfig>,
@@ -80,6 +82,18 @@ pub struct ServiceEndpoint {
     // maximum gRPC message size in bytes
     #[validate(range(min = 1, max = 2147483647))]
     pub grpc_max_message_size: usize,
+}
+
+/// The enclave init script extracts only the web-identity-token bootstrap port
+/// from the kms-server config before kms-server even starts. Tunnel addressing,
+/// queue count, MTU, and resolver bootstrap now come from the parent-side
+/// `vsocktun` control plane instead of this config file.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct EnclaveBootstrapConfig {
+    // vsock to read fresh k8s web identity tokens from
+    #[validate(range(min = 1, max = 65535))]
+    pub web_identity_token_port: u16,
 }
 
 impl ConfigTracing for CoreConfig {
@@ -415,6 +429,20 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_centralized_enclave_config() {
+        let core_config: CoreConfig = init_conf("config/default_centralized_enclave").unwrap();
+        core_config
+            .validate()
+            .expect("centralized enclave config must validate");
+
+        let enclave_bootstrap = core_config
+            .enclave_bootstrap
+            .as_ref()
+            .expect("enclave_bootstrap section required for enclave config");
+        assert_eq!(enclave_bootstrap.web_identity_token_port, 4100);
     }
 
     // -----------------------------------------------------------------------
