@@ -23,6 +23,7 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Get Rust version
@@ -64,42 +65,9 @@ jobs:
           echo "EXECUTING: make lint-dylint"
           make lint-dylint
 
-  backward-snapshot:
-    name: rust-lint/backward-snapshot
-    permissions:
-      contents: read # Required to checkout repository code
-      actions: read # Required to read workflow run information
-      id-token: write # Required for OIDC token generation
-    runs-on: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-    steps:
-      - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Get Rust version
-        env:
-          GH_WORKSPACE: ${{ github.workspace }}
-        run: |
-          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
-          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Set up Rust and Protoc
-        uses: ./.github/actions/setup-rust-and-protoc
-        with:
-          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          rust-components: rustfmt, clippy
-          rust-cache: "false"
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
       - name: Check backward snapshot compatibility
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          echo "EXECUTING: make backward-snapshot-check BASE_REF=${{ github.event.pull_request.base.sha }}"
-          make backward-snapshot-check BASE_REF=${{ github.event.pull_request.base.sha }}
+          echo "EXECUTING: make backward-snapshot-check BASE_REF=${BASE_SHA}"
+          make backward-snapshot-check "BASE_REF=${BASE_SHA}"
