@@ -36,7 +36,7 @@ Release
 | [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Mixed-version perf tests for `thresholdWithEnclave` | Manual |
 | [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Workflow call |
 | [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, scheduled |
-| [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `make linting-dylint` | PRs |
+| [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `make lint-dylint` | PRs |
 | [`common-testing.yml`](common-testing.yml) | Reusable test runner | Workflow call |
 | [`wasm-testing.yml`](wasm-testing.yml) | WASM test pipeline | Workflow call |
 | [`ci_lint.yml`](ci_lint.yml) | actionlint + zizmor on workflow files | PRs |
@@ -166,7 +166,7 @@ Generates WASM test fixtures from Rust tests, builds `tkms` and `node-tkms` pack
 
 ### `rust-lint.yml`
 
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `make linting-dylint`. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, turning Dylint warnings to errors while disabling the broad tfhe-rs `serialize_without_versionize` lint.
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `make lint-dylint`. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, turning Dylint warnings to errors while disabling the broad tfhe-rs `serialize_without_versionize` lint.
 
 ### `docker-build.yml`
 

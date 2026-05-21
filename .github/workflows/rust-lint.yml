@@ -61,5 +61,5 @@ jobs:
 
       - name: Dylint
         run: |
-          echo "EXECUTING: make linting-dylint"
-          make linting-dylint
+          echo "EXECUTING: make lint-dylint"
+          make lint-dylint
