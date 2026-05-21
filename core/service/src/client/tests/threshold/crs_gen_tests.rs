@@ -10,7 +10,7 @@ cfg_if::cfg_if! {
 
 
     use crate::client::client_wasm::Client;
-    use crate::client::tests::{threshold::common::{ProtoRequestId,poll_with_retries}};
+    use crate::client::tests::{threshold::common::{poll_with_retries}};
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
@@ -338,7 +338,7 @@ pub async fn wait_for_crsgen_result(
     // Poll each (client, request) pair independently until all succeed.
     let mut futs = Vec::new();
     for req in reqs {
-        let req_id: ProtoRequestId = req.request_id.clone().unwrap();
+        let req_id = req.request_id.clone().unwrap();
         for (server_id, client) in kms_clients.iter() {
             let client = client.clone();
             futs.push(poll_with_retries(

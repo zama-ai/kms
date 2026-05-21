@@ -33,7 +33,7 @@ use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
 
 /// RequestIds as they are represented in the current version of the ProtoBuf API.
-pub(crate) type ProtoRequestId = kms_grpc::kms::v1::RequestId;
+type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
 #[allow(clippy::too_many_arguments)]
 async fn threshold_handles_w_vaults(
