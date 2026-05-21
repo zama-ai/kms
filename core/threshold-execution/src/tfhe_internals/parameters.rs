@@ -436,6 +436,20 @@ pub trait DKGParamsBasics: Sync {
     fn get_pmax(&self) -> Option<f64> {
         self.get_sk_deviations().map(|dev| dev.pmax)
     }
+
+    /// Returns `true` when the CPK re-randomization KSK has the same crypto
+    /// parameters as the PKSK (the keyswitching key bundled with the dedicated
+    /// compact public key parameters) and can therefore reuse it instead of
+    /// being generated as a dedicated key.
+    fn rerand_ksk_reuses_pksk(&self) -> bool {
+        match (
+            self.get_rerand_params(),
+            self.get_dedicated_pk_params().map(|(_, p)| p),
+        ) {
+            (Some(rerand), Some(pksk)) => rerand == pksk,
+            _ => false,
+        }
+    }
 }
 
 fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
@@ -724,11 +738,9 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn num_needed_noise_rerand_ksk(&self) -> NoiseInfo {
-        // If there's a dedicated compact key with same parameter,
-        // we won't need to generate a new rerand key.
-        let amount = if self.cpk_re_randomization_ksk_params
-            == self.dedicated_compact_public_key_parameters.map(|(_, p)| p)
-        {
+        // If the dedicated PKSK can be reused as the rerand KSK we don't need
+        // any new noise for it; keep this in sync with `rerand_ksk_reuses_pksk`.
+        let amount = if self.rerand_ksk_reuses_pksk() {
             0
         } else {
             self.lwe_hat_dimension().0 * self.decomposition_level_count_rerand_ksk().0
@@ -2144,7 +2156,9 @@ mod tests {
     use crate::{
         keyset_config::{KeySetConfig, StandardKeySetConfig},
         tfhe_internals::parameters::{
-            BC_PARAMS_SNS, compute_min_trials, compute_prob_hw_within_range,
+            BC_PARAMS_SNS, NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_SNS_FGLWE,
+            NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_SNS_FGLWE, compute_min_trials,
+            compute_prob_hw_within_range,
         },
     };
 
@@ -2303,5 +2317,69 @@ mod tests {
         let log2_p_failure = -20;
         let result = compute_min_trials(p, log2_p_failure).unwrap();
         assert_eq!(result, 49);
+    }
+
+    /// Guards the invariant that the "reuse PKSK as rerand KSK" decision is
+    /// consistent across `rerand_ksk_reuses_pksk` (which the keygen pipeline
+    /// branches on) and `num_needed_noise_rerand_ksk` (which the noise budget
+    /// is sized from).
+    ///
+    /// Regression for the panic at
+    /// `MPCNoiseRandomGenerator::fork` during compressed key generation with
+    /// `NIST_PARAMS_P*_SNS_FGLWE`: the two functions disagreed and the keygen
+    /// would generate a "dedicated" rerand KSK with a zero-length noise vector.
+    #[test]
+    fn rerand_ksk_reuse_decision_is_consistent_with_noise_budget() {
+        for param in DkgParamsAvailable::iter() {
+            let p = param.to_param();
+            let h = p.get_params_basics_handle();
+            if h.rerand_ksk_reuses_pksk() {
+                assert_eq!(
+                    h.num_needed_noise_rerand_ksk().amount,
+                    0,
+                    "{param:?}: rerand_ksk_reuses_pksk() == true but \
+                     num_needed_noise_rerand_ksk().amount != 0; this drove \
+                     keygen into the dedicated-KSK branch with an empty noise \
+                     vec, causing a fork panic during the first LWE encryption.",
+                );
+            } else {
+                // When rerand can't reuse PKSK, the rerand KSK is generated as
+                // a dedicated key and must have a non-zero noise budget iff
+                // rerand params are configured at all.
+                if h.get_rerand_params().is_some() {
+                    assert!(
+                        h.num_needed_noise_rerand_ksk().amount > 0,
+                        "{param:?}: dedicated rerand KSK requested but no \
+                         noise budgeted",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The `NIST_PARAMS_P*_FGLWE` parameter sets configure
+    /// `cpk_re_randomization_ksk_params` to the same
+    /// `ShortintKeySwitchingParameters` value as the PKSK ksk component, so
+    /// the rerand KSK must reuse PKSK on these. The blockchain parameter
+    /// sets use distinct values and must NOT reuse PKSK.
+    #[test]
+    fn rerand_ksk_reuse_decision_matches_known_parameter_sets() {
+        for p in [
+            NIST_PARAMS_P8_NO_SNS_FGLWE,
+            NIST_PARAMS_P8_SNS_FGLWE,
+            NIST_PARAMS_P32_NO_SNS_FGLWE,
+            NIST_PARAMS_P32_SNS_FGLWE,
+        ] {
+            assert!(
+                p.get_params_basics_handle().rerand_ksk_reuses_pksk(),
+                "expected rerand KSK to reuse PKSK on {p:?}",
+            );
+        }
+        for p in [BC_PARAMS_NO_SNS, BC_PARAMS_SNS] {
+            assert!(
+                !p.get_params_basics_handle().rerand_ksk_reuses_pksk(),
+                "expected dedicated rerand KSK on {p:?}",
+            );
+        }
     }
 }
