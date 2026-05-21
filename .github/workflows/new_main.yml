@@ -233,7 +233,7 @@ jobs:
           # Core service - aggressively sharded by family and partition.
           - job_name: core-service-lib-p1
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:1/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:1/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -245,7 +245,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p2
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:2/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:2/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -257,7 +257,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p3
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:3/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:3/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -269,7 +269,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p4
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:4/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:4/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -281,7 +281,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p5
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:5/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:5/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -293,7 +293,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p6
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:6/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:6/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -305,7 +305,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p7
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:7/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:7/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -317,7 +317,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p8
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:8/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:8/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -329,7 +329,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p9
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:9/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:9/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -341,7 +341,7 @@ jobs:
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           - job_name: core-service-lib-p10
             crate_names: '-p kms'
-            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:10/10 --lib -- --skip nightly'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:10/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
             run_minio: true
             run_redis: false
             skip_test_material: false
@@ -350,6 +350,19 @@ jobs:
             runner_volume: '400gb'
             rust_log_level: 'info'
             nextest_threads: '4'
+            efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
+          #======================================================================
+          - job_name: core-service-lib-epoch-reshare
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F s3_tests -F insecure --partition count:1/1 --lib -- test_new_epoch_with_reshare'
+            run_minio: true
+            run_redis: false
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '1'
             efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
           #======================================================================
           - job_name: core-service-test-p1
