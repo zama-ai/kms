@@ -45,6 +45,8 @@ use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
 #[cfg(feature = "insecure")]
+use crate::vault::storage::crypto_material::data_exists_at_epoch;
+#[cfg(feature = "insecure")]
 use alloy_primitives::Address;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
@@ -412,6 +414,17 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         )
         .await
         .unwrap();
+        // Sanity check that the key is indeed gone.
+        assert!(
+            !data_exists_at_epoch(
+                &mut cur_priv_store,
+                &req_key_id,
+                &DEFAULT_EPOCH_ID,
+                &PrivDataType::FheKeyInfo.to_string()
+            )
+            .await
+            .unwrap()
+        );
     }
 
     let (kms_servers, kms_clients) = env.restart_servers().await;

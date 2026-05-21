@@ -16,6 +16,7 @@ use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
+use crate::vault::storage::crypto_material::data_exists_at_epoch;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
     StorageType, delete_at_request_and_epoch_id, read_context_at_id, read_versioned_at_request_id,
@@ -276,6 +277,17 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     )
     .await
     .unwrap();
+    // Sanity check that the key is indeed gone.
+    assert!(
+        !data_exists_at_epoch(
+            &mut priv_storage,
+            &key_id,
+            &epoch_id,
+            &PrivDataType::FhePrivateKey.to_string()
+        )
+        .await
+        .unwrap()
+    );
 
     // Reboot the server.
     let (kms_server, mut kms_client) = env.restart_server().await;
