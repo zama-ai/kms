@@ -383,13 +383,13 @@ async fn test_copy_compressed_key_to_original_success() {
             .retrieve(&old_key_id)
             .unwrap_or_else(|| panic!("meta_store entry should exist for old_key_id={old_key_id}"));
         let meta = match entry {
-            crate::util::meta_store::EntryState::Done(Ok(arc)) => Arc::clone(arc),
+            crate::util::meta_store::EntryState::Done(Ok(arc)) => arc,
             other => panic!(
-                "meta_store should hold Done(Ok(metadata)) for old_key_id={old_key_id}, got {other:?}",
-                other = match other {
-                    crate::util::meta_store::EntryState::Pending(_) => "Pending",
-                    crate::util::meta_store::EntryState::Done(Err(e)) => e.as_str(),
-                    crate::util::meta_store::EntryState::Deleted => "Deleted",
+                "meta_store should hold Done(Ok(metadata)) for old_key_id={old_key_id}, got {state}",
+                state = match other {
+                    crate::util::meta_store::EntryState::Pending => "Pending".to_owned(),
+                    crate::util::meta_store::EntryState::Done(Err(e)) => format!("Done(Err: {e})"),
+                    crate::util::meta_store::EntryState::Deleted => "Deleted".to_owned(),
                     crate::util::meta_store::EntryState::Done(Ok(_)) => unreachable!(),
                 }
             ),

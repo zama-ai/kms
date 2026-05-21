@@ -1362,14 +1362,14 @@ async fn write_backup_keys() {
             .await
             .unwrap()
     );
-    // Request is no longer pending
+    // Request is no longer pending:
     assert!(matches!(
         meta_store
             .read()
             .await
             .retrieve(&req_id)
             .expect("request should remain tracked in meta store"),
-        EntryState::Pending(_)
+        EntryState::Done(Ok(_))
     ));
 }
 

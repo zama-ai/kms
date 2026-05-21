@@ -175,9 +175,9 @@ impl MetaStoreStatusServiceImpl {
                             Some((RequestProcessingStatus::Completed, None))
                         }
                         Some(EntryState::Done(Err(err))) => {
-                            Some((RequestProcessingStatus::Failed, Some(err.clone())))
+                            Some((RequestProcessingStatus::Failed, Some(err)))
                         }
-                        Some(EntryState::Pending(_)) => {
+                        Some(EntryState::Pending) => {
                             Some((RequestProcessingStatus::Processing, None))
                         }
                         Some(EntryState::Deleted) => Some((RequestProcessingStatus::Deleted, None)),
@@ -318,10 +318,8 @@ impl MetaStoreStatusServiceImpl {
         for request_id in paginated_ids {
             let status_pair = match store_guard.retrieve(request_id) {
                 Some(EntryState::Done(Ok(_))) => (RequestProcessingStatus::Completed, None),
-                Some(EntryState::Done(Err(err))) => {
-                    (RequestProcessingStatus::Failed, Some(err.clone()))
-                }
-                Some(EntryState::Pending(_)) => (RequestProcessingStatus::Processing, None),
+                Some(EntryState::Done(Err(err))) => (RequestProcessingStatus::Failed, Some(err)),
+                Some(EntryState::Pending) => (RequestProcessingStatus::Processing, None),
                 Some(EntryState::Deleted) => (RequestProcessingStatus::Deleted, None),
                 None => {
                     // INVARIANT VIOLATION: Request ID from store's own collection is not retrievable

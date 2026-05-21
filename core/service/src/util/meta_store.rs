@@ -73,11 +73,28 @@ enum StoredEntry<T> {
     Deleted,
 }
 
+impl<T> StoredEntry<T> {
+    fn done(value: Result<Arc<T>, String>) -> Self {
+        StoredEntry::Done(value, Arc::new(()))
+    }
+}
+
 impl<T> From<StoredEntry<T>> for EntryState<T> {
     fn from(stored: StoredEntry<T>) -> Self {
         match stored {
             StoredEntry::Pending(_claim) => EntryState::Pending,
             StoredEntry::Done(res, _claim) => EntryState::Done(res),
+            StoredEntry::Deleted => EntryState::Deleted,
+        }
+    }
+}
+
+impl<T> From<&StoredEntry<T>> for EntryState<T> {
+    fn from(stored: &StoredEntry<T>) -> Self {
+        match stored {
+            StoredEntry::Pending(_) => EntryState::Pending,
+            StoredEntry::Done(Ok(arc), _) => EntryState::Done(Ok(Arc::clone(arc))),
+            StoredEntry::Done(Err(e), _) => EntryState::Done(Err(e.clone())),
             StoredEntry::Deleted => EntryState::Deleted,
         }
     }
@@ -128,7 +145,7 @@ impl<T> MetaStore<T> {
             .into_iter()
             .map(|(key, value)| {
                 completed_queue.push_back(key);
-                (key, EntryState::Done(Ok(Arc::new(value))))
+                (key, StoredEntry::done(Ok(Arc::new(value))))
             })
             .collect();
 
@@ -196,9 +213,9 @@ impl<T> MetaStore<T> {
                 )?;
                 if self.storage.remove(&old_request_id).is_none() {
                     self.complete_queue.push_front(old_request_id);
-                    return Err(anyhow::bail!(
+                    return Err(anyhow_error_and_log(format!(
                         "Failed to remove old element {old_request_id} from storage, invariant preserved"
-                    ));
+                    )));
                 }
             }
         }
@@ -273,7 +290,7 @@ impl<T> MetaStore<T> {
                 "The element with ID {req_id} is not in a pending state, update is not allowed"
             )));
         }
-        *cell = StoredEntry::Done(update.map(Arc::new));
+        *cell = StoredEntry::done(update.map(Arc::new));
         self.complete_queue.push_back(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
@@ -303,7 +320,7 @@ impl<T> MetaStore<T> {
                     }
                     Arc::clone(arc)
                 }
-                StoredEntry::Done(_) => {
+                StoredEntry::Done(_, _) => {
                     return Err(anyhow_error_and_log(format!(
                         "The element with ID {request_id} is not in a pending state, update is not allowed"
                     )));
@@ -334,6 +351,7 @@ impl<T> MetaStore<T> {
     /// the standard `insert → update` lifecycle. Bypasses the permit
     /// mechanism on purpose: no live permit can exist for a `Done` entry, and
     /// fresh inserts via this path are explicitly admin-scoped.
+    // TODO should this actually be done with a permit?
     pub(crate) fn replace_done(&mut self, request_id: &RequestId, value: T) -> anyhow::Result<()> {
         match self.storage.get(request_id) {
             Some(StoredEntry::Pending(_)) => {
@@ -346,15 +364,20 @@ impl<T> MetaStore<T> {
                     "The element with ID {request_id} has been deleted, replace_done is not allowed"
                 )));
             }
-            Some(StoredEntry::Done(_)) => {
+            Some(StoredEntry::Done(_, claim)) => {
+                if Arc::strong_count(claim) > 1 {
+                    return Err(anyhow_error_and_log(format!(
+                        "The element with ID {request_id} is currently locked, replace_done is not allowed"
+                    )));
+                }
                 // Existing Done entry — overwrite in place, keep complete_queue slot.
                 self.storage
-                    .insert(*request_id, StoredEntry::Done(Ok(Arc::new(value))));
+                    .insert(*request_id, StoredEntry::done(Ok(Arc::new(value))));
             }
             None => {
                 // Fresh insert — record completion.
                 self.storage
-                    .insert(*request_id, StoredEntry::Done(Ok(Arc::new(value))));
+                    .insert(*request_id, StoredEntry::done(Ok(Arc::new(value))));
                 self.complete_queue.push_back(*request_id);
             }
         }
@@ -362,8 +385,12 @@ impl<T> MetaStore<T> {
     }
 
     /// Retrieve the state of an element and return None if it does not exist.
-    pub fn retrieve(&self, request_id: &RequestId) -> Option<&EntryState<T>> {
-        self.storage.get(request_id).into()
+    ///
+    /// Returns an [`EntryState`] snapshot by value; the internal claim arc on
+    /// `Pending` / `Done` is intentionally hidden from external callers, who
+    /// should not depend on locking state.
+    pub fn retrieve(&self, request_id: &RequestId) -> Option<EntryState<T>> {
+        self.storage.get(request_id).map(EntryState::from)
     }
 
     /// Mark an existing entry as deleted, regardless of whether it was Pending
@@ -413,7 +440,7 @@ impl<T> MetaStore<T> {
         let cell = self.storage.get_mut(request_id).unwrap();
         // TODO ensure we can just clone the old entry
         let old = std::mem::replace(cell, StoredEntry::Deleted);
-        if matches!(old, StoredEntry::Done(_)) {
+        if matches!(old, StoredEntry::Done(_, _)) {
             self.complete_queue.retain(|id| id != request_id);
         }
         Ok(old.into())
@@ -470,7 +497,7 @@ impl<T> MetaStore<T> {
         self.complete_queue
             .iter()
             .filter_map(|id| match self.storage.get(id) {
-                Some(EntryState::Done(Err(_))) => Some(*id),
+                Some(StoredEntry::Done(Err(_), _)) => Some(*id),
                 Some(_) => None,
                 None => {
                     tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
@@ -486,7 +513,7 @@ impl<T> MetaStore<T> {
         self.storage
             .iter()
             .filter_map(|(id, state)| match state {
-                EntryState::Deleted => Some(*id),
+                StoredEntry::Deleted => Some(*id),
                 _ => None,
             })
             .collect()
@@ -639,8 +666,8 @@ async fn poll_entry<T>(
                 tonic::Code::NotFound,
             )))
         }
-        Some(EntryState::Pending(_)) => PollOutcome::Pending,
-        Some(EntryState::Done(Ok(arc))) => PollOutcome::Done(Ok(Arc::clone(arc))),
+        Some(EntryState::Pending) => PollOutcome::Pending,
+        Some(EntryState::Done(Ok(arc))) => PollOutcome::Done(Ok(arc)),
         Some(EntryState::Done(Err(e))) => {
             let msg = format!(
                 "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
@@ -677,7 +704,7 @@ mod tests {
             other => panic!(
                 "expected Done(Ok), got {:?}",
                 match other {
-                    EntryState::Pending(_) => "Pending",
+                    EntryState::Pending => "Pending",
                     EntryState::Done(Err(_)) => "Done(Err)",
                     EntryState::Deleted => "Deleted",
                     EntryState::Done(Ok(_)) => unreachable!(),
@@ -820,7 +847,7 @@ mod tests {
         let id: RequestId = derive_request_id("perm-del").unwrap();
         let permit = meta_store.insert(&id).unwrap();
         let prev = meta_store.delete(permit).unwrap();
-        assert!(matches!(prev, EntryState::Pending(_)));
+        assert!(matches!(prev, EntryState::Pending));
         assert!(matches!(
             meta_store.retrieve(&id),
             Some(EntryState::Deleted)
