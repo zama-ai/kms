@@ -1,0 +1,338 @@
+name: compat-matrix
+
+# Cross-version compatibility matrix between `node-tkms` (client, WASM) and
+# `kms` (server). Every kms release is also a node-tkms release of the same
+# version (see npm-release.yml: the publishable package is built from this
+# repo's core/service). This workflow picks a list of versions, runs the wasm
+# test suite for every off-diagonal (producer, consumer) pair, and produces a
+# 2D pass/fail table on the run summary.
+#
+# Manually dispatched. Edit ci/compat-matrix.json to change the default
+# version list and per-version producer overrides. Diagonal cells are skipped
+# (already covered by wasm-testing.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: "Comma-separated versions (overrides ci/compat-matrix.json `versions`)."
+        type: string
+        required: false
+      skip_cells:
+        description: "JSON array of {producer, consumer, reason} (overrides ci/compat-matrix.json `skip_cells`)."
+        type: string
+        required: false
+      producer_only:
+        description: "Stop after the producer matrix (skip consumer + aggregate)."
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: compat-matrix-${{ github.run_id }}
+  cancel-in-progress: false
+
+# All jobs use the same 16cpu custom runner label as wasm-testing.yml. The
+# runner label cannot be parameterized via env: in `runs-on`, so it is
+# repeated verbatim in each job.
+
+jobs:
+  setup:
+    name: setup
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    permissions:
+      contents: read
+    outputs:
+      producers: ${{ steps.matrix.outputs.producers }}
+      consumers: ${{ steps.matrix.outputs.consumers }}
+      pairs: ${{ steps.matrix.outputs.pairs }}
+      pairs_count: ${{ steps.matrix.outputs.pairs_count }}
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve matrix
+        id: matrix
+        env:
+          INPUT_VERSIONS: ${{ inputs.versions }}
+          INPUT_SKIP_CELLS: ${{ inputs.skip_cells }}
+        run: ci/scripts/compat_matrix_setup.sh ci/compat-matrix.json
+
+  producer:
+    name: producer ${{ matrix.version }}
+    needs: setup
+    if: needs.setup.outputs.pairs_count != '0' || inputs.producer_only
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        version: ${{ fromJson(needs.setup.outputs.producers) }}
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      # HEAD checkout supplies ci/scripts/* and .github/actions/* (the
+      # composite action below). Default path: $GITHUB_WORKSPACE.
+      - name: Checkout HEAD (workflow source)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      # The matrix version's source tree goes into ./src so HEAD's actions
+      # remain visible at $GITHUB_WORKSPACE/.github/actions/. Older tags may
+      # not have setup-rust-and-protoc; we deliberately use HEAD's copy.
+      - name: Checkout kms@${{ matrix.version }}
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ matrix.version }}
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+          path: src
+
+      - name: Detect Rust toolchain
+        id: rust
+        run: |
+          set -euo pipefail
+          if [[ -f src/rust-toolchain.toml ]]; then
+              channel="$(grep '^channel' src/rust-toolchain.toml | awk -F' = ' '{print $2}' | tr -d '"')"
+          elif [[ -f src/toolchain.txt ]]; then
+              channel="$(tr -d '[:space:]' < src/toolchain.txt)"
+          else
+              channel="stable"
+          fi
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "matrix.version=${{ matrix.version }} -> rust channel ${channel}"
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ steps.rust.outputs.channel }}
+          rust-cache: "false"
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src
+          prefix-key: compat-matrix-producer-${{ matrix.version }}
+
+      - name: Run producer recipe
+        run: |
+          set -euo pipefail
+          ci/scripts/compat_matrix_producer.sh \
+              "${{ matrix.version }}" \
+              "src" \
+              "ci/compat-matrix.json"
+
+      - name: Stage artifact
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-out
+          cp src/core/service/temp/test-central-wasm-transcript.bin.* artifact-out/
+          cp src/core/service/temp/test-threshold-wasm-transcript.bin.* artifact-out/
+          ls -la artifact-out/
+
+      - name: Capture bincode/serde versions (diagnostic)
+        if: always()
+        continue-on-error: true
+        working-directory: src
+        run: |
+          set -euo pipefail
+          cargo tree --workspace -p bc2wrap -p bincode -p serde --depth 0 \
+              > ../artifact-out/bincode-versions.txt 2>&1 || true
+
+      - name: Upload transcripts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: transcripts-${{ matrix.version }}
+          path: artifact-out/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove aws credentials file
+        if: always()
+        run: rm -rf ~/.aws
+
+  consumer:
+    name: consumer ${{ matrix.pair.a }} -> ${{ matrix.pair.b }}
+    needs: [setup, producer]
+    if: ${{ inputs.producer_only != true && needs.setup.outputs.pairs_count != '0' }}
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        pair: ${{ fromJson(needs.setup.outputs.pairs) }}
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout HEAD (workflow source)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout kms@${{ matrix.pair.b }}
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ matrix.pair.b }}
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+          path: src
+
+      - name: Detect Rust toolchain
+        id: rust
+        run: |
+          set -euo pipefail
+          if [[ -f src/rust-toolchain.toml ]]; then
+              channel="$(grep '^channel' src/rust-toolchain.toml | awk -F' = ' '{print $2}' | tr -d '"')"
+          elif [[ -f src/toolchain.txt ]]; then
+              channel="$(tr -d '[:space:]' < src/toolchain.txt)"
+          else
+              channel="stable"
+          fi
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ steps.rust.outputs.channel }}
+          rust-cache: "false"
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src
+          prefix-key: compat-matrix-consumer-${{ matrix.pair.b }}
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 20
+
+      # -F wasm_tests is mandatory: TestingUserDecryptionTranscript and the
+      # buf_to_transcript / transcript_to_* helpers used by tests/js/test.js
+      # are gated behind #[cfg(feature = "wasm_tests")]. The publishable npm
+      # build (without this feature) cannot deserialize transcripts.
+      - name: Build consumer WASM (kms@${{ matrix.pair.b }})
+        working-directory: src/core/service
+        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+
+      - name: Download producer transcripts (kms@${{ matrix.pair.a }})
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: transcripts-${{ matrix.pair.a }}
+          path: src/core/service/temp
+
+      - name: Verify transcripts present
+        run: |
+          set -euo pipefail
+          ls -la src/core/service/temp/
+          test -s src/core/service/temp/test-central-wasm-transcript.bin.8
+          test -s src/core/service/temp/test-threshold-wasm-transcript.bin.8
+
+      - name: Run wasm tests
+        id: run
+        continue-on-error: true
+        working-directory: src/core/service
+        run: |
+          set +e
+          node --test tests/js 2>&1 | tee node-test.log
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Emit result.json
+        run: |
+          set -euo pipefail
+          mkdir -p result-out
+          ci/scripts/compat_matrix_emit_result.sh \
+              "${{ matrix.pair.a }}" \
+              "${{ matrix.pair.b }}" \
+              "${{ steps.run.outputs.exit }}" \
+              "src/core/service/node-test.log" \
+              "result-out/result.json"
+          cp src/core/service/node-test.log result-out/node-test.log || true
+
+      - name: Upload cell result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: result-${{ matrix.pair.a }}-${{ matrix.pair.b }}
+          path: result-out/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove aws credentials file
+        if: always()
+        run: rm -rf ~/.aws
+
+  aggregate:
+    name: aggregate
+    needs: [setup, consumer]
+    if: ${{ always() && inputs.producer_only != true && needs.setup.outputs.pairs_count != '0' }}
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    permissions:
+      contents: read
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download all cell results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: result-*
+          path: ./results/
+
+      - name: Render compatibility matrix
+        id: render
+        run: |
+          set +e
+          python3 ci/scripts/render_compat_matrix.py ./results ci/compat-matrix.json \
+              > compat-matrix.md
+          render_status=$?
+          set -e
+          echo "render_status=${render_status}" >> "$GITHUB_OUTPUT"
+          cat compat-matrix.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload rendered matrix
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compat-matrix
+          path: compat-matrix.md
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail if any workflow-level error
+        if: ${{ steps.render.outputs.render_status != '0' }}
+        run: |
+          echo "compat-matrix has cells with status=error or missing artifact -- failing the run" >&2
+          exit 1

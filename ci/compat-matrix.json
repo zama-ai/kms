@@ -1,0 +1,20 @@
+{
+  "$comment": "Cross-version compatibility matrix between kms (server) and node-tkms (client). Consumed by .github/workflows/compat-matrix.yml and ci/scripts/compat_matrix_*.{sh,py}. Edit and dispatch the workflow manually to refresh the matrix.",
+  "versions": [
+    "v0.13.3",
+    "v0.13.10",
+    "v0.13.20-0"
+  ],
+  "skip_cells": [],
+  "producer_overrides": {
+    "v0.13.3": {
+      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "testing", "-o", "./test-material"]
+    },
+    "v0.13.10": {
+      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "testing", "-o", "./test-material"]
+    },
+    "v0.13.20-0": {
+      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "testing", "-o", "./test-material"]
+    }
+  }
+}
