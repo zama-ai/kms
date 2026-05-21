@@ -2156,11 +2156,6 @@ pub async fn execute_cmd(
             overwrite_ephemeral_key,
             operator_recovery_resp_paths,
         }) => {
-            assert_eq!(
-                operator_recovery_resp_paths.len(),
-                num_parties,
-                "Number of operator recovery response paths must match number of operators in the configuration files"
-            );
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
