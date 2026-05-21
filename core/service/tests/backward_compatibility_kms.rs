@@ -845,6 +845,7 @@ fn test_recovery_material(
         let (custodian_pk, _) = gen_sig_keys(&mut rng);
         let backup_material = BackupMaterial {
             backup_id,
+            mpc_context_id: kms_grpc::identifiers::ContextId::from_bytes([9u8; 32]),
             custodian_pk,
             custodian_role: cus_role,
             operator_pk: operator_pk.clone(),
@@ -894,10 +895,8 @@ fn test_internal_recovery_request(
     let original_versionized: InternalRecoveryRequest = load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.state);
-    let backup_id: RequestId = RequestId::new_random(&mut rng);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_dec_key, enc_key) = encryption.keygen().unwrap();
-    let (verf_key, _) = gen_sig_keys(&mut rng);
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.amount {
         let cur_role = Role::indexed_from_one(role_j as usize);
@@ -910,7 +909,7 @@ fn test_internal_recovery_request(
         };
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
-    let new_versionized = InternalRecoveryRequest::new(enc_key, cts, backup_id, verf_key).unwrap();
+    let new_versionized = InternalRecoveryRequest::new(enc_key, cts).unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -980,7 +979,6 @@ fn test_internal_custodian_recovery_output(
     let original_versionized: InternalCustodianRecoveryOutput =
         load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
-    let (operator_verification_key, _sk) = gen_sig_keys(&mut rng);
     let mut buf = [0u8; 100];
     rng.fill_bytes(&mut buf);
     let signcryption = UnifiedSigncryption {
@@ -992,8 +990,6 @@ fn test_internal_custodian_recovery_output(
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
         custodian_role: Role::indexed_from_one(2),
-        operator_verification_key,
-        mpc_context_id: kms_grpc::RequestId::from_bytes([7u8; 32]),
     };
 
     if original_versionized != new_versionized {
@@ -1213,6 +1209,7 @@ fn test_operator_backup_output(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),
+            kms_grpc::identifiers::ContextId::from_bytes([9u8; 32]),
         )
         .unwrap();
 
