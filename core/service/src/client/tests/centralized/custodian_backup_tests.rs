@@ -104,10 +104,11 @@ impl CentralizedBackupTestEnv {
         }
     }
 
-    /// Spin up a fresh KMS server on this env's material dir. Use to verify
-    /// state persists across server restarts. The wrapper must outlive the
-    /// returned pair.
-    async fn restart_server(&self) -> (ServerHandle, CoreServiceEndpointClient<Channel>) {
+    /// Spawn a fresh KMS server attached to this env's material directory. Use to assert state persists across server
+    /// lifetimes. The wrapper must outlive the returned pair.
+    async fn spawn_server_on_existing_material(
+        &self,
+    ) -> (ServerHandle, CoreServiceEndpointClient<Channel>) {
         CentralizedTestEnv::builder()
             .with_custodian_keychain()
             .from_path(self.material_dir.path())
@@ -163,7 +164,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     purge_backup(env.test_path(), &[None]).await;
 
     // Check that the backup is still there after reboot
-    let (_kms_server, _kms_client) = env.restart_server().await;
+    let (_kms_server, _kms_client) = env.spawn_server_on_existing_material().await;
     let _reread_backup = read_custodian_backup_files(
         env.test_path(),
         &env.req_new_cus,
@@ -219,7 +220,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     env.shutdown().await;
 
     // Check that the backup is still there and unmodified after reboot
-    let (_kms_server, _kms_client) = env.restart_server().await;
+    let (_kms_server, _kms_client) = env.spawn_server_on_existing_material().await;
     let reread_crss = read_custodian_backup_files_with_epoch(
         env.test_path(),
         &env.req_new_cus,
@@ -290,7 +291,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     );
 
     // Reboot the server.
-    let (kms_server, mut kms_client) = env.restart_server().await;
+    let (kms_server, mut kms_client) = env.spawn_server_on_existing_material().await;
 
     // Execute the backup restoring.
     let mut rng = AesRng::seed_from_u64(13);
@@ -321,7 +322,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     // by the custodian recovery + restore_from_backup calls above.
     kms_server.assert_shutdown().await;
     drop(kms_client);
-    let (_kms_server, kms_client) = env.restart_server().await;
+    let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
     run_decryption_centralized(
         &kms_client,
@@ -386,7 +387,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     .await
     .unwrap();
 
-    let (kms_server, mut kms_client) = env.restart_server().await;
+    let (kms_server, mut kms_client) = env.spawn_server_on_existing_material().await;
 
     // Tamper with two of the five custodian recovery outputs. Recovery must
     // still succeed because threshold=2 allows for 2 invalid contributions.
@@ -438,7 +439,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     // from the quorum.
     kms_server.assert_shutdown().await;
     drop(kms_client);
-    let (_kms_server, kms_client) = env.restart_server().await;
+    let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
     let mut internal_client = env.create_internal_client(&dkg_param).await;
     run_decryption_centralized(
         &kms_client,
