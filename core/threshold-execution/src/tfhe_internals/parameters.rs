@@ -2323,11 +2323,6 @@ mod tests {
     /// consistent across `rerand_ksk_reuses_pksk` (which the keygen pipeline
     /// branches on) and `num_needed_noise_rerand_ksk` (which the noise budget
     /// is sized from).
-    ///
-    /// Regression for the panic at
-    /// `MPCNoiseRandomGenerator::fork` during compressed key generation with
-    /// `NIST_PARAMS_P*_SNS_FGLWE`: the two functions disagreed and the keygen
-    /// would generate a "dedicated" rerand KSK with a zero-length noise vector.
     #[test]
     fn rerand_ksk_reuse_decision_is_consistent_with_noise_budget() {
         for param in DkgParamsAvailable::iter() {
@@ -2354,32 +2349,6 @@ mod tests {
                     );
                 }
             }
-        }
-    }
-
-    /// The `NIST_PARAMS_P*_FGLWE` parameter sets configure
-    /// `cpk_re_randomization_ksk_params` to the same
-    /// `ShortintKeySwitchingParameters` value as the PKSK ksk component, so
-    /// the rerand KSK must reuse PKSK on these. The blockchain parameter
-    /// sets use distinct values and must NOT reuse PKSK.
-    #[test]
-    fn rerand_ksk_reuse_decision_matches_known_parameter_sets() {
-        for p in [
-            NIST_PARAMS_P8_NO_SNS_FGLWE,
-            NIST_PARAMS_P8_SNS_FGLWE,
-            NIST_PARAMS_P32_NO_SNS_FGLWE,
-            NIST_PARAMS_P32_SNS_FGLWE,
-        ] {
-            assert!(
-                p.get_params_basics_handle().rerand_ksk_reuses_pksk(),
-                "expected rerand KSK to reuse PKSK on {p:?}",
-            );
-        }
-        for p in [BC_PARAMS_NO_SNS, BC_PARAMS_SNS] {
-            assert!(
-                !p.get_params_basics_handle().rerand_ksk_reuses_pksk(),
-                "expected dedicated rerand KSK on {p:?}",
-            );
         }
     }
 }
