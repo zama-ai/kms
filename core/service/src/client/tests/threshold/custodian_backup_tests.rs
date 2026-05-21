@@ -995,7 +995,6 @@ async fn read_signing_keys(
     sig_keys
 }
 
-#[cfg(feature = "insecure")]
 async fn operator_verf_key_map(
     test_path: Option<&std::path::Path>,
     pub_storage_prefixes: &[Option<String>],
@@ -1134,7 +1133,7 @@ async fn emulate_custodian(
         for (i, cur_recovery_req) in &recovery_requests {
             let cur_verf_key = operator_verf_keys
                 .get(i)
-                .expect("operator verification key missing for party");
+                .expect("operator verification key missing for party {cur_idx}");
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
                 std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
