@@ -1,7 +1,3 @@
-// TODO(dp): the imports here are a noisy mess — two `cfg_if!` blocks plus
-// dozens of individually `#[cfg(...)]`-gated `use` lines. Consolidate into
-// a single `cfg_if!` per feature combo (or pull the shared imports up out
-// of the gates) on a dedicated cleanup pass.
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use crate::client::tests::common::default_isolated_extra_data;
@@ -15,6 +11,7 @@ cfg_if::cfg_if! {
     use crate::vault::storage::crypto_material::get_core_signing_key;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::rpc_types::PrivDataType;
+    use crate::testing::material::MaterialType;
 }}
 use crate::client::client_wasm::Client;
 use crate::client::key_gen::tests::check_conformance;
@@ -38,7 +35,7 @@ use crate::engine::base::INSECURE_PREPROCESSING_ID;
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
-use crate::testing::material::{MaterialType, TestMaterialSpec};
+use crate::testing::material::TestMaterialSpec;
 use crate::testing::setup::threshold::ThresholdTestEnv;
 use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
