@@ -36,7 +36,7 @@ pub fn create_test_material_manager() -> TestMaterialManager {
         ),
         None => tracing::warn!(
             "Could not find test-material directory (searched from: {}). \
-             Tests requiring pre-generated material may fail. \
+             Tests requiring pre-generated material will fail at setup. \
              Run 'cargo run -p generate-test-material -- --output ./test-material --profile insecure --parties 4' from workspace root.",
             std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| "<unknown>".to_string())
         ),
