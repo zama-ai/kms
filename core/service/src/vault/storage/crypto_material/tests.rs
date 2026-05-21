@@ -1460,8 +1460,8 @@ async fn update_meta_store_storage_outcomes() {
 // Under the strong-permit invariant, these states are unreachable from the
 // outside: `insert` produces a permit only for a fresh `Pending` entry, and
 // no API constructs a permit for a missing or already-completed one. The
-// fallback `MetaStore::try_update` / `try_delete` primitives still cover the
-// recovery path, exercised in `util::meta_store::tests`.
+// fallback `MetaStore::try_delete` primitive still covers the recovery path,
+// exercised in `util::meta_store::tests`.
 
 #[tokio::test]
 async fn inner_update_backup_vault_paths() {

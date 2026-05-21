@@ -100,6 +100,7 @@ pub enum PublicKeySet {
 ///
 /// Warning: In relation to concurrency where multiple locks are needed always lock as follows:
 /// meta_store -> public_storage -> private_storage second -> backup_vault -> pk_cache.
+/// The exception is if you hold a permit to the meta store, then the storages can be used one at a time
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,

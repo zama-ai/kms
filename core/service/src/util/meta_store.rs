@@ -30,8 +30,7 @@ const META_STORE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Returned by [`MetaStore::insert`]. Required by [`MetaStore::update`] and
 /// [`MetaStore::delete`] to perform the mutation. If the holder drops the
 /// permit without consuming it, the entry is left in `Pending`, and any
-/// other caller can finish or remove it via [`MetaStore::try_update`] or
-/// [`MetaStore::try_delete`].
+/// other caller can finish or remove it via [`MetaStore::try_delete`].
 ///
 /// "Permit alive" is tracked by the strong count of an internal `Arc<()>`:
 /// while the permit exists, `Arc::strong_count` of the entry's claim arc is
@@ -185,7 +184,7 @@ impl<T> MetaStore<T> {
     /// On success, returns a [`MetaStorePermit`] granting the caller the right to
     /// later [`update`] or [`delete`] this entry. Hold the permit until the
     /// mutation; drop it if the work is abandoned (other callers can recover via
-    /// `try_update` / `try_delete`).
+    /// `try_delete`).
     ///
     /// Elements can trivially be inserted until the store reaches its [capacity].
     /// Once the store is full, old completed elements are evicted, but only once we have at least [min_cache] of them.
@@ -294,51 +293,6 @@ impl<T> MetaStore<T> {
         self.complete_queue.push_back(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
-    }
-
-    /// Like [`update`], but for callers that do not hold a permit. Succeeds
-    /// only if no other live permit exists for this entry (i.e. the original
-    /// permit was dropped without being used).
-    pub fn try_update(
-        &mut self,
-        request_id: &RequestId,
-        update: Result<T, String>,
-    ) -> anyhow::Result<()> {
-        let claim = {
-            let entry = self.storage.get(request_id).ok_or_else(|| {
-                anyhow_error_and_log(format!(
-                    "The element with ID {request_id} does not exist, update is not allowed"
-                ))
-            })?;
-            match entry {
-                StoredEntry::Pending(arc) => {
-                    // TODO I am not sure this makes sense, because if it is already pending then it should be locked. alhtough ref might be dropped but why do we need arc count >1 instead of >0
-                    if Arc::strong_count(arc) > 1 {
-                        anyhow::bail!(
-                            "The element with ID {request_id} is currently locked for update"
-                        );
-                    }
-                    Arc::clone(arc)
-                }
-                StoredEntry::Done(_, _) => {
-                    return Err(anyhow_error_and_log(format!(
-                        "The element with ID {request_id} is not in a pending state, update is not allowed"
-                    )));
-                }
-                StoredEntry::Deleted => {
-                    return Err(anyhow_error_and_log(format!(
-                        "The element with ID {request_id} has been deleted, update is not allowed"
-                    )));
-                }
-            }
-        };
-        self.update(
-            update,
-            MetaStorePermit {
-                req_id: *request_id,
-                _claim: claim,
-            },
-        )
     }
 
     /// Set the entry at `request_id` directly to `Done(Ok(value))`, either by
@@ -719,23 +673,11 @@ mod tests {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
         assert!(!meta_store.exists(&request_id));
-        assert!(
-            meta_store
-                .try_update(&request_id, Ok("OK".to_string()))
-                .is_err()
-        );
 
         let permit = meta_store.insert(&request_id).unwrap();
         assert!(meta_store.exists(&request_id));
         assert!(meta_store.update(Ok("OK".to_string()), permit).is_ok());
         assert_done_ok(&meta_store, &request_id, &"OK".to_string());
-
-        // Re-update not allowed (entry is now Done; try_update sees not Pending)
-        assert!(
-            meta_store
-                .try_update(&request_id, Ok("NOK".to_string()))
-                .is_err()
-        );
     }
 
     #[test]
@@ -795,37 +737,6 @@ mod tests {
         // Oldest removed during insert's eviction step
         assert!(meta_store.retrieve(&id1).is_none());
         let _ = p3;
-    }
-
-    #[test]
-    fn try_update_blocked_by_live_permit() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let id: RequestId = derive_request_id("locked").unwrap();
-        let permit = meta_store.insert(&id).unwrap();
-        // Permit is live; try_update should fail.
-        assert!(meta_store.try_update(&id, Ok("v".to_string())).is_err());
-        // Drop the permit and retry.
-        drop(permit);
-        assert!(meta_store.try_update(&id, Ok("v".to_string())).is_ok());
-        assert_done_ok(&meta_store, &id, &"v".to_string());
-    }
-
-    #[test]
-    fn try_update_rejects_done_and_deleted() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(4, 1);
-        let id_done: RequestId = derive_request_id("done").unwrap();
-        let id_del: RequestId = derive_request_id("del").unwrap();
-        let p_done = meta_store.insert(&id_done).unwrap();
-        meta_store.update(Ok("x".to_string()), p_done).unwrap();
-        let p_del = meta_store.insert(&id_del).unwrap();
-        meta_store.delete(p_del).unwrap();
-
-        assert!(
-            meta_store
-                .try_update(&id_done, Ok("y".to_string()))
-                .is_err()
-        );
-        assert!(meta_store.try_update(&id_del, Ok("y".to_string())).is_err());
     }
 
     #[test]
