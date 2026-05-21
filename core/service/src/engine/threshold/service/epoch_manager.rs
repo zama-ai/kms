@@ -88,8 +88,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store,
-            update_req_in_meta_store,
+            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -1297,19 +1297,12 @@ impl<
 
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
-        let meta_permit = {
-            let mut guarded_meta_store = self.reshare_pubinfo_meta_store.write().await;
-            guarded_meta_store.insert(&epoch_id.into()).map_err(|e| {
-                MetricedError::new(
-                    OP_NEW_EPOCH,
-                    Some(epoch_id.into()),
-                    e,
-                    // Note that there are other reason why insert can fail, but
-                    // AlreadyExists seems the most appropriate
-                    tonic::Code::AlreadyExists,
-                )
-            })?
-        };
+        let meta_permit = add_req_to_meta_store(
+            &self.reshare_pubinfo_meta_store,
+            &epoch_id.into(),
+            OP_NEW_EPOCH,
+        )
+        .await?;
         let session_maker = self.session_maker.clone();
         let crypto_storage = self.crypto_storage.clone();
         self.tracker.spawn(async move {
@@ -1324,12 +1317,8 @@ impl<
                         .await
             {
                 let err = format!("PRSS initialization failed during epoch creation: {e:?}");
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    meta_permit,
-                    err,
-                    OP_NEW_EPOCH,
-                );
+                let _ =
+                    update_err_req_in_meta_store(&meta_store, meta_permit, err, OP_NEW_EPOCH).await;
                 return;
             }
             // Either reshare and commit the resulting EpochOutput, or commit
@@ -1342,11 +1331,12 @@ impl<
                 Ok(EpochOutput::PRSSInitOnly)
             };
             let _ = update_req_in_meta_store::<_, String>(
-                &mut meta_store.write().await,
+                &meta_store,
                 meta_permit,
                 result,
                 OP_NEW_EPOCH,
-            );
+            )
+            .await;
         });
 
         Ok(Response::new(Empty {}))

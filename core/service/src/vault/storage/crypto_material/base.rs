@@ -47,7 +47,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
@@ -317,15 +317,7 @@ where
         let res = self
             .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
-        update_meta_store(
-            res,
-            meta_data,
-            &mut guarded_meta_store,
-            permit,
-            op_metric_tag,
-        )
-        .await
+        update_meta_store(res, meta_data, &meta_store, permit, op_metric_tag).await
     }
 
     /// General method for handling the storage of both public and private material along with the backup.
@@ -779,15 +771,7 @@ where
                 OP_DECOMPRESSION_KEYGEN,
             )
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
-        update_meta_store(
-            res,
-            meta_data,
-            &mut guarded_meta_store,
-            permit,
-            OP_DECOMPRESSION_KEYGEN,
-        )
-        .await
+        update_meta_store(res, meta_data, &meta_store, permit, OP_DECOMPRESSION_KEYGEN).await
     }
 
     /// Write the backup keys to the storage and update the meta store.
@@ -846,11 +830,10 @@ where
                     StorageError::BackupVaultPurging
                 });
         }
-        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
             recovery_material,
-            &mut guarded_meta_store,
+            &meta_store,
             permit,
             OP_NEW_CUSTODIAN_CONTEXT,
         )
@@ -1082,7 +1065,7 @@ where
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
     meta_data: MetaT,
-    guarded_meta_store: &mut RwLockWriteGuard<'_, MetaStore<MetaT>>,
+    meta_store: &Arc<RwLock<MetaStore<MetaT>>>,
     permit: MetaStorePermit,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
@@ -1090,13 +1073,14 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
     let is_storage_err = matches!(&storage_res, Err(e) if e != &StorageError::Backup);
     let meta_store_ok = if is_storage_err {
         update_err_req_in_meta_store(
-            guarded_meta_store,
+            meta_store,
             permit,
             storage_res.as_ref().err().unwrap().to_string(),
             op_metric_tag,
         )
+        .await
     } else {
-        update_ok_req_in_meta_store(guarded_meta_store, permit, meta_data, op_metric_tag)
+        update_ok_req_in_meta_store(meta_store, permit, meta_data, op_metric_tag).await
     };
     if !meta_store_ok {
         // NOTE this would indicate a bug since we have just verified that the meta can be updated in the start of this method

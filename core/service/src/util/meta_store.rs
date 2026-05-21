@@ -13,7 +13,7 @@ cfg_if::cfg_if! {
         use anyhow::anyhow;
         use std::fmt::{self};
         use std::time::Duration;
-        use tokio::sync::{RwLock, RwLockWriteGuard};
+        use tokio::sync::RwLock;
         use tokio::time::Instant;
     }
 }
@@ -273,11 +273,7 @@ impl<T> MetaStore<T> {
     ///
     /// Returns an error if the element does not exist, has already been
     /// completed, or has been deleted.
-    pub fn update(
-        &mut self,
-        update: Result<T, String>,
-        permit: MetaStorePermit,
-    ) -> anyhow::Result<()> {
+    fn update(&mut self, update: Result<T, String>, permit: MetaStorePermit) -> anyhow::Result<()> {
         let req_id = permit.req_id;
         let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
             anyhow_error_and_log(format!(
@@ -305,8 +301,7 @@ impl<T> MetaStore<T> {
     /// the standard `insert → update` lifecycle. Bypasses the permit
     /// mechanism on purpose: no live permit can exist for a `Done` entry, and
     /// fresh inserts via this path are explicitly admin-scoped.
-    // TODO should this actually be done with a permit?
-    pub(crate) fn replace_done(&mut self, permit: MetaStorePermit, value: T) -> anyhow::Result<()> {
+    pub fn replace_done(&mut self, permit: MetaStorePermit, value: T) -> anyhow::Result<()> {
         let request_id = permit.req_id;
         match self.storage.get(&request_id) {
             Some(StoredEntry::Pending(_)) => {
@@ -344,14 +339,14 @@ impl<T> MetaStore<T> {
     /// Returns an [`EntryState`] snapshot by value; the internal claim arc on
     /// `Pending` / `Done` is intentionally hidden from external callers, who
     /// should not depend on locking state.
-    pub fn retrieve(&self, request_id: &RequestId) -> Option<EntryState<T>> {
+    pub(crate) fn retrieve(&self, request_id: &RequestId) -> Option<EntryState<T>> {
         self.storage.get(request_id).map(EntryState::from)
     }
 
     /// Mark an existing entry as deleted, regardless of whether it was Pending
     /// or Done. Consumes the permit. Returns the previous state. If the previous
     /// state was `Done`, the entry is also removed from the completion queue.
-    pub fn delete(&mut self, permit: MetaStorePermit) -> anyhow::Result<EntryState<T>> {
+    fn delete(&mut self, permit: MetaStorePermit) -> anyhow::Result<EntryState<T>> {
         let req_id = permit.req_id;
         let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
             anyhow::anyhow!("The element with ID {req_id} does not exist, deletion is not allowed")
@@ -476,52 +471,45 @@ impl<T> MetaStore<T> {
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) fn add_req_to_meta_store<T>(
-    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+pub(crate) async fn add_req_to_meta_store<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
     req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<MetaStorePermit, MetricedError> {
-    if meta_store.exists(req_id) {
-        return Err(MetricedError::new(
-            request_metric,
-            Some(*req_id),
-            anyhow::anyhow!("Duplicate request ID in meta store"),
-            tonic::Code::AlreadyExists,
-        ));
-    }
-    meta_store.insert(req_id).map_err(|e| {
+    meta_store.write().await.insert(req_id).map_err(|e| {
         // We likely reached capacity here
+        // TODO update
         MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
     })
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) fn update_req_in_meta_store<
+pub(crate) async fn update_req_in_meta_store<
     T,
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
 >(
-    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
     permit: MetaStorePermit,
     result: Result<T, E>,
     request_metric: &'static str,
 ) -> bool {
     match result {
-        Ok(res) => update_ok_req_in_meta_store(meta_store, permit, res, request_metric),
+        Ok(res) => update_ok_req_in_meta_store(meta_store, permit, res, request_metric).await,
         Err(e) => {
-            update_err_req_in_meta_store(meta_store, permit, format!("{e:?}"), request_metric)
+            update_err_req_in_meta_store(meta_store, permit, format!("{e:?}"), request_metric).await
         }
     }
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) fn update_ok_req_in_meta_store<T>(
-    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+pub(crate) async fn update_ok_req_in_meta_store<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
     permit: MetaStorePermit,
     result: T,
     request_metric: &'static str,
 ) -> bool {
     let req_id = permit.req_id;
-    match meta_store.update(Ok(result), permit) {
+    match meta_store.write().await.update(Ok(result), permit) {
         Ok(()) => true,
         Err(e) => {
             MetricedError::handle_unreturnable_error(request_metric, Some(req_id), e);
@@ -537,19 +525,39 @@ pub(crate) fn update_ok_req_in_meta_store<T>(
 /// [request_metric] is a free-form string used only for error logging the origin of the failure.
 /// Returns true if the update was successful, false otherwise.
 #[cfg(feature = "non-wasm")]
-pub(crate) fn update_err_req_in_meta_store<T>(
-    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+pub(crate) async fn update_err_req_in_meta_store<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
     permit: MetaStorePermit,
     error: String,
     request_metric: &'static str,
 ) -> bool {
     let req_id = permit.req_id;
     MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
-    match meta_store.update(Err(error.clone()), permit) {
+    match meta_store.write().await.update(Err(error.clone()), permit) {
         Ok(()) => true,
         Err(e) => {
             tracing::error!(
                 "Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}"
+            );
+            false
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn delete_in_meta_store<T>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    permit: MetaStorePermit,
+    error: String,
+    request_metric: &'static str,
+) -> bool {
+    let req_id = permit.req_id;
+    MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
+    match meta_store.write().await.delete(permit) {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::error!(
+                "Failed to delete request ID {req_id} from meta-store, with error message {e}"
             );
             false
         }

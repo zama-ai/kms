@@ -495,11 +495,8 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        let meta_permit = add_req_to_meta_store(
-            &mut meta_store.write().await,
-            &req_id,
-            OP_USER_DECRYPT_REQUEST,
-        )?;
+        let meta_permit =
+            add_req_to_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -567,12 +564,8 @@ impl<
                 metric_tags,
             )
             .await;
-            update_req_in_meta_store(
-                &mut meta_store.write().await,
-                meta_permit,
-                result,
-                OP_USER_DECRYPT_REQUEST,
-            );
+            update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
+                .await;
         };
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.

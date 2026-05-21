@@ -134,8 +134,7 @@ pub async fn key_gen_impl<
         }
 
         // Check that the request ID is not used yet and insert it.
-        let meta_permit =
-            add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)?;
+        let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
 
         (params, rate_limiter_permit, meta_permit)
     };
@@ -383,12 +382,7 @@ pub(crate) async fn key_gen_background<
                     if cancel_token.is_cancelled() {
                         crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
                     }
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        permit,
-                        msg,
-                        op_tag,
-                    );
+                    let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
             };
@@ -423,11 +417,12 @@ pub(crate) async fn key_gen_background<
                 Ok((from, to)) => (from, to),
                 Err(e) => {
                     let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
+                        &meta_store,
                         permit,
                         format!("Failed to use decompression key generation parameters: {e}"),
                         op_tag,
-                    );
+                    )
+                    .await;
                     return;
                 }
             };
@@ -447,12 +442,7 @@ pub(crate) async fn key_gen_background<
                     if cancel_token.is_cancelled() {
                         crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
                     }
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        permit,
-                        msg,
-                        op_tag,
-                    );
+                    let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
             };
@@ -468,11 +458,12 @@ pub(crate) async fn key_gen_background<
                 Ok(info) => info,
                 Err(e) => {
                     let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
+                        &meta_store,
                         permit,
                         format!("Failed to compute decompression key info: {e}"),
                         op_tag,
-                    );
+                    )
+                    .await;
                     return;
                 }
             };

@@ -85,16 +85,13 @@ pub async fn init_impl<
         }
     }
     let permit = add_req_to_meta_store(
-        &mut service.epoch_ids.write().await,
+        &service.epoch_ids,
         &verified_request.epoch_id.into(),
         OP_NEW_EPOCH,
-    )?;
-    update_req_in_meta_store::<(), anyhow::Error>(
-        &mut service.epoch_ids.write().await,
-        permit,
-        Ok(()),
-        OP_NEW_EPOCH,
-    );
+    )
+    .await?;
+    update_req_in_meta_store::<(), anyhow::Error>(&service.epoch_ids, permit, Ok(()), OP_NEW_EPOCH)
+        .await;
     tracing::warn!(
         "Init called on centralized KMS with ID {} - no action taken",
         verified_request.epoch_id

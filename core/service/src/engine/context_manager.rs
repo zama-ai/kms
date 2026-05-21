@@ -183,10 +183,11 @@ where
         }
 
         let meta_permit = add_req_to_meta_store(
-            &mut self.custodian_meta_store.write().await,
+            &self.custodian_meta_store,
             &custodian_context_id,
             OP_NEW_CUSTODIAN_CONTEXT,
-        )?;
+        )
+        .await?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
@@ -224,13 +225,17 @@ where
 
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
-        let mut cus_meta_store = self.custodian_meta_store.write().await;
-        // todo flow should depend on the error type
-        if cus_meta_store.try_delete(&context_id).is_err() {
-            tracing::warn!(
-                "Custodian context with id {context_id} to be deleted does not exist in meta store, or is still locked"
-            );
-        }
+        let permit = {
+            let mut cus_meta_store = self.custodian_meta_store.write().await;
+            cus_meta_store.lock_entry(&context_id).map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_CUSTODIAN_CONTEXT,
+                    Some(context_id),
+                    e,
+                    tonic::Code::FailedPrecondition,
+                )
+            })?
+        };
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {

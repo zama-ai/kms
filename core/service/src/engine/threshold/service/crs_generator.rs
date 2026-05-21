@@ -136,11 +136,8 @@ impl<
             ));
         }
 
-        let meta_permit = add_req_to_meta_store(
-            &mut self.crs_meta_store.write().await,
-            &verified.req_id,
-            op_tag,
-        )?;
+        let meta_permit =
+            add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         let sigkey = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
                 op_tag,
@@ -453,12 +450,7 @@ impl<
                     .inner
                     .purge_crs_material(req_id, epoch_id)
                     .await;
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    permit,
-                    msg,
-                    op_tag,
-                );
+                let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
             }
             Ok((pp, crs_info)) => {
                 tracing::info!(

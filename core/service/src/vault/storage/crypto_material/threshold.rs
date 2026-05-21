@@ -185,15 +185,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 op_metric_tag,
             )
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
-        update_meta_store(
-            res,
-            meta_res,
-            &mut guarded_meta_store,
-            permit,
-            op_metric_tag,
-        )
-        .await
+        update_meta_store(res, meta_res, &meta_store, permit, op_metric_tag).await
     }
 
     /// Purge threshold FHE key material from disk **and** from the in-memory

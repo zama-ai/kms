@@ -84,10 +84,11 @@ pub async fn user_decrypt_impl<
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let mut rng = service.base_kms.new_rng().await;
     let meta_permit = add_req_to_meta_store(
-        &mut service.user_dec_meta_store.write().await,
+        &service.user_dec_meta_store,
         &request_id,
         OP_USER_DECRYPT_REQUEST,
-    )?;
+    )
+    .await?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -132,11 +133,12 @@ pub async fn user_decrypt_impl<
             .await;
             let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
             let _ = update_req_in_meta_store(
-                &mut meta_store.write().await,
+                &meta_store,
                 meta_permit,
                 res_with_extra_data,
                 OP_USER_DECRYPT_REQUEST,
-            );
+            )
+            .await;
         }
         .instrument(tracing::Span::current()),
     );
@@ -261,10 +263,11 @@ pub async fn public_decrypt_impl<
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
     let meta_permit = add_req_to_meta_store(
-        &mut service.pub_dec_meta_store.write().await,
+        &service.pub_dec_meta_store,
         &request_id,
         OP_PUBLIC_DECRYPT_REQUEST,
-    )?;
+    )
+    .await?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let sig_key = service.base_kms.sig_key().map_err(|e| {
@@ -318,12 +321,8 @@ pub async fn public_decrypt_impl<
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
         };
-        let _ = update_req_in_meta_store(
-            &mut meta_store.write().await,
-            meta_permit,
-            res,
-            OP_PUBLIC_DECRYPT_REQUEST,
-        );
+        let _ = update_req_in_meta_store(&meta_store, meta_permit, res, OP_PUBLIC_DECRYPT_REQUEST)
+            .await;
         tracing::info!(
             "⏱️ Core Event Time for decryption computation: {:?}",
             start.elapsed()

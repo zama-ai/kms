@@ -334,11 +334,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         // Consume the meta-store permit in exactly one terminal-state write.
         let bucket_result_ok = bucket_result.is_ok();
         let meta_store_ok = update_req_in_meta_store::<_, String>(
-            &mut bucket_store.write().await,
+            &bucket_store,
             meta_permit,
             bucket_result,
             OP_KEYGEN_PREPROC_REQUEST,
-        );
+        )
+        .await;
 
         if bucket_result_ok && meta_store_ok {
             tracing::info!(
@@ -396,10 +397,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         // Add preprocessing to metastore and fail in case it is already present.
         let meta_permit = add_req_to_meta_store(
-            &mut self.preproc_buckets.write().await,
+            &self.preproc_buckets,
             &request_id,
             OP_KEYGEN_PREPROC_REQUEST,
-        )?;
+        )
+        .await?;
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 

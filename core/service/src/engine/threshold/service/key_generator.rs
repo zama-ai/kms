@@ -559,11 +559,8 @@ impl<
 
         // The meta-store permit is threaded into the spawned background so the
         // strong invariant ("only the rightful holder updates") holds end-to-end.
-        let meta_permit = add_req_to_meta_store(
-            &mut self.dkg_pubinfo_meta_store.write().await,
-            &req_id,
-            op_tag,
-        )?; // TODO should have specific error we can react to and then disc should be checked later. I think that is also how it is in centralized
+        let meta_permit =
+            add_req_to_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag).await?; // TODO should have specific error we can react to and then disc should be checked later. I think that is also how it is in centralized
 
         tracing::info!(
             "Keygen starting with request_id={:?}, insecure={}",
@@ -1069,11 +1066,12 @@ impl<
             Ok(v) => v,
             Err(msg) => {
                 let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
+                    &meta_store,
                     meta_permit,
                     msg,
                     OP_DECOMPRESSION_KEYGEN,
-                );
+                )
+                .await;
                 return;
             }
         };
@@ -1091,11 +1089,12 @@ impl<
             Ok(info) => info,
             Err(e) => {
                 let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
+                    &meta_store,
                     meta_permit,
                     format!("Failed to compute key info: {e}"),
                     OP_DECOMPRESSION_KEYGEN,
-                );
+                )
+                .await;
                 return;
             }
         };
@@ -1261,11 +1260,12 @@ impl<
             Ok(v) => v,
             Err(msg) => {
                 let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
+                    &meta_store,
                     meta_permit,
                     format!("Standard key generation failed: {msg}"),
                     op_tag,
-                );
+                )
+                .await;
                 return;
             }
         };
@@ -1286,12 +1286,7 @@ impl<
         {
             Ok(p) => p,
             Err(msg) => {
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    meta_permit,
-                    msg,
-                    op_tag,
-                );
+                let _ = update_err_req_in_meta_store(&meta_store, meta_permit, msg, op_tag).await;
                 return;
             }
         };
@@ -1852,6 +1847,7 @@ mod tests {
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
+        util::meta_store::update_ok_req_in_meta_store,
         vault::storage::ram,
     };
 
@@ -1962,11 +1958,18 @@ mod tests {
                 )))),
                 dkg_param: TEST_PARAM,
             };
-            let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
-            let permit = (*guarded_prep_bucket).insert(prep_id).unwrap();
-            (*guarded_prep_bucket)
-                .update(Ok(dummy_prep), permit)
+            let permit = add_req_to_meta_store(&kg.preproc_buckets, prep_id, OP_KEYGEN_REQUEST)
+                .await
                 .unwrap();
+            assert!(
+                update_ok_req_in_meta_store(
+                    &kg.preproc_buckets,
+                    permit,
+                    dummy_prep,
+                    OP_KEYGEN_REQUEST
+                )
+                .await
+            );
         }
         (prep_ids, kg)
     }

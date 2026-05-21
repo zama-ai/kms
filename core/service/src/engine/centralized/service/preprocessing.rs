@@ -60,10 +60,11 @@ pub async fn preprocessing_impl<
         validate_preproc_request(inner)?;
 
     let permit = add_req_to_meta_store(
-        &mut service.preprocessing_meta_store.write().await,
+        &service.preprocessing_meta_store,
         &req_id,
         OP_KEYGEN_PREPROC_REQUEST,
-    )?;
+    )
+    .await?;
 
     let sk = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
@@ -83,11 +84,12 @@ pub async fn preprocessing_impl<
     });
 
     let _ = update_req_in_meta_store(
-        &mut service.preprocessing_meta_store.write().await,
+        &service.preprocessing_meta_store,
         permit,
         preproc_bucket,
         OP_KEYGEN_PREPROC_REQUEST,
-    );
+    )
+    .await;
     tracing::warn!(
         "Received a preprocessing request for the central server {} - No action taken",
         req_id

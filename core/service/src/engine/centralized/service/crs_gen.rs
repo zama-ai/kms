@@ -77,11 +77,8 @@ pub async fn crs_gen_impl<
     // all validation must be done before inserting the request ID.
     // The meta-store permit is threaded into crs_gen_background and consumed
     // by one of: the abort arm, the generation-error arm, or write_crs.
-    let meta_permit = add_req_to_meta_store(
-        &mut service.crs_meta_map.write().await,
-        &verified.req_id,
-        op_tag,
-    )?;
+    let meta_permit =
+        add_req_to_meta_store(&service.crs_meta_map, &verified.req_id, op_tag).await?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
@@ -297,8 +294,7 @@ pub(crate) async fn crs_gen_background<
                 m
             };
 
-            let _ =
-                update_err_req_in_meta_store(&mut meta_store.write().await, permit, msg, op_tag);
+            let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
         }
         Ok((pp, crs_info)) => {
             // write_crs consumes the permit via update_meta_store internally

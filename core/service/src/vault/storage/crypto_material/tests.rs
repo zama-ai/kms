@@ -1348,8 +1348,9 @@ async fn write_backup_keys() {
     // from `MetaStore::insert`.
 
     let req_id = recovery.custodian_context().context_id;
-    let permit =
-        add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
     // Validate that writing works, when entry is present in meta store
     storage
         .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
@@ -1379,8 +1380,9 @@ async fn write_backup_keys_no_vault() {
     let recovery = dummy_recovery_material("write_backup_keys_no_vault");
     let req_id = recovery.custodian_context().context_id;
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    let permit =
-        add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
     assert_eq!(
         storage
             .write_backup_keys(recovery, meta_store, permit)
@@ -1401,41 +1403,42 @@ async fn update_meta_store_storage_outcomes() {
     let req_writing = derive_request_id("ums_writing").unwrap();
     let meta_store: Arc<RwLock<MetaStore<u32>>> = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
-    {
-        let mut write_guard = meta_store.write().await;
-        let permit_ok = add_req_to_meta_store(&mut write_guard, &req_ok, TEST_METRIC).unwrap();
-        let permit_backup =
-            add_req_to_meta_store(&mut write_guard, &req_backup, TEST_METRIC).unwrap();
-        let permit_writing =
-            add_req_to_meta_store(&mut write_guard, &req_writing, TEST_METRIC).unwrap();
-        assert!(
-            update_meta_store(Ok(()), 42_u32, &mut write_guard, permit_ok, TEST_METRIC)
-                .await
-                .is_ok()
-        );
-        assert_eq!(
-            update_meta_store(
-                Err(StorageError::Backup),
-                7_u32,
-                &mut write_guard,
-                permit_backup,
-                TEST_METRIC,
-            )
-            .await,
+    let permit_ok = add_req_to_meta_store(&meta_store, &req_ok, TEST_METRIC)
+        .await
+        .unwrap();
+    let permit_backup = add_req_to_meta_store(&meta_store, &req_backup, TEST_METRIC)
+        .await
+        .unwrap();
+    let permit_writing = add_req_to_meta_store(&meta_store, &req_writing, TEST_METRIC)
+        .await
+        .unwrap();
+    assert!(
+        update_meta_store(Ok(()), 42_u32, &meta_store, permit_ok, TEST_METRIC)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        update_meta_store(
             Err(StorageError::Backup),
-        );
-        assert_eq!(
-            update_meta_store(
-                Err(StorageError::Writing),
-                0_u32,
-                &mut write_guard,
-                permit_writing,
-                TEST_METRIC,
-            )
-            .await,
+            7_u32,
+            &meta_store,
+            permit_backup,
+            TEST_METRIC,
+        )
+        .await,
+        Err(StorageError::Backup),
+    );
+    assert_eq!(
+        update_meta_store(
             Err(StorageError::Writing),
-        );
-    }
+            0_u32,
+            &meta_store,
+            permit_writing,
+            TEST_METRIC,
+        )
+        .await,
+        Err(StorageError::Writing),
+    );
     assert_eq!(
         *retrieve_from_meta_store::<u32>(&meta_store, &req_ok, TEST_METRIC)
             .await
