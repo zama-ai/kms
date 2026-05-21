@@ -51,7 +51,9 @@ The Make targets above call `ci/scripts/backward_snapshot.sh`, which exposes two
 - `check --base-ref <ref>` is the CI-style gate. It generates a snapshot from `<ref>` in a temporary detached worktree, generates another from the current checkout, then runs `tfhe-backward-compat-checker check`.
 - `report --base-ref <ref> --output <file>` uses the same base/head snapshots as `check`, but writes a markdown report. Use it when reviewing warnings or sharing the full diff with a reviewer.
 
-By default, both subcommands install `cargo-dylint`, `dylint-link`, the pinned nightly toolchain used by the snapshot lint, and `tfhe-backward-compat-checker` before running. For local iteration after tools are already installed, set:
+By default, both subcommands install `cargo-dylint`, `dylint-link`, and `tfhe-backward-compat-checker` before running. The tfhe-rs git/tag pin is read from the root `dylint.toml` entry for `utils/tfhe-lints/lints`; the snapshot lint is loaded from the same tfhe-rs source without being added to normal `make lint-dylint` runs.
+
+For local iteration after tools are already installed, set:
 
 ```shell
 SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 make backward-snapshot-check BASE_REF=origin/main

@@ -25,10 +25,6 @@
 # Set SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 to suppress it during local iteration.
 #
 # Configuration env vars (defaults shown):
-#   TFHE_LINTS_GIT=https://github.com/zama-ai/tfhe-rs
-#   TFHE_LINTS_TAG=tfhe-rs-1.6.1
-#   TFHE_LINTS_TOOLCHAIN=nightly-2026-01-22
-#   TFHE_SNAPSHOT_PATTERN=utils/tfhe-lints/snapshot
 #   SNAPSHOT_PACKAGES="kms kms-grpc threshold-execution threshold-algebra threshold-networking threshold-types"
 #=============================================================================
 
@@ -40,13 +36,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-#=============================================================================
-# Configuration (env-var-overridable)
-#=============================================================================
-TFHE_LINTS_GIT="${TFHE_LINTS_GIT:-https://github.com/zama-ai/tfhe-rs}"
-TFHE_LINTS_TAG="${TFHE_LINTS_TAG:-tfhe-rs-1.6.1}"
-TFHE_LINTS_TOOLCHAIN="${TFHE_LINTS_TOOLCHAIN:-nightly-2026-01-22}"
-TFHE_SNAPSHOT_PATTERN="${TFHE_SNAPSHOT_PATTERN:-utils/tfhe-lints/snapshot}"
 SNAPSHOT_PACKAGES="${SNAPSHOT_PACKAGES:-kms kms-grpc threshold-execution threshold-algebra threshold-networking threshold-types}"
 
 #=============================================================================
@@ -93,15 +82,27 @@ Examples:
 
 Environment:
   SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1   Skip the implicit install-tools step.
-  TFHE_LINTS_GIT, TFHE_LINTS_TAG, TFHE_LINTS_TOOLCHAIN,
-  TFHE_SNAPSHOT_PATTERN                Override the pinned snapshot lint source.
   SNAPSHOT_PACKAGES                    Space-separated package list to snapshot.
+
+The tfhe-rs git/tag pin is read from the root dylint.toml entry for
+utils/tfhe-lints/lints. The snapshot lint is loaded from the same source without
+adding it to normal \`make lint-dylint\` runs.
 EOF
 }
 
 die() {
     log_error "$@"
     exit 1
+}
+
+#=============================================================================
+# Dylint source
+#=============================================================================
+tfhe_lints_source() {
+    local tfhe_source
+    tfhe_source="$(sed -nE '/pattern = "utils\/tfhe-lints\/lints"/ { s/.*git = "([^"]+)".*tag = "([^"]+)".*/\1 \2/p; q; }' "${REPO_ROOT}/dylint.toml")"
+    [[ -n "${tfhe_source}" ]] || die "Could not parse tfhe-rs git/tag from ${REPO_ROOT}/dylint.toml"
+    echo "${tfhe_source}"
 }
 
 #=============================================================================
@@ -112,24 +113,27 @@ install_tools() {
         log_info "SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1, skipping tool install"
         return
     fi
+    local source_git source_tag
+    read -r source_git source_tag < <(tfhe_lints_source)
+
     log_info "Installing cargo-dylint, dylint-link"
     cargo install cargo-dylint dylint-link --locked
-    log_info "Installing Rust toolchain ${TFHE_LINTS_TOOLCHAIN}"
-    rustup toolchain install "${TFHE_LINTS_TOOLCHAIN}" --component llvm-tools-preview,rustc-dev
-    log_info "Installing tfhe-backward-compat-checker from ${TFHE_LINTS_GIT}@${TFHE_LINTS_TAG}"
-    cargo install --force --git "${TFHE_LINTS_GIT}" --tag "${TFHE_LINTS_TAG}" tfhe-backward-compat-checker --locked
+    log_info "Installing tfhe-backward-compat-checker from ${source_git}@${source_tag}"
+    cargo install --force --git "${source_git}" --tag "${source_tag}" tfhe-backward-compat-checker --locked
 }
 
 #=============================================================================
 # Snapshot generation
 #
-# Runs `cargo dylint` with the tfhe-lints snapshot pattern over each package
-# in $SNAPSHOT_PACKAGES, writing lint_enum_snapshots_*.json into $1.
-# The cwd at call time determines which checkout is snapshotted.
+# Runs the tfhe-rs snapshot Dylint library over each package in
+# $SNAPSHOT_PACKAGES, writing lint_enum_snapshots_*.json into $1. The cwd at
+# call time determines which checkout is snapshotted.
 #=============================================================================
 generate_in_cwd() {
     local output_dir="$1"
     local target_dir="${output_dir}/cargo-target"
+    local source_git source_tag
+    read -r source_git source_tag < <(tfhe_lints_source)
 
     rm -f "${output_dir}"/lint_enum_snapshots_*.json
 
@@ -140,9 +144,9 @@ generate_in_cwd() {
         CARGO_TARGET_DIR="${target_dir}" \
         TFHE_BACKWARD_COMPAT_DATA_DIR="${output_dir}" \
             cargo dylint \
-                --git "${TFHE_LINTS_GIT}" \
-                --tag "${TFHE_LINTS_TAG}" \
-                --pattern "${TFHE_SNAPSHOT_PATTERN}" \
+                --git "${source_git}" \
+                --tag "${source_tag}" \
+                --pattern utils/tfhe-lints/snapshot \
                 --all \
                 --no-deps \
                 -p "${package}" -- --all-features
