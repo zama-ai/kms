@@ -166,7 +166,7 @@ Generates WASM test fixtures from Rust tests, builds `tkms` and `node-tkms` pack
 
 ### `rust-lint.yml`
 
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `make linting-dylint`. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, disabling the broad tfhe-rs `serialize_without_versionize` lint while keeping the other configured Dylint checks active.
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `make linting-dylint`. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, turning Dylint warnings to errors while disabling the broad tfhe-rs `serialize_without_versionize` lint.
 
 ### `docker-build.yml`
 

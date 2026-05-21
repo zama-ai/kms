@@ -49,7 +49,7 @@ make install-dylint
 make linting-dylint
 ```
 
-`make linting-dylint` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. During the initial warn-only rollout, this command may report existing warnings.
+`make linting-dylint` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. Dylint warnings are errors, so reported warnings must be fixed or explicitly allowed.
 
 ### 3.2 Testing
 
