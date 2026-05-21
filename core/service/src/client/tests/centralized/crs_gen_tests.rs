@@ -50,8 +50,6 @@ async fn test_crs_gen_centralized() -> Result<()> {
     )
     .await
 }
-
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insecure_crs_gen_centralized() -> Result<()> {
     let crs_req_id = derive_request_id("test_insecure_crs_gen_centralized").unwrap();
@@ -210,18 +208,11 @@ pub(crate) async fn run_crs_centralized(
     tracing::debug!("making crs request, insecure? {insecure}");
     match insecure {
         true => {
-            #[cfg(feature = "insecure")]
-            {
-                let gen_response = kms_client
-                    .insecure_crs_gen(tonic::Request::new(gen_req.clone()))
-                    .await
-                    .unwrap();
-                assert_eq!(gen_response.into_inner(), Empty {});
-            }
-            #[cfg(not(feature = "insecure"))]
-            {
-                panic!("cannot perform insecure central crs gen")
-            }
+            let gen_response = kms_client
+                .insecure_crs_gen(tonic::Request::new(gen_req.clone()))
+                .await
+                .unwrap();
+            assert_eq!(gen_response.into_inner(), Empty {});
         }
         false => {
             let gen_response = kms_client

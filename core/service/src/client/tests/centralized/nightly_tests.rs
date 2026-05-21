@@ -155,7 +155,6 @@ async fn default_user_decryption_centralized_precompute_sns(
 }
 
 // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_insecure_crs_gen_centralized() -> anyhow::Result<()> {
     let crs_req_id = derive_request_id("default_insecure_crs_gen_centralized").unwrap();

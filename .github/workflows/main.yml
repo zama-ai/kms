@@ -568,14 +568,14 @@ jobs:
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
             MATRIX_JSON=$(jq -nc '{
               include: [
-                { "args-tests": "--release -F slow_tests -F s3_tests -F insecure nightly" }
+                { "args-tests": "--release -F slow_tests -F s3_tests nightly" }
               ]
             }')
           else
             MATRIX_JSON=$(jq -nc '{
               include: [
-                { "args-tests": "-F slow_tests -F s3_tests -F insecure --lib -- --skip nightly" },
-                { "args-tests": "-E kind(test) -F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly" }
+                { "args-tests": "-F slow_tests -F s3_tests --lib -- --skip nightly" },
+                { "args-tests": "-E kind(test) -F slow_tests -F s3_tests -- --skip threshold --skip nightly" }
               ]
             }')
           fi
@@ -646,7 +646,7 @@ jobs:
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      args-tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
+      args-tests: '-E kind(test) -F slow_tests -F s3_tests threshold -- --skip default_user_decryption_threshold --skip nightly'
       run-minio: true
       crate-names: '-p kms'
       runner-volume: '400gb'

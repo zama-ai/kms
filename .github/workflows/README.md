@@ -118,10 +118,10 @@ All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for th
 ### `test-core-service` matrix
 
 Two parallel entries on PRs:
-1. `-F slow_tests -F s3_tests -F insecure --lib -- --skip nightly` — workspace lib tests
-2. `-E kind(test) -F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
+1. `-F slow_tests -F s3_tests --lib -- --skip nightly` — workspace lib tests
+2. `-E kind(test) -F slow_tests -F s3_tests -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
 
-Schedule entry: `--release -F slow_tests -F s3_tests -F insecure nightly` — nightly-suffixed tests in release mode.
+Schedule entry: `--release -F slow_tests -F s3_tests nightly` — nightly-suffixed tests in release mode.
 
 ### Test material
 
