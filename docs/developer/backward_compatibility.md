@@ -40,7 +40,7 @@ However, this does not allow changes to be made to the test metadata scheme itse
 
 Each generator uses the exact dependencies from its target KMS version.
 
-To re-generate data for **all versions** (recommended):
+To re-generate data for all **deterministic** versions (recommended — frozen versions are intentionally skipped, see [Data Determinism](#data-determinism) below):
 
 ```shell
 make generate-backward-compatibility-all
@@ -113,8 +113,7 @@ By maintaining separate generator crates per version, we can:
 
 ### Metadata Merging
 
-Generators **append** to existing metadata files rather than overwriting them.
-This allows multiple versions to coexist:
+Generators merge into existing metadata files rather than overwriting them, so multiple versions can coexist in a single `.ron`:
 
 ```ron
 // backward-compatibility/data/kms.ron
@@ -123,6 +122,10 @@ This allows multiple versions to coexist:
     (kms_core_version_min: "0.11.1", ...),  // From generate-v0.11.1
 ]
 ```
+
+Deterministic generators (`generate-v0.14.0` and later) works as follows: any existing entries whose `kms_core_version_min` matches a version being written are dropped first, then the freshly generated entries are appended. Entries for other versions — notably the frozen ones — are preserved verbatim. This is what makes `make generate-backward-compatibility-all` idempotent: re-running it does not accumulate duplicate rows for the deterministic versions it regenerates, while still leaving frozen-version entries intact.
+
+The older frozen generators (`generate-v0.11.0` … `generate-v0.13.20`) use a plain append, which is one reason re-running them can produce duplicate `.ron` rows and why they must not be run as part of normal workflow (see [Data Determinism](#data-determinism)).
 
 The `make generate-backward-compatibility-all` target only cleans and regenerates **deterministic** versions (listed in `DETERMINISTIC_BWC_VERSIONS` in the root `Makefile`). **Frozen** versions (`FROZEN_BWC_VERSIONS`, currently everything up to and including `0.13.20`) are left untouched — their data dirs are preserved and their generators are not invoked. The shared `.ron` files are never deleted by `-all`, so committed frozen entries survive across regenerations.
 
