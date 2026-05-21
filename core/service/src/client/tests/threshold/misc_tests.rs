@@ -26,13 +26,10 @@ use tonic_health::pb::health_check_response::ServingStatus;
 async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let amount_parties = 4;
 
-    // DON'T setup PRSS in order to ensure the server is not ready yet
-    let spec = {
-        use crate::testing::material::KeyType;
-        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
-        s.required_keys.insert(KeyType::FheKeys);
-        s
-    };
+    // DON'T setup PRSS in order to ensure the server is not ready yet.
+    // `threshold_basic` gives ClientKeys + SigningKeys + ServerSigningKeys + FheKeys,
+    // no PRSS.
+    let spec = TestMaterialSpec::threshold_basic(amount_parties);
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)

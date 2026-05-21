@@ -389,7 +389,7 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 /// # Note
 /// Uses Default FHE parameters (production-like, slower than Test params) with `ensure_default_prss=false`.
 /// Internally uses `TestMaterialSpec::threshold_default` — PRSS is bootstrapped at runtime
-/// when `ensure_default_prss=true`, never pre-staged as a fixture.
+/// when `ensure_default_prss=true`.
 ///
 /// # Example
 /// ```no_run

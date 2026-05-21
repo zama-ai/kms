@@ -19,7 +19,10 @@ use tonic::transport::Channel;
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use std::sync::Arc;
+    use crate::testing::setup::ThresholdTestEnv;
+    use crate::testing::prelude::{MaterialType, TestMaterialSpec};
 }}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
@@ -29,7 +32,7 @@ async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
     let parameter = FheParameter::Test;
     let max_bits = Some(16);
 
-    // Signing keys for request auth. FHE keys unused. PRSS bootstrapped at runtime.
+    // Signing keys for request auth.
     let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
 
     let env = ThresholdTestEnv::builder()
@@ -158,16 +161,12 @@ pub(crate) async fn crs_gen(
 ) {
     let dkg_param: WrappedDKGParams = parameter.into();
 
-    // TODO(dp): broader PrssSetup cleanup is stashed for a separate PR — PRSS is
-    // bootstrapped at runtime via `.with_prss()` below.
-    let spec = {
-        let mut s = match parameter {
-            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
-            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
-        };
-        s.required_keys.remove(&KeyType::FheKeys);
-        s
-    };
+    // CRS gen needs signing keys (for request auth) but not FHE keys. PRSS is bootstrapped
+    // at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameter, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
 
     let env = ThresholdTestEnv::builder()
         .with_test_name(format!("crs_gen_{amount_parties}_{parameter:?}"))

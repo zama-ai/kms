@@ -13,6 +13,8 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{Response, Status, transport::Channel};
 
+use crate::testing::prelude::{MaterialType, TestMaterialSpec, ThresholdTestEnv};
+
 use crate::{
     client::{
         client_wasm::Client,
@@ -57,8 +59,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     parameters: FheParameter,
     party_ids_to_crash: Option<Vec<usize>>,
 ) {
-    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
-
     let dkg_param: WrappedDKGParams = parameters.into();
     // Preproc should use all the tokens in the bucket,
     // then they're returned to the bucket before keygen starts.
@@ -103,14 +103,11 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             .unwrap()
             .into();
 
-    let spec = {
-        let mut s = match parameters {
-            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
-            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
-        };
-        s.required_keys.remove(&KeyType::FheKeys);
-        s
-    };
+    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameters, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
 
     // Setting ensure_default_prss to true to
     // to create the default context and epoch with its PRSS init
