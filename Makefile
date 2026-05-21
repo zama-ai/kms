@@ -106,12 +106,12 @@ pull-lfs-files: check-git-lfs
 # for the command-line allow.
 DYLINT_RUSTFLAGS ?= -D warnings -Aunknown-lints -Aserialize_without_versionize
 
-linting-all:
+lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 
-linting-package:
+lint-package:
 	@if [ -z "$(PACKAGE)" ]; then \
-		echo "Error: PACKAGE is not set. Usage: make clippy-package PACKAGE=<package-name>"; \
+		echo "Error: PACKAGE is not set. Usage: make lint-package PACKAGE=<package-name>"; \
 		exit 1; \
 	fi
 	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
@@ -123,5 +123,5 @@ linting-package:
 install-dylint:
 	cargo install cargo-dylint dylint-link --locked
 
-linting-dylint:
+lint-dylint:
 	DYLINT_RUSTFLAGS="$(DYLINT_RUSTFLAGS)" cargo dylint --all

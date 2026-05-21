@@ -23,20 +23,20 @@ cargo clippy --all-targets --all-features -- -D warnings
 All-features clippy as a Makefile target:
 
 ```
-make linting-all
+make lint
 ```
 
 Lint a single crate:
 
 ```
-make linting-package PACKAGE=<crate-name>
+make lint-package PACKAGE=<crate-name>
 ```
 
 Installing and running dylint:
 
 ```
 make install-dylint
-make linting-dylint
+make lint-dylint
 ```
 
 

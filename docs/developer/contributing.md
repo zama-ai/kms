@@ -46,10 +46,10 @@ To format the code and check for issues the following commands are used:
 cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 make install-dylint
-make linting-dylint
+make lint-dylint
 ```
 
-`make linting-dylint` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. Dylint warnings are errors, so reported warnings must be fixed or explicitly allowed.
+`make lint-dylint` runs project-specific lints, including tfhe-rs lints loaded from the tfhe-rs tag matching the workspace `tfhe` dependency. Dylint warnings are errors, so reported warnings must be fixed or explicitly allowed.
 
 ### 3.2 Testing
 
