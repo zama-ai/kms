@@ -352,8 +352,9 @@ impl<T> MetaStore<T> {
     /// mechanism on purpose: no live permit can exist for a `Done` entry, and
     /// fresh inserts via this path are explicitly admin-scoped.
     // TODO should this actually be done with a permit?
-    pub(crate) fn replace_done(&mut self, request_id: &RequestId, value: T) -> anyhow::Result<()> {
-        match self.storage.get(request_id) {
+    pub(crate) fn replace_done(&mut self, permit: MetaStorePermit, value: T) -> anyhow::Result<()> {
+        let request_id = permit.req_id;
+        match self.storage.get(&request_id) {
             Some(StoredEntry::Pending(_)) => {
                 return Err(anyhow_error_and_log(format!(
                     "The element with ID {request_id} is currently pending, replace_done is not allowed"
@@ -372,13 +373,13 @@ impl<T> MetaStore<T> {
                 }
                 // Existing Done entry — overwrite in place, keep complete_queue slot.
                 self.storage
-                    .insert(*request_id, StoredEntry::done(Ok(Arc::new(value))));
+                    .insert(request_id, StoredEntry::done(Ok(Arc::new(value))));
             }
             None => {
                 // Fresh insert — record completion.
                 self.storage
-                    .insert(*request_id, StoredEntry::done(Ok(Arc::new(value))));
-                self.complete_queue.push_back(*request_id);
+                    .insert(request_id, StoredEntry::done(Ok(Arc::new(value))));
+                self.complete_queue.push_back(request_id);
             }
         }
         Ok(())
