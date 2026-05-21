@@ -503,7 +503,6 @@ mod tests {
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
             }
 
-            #[cfg(feature = "all_extension_degrees")]
             #[test]
             fn [<test_syndrome_decoding_large_ $z:lower>]() {
                 let n = 10;

@@ -1170,9 +1170,9 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::malicious_execution::large_execution::malicious_vss::{
-        WrongDegreeSharingVss, WrongSecretLenVss,
-    };
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::large_execution::malicious_vss::WrongDegreeSharingVss;
+    use crate::malicious_execution::large_execution::malicious_vss::WrongSecretLenVss;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::large_session::LargeSession;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -1620,6 +1620,7 @@ pub(crate) mod tests {
 
     // Test that when the sender sends a polynomial that has too
     // high degree it's caught
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[3],&[],&[],true,None), 4)]
@@ -1649,7 +1650,6 @@ pub(crate) mod tests {
     //Test behaviour if a party doesn't participate in the protocol
     //Expected behaviour is that we end up with trivial 0 sharing for this party
     //and all other vss are fine
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
@@ -1719,7 +1719,6 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
@@ -1751,7 +1750,6 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 1)]

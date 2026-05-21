@@ -187,11 +187,9 @@ pub(crate) mod tests {
         runtime::sessions::large_session::LargeSession,
     };
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128};
     #[cfg(feature = "slow_tests")]
     use algebra::matrix::VdmMatrix;
-    #[cfg(feature = "slow_tests")]
     use algebra::structure_traits::{One, Zero};
     use algebra::{
         sharing::{
@@ -202,7 +200,6 @@ pub(crate) mod tests {
     };
     use num_integer::div_ceil;
     use rstest::rstest;
-    #[cfg(feature = "slow_tests")]
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
@@ -348,7 +345,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(feature = "slow_tests")]
     #[test]
     fn test_vdm() {
         let vdm = VdmMatrix::<ResiduePolyF8Z128>::from_exceptional_sequence(4, 4).unwrap();
