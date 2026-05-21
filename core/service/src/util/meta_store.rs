@@ -476,7 +476,16 @@ pub(crate) async fn add_req_to_meta_store<T>(
     req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<MetaStorePermit, MetricedError> {
-    meta_store.write().await.insert(req_id).map_err(|e| {
+    let mut guard = meta_store.write().await;
+    if guard.exists(req_id) {
+        return Err(MetricedError::new(
+            request_metric,
+            Some(*req_id),
+            anyhow::anyhow!("Duplicate request ID in meta store"),
+            tonic::Code::AlreadyExists,
+        )); // TODO remove once we gustom error to allow to return already exits 
+    }
+    guard.insert(req_id).map_err(|e| {
         // We likely reached capacity here
         // TODO update
         MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
