@@ -49,7 +49,7 @@ clean-backward-compatibility-data:
 	@# .ron files are preserved so committed frozen entries survive.
 	@if [ -n "$(DETERMINISTIC_BWC_DIRS)" ]; then rm -rf $(DETERMINISTIC_BWC_DIRS); fi
 
-# Use the version-specifc generators only if you really need it,
+# Use the version-specific generators only if you really need it,
 # e.g., when a type is added in a minor release.
 generate-backward-compatibility-v0.13.0:
 	cd backward-compatibility/generate-v0.13.0 && cargo run --release
