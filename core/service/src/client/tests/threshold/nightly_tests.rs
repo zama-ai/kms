@@ -210,15 +210,7 @@ async fn default_user_decryption_threshold_with_crash(
 async fn secure_threshold_sequential_crs_test(#[case] amount_parties: usize) {
     // NOTE: When using tests parameters for CRS gen the maximum amount of bits supported is 512
 
-    crs_gen(
-        amount_parties,
-        FheParameter::Test,
-        Some(512),
-        false,
-        2,
-        false,
-    )
-    .await;
+    crs_gen(amount_parties, FheParameter::Test, Some(512), 2, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -227,15 +219,7 @@ async fn secure_threshold_sequential_crs_test(#[case] amount_parties: usize) {
 #[case(DEFAULT_AMOUNT_PARTIES)]
 async fn secure_threshold_concurrent_crs_test(#[case] amount_parties: usize) {
     // NOTE: When using tests parameters for CRS gen the maximum amount of bits supported is 512
-    crs_gen(
-        amount_parties,
-        FheParameter::Test,
-        Some(512),
-        false,
-        2,
-        true,
-    )
-    .await;
+    crs_gen(amount_parties, FheParameter::Test, Some(512), 2, true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -243,15 +227,7 @@ async fn secure_threshold_concurrent_crs_test(#[case] amount_parties: usize) {
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
 async fn secure_threshold_sequential_crs_default(#[case] amount_parties: usize) {
-    crs_gen(
-        amount_parties,
-        FheParameter::Default,
-        Some(512),
-        false,
-        2,
-        false,
-    )
-    .await;
+    crs_gen(amount_parties, FheParameter::Default, Some(512), 2, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -259,15 +235,7 @@ async fn secure_threshold_sequential_crs_default(#[case] amount_parties: usize) 
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
 async fn secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) {
-    crs_gen(
-        amount_parties,
-        FheParameter::Default,
-        Some(2048),
-        false,
-        2,
-        true,
-    )
-    .await;
+    crs_gen(amount_parties, FheParameter::Default, Some(2048), 2, true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
