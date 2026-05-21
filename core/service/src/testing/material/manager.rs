@@ -6,8 +6,8 @@ use super::spec::{KeyType, MaterialType, TestMaterialSpec};
 use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
-    OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-    TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
+    OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
+    TMP_PATH_PREFIX,
 };
 use crate::engine::base::derive_request_id;
 use crate::vault::storage::StorageType;
@@ -211,18 +211,12 @@ impl TestMaterialManager {
             } else {
                 Either::Right(ready(Ok(())))
             };
-        let copy_prss_setup = if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
-            Either::Left(self.copy_prss_setup(source_base_ref, dest_base, spec))
-        } else {
-            Either::Right(ready(Ok(())))
-        };
 
         tokio::try_join!(
             copy_client_keys,
             copy_signing_keys,
             copy_fhe_keys,
             copy_crs_keys,
-            copy_prss_setup
         )?;
 
         Ok(())
@@ -415,38 +409,6 @@ impl TestMaterialManager {
                 self.copy_epoch_key_files(&source_priv, &dest_priv, &crs_info_type, crs_id)
                     .await?;
             }
-        }
-
-        Ok(())
-    }
-
-    /// Copy PRSS setup for threshold tests
-    async fn copy_prss_setup(
-        &self,
-        source_base: Option<&Path>,
-        dest_base: &Path,
-        spec: &TestMaterialSpec,
-    ) -> Result<()> {
-        for i in 1..=spec.party_count() {
-            let role = Role::indexed_from_one(i);
-            let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
-            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
-
-            // Copy PRSS setup files
-            self.copy_key_files(
-                &source_priv,
-                &dest_priv,
-                &PrivDataType::PrssSetupCombined.to_string(),
-                PRSS_INIT_REQ_ID,
-            )
-            .await?;
-            self.copy_key_files(
-                &source_priv,
-                &dest_priv,
-                &PrivDataType::ContextInfo.to_string(),
-                PRSS_INIT_REQ_ID,
-            )
-            .await?;
         }
 
         Ok(())

@@ -109,7 +109,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             _ => TestMaterialSpec::threshold_signing_only(amount_parties),
         };
         s.required_keys.remove(&KeyType::FheKeys);
-        s.required_keys.insert(KeyType::PrssSetup);
         s
     };
 

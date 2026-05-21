@@ -13,7 +13,7 @@ cfg_if::cfg_if! {
         store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
     };
     use crate::vault::storage::crypto_material::get_core_signing_key;
-
+    use crate::testing::helpers::domain_to_msg;
     use kms_grpc::rpc_types::PrivDataType;
 }}
 use crate::client::client_wasm::Client;
@@ -38,9 +38,7 @@ use crate::engine::base::INSECURE_PREPROCESSING_ID;
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
-#[cfg(feature = "slow_tests")]
-use crate::testing::helpers::domain_to_msg;
-use crate::testing::material::{KeyType, TestMaterialSpec};
+use crate::testing::material::{MaterialType, TestMaterialSpec};
 use crate::testing::setup::threshold::ThresholdTestEnv;
 use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
@@ -170,12 +168,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
         "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
     ))?;
 
-    // Test generates its own FHE keys; only signing material + PRSS are needed pre-generated.
-    let spec = {
-        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
-    };
+    // Test generates its own FHE keys; only signing material is needed pre-staged.
+    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("test_insecure_compressed_dkg")
@@ -484,15 +478,11 @@ pub(crate) async fn run_threshold_decompression_keygen(
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
 
     let dkg_param: WrappedDKGParams = parameter.into();
-    let spec = {
-        let mut s = match parameter {
-            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
-            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
-        };
-        s.required_keys.remove(&KeyType::FheKeys);
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
-    };
+    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameter, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
 
     let (material_dir, kms_servers, kms_clients, internal_client) = {
         let env = ThresholdTestEnv::builder()
@@ -702,15 +692,11 @@ pub(crate) async fn preproc_and_keygen(
         new_epoch: 1,
     };
 
-    let spec = {
-        let mut s = match parameter {
-            FheParameter::Default => TestMaterialSpec::threshold_default(amount_parties),
-            _ => TestMaterialSpec::threshold_signing_only(amount_parties),
-        };
-        s.required_keys.remove(&KeyType::FheKeys);
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
-    };
+    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameter, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
 
     let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
         let env = ThresholdTestEnv::builder()
@@ -1428,7 +1414,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 async fn default_insecure_dkg() -> anyhow::Result<()> {
     // Use Default material spec for production-like keys.
     // PRSS is generated at server startup via `with_prss()`.
-    let spec = TestMaterialSpec::threshold_default_no_prss(4);
+    let spec = TestMaterialSpec::threshold_default(4);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("default_insecure_dkg")
