@@ -417,7 +417,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         // Sanity check that the key is indeed gone.
         assert!(
             !data_exists_at_epoch(
-                &mut cur_priv_store,
+                &cur_priv_store,
                 &req_key_id,
                 &DEFAULT_EPOCH_ID,
                 &PrivDataType::FheKeyInfo.to_string()
