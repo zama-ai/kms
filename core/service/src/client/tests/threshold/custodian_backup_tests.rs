@@ -995,6 +995,7 @@ async fn read_signing_keys(
     sig_keys
 }
 
+#[cfg(feature = "testing")]
 async fn operator_verf_key_map(
     test_path: Option<&std::path::Path>,
     pub_storage_prefixes: &[Option<String>],
