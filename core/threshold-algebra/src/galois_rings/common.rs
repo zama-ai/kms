@@ -44,7 +44,7 @@ use zeroize::Zeroize;
 ///
 /// This is also the 'value' of a single ShamirShare.
 #[derive(Clone, Copy, PartialEq, Hash, Eq, Debug, Zeroize, Versionize)]
-#[versionize(ResiduePolyVersioned)]
+#[versionize(ResiduePolyVersions)]
 pub struct ResiduePoly<Z, const EXTENSION_DEGREE: usize> {
     pub coefs: [Z; EXTENSION_DEGREE],
 }
@@ -88,7 +88,7 @@ impl<'a, Z: Deserialize<'a>, const EXTENSION_DEGREE: usize> Deserialize<'a>
 }
 
 #[derive(Serialize, Deserialize, Clone, VersionsDispatch)]
-pub enum ResiduePolyVersioned<Z, const EXTENSION_DEGREE: usize> {
+pub enum ResiduePolyVersions<Z, const EXTENSION_DEGREE: usize> {
     V0(ResiduePoly<Z, EXTENSION_DEGREE>),
 }
 

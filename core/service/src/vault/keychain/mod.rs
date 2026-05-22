@@ -22,13 +22,13 @@ pub mod awskms;
 pub mod secretsharing;
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum AppKeyBlobVersioned {
+pub enum AppKeyBlobVersions {
     V0(AppKeyBlob),
 }
 
 /// Container type for encrypted application keys (such as FHE private keys)
 #[derive(Serialize, Deserialize, Versionize, PartialEq, Debug, Clone)]
-#[versionize(AppKeyBlobVersioned)]
+#[versionize(AppKeyBlobVersions)]
 pub struct AppKeyBlob {
     pub root_key_id: String,
     pub data_key_blob: Vec<u8>,

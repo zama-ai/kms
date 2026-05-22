@@ -328,7 +328,7 @@ impl TestedModule for KMS {
 A test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) runs as part of the `core/service` test suite, but its scan is workspace-wide: it uses `cargo metadata` to enumerate every workspace member and statically inspects each one for `#[derive(VersionsDispatch)]` enums, enforcing two invariants:
 
 1. **Contiguous variants** — variants must be named `V0`, `V1`, `V2`, … in order.
-2. **Fixture coverage** — every dispatch type (with its `Versioned` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
+2. **Fixture coverage** — every dispatch type (with its `Versions` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
 
 The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is to add a direct `.ron` fixture for it, as described in [Adding a test for a new type](#adding-a-test-for-a-new-type). `ALLOW_UNCOVERED` is for inner types that are only reachable as fields of a parent type that already has a fixture.
 
@@ -418,11 +418,11 @@ The data is stored using git-lfs, so be sure to clone the kms-core repo with lfs
 
 When some breaking changes are added to a versionized type, you should update several things. Let's say that the type only had a `V0` version, then you should:
 
-- add a new version `v1` to the `XXXVersioned` enum associated to the type `XXX` (ex: `PrivateSigKeyVersioned` for `PrivateSigKey`)
+- add a new version `v1` to the `XXXVersions` enum associated to the type `XXX` (ex: `PrivateSigKeyVersions` for `PrivateSigKey`)
 - **keep** the `PrivateSigKey` old definition and rename it to `PrivateSigKeyV0`
 - replace the `Versionize` derive trait with the `Version` one (import if from `tfhe-versionable` if needed)
-- remove the `#[versionize(XXXVersioned)]` attribute
-- add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersioned)]` attribute to it
+- remove the `#[versionize(XXXVersions)]` attribute
+- add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersions)]` attribute to it
 - implement the `Upgrade` trait for the old definition (ex: `PrivateSigKeyV0`)
 
 It is important to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
@@ -431,7 +431,7 @@ It should look like the following:
 
 ```rust
 #[derive(..., VersionsDispatch)]
-pub enum PrivateSigKeyVersioned {
+pub enum PrivateSigKeyVersions {
     V0(PrivateSigKeyV0),
     V1(PrivateSigKey),
 }
@@ -444,7 +444,7 @@ pub struct PrivateSigKeyV0 {
 
 // New definition
 #[derive(..., Versionize)]
-#[versionize(PrivateSigKeyVersioned)]
+#[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     // New definition
 }

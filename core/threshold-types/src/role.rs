@@ -90,7 +90,7 @@ impl TwoSetsRole {
     Zeroize,
     tfhe_versionable::Versionize,
 )]
-#[versionize(RoleVersioned)]
+#[versionize(RoleVersions)]
 /// This defines the role of a party in the distributed system.
 /// Role are stored as 1-based indices, meaning that the first party has role 1, the second party has role 2, and so on.
 /// However, when used to do direct indexing into a vector, it is converted to a 0-based index.
@@ -99,7 +99,7 @@ impl TwoSetsRole {
 pub struct Role(u64);
 
 #[derive(Clone, Serialize, Deserialize, tfhe_versionable::VersionsDispatch)]
-pub enum RoleVersioned {
+pub enum RoleVersions {
     V0(Role),
 }
 

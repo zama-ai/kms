@@ -27,12 +27,12 @@ pub trait HasSigningScheme {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum SigningSchemeTypeVersioned {
+pub enum SigningSchemeTypeVersions {
     V0(SigningSchemeType),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
-#[versionize(SigningSchemeTypeVersioned)]
+#[versionize(SigningSchemeTypeVersions)]
 pub enum SigningSchemeType {
     Ecdsa256k1,
     // Eventually we will support post quantum signatures as well
@@ -62,14 +62,14 @@ impl TryFrom<i32> for SigningSchemeType {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum PublicSigKeyVersioned {
+pub enum PublicSigKeyVersions {
     V0(PublicSigKey),
 }
 
 // Struct wrapping signature verification key used by both the user's wallet and server
 #[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, Versionize)]
-#[versionize(PublicSigKeyVersioned)]
+#[versionize(PublicSigKeyVersions)]
 pub struct PublicSigKey {
     pk: WrappedVerifyingKey,
 }
@@ -206,7 +206,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
 }
 // Drop manually implemented due to conflict with Versionize macro
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
-pub enum PrivateSigKeyVersioned {
+pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
 }
 // TODO(#2781) should eventually be replaced or consolidated with the UnifiedPrivateSigningKey
@@ -214,7 +214,7 @@ pub enum PrivateSigKeyVersioned {
 // messages to one another
 #[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, Versionize)]
-#[versionize(PrivateSigKeyVersioned)]
+#[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
 }

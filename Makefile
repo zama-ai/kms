@@ -96,12 +96,33 @@ check-git-lfs:
 pull-lfs-files: check-git-lfs
 	git lfs pull
 
-linting-all:
+
+# `DYLINT_RUSTFLAGS` is consumed by `cargo-dylint` and forwarded to the `rustc`
+# driver that runs each Dylint library. Here it turns warnings to errors so Dylint
+# findings fail CI, while disabling the tfhe-rs `serialize_without_versionize`
+# lint, which is intentionally too broad for this workspace. `-Aunknown-lints`
+# is paired with it because `cargo dylint --all` loads multiple lint
+# libraries/toolchains; libraries that do not define
+# `serialize_without_versionize` would otherwise emit an "unknown lint" warning
+# for the command-line allow.
+DYLINT_RUSTFLAGS ?= -D warnings -Aunknown-lints -Aserialize_without_versionize
+
+lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 
-linting-package:
+lint-package:
 	@if [ -z "$(PACKAGE)" ]; then \
-		echo "Error: PACKAGE is not set. Usage: make clippy-package PACKAGE=<package-name>"; \
+		echo "Error: PACKAGE is not set. Usage: make lint-package PACKAGE=<package-name>"; \
 		exit 1; \
 	fi
 	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
+
+# The nightly toolchain and components needed to build each Dylint library are
+# auto-installed by rustup on the first `cargo dylint --all` run, driven by the
+# `rust-toolchain` file each library ships (e.g. `tfhe-lints` in the tfhe-rs
+# repo at the tag pinned in `dylint.toml`).
+install-dylint:
+	cargo install cargo-dylint dylint-link --locked
+
+lint-dylint:
+	DYLINT_RUSTFLAGS="$(DYLINT_RUSTFLAGS)" cargo dylint --all

@@ -17,14 +17,14 @@ use algebra::{
 use super::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CompressionPrivateKeySharesVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
+pub enum CompressionPrivateKeySharesVersions<Z: Clone, const EXTENSION_DEGREE: usize> {
     V0(CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>),
 }
 
 ///Structure that holds a share of the LWE key
 /// - data contains shares of the key components
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(CompressionPrivateKeySharesVersioned)]
+#[versionize(CompressionPrivateKeySharesVersions)]
 pub struct CompressionPrivateKeyShares<Z: Clone, const EXTENSION_DEGREE: usize> {
     pub post_packing_ks_key: GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     pub params: CompressionParameters,
