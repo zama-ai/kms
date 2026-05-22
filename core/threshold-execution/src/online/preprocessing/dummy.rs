@@ -270,7 +270,6 @@ where
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         const BIT_FLAG: u64 = 0xB542074E84A9D88E;
         let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed ^ self.bit_ctr);
-        self.bit_ctr += amount as u64;
         let mut res = Vec::with_capacity(amount);
         let my_role = self.parameters.my_role();
         let my_share_zero = DummyPreprocessing::share(
@@ -290,6 +289,7 @@ where
             let secret = if bit { my_share_one } else { my_share_zero };
             res.push(secret);
         }
+        self.bit_ctr += amount as u64;
         Ok(res)
     }
 
