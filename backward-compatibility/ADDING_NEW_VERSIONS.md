@@ -30,7 +30,9 @@ Add the version to the most recent compatible deterministic generator (e.g., `ge
 ```toml
 kms_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.14.0" }
 kms_grpc_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.14.0" }
-threshold_fhe_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "v0.14.0", features = ["testing"] }
+algebra_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "v0.14.0" }
+threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "v0.14.0", features = ["testing"] }
+# and so on, see the examples in kms/backward-compatibility/generate-vX.X.X/Cargo.toml
 ```
 
 2. **Create** `backward-compatibility/generate-v0.14.0/src/data_0_14.rs` implementing `KMSCoreVersion` trait
@@ -100,7 +102,8 @@ generate-backward-compatibility-v0.14.0:
 	cd backward-compatibility/generate-v0.14.0 && cargo run --release
 ```
 
-6. **Do not add the new version to `FROZEN_BWC_VERSIONS`** unless the generator is known to be non-deterministic and the generated data is intentionally frozen. `clean-backward-compatibility-data` derives deterministic data directories from `DETERMINISTIC_BWC_VERSIONS`.
+6. **Do not add the new version to `FROZEN_BWC_VERSIONS`** unless the generator is known to be non-deterministic and the generated data is intentionally frozen (some excptions on this rule is if we have to make backport some fixes and make a minor release from one of the v0.13.x versions). `clean-backward-compatibility-data` derives deterministic data directories from `DETERMINISTIC_BWC_VERSIONS`.
+In more detail, the kms code initially had versioned data structures that could not be serialized deterministically (e.g., due to the use of `HashMap`), this made changes harder to review because a lot of the backward compatibility data would change during re-generation. To fix this issue, we made sure all versioned data had deterministic serialization for v0.14.0 and later, and froze all prior backward compatibility data, defined in `FROZEN_BWC_VERSIONS`.
 
 7. **Test the new generator**:
 ```bash

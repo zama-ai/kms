@@ -382,7 +382,7 @@ impl Custodian {
         custodian_name: String, // This is the human readable name of the custodian to be used in the setup message
     ) -> Result<InternalCustodianSetupMessage, BackupError> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        self.generate_setup_message_with_timestamp(rng, custodian_name, timestamp)
+        Ok(self.generate_setup_message_with_timestamp(rng, custodian_name, timestamp))
     }
 
     // The timestamp is taken as an explicit argument so that callers needing deterministic
@@ -392,11 +392,11 @@ impl Custodian {
         rng: &mut R,
         custodian_name: String,
         timestamp: u64,
-    ) -> Result<InternalCustodianSetupMessage, BackupError> {
+    ) -> InternalCustodianSetupMessage {
         let mut random_value = [0u8; 32];
         rng.fill_bytes(&mut random_value);
 
-        Ok(InternalCustodianSetupMessage {
+        InternalCustodianSetupMessage {
             header: HEADER.to_string(),
             custodian_role: self.role,
             random_value,
@@ -404,7 +404,7 @@ impl Custodian {
             public_enc_key: self.enc_key.clone(),
             public_verf_key: self.verification_key().clone(),
             name: custodian_name,
-        })
+        }
     }
 
     pub fn public_dec_key(&self) -> &UnifiedPrivateEncKey {
