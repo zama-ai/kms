@@ -1,7 +1,7 @@
 use crate::client::client_wasm::Client;
-use crate::client::test_tools::centralized_custodian_handles;
 use crate::consts::DEFAULT_MPC_CONTEXT;
 use crate::consts::SIGNING_KEY_ID;
+use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::backup_exists;
 use crate::util::key_setup::test_tools::read_custodian_backup_files;
 use crate::{
@@ -25,12 +25,20 @@ pub(crate) async fn new_custodian_context(
     let req_new_cus: RequestId = derive_request_id("test_new_custodian_context_central").unwrap();
     let req_new_cus2: RequestId =
         derive_request_id("test_new_custodian_context_central_2").unwrap();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_path = Some(temp_dir.path());
 
     let dkg_param: WrappedDKGParams = parameter.into();
-    let (kms_server, mut kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
+    let test_env = CentralizedTestEnv::builder()
+        .with_custodian_keychain()
+        .build()
+        .await
+        .unwrap();
+    let mut internal_client = test_env.create_internal_client(&dkg_param).await.unwrap();
+    let CentralizedTestEnv {
+        material_dir,
+        server: kms_server,
+        client: mut kms_client,
+    } = test_env;
+    let test_path = Some(material_dir.path());
     run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -76,8 +84,11 @@ pub(crate) async fn new_custodian_context(
     kms_server.assert_shutdown().await;
     drop(kms_client);
     drop(internal_client);
-    let (_kms_server, _kms_client, _internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
+    let (_kms_server, _kms_client) = CentralizedTestEnv::builder()
+        .with_custodian_keychain()
+        .from_path(material_dir.path())
+        .await
+        .unwrap();
     let reboot_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus2,

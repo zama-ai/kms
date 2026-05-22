@@ -18,27 +18,26 @@ use crate::consts::{
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
+use crate::engine::base::derive_request_id;
 use crate::engine::base::{
     CrsGenMetadata, DSEP_PUBDATA_KEY, INSECURE_PREPROCESSING_ID,
     safe_serialize_hash_element_versioned,
 };
 use crate::engine::context::ContextInfo;
+use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
-use crate::util::key_setup::test_tools::purge_priv;
 use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
 use crate::vault::storage::StorageType;
+use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
+use crate::vault::storage::delete_at_request_and_epoch_id;
+use crate::vault::storage::delete_at_request_id;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::read_context_at_id;
 use crate::vault::storage::read_versioned_at_request_and_epoch_id;
 use crate::vault::storage::read_versioned_at_request_id;
-use crate::{
-    client::tests::common::TIME_TO_SLEEP_MS,
-    client::tests::threshold::common::threshold_handles_custodian_backup,
-    engine::base::derive_request_id,
-};
 use aes_prng::AesRng;
 use alloy_primitives::Address;
 use kms_grpc::identifiers::EpochId;
@@ -70,7 +69,7 @@ struct ThresholdBackupTestEnv {
     internal_client: Option<Client>,
     mnemonics: Vec<String>,
     req_new_cus: RequestId,
-    temp_dir: tempfile::TempDir,
+    material_dir: tempfile::TempDir,
 }
 
 impl ThresholdBackupTestEnv {
@@ -78,23 +77,23 @@ impl ThresholdBackupTestEnv {
 
     async fn new(test_name: &str, amount_custodians: usize, threshold: u32) -> Self {
         let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let test_path = Some(temp_dir.path());
         let req_new_cus: RequestId = derive_request_id(test_name).unwrap();
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
-            *dkg_param,
-            Self::AMOUNT_PARTIES,
-            true,
-            false,
-            None,
-            None,
-            test_path,
-        )
-        .await;
+        let (material_dir, servers, clients, mut internal_client) = {
+            let env = ThresholdTestEnv::builder()
+                .with_test_name(test_name)
+                .with_party_count(Self::AMOUNT_PARTIES)
+                .with_custodian_keychain()
+                .with_prss()
+                .build()
+                .await
+                .unwrap();
+            let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+            (env.material_dir, env.servers, env.clients, internal_client)
+        };
+
         let mnemonics = run_new_cus_context(
-            &kms_clients,
+            &clients,
             &mut internal_client,
             &req_new_cus,
             amount_custodians,
@@ -103,17 +102,17 @@ impl ThresholdBackupTestEnv {
         .await;
 
         Self {
-            kms_servers: Some(kms_servers),
-            kms_clients: Some(kms_clients),
+            kms_servers: Some(servers),
+            kms_clients: Some(clients),
             internal_client: Some(internal_client),
             mnemonics,
             req_new_cus,
-            temp_dir,
+            material_dir,
         }
     }
 
     fn test_path(&self) -> Option<&std::path::Path> {
-        Some(self.temp_dir.path())
+        Some(self.material_dir.path())
     }
 
     fn backup_prefixes(&self) -> &[Option<String>] {
@@ -146,6 +145,44 @@ impl ThresholdBackupTestEnv {
                 s.assert_shutdown().await;
             }
         }
+    }
+
+    /// Spawn a fresh KMS server attached to this env's material directory. Use to assert state persists across server
+    /// lifetimes. The wrapper must outlive the returned pair.
+    async fn spawn_server_on_existing_material(
+        &self,
+    ) -> (
+        HashMap<u32, ServerHandle>,
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    ) {
+        ThresholdTestEnv::builder()
+            .with_party_count(Self::AMOUNT_PARTIES)
+            .with_custodian_keychain()
+            .with_prss()
+            .from_path(self.material_dir.path())
+            .await
+            .unwrap()
+    }
+
+    /// Construct a fresh internal Client backed by this env's material dir.
+    async fn create_internal_client(
+        &self,
+        dkg_param: &threshold_execution::tfhe_internals::parameters::DKGParams,
+    ) -> Client {
+        let path = self.material_dir.path();
+        let mut pub_storage_map = HashMap::new();
+        for (i, prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..Self::AMOUNT_PARTIES]
+            .iter()
+            .enumerate()
+        {
+            let pub_storage =
+                FileStorage::new(Some(path), StorageType::PUB, prefix.as_deref()).unwrap();
+            pub_storage_map.insert((i + 1) as u32, pub_storage);
+        }
+        let client_storage = FileStorage::new(Some(path), StorageType::CLIENT, None).unwrap();
+        Client::new_client(client_storage, pub_storage_map, dkg_param, None)
+            .await
+            .unwrap()
     }
 }
 
@@ -182,10 +219,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     // Purge backup
     purge_backup(env.test_path(), env.backup_prefixes()).await;
     // Check that the backup is still there after reboot
-    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-    let (_kms_servers, _kms_clients, _internal_client) =
-        threshold_handles_custodian_backup(*dkg_param, n, true, false, None, None, env.test_path())
-            .await;
+    let (_kms_servers, _kms_clients) = env.spawn_server_on_existing_material().await;
     let _reread_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         env.test_path(),
         &env.req_new_cus,
@@ -272,22 +306,32 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 
     env.shutdown().await;
 
-    // Capture operator verification keys before purging
+    // Capture operator verification keys (needed for `run_full_custodian_recovery` below).
     let operator_verf_keys = operator_verf_key_map(env.test_path(), env.pub_prefixes()).await;
     let custodian_context_id = env.req_new_cus;
 
-    // Purge the private storage to test the backup recovery
-    purge_priv(env.test_path(), env.priv_prefixes()).await;
+    // Delete only the CRS metadata for each party. Signing keys stay intact so the cluster can spawn via
+    // `spawn_server_on_existing_material`.
+    for storage_prefix in env.priv_prefixes().iter() {
+        let mut cur_priv_store = FileStorage::new(
+            env.test_path(),
+            StorageType::PRIV,
+            storage_prefix.as_deref(),
+        )
+        .unwrap();
+        delete_at_request_and_epoch_id(
+            &mut cur_priv_store,
+            &crs_req,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
+    }
 
-    // Reboot the servers
-    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-    let (kms_servers, kms_clients, internal_client) =
-        threshold_handles_custodian_backup(*dkg_param, n, true, false, None, None, env.test_path())
-            .await;
-    // Purge the private storage again to delete the signing key
-    purge_priv(env.test_path(), env.priv_prefixes()).await;
+    let (kms_servers, kms_clients) = env.spawn_server_on_existing_material().await;
 
-    // Execute the backup restoring
+    // Execute the backup restore
     run_full_custodian_recovery(
         &kms_clients,
         &operator_verf_keys,
@@ -317,9 +361,10 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         assert_eq!(recovered_meta, original_crs_metadata[i]);
     }
 
-    // Shut down the servers
-    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
+    shutdown_servers(kms_servers).await;
+    drop(kms_clients);
 }
+
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -327,6 +372,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     decrypt_after_recovery(custodians, threshold).await;
 }
+
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let mut env = ThresholdBackupTestEnv::new(
@@ -359,22 +405,61 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     env.shutdown().await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
 
-    // Read the private signing keys for reference
+    // Capture state while disk is intact. `sig_keys` is the byte-level snapshot we'll compare against after recovery to
+    // verify signing keys are preserved exactly.
     let sig_keys = read_signing_keys(env.test_path(), env.priv_prefixes()).await;
     let operator_verf_keys = operator_verf_key_map(env.test_path(), env.pub_prefixes()).await;
     let custodian_context_id = env.req_new_cus;
 
-    // Purge the private storage to test the backup
-    purge_priv(env.test_path(), env.priv_prefixes()).await;
+    // Boot fresh servers.
+    let (kms_servers, kms_clients) = env.spawn_server_on_existing_material().await;
 
-    // Reboot the servers
-    let (kms_servers, kms_clients, internal_client) =
-        threshold_handles_custodian_backup(*dkg_param, n, true, false, None, None, env.test_path())
-            .await;
-    // Purge the private storage again to delete the signing key
-    purge_priv(env.test_path(), env.priv_prefixes()).await;
+    // Delete the FHE shares and the per-party signing keys so we can check them after recovery.
+    for storage_prefix in env.priv_prefixes().iter() {
+        let mut cur_priv_store = FileStorage::new(
+            env.test_path(),
+            StorageType::PRIV,
+            storage_prefix.as_deref(),
+        )
+        .unwrap();
+        delete_at_request_and_epoch_id(
+            &mut cur_priv_store,
+            &req_key_id,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        delete_at_request_id(
+            &mut cur_priv_store,
+            &SIGNING_KEY_ID,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
 
-    // Execute the backup restoring
+        assert!(
+            !data_exists_at_epoch(
+                &cur_priv_store,
+                &req_key_id,
+                &DEFAULT_EPOCH_ID,
+                &PrivDataType::FheKeyInfo.to_string()
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !data_exists(
+                &cur_priv_store,
+                &SIGNING_KEY_ID,
+                &PrivDataType::SigningKey.to_string()
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    // Execute the backup restore.
     run_full_custodian_recovery(
         &kms_clients,
         &operator_verf_keys,
@@ -385,17 +470,15 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     )
     .await;
 
-    // Check that the key material is back
-    let recovered_keys = read_signing_keys(env.test_path(), env.priv_prefixes()).await;
-    for (i, key) in recovered_keys.iter().enumerate() {
-        assert_eq!(key, &sig_keys[i]);
-    }
+    // Signing keys must be back on disk, byte-equal to the originals.
+    let recovered_sig_keys = read_signing_keys(env.test_path(), env.priv_prefixes()).await;
+    assert_eq!(recovered_sig_keys, sig_keys);
 
-    // Reboot the servers and try to decrypt
-    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) =
-        threshold_handles_custodian_backup(*dkg_param, n, true, false, None, None, env.test_path())
-            .await;
+    // Reboot the servers and verify decryption
+    shutdown_servers(kms_servers).await;
+    drop(kms_clients);
+    let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
     run_decryption_threshold(
         n,
         &mut kms_servers,
@@ -422,6 +505,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
 }
+
 fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecoveryRequest)>) {
     // Change a bit in two of the custodians contribution to the recover requests to make them invalid
     for (_, cur_payload) in cus_out.values_mut() {
@@ -449,6 +533,7 @@ fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecov
             });
     }
 }
+
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let mut env = ThresholdBackupTestEnv::new(
@@ -457,26 +542,65 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         threshold,
     )
     .await;
+    let req_key_id: RequestId = derive_request_id(&format!(
+        "decrypt_after_recovery_threshold_negative_key_{n}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
+
+    // Generate a key so we have FHE material to delete + recover.
+    let (keyset_config, keyset_added_info) = keygen_config();
+    let _keys = run_threshold_keygen(
+        FheParameter::Test,
+        env.kms_clients(),
+        env.internal_client(),
+        &INSECURE_PREPROCESSING_ID,
+        &req_key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        env.test_path(),
+        0,
+    )
+    .await;
 
     env.shutdown().await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
 
-    // Read the private signing keys for reference
+    // Capture state while disk is intact.
     let sig_keys = read_signing_keys(env.test_path(), env.priv_prefixes()).await;
     let operator_verf_keys = operator_verf_key_map(env.test_path(), env.pub_prefixes()).await;
     let custodian_context_id = env.req_new_cus;
 
-    // Purge the private storage to test the backup
-    purge_priv(env.test_path(), env.priv_prefixes()).await;
+    // Boot fresh serversso they can load signing keys into memory before deleting.
+    let (kms_servers, kms_clients) = env.spawn_server_on_existing_material().await;
 
-    // Reboot the servers
-    let (_kms_servers, kms_clients, _internal_client) =
-        threshold_handles_custodian_backup(*dkg_param, n, true, false, None, None, env.test_path())
-            .await;
-    // Purge the private storage again to delete the signing key
-    purge_priv(env.test_path(), env.priv_prefixes()).await;
+    // Delete the FHE shares and the per-party signing keys (so we can byte-compare them after recovery).
+    for storage_prefix in env.priv_prefixes().iter() {
+        let mut cur_priv_store = FileStorage::new(
+            env.test_path(),
+            StorageType::PRIV,
+            storage_prefix.as_deref(),
+        )
+        .unwrap();
+        delete_at_request_and_epoch_id(
+            &mut cur_priv_store,
+            &req_key_id,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        delete_at_request_id(
+            &mut cur_priv_store,
+            &SIGNING_KEY_ID,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+    }
 
-    // Execute the backup restoring with corrupted custodian outputs
+    // Execute the backup restore with corrupted custodian outputs. With threshold=2 of 5 custodians, the quorum
+    // tolerates 2 bad shares.
     run_full_custodian_recovery(
         &kms_clients,
         &operator_verf_keys,
@@ -487,11 +611,34 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     )
     .await;
 
-    // Check that the key material is back
-    let recovered_keys = read_signing_keys(env.test_path(), env.priv_prefixes()).await;
-    for (i, key) in recovered_keys.iter().enumerate() {
-        assert_eq!(key, &sig_keys[i]);
-    }
+    // Signing keys must be back on disk, byte-equal to the originals — the corrupted
+    // custodian outputs must not have changed what the recovery wrote.
+    let recovered_sig_keys = read_signing_keys(env.test_path(), env.priv_prefixes()).await;
+    assert_eq!(recovered_sig_keys, sig_keys);
+
+    // Decryption succeeds means recovery worked despite the tampered custodian outputs.
+    shutdown_servers(kms_servers).await;
+    drop(kms_clients);
+    let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
+    run_decryption_threshold(
+        n,
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        None,
+        &req_key_id,
+        None,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        None,
+        1,
+        env.test_path(),
+    )
+    .await;
 }
 
 /// Test that PRSS data (PrssSetupCombined) is present in the custodian backup vault
@@ -915,15 +1062,10 @@ async fn test_backup_after_reshare_threshold() {
     env.shutdown().await;
 }
 
-async fn shutdown_servers_and_client(
-    kms_servers: HashMap<u32, ServerHandle>,
-    _kms_clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    _internal_client: Client,
-) {
+async fn shutdown_servers(kms_servers: HashMap<u32, ServerHandle>) {
     for (_, kms_server) in kms_servers {
         kms_server.assert_shutdown().await;
     }
-    // here we will drop kms_clients and internal_client
 }
 #[allow(clippy::type_complexity)]
 async fn run_full_custodian_recovery(

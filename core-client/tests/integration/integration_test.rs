@@ -388,8 +388,8 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 ///
 /// # Note
 /// Uses Default FHE parameters (production-like, slower than Test params) with `ensure_default_prss=false`.
-/// Internally uses `TestMaterialSpec::threshold_default_no_prss` — PRSS is excluded from
-/// required material and is not used at all (no pre-generated PRSS needed).
+/// Internally uses `TestMaterialSpec::threshold_default` — PRSS is bootstrapped at runtime
+/// when `ensure_default_prss=true`.
 ///
 /// # Example
 /// ```no_run
@@ -555,7 +555,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 
     let default_material_spec = match fhe_params {
         FheParameter::Default => {
-            kms_lib::testing::material::TestMaterialSpec::threshold_default_no_prss(party_count)
+            kms_lib::testing::material::TestMaterialSpec::threshold_default(party_count)
         }
         _ => kms_lib::testing::material::TestMaterialSpec::threshold_basic(party_count),
     };

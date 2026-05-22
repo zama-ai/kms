@@ -45,8 +45,6 @@ pub enum KeyType {
     CrsKeys,
     /// Decompression keys for compressed ciphertexts
     DecompressionKeys,
-    /// PRSS setup for threshold protocols
-    PrssSetup,
 }
 
 impl TestMaterialSpec {
@@ -110,7 +108,6 @@ impl TestMaterialSpec {
 
         if party_count.is_some() {
             required_keys.insert(KeyType::ServerSigningKeys);
-            required_keys.insert(KeyType::PrssSetup);
         }
 
         Self {
@@ -140,18 +137,6 @@ impl TestMaterialSpec {
     pub fn threshold_default(party_count: usize) -> Self {
         let mut spec = Self::threshold_basic(party_count);
         spec.material_type = MaterialType::Default;
-        spec.required_keys.insert(KeyType::PrssSetup);
-        spec
-    }
-
-    /// Create specification for threshold test with Default parameters but without PRSS setup
-    ///
-    /// Uses production-like key sizes (MaterialType::Default) while excluding PRSS material.
-    /// This is intended for tests that run with Default parameters but do not initialize PRSS
-    /// at server startup (`ensure_default_prss=false`).
-    pub fn threshold_default_no_prss(party_count: usize) -> Self {
-        let mut spec = Self::threshold_default(party_count);
-        spec.required_keys.remove(&KeyType::PrssSetup);
         spec
     }
 
@@ -180,71 +165,6 @@ impl Default for TestMaterialSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-    use strum::IntoEnumIterator;
-
-    /// Maps a PrivDataType to its corresponding KeyType(s).
-    /// This function must be exhaustive - the compiler will error if new variants are added.
-    fn priv_data_type_to_key_types(pdt: PrivDataType) -> Vec<KeyType> {
-        match pdt {
-            PrivDataType::SigningKey => vec![KeyType::SigningKeys, KeyType::ServerSigningKeys],
-            PrivDataType::FheKeyInfo => vec![KeyType::FheKeys], // Threshold FHE key info
-            PrivDataType::CrsInfo => vec![KeyType::CrsKeys],
-            PrivDataType::FhePrivateKey => vec![KeyType::FheKeys], // Centralized FHE private key
-            #[expect(deprecated)]
-            PrivDataType::PrssSetup => vec![KeyType::PrssSetup],
-            PrivDataType::PrssSetupCombined => vec![KeyType::PrssSetup],
-            PrivDataType::ContextInfo => vec![KeyType::PrssSetup], // MPC context stored with PRSS
-        }
-    }
-
-    /// Maps a PubDataType to its corresponding KeyType(s).
-    /// This function must be exhaustive - the compiler will error if new variants are added.
-    fn pub_data_type_to_key_types(pdt: PubDataType) -> Vec<KeyType> {
-        match pdt {
-            PubDataType::ServerKey => vec![KeyType::FheKeys],
-            PubDataType::PublicKey => vec![KeyType::FheKeys],
-            #[allow(deprecated)]
-            PubDataType::PublicKeyMetadata => vec![KeyType::FheKeys],
-            PubDataType::CRS => vec![KeyType::CrsKeys],
-            PubDataType::VerfKey => vec![KeyType::SigningKeys],
-            PubDataType::VerfAddress => vec![KeyType::SigningKeys],
-            PubDataType::DecompressionKey => vec![KeyType::DecompressionKeys],
-            PubDataType::CACert => vec![KeyType::ServerSigningKeys], // TLS certs for MPC nodes
-            PubDataType::RecoveryMaterial => vec![KeyType::ClientKeys], // Backup recovery
-            PubDataType::CompressedXofKeySet => vec![KeyType::FheKeys], // Compressed server key
-        }
-    }
-
-    /// Ensures KeyType covers all PrivDataType variants.
-    /// If a new PrivDataType is added, the exhaustive match in priv_data_type_to_key_types
-    /// will cause a compile error, forcing an update to both the mapping and KeyType if needed.
-    #[test]
-    fn test_key_type_covers_all_priv_data_types() {
-        for pdt in PrivDataType::iter() {
-            let key_types = priv_data_type_to_key_types(pdt);
-            assert!(
-                !key_types.is_empty(),
-                "PrivDataType::{:?} must map to at least one KeyType",
-                pdt
-            );
-        }
-    }
-
-    /// Ensures KeyType covers all PubDataType variants.
-    /// If a new PubDataType is added, the exhaustive match in pub_data_type_to_key_types
-    /// will cause a compile error, forcing an update to both the mapping and KeyType if needed.
-    #[test]
-    fn test_key_type_covers_all_pub_data_types() {
-        for pdt in PubDataType::iter() {
-            let key_types = pub_data_type_to_key_types(pdt);
-            assert!(
-                !key_types.is_empty(),
-                "PubDataType::{:?} must map to at least one KeyType",
-                pdt
-            );
-        }
-    }
 
     #[test]
     fn test_centralized_basic_spec() {
@@ -256,7 +176,6 @@ mod tests {
         assert!(spec.requires_key_type(KeyType::ClientKeys));
         assert!(spec.requires_key_type(KeyType::SigningKeys));
         assert!(spec.requires_key_type(KeyType::FheKeys));
-        assert!(!spec.requires_key_type(KeyType::PrssSetup));
     }
 
     #[test]
@@ -269,7 +188,6 @@ mod tests {
         assert!(spec.requires_key_type(KeyType::ClientKeys));
         assert!(spec.requires_key_type(KeyType::SigningKeys));
         assert!(spec.requires_key_type(KeyType::ServerSigningKeys));
-        assert!(!spec.requires_key_type(KeyType::PrssSetup));
     }
 
     #[test]
@@ -282,27 +200,12 @@ mod tests {
     }
 
     #[test]
-    fn test_threshold_default_spec_requires_prss() {
+    fn test_threshold_default_spec() {
         let spec = TestMaterialSpec::threshold_default(4);
 
         assert_eq!(spec.material_type, MaterialType::Default);
         assert!(spec.is_threshold());
         assert_eq!(spec.party_count(), 4);
-        assert!(spec.requires_key_type(KeyType::PrssSetup));
-    }
-
-    #[test]
-    fn test_threshold_default_no_prss_spec() {
-        let spec = TestMaterialSpec::threshold_default_no_prss(4);
-
-        assert_eq!(spec.material_type, MaterialType::Default);
-        assert!(spec.is_threshold());
-        assert_eq!(spec.party_count(), 4);
-        assert!(spec.requires_key_type(KeyType::ClientKeys));
-        assert!(spec.requires_key_type(KeyType::SigningKeys));
-        assert!(spec.requires_key_type(KeyType::ServerSigningKeys));
-        assert!(spec.requires_key_type(KeyType::FheKeys));
-        assert!(!spec.requires_key_type(KeyType::PrssSetup));
     }
 
     #[test]

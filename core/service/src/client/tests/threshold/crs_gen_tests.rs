@@ -1,15 +1,19 @@
 use crate::client::client_wasm::Client;
+use crate::client::tests::threshold::common::poll_with_retries;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::max_threshold;
 use crate::vault::storage::{StorageType, file::FileStorage};
+use futures_util::future::join_all;
+use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::kms::v1::CrsInfo;
 use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use std::collections::HashMap;
 use std::path::Path;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
@@ -19,25 +23,21 @@ use tonic::transport::Channel;
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use std::sync::Arc;
-    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-    use crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL;
-    use crate::util::key_setup::test_tools::purge;
+    use crate::testing::setup::ThresholdTestEnv;
+    use crate::testing::prelude::{MaterialType, TestMaterialSpec};
 }}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
-    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+    use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 
     let amount_parties = 4;
     let parameter = FheParameter::Test;
     let max_bits = Some(16);
 
-    // Signing keys (request auth) + PRSS (distributed ceremony). FHE keys unused.
-    let spec = {
-        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
-    };
+    // Signing keys for request auth.
+    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("insecure_crs_gen_threshold")
@@ -117,17 +117,13 @@ async fn secure_threshold_crs() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
-    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+    use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 
     let amount_parties = 4;
     let parameter = FheParameter::Test;
     let max_bits = Some(2048);
 
-    let spec = {
-        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
-    };
+    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("test_crs_gen_threshold")
@@ -159,9 +155,6 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO(dp): legacy global-storage path — only `nightly_tests.rs` callers
-// (slow_tests-gated) still use this. Port them to `ThresholdTestEnv::builder()`
-// and delete this helper.
 #[cfg(feature = "slow_tests")]
 pub(crate) async fn crs_gen(
     amount_parties: usize,
@@ -170,29 +163,25 @@ pub(crate) async fn crs_gen(
     iterations: usize,
     concurrent: bool,
 ) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    for i in 0..iterations {
-        let req_crs: RequestId = derive_request_id(&format!(
-            "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}"
-        ))
-        .unwrap();
-        purge(
-            None,
-            None,
-            &req_crs,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
-    }
     let dkg_param: WrappedDKGParams = parameter.into();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    // The threshold handle should only be started after the storage is purged
-    // since the threshold parties will load the CRS from private storage
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+    // CRS gen needs signing keys (for request auth) but not FHE keys. PRSS is bootstrapped
+    // at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameter, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name(format!("crs_gen_{amount_parties}_{parameter:?}"))
+        .with_party_count(amount_parties)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await
+        .unwrap();
+    let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
 
     if concurrent {
         let arc_clients = Arc::new(kms_clients);
@@ -206,6 +195,7 @@ pub(crate) async fn crs_gen(
             crs_set.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
+                let path_clone = material_path.clone();
                 async move {
                     let _ = run_crs(
                         parameter,
@@ -214,7 +204,7 @@ pub(crate) async fn crs_gen(
                         false,
                         &cur_id,
                         max_bits,
-                        None,
+                        Some(path_clone.as_path()),
                     )
                     .await;
                 }
@@ -235,7 +225,7 @@ pub(crate) async fn crs_gen(
                 false,
                 &cur_id,
                 max_bits,
-                None,
+                Some(material_path.as_path()),
             )
             .await;
         }
@@ -257,12 +247,12 @@ pub async fn run_crs(
         .crs_gen_request(crs_req_id, None, None, max_bits, Some(parameter), &domain)
         .unwrap();
 
-    let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
+    let responses = launch_crs(&crs_req, kms_clients, insecure).await;
     for response in responses {
         response.unwrap();
     }
     wait_for_crsgen_result(
-        &vec![crs_req],
+        &[crs_req],
         kms_clients,
         internal_client,
         &dkg_param,
@@ -271,54 +261,62 @@ pub async fn run_crs(
     .await
 }
 async fn launch_crs(
-    reqs: &Vec<CrsGenRequest>,
+    req: &CrsGenRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     insecure: bool,
 ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
-    for req in reqs {
-        for i in 1..=amount_parties as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req.clone();
-            tasks_gen.spawn(async move {
-                if insecure {
-                    cur_client
-                        .insecure_crs_gen(tonic::Request::new(req_clone))
-                        .await
-                } else {
-                    cur_client.crs_gen(tonic::Request::new(req_clone)).await
-                }
-            });
-        }
+    for i in 1..=amount_parties as u32 {
+        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+        let req_clone = req.clone();
+        tasks_gen.spawn(async move {
+            if insecure {
+                cur_client
+                    .insecure_crs_gen(tonic::Request::new(req_clone))
+                    .await
+            } else {
+                cur_client.crs_gen(tonic::Request::new(req_clone)).await
+            }
+        });
     }
     let mut responses_gen = Vec::new();
     while let Some(inner) = tasks_gen.join_next().await {
         let resp = inner.unwrap();
         responses_gen.push(resp);
     }
-    assert_eq!(responses_gen.len(), amount_parties * reqs.len());
+    assert_eq!(responses_gen.len(), amount_parties);
     responses_gen
 }
 pub async fn wait_for_crsgen_result(
-    reqs: &Vec<CrsGenRequest>,
+    reqs: &[CrsGenRequest],
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     param: &DKGParams,
     test_path: Option<&Path>,
 ) -> Vec<CrsInfo> {
-    let amount_parties = kms_clients.len();
-    // wait a bit for the crs generation to finish
-    let joined_responses =
-        crate::par_poll_responses!(kms_clients, reqs, get_crs_gen_result, amount_parties);
+    let amount_parties: usize = kms_clients.len();
+
+    // Poll each (client, request) pair independently until all succeed.
+    let mut futs = Vec::new();
+    for req in reqs {
+        let req_id = req.request_id.clone().unwrap();
+        for (server_id, client) in kms_clients.iter() {
+            let client = client.clone();
+            futs.push(poll_with_retries(
+                client,
+                *server_id,
+                req_id.clone(),
+                |c, req| Box::pin(c.get_crs_gen_result(req)),
+            ))
+        }
+    }
+    let joined_responses = join_all(futs).await;
 
     let mut results = Vec::new();
     // first check the happy path
     // the public parameter is checked in ddec tests, so we don't specifically check _pp
     for req in reqs {
-        use itertools::Itertools;
-        use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-
         let req_id: RequestId = req.clone().request_id.unwrap().try_into().unwrap();
         let joined_responses: Vec<_> = joined_responses
             .iter()
@@ -336,7 +334,7 @@ pub async fn wait_for_crsgen_result(
 
         // we need to setup the storage devices in the right order
         // so that the client can read the CRS
-        tracing::info!(
+        tracing::debug!(
             "Got {} responses for CRS gen request id {}",
             joined_responses.len(),
             req_id
@@ -514,73 +512,4 @@ fn set_digests(
     for (crs_gen_result, _) in crs_res_storage.iter_mut().take(count) {
         crs_gen_result.crs_digest = digest.to_vec();
     }
-}
-
-// Poll the client method function `f_to_poll` until there is a result
-// or error out until some timeout.
-// The requests from the `reqs` argument need to implement `RequestIdGetter`.
-#[macro_export]
-macro_rules! par_poll_responses {
-    ($kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
-        use $crate::consts::MAX_TRIES;
-        let mut joined_responses = vec![];
-        for count in 0..MAX_TRIES {
-            // Reset the list every time since we get all old results as well
-            joined_responses = vec![];
-            tokio::time::sleep(tokio::time::Duration::from_secs(30 * $reqs.len() as u64)).await;
-
-            let mut tasks_get = JoinSet::new();
-            for req in $reqs {
-                for i in 1..=$amount_parties as u32 {
-                    // Make sure we only consider clients for which
-                    // we haven't killed the corresponding server
-                    if let Some(cur_client) = $kms_clients.get(&i) {
-                        let mut cur_client = cur_client.clone();
-                        let req_id_proto = req.request_id.clone().unwrap();
-                        tasks_get.spawn(async move {
-                            (
-                                i,
-                                req_id_proto.clone(),
-                                cur_client
-                                    .$f_to_poll(tonic::Request::new(req_id_proto))
-                                    .await,
-                            )
-                        });
-                    }
-                }
-            }
-
-            while let Some(res) = tasks_get.join_next().await {
-                match res {
-                    Ok(inner) => {
-                        // Validate if the result returned is ok, if not we ignore, since it likely means that the process is still running on the server
-                        if let (j, req_id, Ok(resp)) = inner {
-                            joined_responses.push((j, req_id, resp.into_inner()));
-                        } else {
-                            let (j, req_id, inner_resp) = inner;
-                            // Explicitly convert to string to avoid any type conversion issues
-                            let req_id_str = match kms_grpc::RequestId::try_from(req_id.clone()).unwrap() {
-                                id => id.to_string(),
-                            };
-                            tracing::info!("Response in iteration {count} for server {j} and req_id {req_id_str} is: {:?}", inner_resp);
-                        }
-                    }
-                    _ => {
-                        panic!("Something went wrong while polling for responses");
-                    }
-                }
-            }
-
-            if joined_responses.len() >= $kms_clients.len() * $reqs.len() {
-                break;
-            }
-
-            // fail if we can't find a response
-            if count >= MAX_TRIES - 1 {
-                panic!("could not get response after {} tries", count);
-            }
-        }
-
-        joined_responses
-    }};
 }
