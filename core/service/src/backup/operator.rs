@@ -3,6 +3,10 @@ use super::{
     error::{BackupError, SetupSkipReason},
     secretsharing,
 };
+use crate::backup::{
+    custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+    error::RecoverySkipReason,
+};
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
@@ -12,15 +16,11 @@ use crate::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
     },
-    engine::{base::safe_serialize_hash_element_versioned, validation::RequestIdParsingErr},
+    engine::base::safe_serialize_hash_element_versioned,
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
-};
-use crate::{
-    backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
-    engine::validation::parse_optional_grpc_request_id,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -65,8 +65,6 @@ impl Named for InternalRecoveryRequest {
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    backup_id: RequestId,
-    operator_verification_key: PublicSigKey,
 }
 
 impl InternalRecoveryRequest {
@@ -74,20 +72,11 @@ impl InternalRecoveryRequest {
     pub fn new(
         ephem_op_enc_key: UnifiedPublicEncKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-        backup_id: RequestId,
-        operator_verification_key: PublicSigKey,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
             ephem_op_enc_key,
             cts,
-            backup_id,
-            operator_verification_key,
         };
-        if !backup_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "InternalRecoveryRequest has an invalid backup ID",
-            ));
-        }
         Ok(res)
     }
 
@@ -97,10 +86,6 @@ impl InternalRecoveryRequest {
         custodian_role: Role,
         unsigncrypt_key: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<bool> {
-        if !self.backup_id.is_valid() {
-            tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
-            return Ok(false);
-        }
         let output = match self.cts.get(&custodian_role) {
             Some(output) => output,
             None => {
@@ -129,24 +114,11 @@ impl InternalRecoveryRequest {
     pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
         self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
-
-    pub fn backup_id(&self) -> RequestId {
-        self.backup_id
-    }
-
-    pub fn operator_verification_key(&self) -> &PublicSigKey {
-        &self.operator_verification_key
-    }
 }
 
 impl Display for InternalRecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "InternalRecoveryRequest with:\n backup id: {}\n operator : {}",
-            self.backup_id,
-            self.operator_verification_key.address(),
-        )
+        write!(f, "InternalRecoveryRequest",)
     }
 }
 
@@ -165,15 +137,9 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             let inner_ct: InnerOperatorBackupOutput = cur_backup_out.try_into()?;
             cts.insert(role, inner_ct);
         }
-        let backup_id: RequestId =
-            parse_optional_grpc_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
-        let operator_verification_key: PublicSigKey =
-            bc2wrap::deserialize_safe(&value.operator_verification_key)?;
         Ok(Self {
             ephem_op_enc_key,
             cts,
-            backup_id,
-            operator_verification_key,
         })
     }
 }
@@ -351,6 +317,10 @@ impl RecoveryValidationMaterial {
         &self.payload.custodian_context
     }
 
+    pub fn mpc_context(&self) -> ContextId {
+        self.payload.mpc_context
+    }
+
     /// Validated the signature on the recovery validation material.
     /// This is useful after deserializing from untrusted storage such as public storage
     pub fn validate(&self, verf_key: &PublicSigKey) -> bool {
@@ -405,46 +375,6 @@ impl Named for RecoveryValidationMaterialPayload {
     const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
 }
 
-#[allow(clippy::too_many_arguments)]
-fn checked_decryption_deserialize(
-    unsign_key: &UnifiedUnsigncryptionKey,
-    signcryption: &UnifiedSigncryption,
-    commitment: &[u8],
-    backup_id: RequestId,
-    custodian_role: Role,
-) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
-    let backup_material: BackupMaterial = unsign_key
-        .unsigncrypt(&DSEP_BACKUP_RECOVERY, signcryption)
-        .map_err(|e| {
-            BackupError::OperatorError(format!(
-                "Failed to unsigncrypt backup share for custodian role {custodian_role}: {e}",
-            ))
-        })?;
-    // check metadata
-    if !backup_material.matches_expected_metadata(
-        backup_id,
-        unsign_key.sender_verf_key,
-        custodian_role,
-        unsign_key.receiver_id,
-    ) {
-        return Err(BackupError::OperatorError(
-            "backup metadata check failure".to_string(),
-        ));
-    }
-
-    // check commitment
-    let actual_commitment =
-        safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-            .map_err(|e| BackupError::OperatorError(e.to_string()))?;
-    if actual_commitment != commitment {
-        return Err(BackupError::OperatorError(
-            "backup commitment check failure".to_string(),
-        ));
-    }
-
-    Ok(backup_material.shares)
-}
-
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupMaterialVersioned {
     V0(BackupMaterial),
@@ -453,7 +383,10 @@ pub enum BackupMaterialVersioned {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(BackupMaterialVersioned)]
 pub struct BackupMaterial {
+    /// The custodian context this backup is associated with.
     pub backup_id: RequestId,
+    /// The MPC context this backup was produced under.
+    pub mpc_context_id: ContextId,
     // receiver
     pub custodian_pk: PublicSigKey,
     pub custodian_role: Role,
@@ -463,38 +396,31 @@ pub struct BackupMaterial {
 }
 
 impl BackupMaterial {
-    pub fn matches_expected_metadata(
+    /// Verify the operator-/custodian-bound metadata fields of a freshly unsigncrypted
+    /// `BackupMaterial` against the expected routing parameters.
+    pub fn check_expected_metadata(
         &self,
-        backup_id: RequestId,
         custodian_verf_key: &PublicSigKey,
         custodian_role: Role,
         operator_pk_id: &[u8],
-    ) -> bool {
-        if self.backup_id != backup_id {
-            tracing::error!(
-                "backup_id mismatch: expected {} but got {}",
-                self.backup_id,
-                backup_id
-            );
-            return false;
-        }
+    ) -> Result<(), RecoverySkipReason> {
         if self.custodian_role != custodian_role {
             tracing::error!(
                 "custodian_role mismatch: expected {} but got {}",
                 self.custodian_role,
                 custodian_role
             );
-            return false;
+            return Err(RecoverySkipReason::CustodianRoleMismatchInPayload);
         }
         if &self.custodian_pk != custodian_verf_key {
             tracing::error!("custodian_pk mismatch");
-            return false;
+            return Err(RecoverySkipReason::CustodianKeyMismatchInPayload);
         }
         if self.operator_pk.verf_key_id() != operator_pk_id {
             tracing::error!("operator_pk_id mismatch");
-            return false;
+            return Err(RecoverySkipReason::OperatorMismatchInPayload);
         }
-        true
+        Ok(())
     }
 }
 
@@ -567,6 +493,7 @@ impl Operator {
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
+        mpc_context_id: ContextId,
     ) -> Result<SigncryptResult, BackupError> {
         let sk = match &self.signing_key {
             None => {
@@ -639,6 +566,7 @@ impl Operator {
             };
             let backup_material = BackupMaterial {
                 backup_id,
+                mpc_context_id,
                 custodian_pk: custodian_verf_key.clone(),
                 custodian_role: role_j,
                 operator_pk: self.verification_key.clone(),
@@ -683,61 +611,176 @@ impl Operator {
         })
     }
 
-    /// Operators that does the recovery collects all the materials
-    /// used during the backup protocol such as shares, keys and signcryptions,
-    /// and then uses them to verify whether the shares are correct before
-    /// doing the reconstruction.
+    /// Validate a single signcrypted custodian recovery output.
     ///
-    /// Commitments do not come from the same location as the custodian message
-    /// so the are a separate input.
+    /// Runs every check the operator-side recovery path requires: unsigncryption (which also
+    /// enforces the signcryption's receiver-id binding), `backup_id` / `mpc_context_id` validity +
+    /// equality against the operator-signed `RecoveryValidationMaterial`, custodian / operator key
+    /// equality inside the decrypted payload, and the commitment match. Returns the precise
+    /// `RecoverySkipReason` on the first failure.
+    pub(crate) fn validate_one_recovery_output(
+        &self,
+        output: &InternalCustodianRecoveryOutput,
+        recovery_material: &RecoveryValidationMaterial,
+        ephm_dec_key: &UnifiedPrivateEncKey,
+        ephm_enc_key: &UnifiedPublicEncKey,
+    ) -> Result<BackupMaterial, RecoverySkipReason> {
+        let (_, custodian_verf_key) = self.custodian_keys.get(&output.custodian_role).ok_or({
+            tracing::warn!("missing custodian key for role {}", output.custodian_role);
+            RecoverySkipReason::MissingVerificationKey
+        })?;
+        let operator_id = self.verification_key.verf_key_id();
+        let unsign_key = UnifiedUnsigncryptionKey::new(
+            ephm_dec_key,
+            ephm_enc_key,
+            custodian_verf_key,
+            &operator_id,
+        );
+        let backup_material: BackupMaterial = unsign_key
+            .unsigncrypt(&DSEP_BACKUP_RECOVERY, &output.signcryption)
+            .map_err(|e| {
+                tracing::warn!(
+                    "Could not unsigncrypt backup share for custodian role {} (wrong operator or tampered): {e}",
+                    output.custodian_role
+                );
+                RecoverySkipReason::InvalidSigncryption
+            })?;
+        let expected_backup_id: RequestId = recovery_material.custodian_context().context_id;
+        let expected_mpc_context_id = recovery_material.mpc_context();
+        if !backup_material.backup_id.is_valid() {
+            tracing::warn!(
+                "BackupMaterial.backup_id {} is malformed for custodian role {}",
+                backup_material.backup_id,
+                output.custodian_role
+            );
+            return Err(RecoverySkipReason::BackupIdMalformed);
+        }
+        if !backup_material.mpc_context_id.is_valid() {
+            tracing::warn!(
+                "BackupMaterial.mpc_context_id {} is malformed for custodian role {}",
+                backup_material.mpc_context_id,
+                output.custodian_role
+            );
+            return Err(RecoverySkipReason::MpcContextIdMalformed);
+        }
+        if backup_material.backup_id != expected_backup_id {
+            tracing::warn!(
+                "BackupMaterial.backup_id mismatch for custodian role {}: expected {} got {}",
+                output.custodian_role,
+                expected_backup_id,
+                backup_material.backup_id
+            );
+            return Err(RecoverySkipReason::BackupIdMismatch);
+        }
+        if backup_material.mpc_context_id != expected_mpc_context_id {
+            tracing::warn!(
+                "BackupMaterial.mpc_context_id mismatch for custodian role {}: expected {} got {}",
+                output.custodian_role,
+                expected_mpc_context_id,
+                backup_material.mpc_context_id
+            );
+            return Err(RecoverySkipReason::MpcContextIdMismatch);
+        }
+        if let Err(e) = backup_material.check_expected_metadata(
+            custodian_verf_key,
+            output.custodian_role,
+            &operator_id,
+        ) {
+            tracing::warn!(
+                "Metadata check ({e:?}) failed for custodian role {}",
+                output.custodian_role
+            );
+            return Err(e);
+        }
+        let actual_commitment =
+            safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Could not hash BackupMaterial for commitment check (role {}): {e}",
+                        output.custodian_role
+                    );
+                    RecoverySkipReason::ParseError
+                })?;
+        let expected_commitment = recovery_material.get(&output.custodian_role).map_err(|_| {
+            tracing::warn!(
+                "No stored commitment for custodian role {}",
+                output.custodian_role
+            );
+            RecoverySkipReason::MissingCommitment
+        })?;
+        if actual_commitment.as_slice() != expected_commitment {
+            tracing::warn!(
+                "Commitment mismatch for custodian role {}: BackupMaterial hash does not match the operator-signed commitment",
+                output.custodian_role
+            );
+            return Err(RecoverySkipReason::CommitmentMismatch);
+        }
+        Ok(backup_material)
+    }
+
+    /// Validate every signcrypted custodian recovery output and reconstruct the operator's secret.
     pub fn verify_and_recover(
         &self,
         custodian_recovery_output: &[InternalCustodianRecoveryOutput],
         recovery_material: &RecoveryValidationMaterial,
-        backup_id: RequestId,
-        ephm_dec_key: &UnifiedPrivateEncKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
+        ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Vec<u8>, BackupError> {
-        // the output is ordered by custodian ID, from 0 to n-1
-        // first check the signature and decrypt
-        // decrypted_buf[j][i] where j = jth custodian, i = ith block
-        let decrypted_buf = custodian_recovery_output
-            .iter()
-            .map(|custodian_output| {
-                let (_, custodian_verf_key) = self
-                    .custodian_keys
-                    .get(&custodian_output.custodian_role)
-                    .ok_or_else(|| {
-                        BackupError::OperatorError(format!(
-                            "missing custodian key for {}",
-                            custodian_output.custodian_role
-                        ))
-                    })?;
-                let commitment = recovery_material
-                    .get(&custodian_output.custodian_role)
-                    .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
-                let operator_id = &self.verification_key.verf_key_id();
-                let unsign_key = UnifiedUnsigncryptionKey::new(
-                    ephm_dec_key,
-                    ephm_enc_key,
-                    custodian_verf_key,
-                    operator_id,
-                );
-                checked_decryption_deserialize(
-                    &unsign_key,
-                    &custodian_output.signcryption,
-                    commitment,
-                    backup_id,
-                    custodian_output.custodian_role,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut validated: HashMap<Role, BackupMaterial> = HashMap::new();
+        let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
+        for output in custodian_recovery_output {
+            match self.validate_one_recovery_output(
+                output,
+                recovery_material,
+                ephm_dec_key,
+                ephm_enc_key,
+            ) {
+                Ok(bm) => match validated.entry(output.custodian_role) {
+                    std::collections::hash_map::Entry::Occupied(_) => {
+                        tracing::warn!(
+                            "Received multiple recovery outputs for custodian role {}. Only the first one will be used.",
+                            output.custodian_role
+                        );
+                        skip_reasons.push(RecoverySkipReason::DuplicateRole);
+                    }
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(bm);
+                    }
+                },
+                Err(reason) => skip_reasons.push(reason),
+            }
+        }
+        let threshold = recovery_material.custodian_context().threshold as usize;
+        let required_min = threshold + 1;
+        if validated.len() < required_min {
+            let received = validated.len();
+            tracing::error!(
+                received,
+                threshold,
+                ?skip_reasons,
+                "Cannot recover the backup decryption key: not enough valid recovery outputs"
+            );
+            return Err(BackupError::RecoveryThresholdNotMet {
+                required_min,
+                received,
+                threshold,
+                skipped: skip_reasons,
+            });
+        }
+        self.recover_from_validated(&validated)
+    }
+
+    /// Reconstruct the operator's secret from already-validated per-role `BackupMaterial`s.
+    pub fn recover_from_validated(
+        &self,
+        validated: &HashMap<Role, BackupMaterial>,
+    ) -> Result<Vec<u8>, BackupError> {
+        let decrypted_buf: Vec<&Vec<Share<ResiduePolyF4Z64>>> =
+            validated.values().map(|bm| &bm.shares).collect();
 
         let num_blocks = if let Some(x) = decrypted_buf.iter().map(|v| v.len()).min() {
             x
         } else {
-            // This is normally impossible to happen because if it did
-            // then it would mean the validation on expected_shares above failed
             return Err(BackupError::NoBlocksError);
         };
 
@@ -745,7 +788,6 @@ impl Operator {
         for b in 0..num_blocks {
             let mut shamir_sharing = ShamirSharings::new();
             for blocks in decrypted_buf.iter() {
-                // we should be able to safely add shares since it checks whether the role is repeated
                 shamir_sharing.add_share(blocks[b]);
             }
             all_sharings.push(shamir_sharing);
@@ -1203,6 +1245,66 @@ mod tests {
                 .contains(&SetupSkipReason::DuplicateRole),
             "expected DuplicateRole in skip reasons: {:?}",
             result.skip_reasons
+        );
+    }
+
+    #[test]
+    fn check_expected_metadata_sunshine_and_mismatches() {
+        let mut rng = AesRng::seed_from_u64(101);
+        let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let (operator_verf_key, _) = gen_sig_keys(&mut rng);
+        let (other_custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let (other_operator_verf_key, _) = gen_sig_keys(&mut rng);
+
+        let custodian_role = Role::indexed_from_one(2);
+        let backup_id = derive_request_id("check_expected_metadata").unwrap();
+
+        let material = BackupMaterial {
+            backup_id,
+            mpc_context_id: *DEFAULT_MPC_CONTEXT,
+            custodian_pk: custodian_verf_key.clone(),
+            custodian_role,
+            operator_pk: operator_verf_key.clone(),
+            shares: Vec::new(),
+        };
+
+        // Sunshine: every metadata field matches the expected routing parameters.
+        material
+            .check_expected_metadata(
+                &custodian_verf_key,
+                custodian_role,
+                &operator_verf_key.verf_key_id(),
+            )
+            .expect("metadata that matches the routing parameters should validate");
+
+        // Custodian role mismatch.
+        assert_eq!(
+            material.check_expected_metadata(
+                &custodian_verf_key,
+                Role::indexed_from_one(3),
+                &operator_verf_key.verf_key_id(),
+            ),
+            Err(RecoverySkipReason::CustodianRoleMismatchInPayload),
+        );
+
+        // Custodian verification key mismatch.
+        assert_eq!(
+            material.check_expected_metadata(
+                &other_custodian_verf_key,
+                custodian_role,
+                &operator_verf_key.verf_key_id(),
+            ),
+            Err(RecoverySkipReason::CustodianKeyMismatchInPayload),
+        );
+
+        // Operator (recipient) id mismatch — defends against a share routed to the wrong operator.
+        assert_eq!(
+            material.check_expected_metadata(
+                &custodian_verf_key,
+                custodian_role,
+                &other_operator_verf_key.verf_key_id(),
+            ),
+            Err(RecoverySkipReason::OperatorMismatchInPayload),
         );
     }
 
