@@ -2162,7 +2162,7 @@ mod tests {
         },
     };
 
-    use super::{BC_PARAMS_NO_SNS, DkgParamsAvailable};
+    use super::{BC_PARAMS_NO_SNS, DKGParams, DkgParamsAvailable};
     use strum::IntoEnumIterator;
 
     #[test]
@@ -2348,6 +2348,57 @@ mod tests {
                          noise budgeted",
                     );
                 }
+            }
+        }
+    }
+
+    // Best effort test to catch any panics from the various `unwrap()` and `assert!()`
+    #[test]
+    fn check_no_panic() {
+        for param in DkgParamsAvailable::iter() {
+            let p = param.to_param();
+            let h = p.get_params_basics_handle();
+
+            // `unwrap()` inside serialization.
+            let _ = h.get_prefix_path();
+
+            // `panic!` if the noise distribution is not TUniform.
+            let _ = h.lwe_tuniform_bound();
+            let _ = h.lwe_hat_tuniform_bound();
+            let _ = h.glwe_tuniform_bound();
+
+            // `panic!` if compression key noise distribution is not TUniform.
+            let _ = h.compression_key_tuniform_bound();
+
+            // Multiple `unwrap()` from `compute_min_trials`.
+            let _ = h.lwe_sk_num_bits_to_sample();
+            let _ = h.lwe_hat_sk_num_bits_to_sample();
+            let _ = h.glwe_sk_num_bits_to_sample();
+            let _ = h.compression_sk_num_bits_to_sample();
+
+            // `assert!` inside this function can panic if destination key is invalid.
+            let _ = h.get_rerand_params();
+            let _ = h.get_rerand_ksk_params();
+
+            // `unwrap()` when converting to compact public key parameters.
+            let _ = h.get_compact_pk_enc_params();
+
+            // `panic!` if compression params are present but not `Classic`.
+            let _ = h.get_compression_decompression_params();
+
+            if let DKGParams::WithSnS(sns_params) = p {
+                // `panic!` if SnS GLWE noise distribution is not TUniform.
+                let _ = sns_params.glwe_tuniform_bound_sns();
+
+                // `unwrap()` from `compute_min_trials`.
+                let _ = sns_params.glwe_sk_num_bits_sns_to_sample();
+                let _ = sns_params.sns_compression_sk_num_bits_to_sample();
+
+                // `panic!` if SnS compression key noise is not TUniform.
+                let _ = sns_params.num_needed_noise_sns_compression_key();
+
+                // `panic!` if SnS params are MultiBit (currently unsupported).
+                let _ = sns_params.get_msnrk_configuration_sns();
             }
         }
     }
