@@ -58,13 +58,6 @@ fn bench_bivariate_evaluation(c: &mut Criterion) {
                 )
             });
         });
-<<<<<<< HEAD
-        // Fused: the path `DoublePoly::from_bivariate` actually uses.
-        group.bench_function(BenchmarkId::new("partial_evaluations", degree), |b| {
-            b.iter(|| black_box(poly.partial_evals(black_box(point))));
-        });
-=======
->>>>>>> origin/main
         group.bench_function(BenchmarkId::new("full", degree), |b| {
             b.iter(|| black_box(poly.full_eval(black_box(point), black_box(point))));
         });
