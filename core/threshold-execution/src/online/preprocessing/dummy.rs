@@ -53,6 +53,9 @@ pub struct DummyPreprocessing {
     parameters: SessionParameters,
     pub rnd_ctr: u64,
     pub trip_ctr: u64,
+    // Note: Important for DKG that we don't always produce the same bit sequence
+    // otherwise we may never be able to sample the expected Hamming weight for our secret keys.
+    pub bit_ctr: u64,
 }
 
 impl DummyPreprocessing {
@@ -63,6 +66,7 @@ impl DummyPreprocessing {
             parameters: session.to_parameters(),
             rnd_ctr: 0,
             trip_ctr: 0,
+            bit_ctr: 0,
         }
     }
 
@@ -112,6 +116,7 @@ impl Default for DummyPreprocessing {
             .unwrap(),
             rnd_ctr: 0,
             trip_ctr: 0,
+            bit_ctr: 0,
         }
     }
 }
@@ -264,7 +269,8 @@ where
 
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         const BIT_FLAG: u64 = 0xB542074E84A9D88E;
-        let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed);
+        let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed ^ self.bit_ctr);
+        self.bit_ctr += amount as u64;
         let mut res = Vec::with_capacity(amount);
         let my_role = self.parameters.my_role();
         let my_share_zero = DummyPreprocessing::share(
