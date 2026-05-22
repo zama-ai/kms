@@ -4,7 +4,7 @@ use super::{
 };
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
-    bivariate::MatrixMul,
+    matrix::MatrixMul,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring},
 };
 use async_trait::async_trait;

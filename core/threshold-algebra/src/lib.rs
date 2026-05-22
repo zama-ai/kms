@@ -4,6 +4,7 @@ pub mod commitment;
 pub mod error_correction;
 pub mod galois_fields;
 pub mod galois_rings;
+pub mod matrix;
 pub mod poly;
 pub mod randomness_check;
 pub mod sharing;
