@@ -4,12 +4,14 @@ use super::structure_traits::Sample;
 
 use rand::{CryptoRng, Rng};
 
-/// Bivariate polynomial represented as a row-major square matrix of coefficients of ResiduePolynomials.
+/// Bivariate polynomial represented as a square, row-major coefficient matrix.
 ///
-/// The row view of the polynomials is the following:
-/// [[a_{00}, a_{01}, ..., a_{0d}], ..., [a_{d0}, ..., a_{dd}]]
+/// The row view of the coefficients is:
+/// [[a_{00}, a_{01}, ..., a_{0t}], ..., [a_{t0}, ..., a_{tt}]]
 ///
-/// Invariant: `coefs.len() == (degree + 1)^2`
+/// The `degree` field is the common degree in each variable, not the usual
+/// total degree of a bivariate polynomial. This type assumes
+/// `deg_X == deg_Y == degree`, so `coefs.len() == (degree + 1)^2`.
 #[derive(Clone, Debug)]
 pub struct BivariatePoly<Z> {
     /// Row-major; `(degree + 1)^2` elements.
