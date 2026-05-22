@@ -252,7 +252,6 @@ pub(crate) async fn threshold_handles_custodian_backup(
 /// # Returns
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
-#[cfg(feature = "insecure")]
 pub async fn threshold_insecure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
