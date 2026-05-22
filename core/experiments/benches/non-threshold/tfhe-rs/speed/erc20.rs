@@ -10,7 +10,7 @@ use aes_prng::AesRng;
 use criterion::Criterion;
 use rand::prelude::*;
 use tfhe::{CompactPublicKey, FheUint64, ReRandomizationContext, prelude::*, set_server_key};
-use utilities::{ALL_PARAMS, generate_tfhe_keys, set_plan};
+use utilities::{ALL_PARAMS, SAMPLE_SIZE, generate_tfhe_keys, set_plan};
 
 /// This one uses overflowing sub to remove the need for comparison
 /// it also uses the 'boolean' multiplication
@@ -92,7 +92,9 @@ fn main() {
 
         set_server_key(server_key);
 
-        let mut c = Criterion::default().sample_size(10).configure_from_args();
+        let mut c = Criterion::default()
+            .sample_size(SAMPLE_SIZE)
+            .configure_from_args();
 
         let bench_name = format!("non-threshold_erc20_{name}");
         // FheUint64 latency

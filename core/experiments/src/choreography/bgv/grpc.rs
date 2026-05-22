@@ -8,6 +8,8 @@ use dashmap::DashMap;
 use futures::TryFutureExt;
 
 use super::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
+#[cfg(feature = "measure_memory")]
+use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::server_utils::{
     create_small_sessions, fill_network_memory_info_multiple_sessions,
     fill_network_memory_info_single_session, gen_random_sid,
@@ -266,6 +268,9 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<PrssInitRequest>,
     ) -> Result<tonic::Response<PrssInitResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let start = Instant::now();
         let request = request.into_inner();
 
@@ -367,6 +372,9 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<PreprocKeyGenRequest>,
     ) -> Result<tonic::Response<PreprocKeyGenResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let start = Instant::now();
         let request = request.into_inner();
 
@@ -471,6 +479,9 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<ThresholdKeyGenRequest>,
     ) -> Result<tonic::Response<ThresholdKeyGenResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let start = Instant::now();
         let request = request.into_inner();
 
@@ -701,6 +712,9 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<ThresholdDecryptRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let start = Instant::now();
         let request = request.into_inner();
 
