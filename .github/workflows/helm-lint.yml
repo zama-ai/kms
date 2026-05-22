@@ -1,7 +1,20 @@
 name: helm-lint
 
+# Triggered for any change under charts/** on PRs and pushes to main/release/*,
+# and unconditionally on the weekday nightly schedule (GitHub's schedule trigger
+# does not support path filters, and only fires from the default branch).
 on:
-  workflow_call:
+  pull_request:
+    paths:
+      - 'charts/**'
+  push:
+    branches: ['main', 'release/*']
+    paths:
+      - 'charts/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
