@@ -38,8 +38,6 @@ jobs:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: rustfmt, clippy
           rust-cache: "false"
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2

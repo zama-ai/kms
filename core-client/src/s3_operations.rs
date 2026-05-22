@@ -1,3 +1,4 @@
+#[cfg(feature = "testing")]
 use std::collections::HashMap;
 use std::{collections::HashSet, path::Path};
 
@@ -8,11 +9,15 @@ use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "testing")]
 use kms_lib::cryptography::signatures::PrivateSigKey;
+#[cfg(feature = "testing")]
 use kms_lib::vault::storage::file::FileStorage;
+#[cfg(feature = "testing")]
 use kms_lib::vault::storage::s3::{
     S3Storage, build_anonymous_s3_client, find_region_from_s3_url, split_url,
 };
+#[cfg(feature = "testing")]
 use kms_lib::vault::storage::{StorageReader, StorageType};
+#[cfg(feature = "testing")]
 use kms_lib::{consts::SIGNING_KEY_ID, cryptography::signatures::PublicSigKey};
 
 /// Fetch all remote elements and store them locally for the core client
@@ -83,6 +88,7 @@ pub async fn fetch_public_elements(
 }
 
 /// This fetches the KMS public verification key from S3 for all the cores.
+#[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {

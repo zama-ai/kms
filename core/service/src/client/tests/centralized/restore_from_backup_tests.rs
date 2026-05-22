@@ -105,7 +105,6 @@ async fn key_gen(
 /// 4. Restore from backup
 /// 5. Verify restoration via decryption test
 ///
-#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_insecure_central_dkg_backup() -> Result<()> {
     // Setup using builder pattern with backup vault
@@ -233,7 +232,6 @@ async fn test_insecure_central_dkg_backup() -> Result<()> {
 /// 2. Shutdown server
 /// 3. Verify backup was auto-created (checks FhePrivateKey in backup storage)
 ///
-#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_insecure_central_autobackup_after_deletion() -> Result<()> {
     // Setup using builder pattern with backup vault
@@ -275,7 +273,7 @@ async fn test_insecure_central_autobackup_after_deletion() -> Result<()> {
 /// Generates a CRS, deletes it from private storage, restores from backup,
 /// and verifies restoration. This is a slow test that runs in nightly CI.
 ///
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 #[tokio::test]
 async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
