@@ -897,6 +897,7 @@ fn update_threshold_kms_system_metrics(
 mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use std::collections::BTreeMap;
     use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
     use tfhe_versionable::Upgrade;
     use threshold_execution::tfhe_internals::{
@@ -1024,7 +1025,7 @@ mod tests {
                 meta_data: KeyGenMetadata::new(
                     RequestId::zeros(),
                     RequestId::zeros(),
-                    HashMap::new(),
+                    BTreeMap::new(),
                     vec![],
                     vec![],
                 ),
@@ -1072,7 +1073,7 @@ mod tests {
             KeyGenMetadata::new(
                 RequestId::zeros(),
                 RequestId::zeros(),
-                HashMap::new(),
+                BTreeMap::new(),
                 vec![],
                 vec![],
             ),
@@ -1136,7 +1137,7 @@ mod tests {
             meta_data: KeyGenMetadata::new(
                 RequestId::zeros(),
                 RequestId::zeros(),
-                HashMap::new(),
+                BTreeMap::new(),
                 vec![],
                 vec![],
             ),
