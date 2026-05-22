@@ -1,9 +1,8 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
 use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
+use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::backup_exists;
 use crate::util::key_setup::test_tools::read_custodian_backup_files;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
@@ -29,10 +28,7 @@ async fn new_custodian_context(
     amount_custodians: usize,
     threshold: u32,
 ) {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_path = Some(temp_dir.path());
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    ensure_testing_material_exists(test_path).await;
     let req_new_cus: RequestId = derive_request_id(&format!(
         "test_new_custodian_context_threshold_{amount_parties}"
     ))
@@ -43,18 +39,19 @@ async fn new_custodian_context(
     .unwrap();
     let dkg_param: WrappedDKGParams = parameter.into();
 
-    // The threshold handle should only be started after the storage is purged
-    // since the threshold parties will load the CRS from private storage
-    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
-        *dkg_param,
-        amount_parties,
-        true,
-        false,
-        None,
-        None,
-        test_path,
-    )
-    .await;
+    let (material_dir, kms_servers, kms_clients, mut internal_client) = {
+        let env = ThresholdTestEnv::builder()
+            .with_party_count(amount_parties)
+            .with_custodian_keychain()
+            .with_prss()
+            .build()
+            .await
+            .unwrap();
+        let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+        (env.material_dir, env.servers, env.clients, internal_client)
+    };
+    let test_path = Some(material_dir.path());
+
     run_new_cus_context(
         &kms_clients,
         &mut internal_client,
@@ -110,16 +107,13 @@ async fn new_custodian_context(
     }
     drop(kms_clients);
     drop(internal_client);
-    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
-        *dkg_param,
-        amount_parties,
-        true,
-        false,
-        None,
-        None,
-        test_path,
-    )
-    .await;
+    let (_kms_servers, _kms_clients) = ThresholdTestEnv::builder()
+        .with_party_count(amount_parties)
+        .with_custodian_keychain()
+        .with_prss()
+        .from_path(material_dir.path())
+        .await
+        .unwrap();
     let reboot_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus2,

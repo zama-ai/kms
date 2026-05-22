@@ -346,14 +346,14 @@ pub(crate) struct PrfAes {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum PrssSetVersioned<Z> {
+pub enum PrssSetVersions<Z> {
     V0(PrssSetV0<Z>),
     V1(PrssSet<Z>),
 }
 
 /// structure for holding values for each subset of n-t parties
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(PrssSetVersioned)]
+#[versionize(PrssSetVersions)]
 pub struct PrssSet<Z> {
     parties: PartySet,
     set_key: PrfKey,
@@ -423,14 +423,14 @@ type ValueVotes<Z> = HashMap<Vec<Z>, HashSet<Role>>;
 
 /// PRSS object that holds info in a certain epoch for a single party Pi
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum PRSSSetupVersioned<Z: Default + Clone + Serialize> {
+pub enum PRSSSetupVersions<Z: Default + Clone + Serialize> {
     V0(PRSSSetup<Z>),
 }
 
 /// This struct is cheap to clone as it's made of Arc
 /// This is because it's cloned for every new session
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(PRSSSetupVersioned)]
+#[versionize(PRSSSetupVersions)]
 pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
     pub(crate) sets: Arc<Vec<PrssSet<Z>>>,

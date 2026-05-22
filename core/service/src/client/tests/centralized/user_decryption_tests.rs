@@ -1,5 +1,4 @@
 use crate::client::client_wasm::ServerIdentities;
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
@@ -190,7 +189,6 @@ pub(crate) async fn user_decryption_centralized(
     secure: bool,
 ) -> Result<()> {
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let spec = match material_type {
         MaterialType::Testing => TestMaterialSpec::centralized_basic(),
         MaterialType::Default => TestMaterialSpec::centralized_default(),

@@ -646,7 +646,7 @@ pub mod tests {
     use tfhe_versionable::VersionsDispatch;
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
-    pub enum TestTypeVersioned {
+    pub enum TestTypeVersions {
         V0(TestType),
     }
 
@@ -655,7 +655,7 @@ pub mod tests {
     }
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Versionize)]
-    #[versionize(TestTypeVersioned)]
+    #[versionize(TestTypeVersions)]
     pub struct TestType {
         pub i: u32,
     }

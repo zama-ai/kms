@@ -23,9 +23,6 @@ use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant, sleep};
 use tonic::transport::Channel;
 
-// Time to sleep to ensure that previous servers and tests have shut down properly.
-pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
-
 /// Poll storage until it contains the given (`request_id`, `epoch_id`, `data_type`) tuple. Give up after 30s.
 // TODO(dp): Not the most elegant solution; what's a better way? Came about because tests like e.g. `test_insecure_threshold_crs_backup`
 // would try to inspect state before backup actually had time to happen.
@@ -61,7 +58,6 @@ pub(crate) fn default_isolated_extra_data() -> Vec<u8> {
 /// Returns the default keygen config.
 ///
 /// The default is compressed public key material.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) fn keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
@@ -79,7 +75,6 @@ pub(crate) fn keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>)
 /// Returns a keygen config explicitly requesting uncompressed keys.
 ///
 /// Use this when a test specifically needs uncompressed keys.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) fn uncompressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {

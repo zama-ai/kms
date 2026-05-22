@@ -8,7 +8,11 @@ use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
-use threshold_execution::online::preprocessing::PreprocessorFactory;
+use threshold_execution::{
+    malicious_execution::zk::ceremony::DroppingCeremony,
+    online::preprocessing::PreprocessorFactory,
+    zk::ceremony::{RealCeremony, SecureCeremony},
+};
 use threshold_types::role::Role;
 
 use crate::choreography::tfhe_rs::grpc::GrpcChoreography;
@@ -44,6 +48,7 @@ pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreograph
     SecureSmallPreprocessing,
     SecureLargePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     SecureLargePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    SecureCeremony,
 >;
 
 /// Moby that lies in all its broadcast as the Sender following
@@ -95,6 +100,7 @@ type GrpcChoreographyMaliciousBroadcastSenderEcho<const EXTENSION_DEGREE: usize>
         >,
         SecureRobustOpen,
     >,
+    RealCeremony<MaliciousBroadcastSenderEcho>,
 >;
 
 /// Moby that drops everything
@@ -104,6 +110,7 @@ type GrpcChoreographyDropAll<const EXTENSION_DEGREE: usize> = GrpcChoreography<
     MaliciousOfflineDrop,
     MaliciousOfflineDrop,
     MaliciousOfflineDrop,
+    DroppingCeremony,
 >;
 
 pub struct DefaultChoreoRoutingHelper;

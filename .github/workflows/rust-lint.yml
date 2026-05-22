@@ -54,12 +54,12 @@ jobs:
           echo "EXECUTING: cargo clippy --workspace --all-targets --all-features -- -D warnings"
           cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Install cargo-dylint
+      - name: Install Dylint
         run: |
-          echo "EXECUTING: cargo install cargo-dylint dylint-link --locked"
-          cargo install cargo-dylint dylint-link --locked
+          echo "EXECUTING: make install-dylint"
+          make install-dylint
 
       - name: Dylint
         run: |
-          echo "EXECUTING: cargo dylint --all"
-          cargo dylint --all
+          echo "EXECUTING: make lint-dylint"
+          make lint-dylint

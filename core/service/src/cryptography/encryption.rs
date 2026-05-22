@@ -18,12 +18,12 @@ use tfhe_versionable::VersionsDispatch;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum UnifiedPublicEncKeyVersioned {
+pub enum UnifiedPublicEncKeyVersions {
     V0(UnifiedPublicEncKey),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(UnifiedPublicEncKeyVersioned)]
+#[versionize(UnifiedPublicEncKeyVersions)]
 #[expect(clippy::large_enum_variant)]
 pub enum UnifiedPublicEncKey {
     MlKem512(PublicEncKey<ml_kem::MlKem512>),
@@ -224,7 +224,7 @@ impl Encrypt for UnifiedPublicEncKey {
 #[derive(
     Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
 )]
-pub enum UnifiedPrivateEncKeyVersioned {
+pub enum UnifiedPrivateEncKeyVersions {
     V0(UnifiedPrivateEncKey),
 }
 
@@ -234,7 +234,7 @@ pub enum UnifiedPrivateEncKeyVersioned {
 /// - Scope: Lifetime of a backup (i.e. lifetime of a custodian context), but local to client application
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[expect(clippy::large_enum_variant)]
-#[versionize(UnifiedPrivateEncKeyVersioned)]
+#[versionize(UnifiedPrivateEncKeyVersions)]
 pub enum UnifiedPrivateEncKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
     MlKem1024(PrivateEncKey<ml_kem::MlKem1024>),
@@ -442,12 +442,12 @@ pub trait HasPkeScheme {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum PkeSchemeTypeVersioned {
+pub enum PkeSchemeTypeVersions {
     V0(PkeSchemeType),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
-#[versionize(PkeSchemeTypeVersioned)]
+#[versionize(PkeSchemeTypeVersions)]
 pub enum PkeSchemeType {
     MlKem512,
     #[deprecated(
@@ -522,12 +522,12 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
-pub enum UnifiedCipherVersioned {
+pub enum UnifiedCipherVersions {
     V0(UnifiedCipher),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(UnifiedCipherVersioned)]
+#[versionize(UnifiedCipherVersions)]
 pub struct UnifiedCipher {
     pub cipher: HybridKemCt,
     pub pke_type: PkeSchemeType,

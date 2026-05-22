@@ -7,11 +7,13 @@ set -e
 TARGET_DIR="$(pwd)/non_threshold_bench/zk-bench"
 OUTPUT_FILE="$TARGET_DIR/bench_results.json"
 MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.txt"
+SIZE_OUTPUT_FILE="$TARGET_DIR/size_bench_results.txt"
 
 # Create target directory and clear output files
 mkdir -p "$TARGET_DIR"
 : > "$OUTPUT_FILE"
 : > "$MEMORY_OUTPUT_FILE"
+: > "$SIZE_OUTPUT_FILE"
 
 echo "Running ZK PoK speed benchmarks → $OUTPUT_FILE"
 cargo-criterion \
@@ -24,6 +26,14 @@ cargo bench \
     --bench non-threshold_tfhe-zk-pok_memory \
     --features="measure_memory" \
     >> "$MEMORY_OUTPUT_FILE"
+
+echo ""
+echo "Running ZK PoK size benchmarks → $SIZE_OUTPUT_FILE"
+cargo bench \
+    --bench non-threshold_tfhe-zk-pok_size \
+    >> "$SIZE_OUTPUT_FILE"
+
+
 
 echo ""
 echo "Parsing results into CSV → $TARGET_DIR/output/"

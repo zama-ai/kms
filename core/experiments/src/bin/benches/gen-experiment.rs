@@ -34,6 +34,9 @@ impl Display for Protocol {
 pub struct ProtocolArg {
     #[clap(long, value_enum)]
     protocol: Protocol,
+
+    #[clap(short = 'm', long, default_value = "false")]
+    measure_memory: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -79,20 +82,21 @@ fn main() {
     let mut templates = vec![];
     let command = args.command.unwrap_or(Command::All(ProtocolArg {
         protocol: Protocol::TFHE,
+        measure_memory: false,
     }));
-    let protocol = match command {
+    let (protocol, measure_memory) = match command {
         Command::Parties(protocol) => {
             templates.push(("yml", docker_template));
-            protocol.protocol.to_string()
+            (protocol.protocol.to_string(), protocol.measure_memory)
         }
         Command::Choreographer => {
             templates.push(("toml", conf_template));
-            "".to_string()
+            ("".to_string(), false)
         }
         Command::All(protocol) => {
             templates.push(("toml", conf_template));
             templates.push(("yml", docker_template));
-            protocol.protocol.to_string()
+            (protocol.protocol.to_string(), protocol.measure_memory)
         }
     };
 
@@ -101,6 +105,12 @@ fn main() {
         "bgv" => "bgv-core".to_string(),
         "tfhe" => format!("tfhe-core-degree-{image_degree}"),
         _ => panic!("Unsupported protocol: {protocol}"),
+    };
+
+    let image_name = if measure_memory {
+        format!("{}-mem", image_name)
+    } else {
+        image_name
     };
 
     let protocol = match protocol.as_str() {

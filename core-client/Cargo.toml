@@ -110,4 +110,4 @@ ignored = ["kms", "strum"]
 threshold_tests = ["testing"]
 # Enable tests that require a running Kind/Kubernetes cluster.
 kind_tests = ["testing"]
-testing = []
+testing = ["threshold-execution/testing"]

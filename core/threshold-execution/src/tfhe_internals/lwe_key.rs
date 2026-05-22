@@ -38,14 +38,14 @@ use super::{
 };
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum LweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
+pub enum LweSecretKeyShareVersions<Z: Clone, const EXTENSION_DEGREE: usize> {
     V0(LweSecretKeyShare<Z, EXTENSION_DEGREE>),
 }
 
 ///Structure that holds a share of the LWE key
 /// - data contains shares of the key components
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(LweSecretKeyShareVersioned)]
+#[versionize(LweSecretKeyShareVersions)]
 pub struct LweSecretKeyShare<Z: Clone, const EXTENSION_DEGREE: usize> {
     pub data: Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
 }

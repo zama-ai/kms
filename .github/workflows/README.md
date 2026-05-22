@@ -36,7 +36,7 @@ Release
 | [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Mixed-version perf tests for `thresholdWithEnclave` | Manual |
 | [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Workflow call |
 | [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, scheduled |
-| [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `cargo dylint` | PRs |
+| [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `make lint-dylint` | PRs |
 | [`common-testing.yml`](common-testing.yml) | Reusable test runner | Workflow call |
 | [`wasm-testing.yml`](wasm-testing.yml) | WASM test pipeline | Workflow call |
 | [`ci_lint.yml`](ci_lint.yml) | actionlint + zizmor on workflow files | PRs |
@@ -118,10 +118,10 @@ All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for th
 ### `test-core-service` matrix
 
 Two parallel entries on PRs:
-1. `-F slow_tests -F s3_tests -F insecure --lib -- --skip nightly` — workspace lib tests
-2. `-E kind(test) -F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
+1. `-F slow_tests -F s3_tests --lib -- --skip nightly` — workspace lib tests
+2. `-E kind(test) -F slow_tests -F s3_tests -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
 
-Schedule entry: `--release -F slow_tests -F s3_tests -F insecure nightly` — nightly-suffixed tests in release mode.
+Schedule entry: `--release -F slow_tests -F s3_tests nightly` — nightly-suffixed tests in release mode.
 
 ### Test material
 
@@ -166,7 +166,7 @@ Generates WASM test fixtures from Rust tests, builds `tkms` and `node-tkms` pack
 
 ### `rust-lint.yml`
 
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo dylint --all`. Runs on every PR.
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `make lint-dylint`. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, turning Dylint warnings to errors while disabling the broad tfhe-rs `serialize_without_versionize` lint.
 
 ### `docker-build.yml`
 

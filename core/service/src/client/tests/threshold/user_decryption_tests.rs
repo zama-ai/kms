@@ -11,6 +11,7 @@ use crate::cryptography::signatures::{PrivateSigKey, internal_sign};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
+use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 #[cfg(feature = "wasm_tests")]
 use crate::util::file_handling::write_element;
 use crate::util::key_setup::max_threshold;
@@ -347,20 +348,14 @@ pub(crate) async fn user_decryption_threshold(
     malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
 ) {
-    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
-
     assert!(parallelism > 0);
 
-    // Spec: pre-gen FHE keys for `key_id` plus signing + PRSS. Material
-    // type follows the DKG params.
-    let spec = {
-        let mut s = if dkg_params == TEST_PARAM {
-            TestMaterialSpec::threshold_basic(amount_parties)
-        } else {
-            TestMaterialSpec::threshold_default(amount_parties)
-        };
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
+    // Spec: pre-gen FHE keys for `key_id` plus signing. PRSS is bootstrapped
+    // at runtime via `.with_prss()`. Material type follows the DKG params.
+    let spec = if dkg_params == TEST_PARAM {
+        TestMaterialSpec::threshold_basic(amount_parties)
+    } else {
+        TestMaterialSpec::threshold_default(amount_parties)
     };
 
     let mut builder = ThresholdTestEnv::builder()

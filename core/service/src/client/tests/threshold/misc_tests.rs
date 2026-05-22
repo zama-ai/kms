@@ -5,7 +5,6 @@
 use crate::client::test_tools::{
     await_server_ready, check_port_is_closed, get_health_client, get_status,
 };
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::common::send_dec_reqs;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
@@ -27,13 +26,10 @@ use tonic_health::pb::health_check_response::ServingStatus;
 async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let amount_parties = 4;
 
-    // DON'T setup PRSS in order to ensure the server is not ready yet
-    let spec = {
-        use crate::testing::material::KeyType;
-        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
-        s.required_keys.insert(KeyType::FheKeys);
-        s
-    };
+    // DON'T setup PRSS in order to ensure the server is not ready yet.
+    // `threshold_basic` gives ClientKeys + SigningKeys + ServerSigningKeys + FheKeys,
+    // no PRSS.
+    let spec = TestMaterialSpec::threshold_basic(amount_parties);
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)
@@ -151,8 +147,6 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_close_after_drop() -> Result<()> {
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-
     let env = ThresholdTestEnv::builder()
         .with_test_name("close_after_drop")
         .with_party_count(4)
@@ -222,8 +216,6 @@ async fn test_threshold_shutdown() -> Result<()> {
     let amount_parties = 4;
     let pub_storage_prefixes =
         &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("shutdown")
