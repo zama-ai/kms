@@ -50,8 +50,12 @@ impl<Z> BivariatePoly<Z> {
 }
 
 impl<Z: Ring> BivariatePoly<Z> {
-    /// Given a degree T bivariate poly F(X,Y) = sum a_ij X^i Y^j and a point \alpha, evaluate the X variable:
-    /// G(Y) = F(\alpha, Y) with coefficients [sum_i a_i0 \alpha^i, ..., sum_i a_id \alpha^i].
+    /// Given a bivariate polynomial
+    /// F(X, Y) = \sum_{i=0}^{d-1} \sum_{j=0}^{d-1} a_{ij} X^i Y^j,
+    /// evaluate the X variable at \alpha.
+    ///
+    /// Returns G(Y) = F(\alpha, Y), whose Y^j coefficient is
+    /// \sum_{i=0}^{d-1} a_{ij} \alpha^i.
     pub fn partial_x_eval(&self, alpha: Z) -> Poly<Z> {
         let d = self.dim();
         let coefs = self.coeffs();
@@ -65,8 +69,12 @@ impl<Z: Ring> BivariatePoly<Z> {
         Poly::from_coefs(res)
     }
 
-    /// Given a degree T bivariate poly F(X,Y) = sum a_ij X^i Y^j and a point \alpha, evaluate the Y variable:
-    /// G(X) = F(X, \alpha) with coefficients [sum_j a_0j \alpha^j, ..., sum_j a_dj \alpha^j].
+    /// Given a bivariate polynomial
+    /// F(X, Y) = \sum_{i=0}^{d-1} \sum_{j=0}^{d-1} a_{ij} X^i Y^j,
+    /// evaluate the Y variable at \alpha.
+    ///
+    /// Returns G(X) = F(X, \alpha), whose X^i coefficient is
+    /// \sum_{j=0}^{d-1} a_{ij} \alpha^j.
     pub fn partial_y_eval(&self, alpha: Z) -> Poly<Z> {
         let d = self.dim();
         let coefs = self.coeffs();
@@ -153,6 +161,7 @@ impl<Z: Ring> BivariatePoly<Z> {
 mod tests {
     use super::*;
     use crate::galois_rings::degree_8::ResiduePolyF8Z128;
+    use crate::structure_traits::{FromU128, ZConsts};
     use crate::{
         galois_rings::{
             common::ResiduePoly,
@@ -169,7 +178,7 @@ mod tests {
     //Checks the hot coefficient shapes used by bivariate evaluation.
     #[test]
     fn test_bivariate_supported_shapes() {
-        let two = ResiduePolyF4Z128::ONE + ResiduePolyF4Z128::ONE;
+        let two = ResiduePolyF4Z128::TWO;
         let bpoly2 = BivariatePoly::from_coeffs(vec![ResiduePolyF4Z128::ONE; 4], 1);
         let expected2 = Poly::from_coefs(vec![two; 2]);
         assert_eq!(bpoly2.partial_x_eval(ResiduePolyF4Z128::ONE), expected2);
@@ -179,14 +188,14 @@ mod tests {
             two + two
         );
 
-        let five = two + two + ResiduePolyF4Z128::ONE;
+        let five = ResiduePolyF4Z128::from_u128(5);
         let bpoly5 = BivariatePoly::from_coeffs(vec![ResiduePolyF4Z128::ONE; 25], 4);
         let expected5 = Poly::from_coefs(vec![five; 5]);
         assert_eq!(bpoly5.partial_x_eval(ResiduePolyF4Z128::ONE), expected5);
         assert_eq!(bpoly5.partial_y_eval(ResiduePolyF4Z128::ONE), expected5);
         assert_eq!(
             bpoly5.full_eval(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE),
-            five + five + five + five + five
+            ResiduePolyF4Z128::from_u128(25)
         );
     }
 
@@ -194,24 +203,24 @@ mod tests {
     fn bivariate_partial_evals_match_full() {
         // F(X, Y) = 1 + 2*Y + 3*X + 4*X*Y, stored row-major as [a_00, a_01, a_10, a_11].
         let one = ResiduePolyF4Z128::ONE;
-        let two = one + one;
-        let three = two + one;
-        let four = two + two;
-        let five = four + one;
-        let seven = four + three;
+        let two = ResiduePolyF4Z128::TWO;
+        let three = ResiduePolyF4Z128::THREE;
+        let four = ResiduePolyF4Z128::from_u128(4);
+        let five = ResiduePolyF4Z128::from_u128(5);
+        let seven = ResiduePolyF4Z128::from_u128(7);
         let bpoly = BivariatePoly::from_coeffs(vec![one, two, three, four], 1);
 
         // F(5, Y) = (1 + 3*5) + (2 + 4*5)*Y = 16 + 22*Y
-        let sixteen = five + five + five + one;
-        let twentytwo = sixteen + three + three;
+        let sixteen = ResiduePolyF4Z128::from_u128(16);
+        let twentytwo = ResiduePolyF4Z128::from_u128(22);
         assert_eq!(
             bpoly.partial_x_eval(five),
             Poly::from_coefs(vec![sixteen, twentytwo])
         );
 
         // F(X, 5) = (1 + 2*5) + (3 + 4*5)*X = 11 + 23*X
-        let eleven = five + five + one;
-        let twentythree = eleven + four + four + four;
+        let eleven = ResiduePolyF4Z128::from_u128(11);
+        let twentythree = ResiduePolyF4Z128::from_u128(23);
         assert_eq!(
             bpoly.partial_y_eval(five),
             Poly::from_coefs(vec![eleven, twentythree])
@@ -223,10 +232,7 @@ mod tests {
         assert_eq!(py, Poly::from_coefs(vec![eleven, twentythree]));
 
         // F(5, 7) = 1 + 2*7 + 3*5 + 4*5*7 = 170
-        let mut expected_full = ResiduePolyF4Z128::ZERO;
-        for _ in 0..170 {
-            expected_full += one;
-        }
+        let expected_full = ResiduePolyF4Z128::from_u128(170);
         assert_eq!(bpoly.full_eval(five, seven), expected_full);
     }
 
