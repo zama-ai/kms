@@ -102,18 +102,17 @@ pub(crate) struct DoublePoly<Z>
 where
     Poly<Z>: Eq,
 {
+    /// The share polynomial in variable X, F(X, \alpha)
     pub(crate) share_in_x: Poly<Z>,
+    /// The share polynomial in variable Y, F(\alpha, Y)
     pub(crate) share_in_y: Poly<Z>,
 }
 
 impl<Z: Ring> DoublePoly<Z> {
     pub(crate) fn from_bivariate(poly: &BivariatePoly<Z>, point: Z) -> Self {
-        // `partial_evals` returns `(F(alpha, Y), F(X, alpha))`, which are the
-        // recipient's Y-share and X-share respectively.
-        let (share_in_y, share_in_x) = poly.partial_evals(point);
         Self {
-            share_in_x, // F(X, alpha)
-            share_in_y, // F(alpha, Y)
+            share_in_x: poly.partial_y_eval(point), // F(X, alpha)
+            share_in_y: poly.partial_x_eval(point), // F(alpha, Y)
         }
     }
 }

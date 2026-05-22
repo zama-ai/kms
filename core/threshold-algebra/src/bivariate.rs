@@ -90,53 +90,7 @@ impl<Z: Ring> BivariatePoly<Z> {
         Poly::from_coefs(res)
     }
 
-    /// Compute both partial evaluations at the same point.
-    ///
-    /// Returns `(F(\alpha, Y), F(X, \alpha))`, matching
-    /// [`Self::partial_x_eval`] and [`Self::partial_y_eval`].
-    // TODO(dp): Not sure this is actually worth keeping, The perf gain from doing this vs partial_x + partial_y is ~3% which seems silly.
-    pub fn partial_evals(&self, alpha: Z) -> (Poly<Z>, Poly<Z>) {
-        let d = self.dim();
-        let coefs = self.coeffs();
-        let last_row_start = (d - 1) * d;
-        let last_row = &coefs[last_row_start..last_row_start + d];
-
-        // partial_x is seeded with the last row (the high-i term in the outer Horner).
-        let mut partial_x = last_row.to_vec();
-        let mut partial_y = vec![Z::ZERO; d];
-
-        // Last row's partial_y is its own Horner; its partial_x slots are already correct.
-        let mut acc = last_row[d - 1];
-        for coef in last_row[..d - 1].iter().rev() {
-            acc = acc * alpha + *coef;
-        }
-        partial_y[d - 1] = acc;
-
-        // Walk each remaining row once. Each coefficient feeds two Horner chains:
-        // the row-wise chain producing the next `partial_y` coefficient, and the
-        // column-wise chain updating `partial_x`. This keeps the fused path equivalent
-        // to two separate partial evaluations while reusing each loaded coefficient.
-        for (partial_y_coef, row) in partial_y[..d - 1]
-            .iter_mut()
-            .rev()
-            .zip(coefs[..last_row_start].chunks_exact(d).rev())
-        {
-            let last = row[d - 1];
-            let mut acc = last;
-            partial_x[d - 1] = partial_x[d - 1] * alpha + last;
-            for (res_coef, coef) in partial_x[..d - 1].iter_mut().zip(&row[..d - 1]).rev() {
-                let c = *coef;
-                acc = acc * alpha + c;
-                *res_coef = *res_coef * alpha + c;
-            }
-            *partial_y_coef = acc;
-        }
-
-        (Poly::from_coefs(partial_x), Poly::from_coefs(partial_y))
-    }
-
-    /// Given a degree T bivariate poly F(X,Y) and two points \alpha_x, \alpha_y, we compute
-    /// F(\alpha_x, \alpha_y)
+    /// Given a bivariate poly F(X,Y) and two points \alpha_x, \alpha_y, compute F(\alpha_x, \alpha_y)
     pub fn full_eval(&self, alpha_x: Z, alpha_y: Z) -> Z {
         let d = self.dim();
         let coefs = self.coeffs();
@@ -226,27 +180,9 @@ mod tests {
             Poly::from_coefs(vec![eleven, twentythree])
         );
 
-        // Fused returns (F(alpha, Y), F(X, alpha)).
-        let (px, py) = bpoly.partial_evals(five);
-        assert_eq!(px, Poly::from_coefs(vec![sixteen, twentytwo]));
-        assert_eq!(py, Poly::from_coefs(vec![eleven, twentythree]));
-
         // F(5, 7) = 1 + 2*7 + 3*5 + 4*5*7 = 170
         let expected_full = ResiduePolyF4Z128::from_u128(170);
         assert_eq!(bpoly.full_eval(five, seven), expected_full);
-    }
-
-    #[rstest]
-    fn test_bivariate_partial_evaluations(#[values(1, 4, 10)] degree: usize) {
-        let mut rng = AesRng::seed_from_u64(0);
-        let secret = ResiduePolyF4Z128::sample(&mut rng);
-        let point = ResiduePolyF4Z128::sample(&mut rng);
-        let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree);
-
-        let (partial_x, partial_y) = bpoly.partial_evals(point);
-
-        assert_eq!(partial_x, bpoly.partial_x_eval(point));
-        assert_eq!(partial_y, bpoly.partial_y_eval(point));
     }
 
     //Test that eval at 0 return the secret for ResiduePolyF4Z128
