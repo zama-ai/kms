@@ -838,7 +838,10 @@ impl DKGParamsBasics for DKGParamsRegular {
             self.cpk_re_randomization_ksk_params,
             self.dedicated_compact_public_key_parameters,
         ) {
-            (Some(cpk_re_randomization_ksk_params), Some(_)) => {
+            // Note: Having rerand params without pk parameter would be unusual,
+            // but with transciphering we might someday need it
+            // (since the pk would become useless, even though we'd still technically have a public key scheme)
+            (Some(cpk_re_randomization_ksk_params), _) => {
                 assert!(
                     matches!(
                         cpk_re_randomization_ksk_params.destination_key,
@@ -854,8 +857,7 @@ impl DKGParamsBasics for DKGParamsRegular {
                     decomposition_level_count: self.decomposition_level_count_rerand_ksk(),
                 })
             }
-            (_, None) => None,
-            _ => panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization."),
+            (None, _) => None,
         }
     }
 
@@ -2156,9 +2158,7 @@ mod tests {
     use crate::{
         keyset_config::{KeySetConfig, StandardKeySetConfig},
         tfhe_internals::parameters::{
-            BC_PARAMS_SNS, NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_SNS_FGLWE,
-            NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_SNS_FGLWE, compute_min_trials,
-            compute_prob_hw_within_range,
+            BC_PARAMS_SNS, compute_min_trials, compute_prob_hw_within_range,
         },
     };
 
