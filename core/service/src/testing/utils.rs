@@ -471,22 +471,6 @@ pub mod setup {
         }
     }
 
-    pub async fn ensure_testing_material_exists(path: Option<&Path>) {
-        generate_material_to_path(MaterialType::Testing, path, &[4, 10])
-            .await
-            .expect("testing material generation should succeed");
-    }
-
-    pub async fn ensure_default_material_exists() {
-        ensure_default_material_exists_to_path(None).await;
-    }
-
-    pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
-        generate_material_to_path(MaterialType::Default, path, &[4, 10, 13])
-            .await
-            .expect("default material generation should succeed");
-    }
-
     pub async fn generate_material_to_path(
         material_type: MaterialType,
         path: Option<&Path>,

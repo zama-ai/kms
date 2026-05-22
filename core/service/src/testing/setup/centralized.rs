@@ -2,15 +2,20 @@
 //!
 //! This module provides a builder pattern for setting up isolated centralized KMS
 //! test environments with automatic cleanup.
+use crate::client::test_tools::setup_centralized;
+use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::SIGNING_KEY_ID;
-use crate::testing::helpers::{create_test_material_manager, regenerate_central_keys};
-use crate::testing::material::{MaterialType, TestMaterialManager, TestMaterialSpec};
+use crate::testing::helpers::create_test_material_manager;
+use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 use crate::util::key_setup::ensure_client_keys_exist;
-use crate::vault::storage::{StorageType, file::FileStorage};
+use crate::vault::Vault;
+use crate::vault::keychain::make_keychain_proxy;
+use crate::vault::storage::{StorageProxy, StorageType, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
+use std::path::Path;
 use tempfile::TempDir;
 use tonic::transport::Channel;
 
@@ -144,68 +149,19 @@ impl CentralizedTestEnvBuilder {
         // Setup isolated material
         let material_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
 
-        let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-        let mut priv_storage =
-            FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-
-        // For `Testing` material we (re)generate centralized keys to guarantee freshness;
-        // for `Default` we trust the pre-generated `test-material/default/` fixture as-is.
-        // TODO(dp): runs even when the just-copied fixture is already valid.
-        // Could be skipped if `regenerate_central_keys`'s outputs are already
-        // present in the dest tempdir.
-        if spec.material_type == MaterialType::Testing {
-            regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
-        }
+        let pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
+        let priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
         // Ensure client signing/verification keys exist
         ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;
 
-        // Setup KMS server with optional backup vault
         let backup_vault = if self.with_backup_vault {
-            use crate::conf::{Keychain, SecretSharingKeychain};
-            use crate::vault::Vault;
-            use crate::vault::keychain::make_keychain_proxy;
-            use std::fs;
-
-            // Create BACKUP directory
-            let backup_dir = material_dir.path().join("BACKUP");
-            fs::create_dir_all(&backup_dir)?;
-
-            let backup_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
-                Some(material_dir.path()),
-                StorageType::BACKUP,
-                None,
-            )?);
-
-            let keychain = if self.with_custodian_keychain {
-                let pub_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
-                    Some(material_dir.path()),
-                    StorageType::PUB,
-                    None,
-                )?);
-                Some(
-                    make_keychain_proxy(
-                        &Keychain::SecretSharing(SecretSharingKeychain {}),
-                        None,
-                        None,
-                        Some(&pub_proxy),
-                        false,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-
-            Some(Vault {
-                storage: backup_proxy,
-                keychain,
-            })
+            Some(build_backup_vault(material_dir.path(), self.with_custodian_keychain).await?)
         } else {
             None
         };
 
-        let (server, client) = crate::client::test_tools::setup_centralized(
+        let (server, client) = setup_centralized(
             pub_storage,
             priv_storage,
             backup_vault,
@@ -219,4 +175,64 @@ impl CentralizedTestEnvBuilder {
             client,
         })
     }
+
+    /// Spin up a KMS server on an existing material directory. Use to verify
+    /// state persists across server restarts. `path` must outlive the
+    /// returned pair.
+    pub async fn from_path(
+        self,
+        path: &Path,
+    ) -> Result<(ServerHandle, CoreServiceEndpointClient<Channel>)> {
+        let pub_storage = FileStorage::new(Some(path), StorageType::PUB, None)?;
+        let priv_storage = FileStorage::new(Some(path), StorageType::PRIV, None)?;
+        let backup_vault = if self.with_backup_vault {
+            Some(build_backup_vault(path, self.with_custodian_keychain).await?)
+        } else {
+            None
+        };
+        Ok(setup_centralized(
+            pub_storage,
+            priv_storage,
+            backup_vault,
+            self.rate_limiter_conf,
+        )
+        .await)
+    }
+}
+
+async fn build_backup_vault(material_path: &Path, with_custodian_keychain: bool) -> Result<Vault> {
+    // Create BACKUP directory
+    let backup_dir = material_path.join("BACKUP");
+    std::fs::create_dir_all(&backup_dir)?;
+
+    let backup_proxy = StorageProxy::from(FileStorage::new(
+        Some(material_path),
+        StorageType::BACKUP,
+        None,
+    )?);
+
+    let keychain = if with_custodian_keychain {
+        let pub_proxy = StorageProxy::from(FileStorage::new(
+            Some(material_path),
+            StorageType::PUB,
+            None,
+        )?);
+        Some(
+            make_keychain_proxy(
+                &Keychain::SecretSharing(SecretSharingKeychain {}),
+                None,
+                None,
+                Some(&pub_proxy),
+                false,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    Ok(Vault {
+        storage: backup_proxy,
+        keychain,
+    })
 }

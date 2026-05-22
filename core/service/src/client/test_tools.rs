@@ -1,5 +1,4 @@
-use crate::client::client_wasm::Client;
-use crate::conf::{CoreConfig, Keychain, SecretSharingKeychain, init_conf};
+use crate::conf::{CoreConfig, init_conf};
 use crate::conf::{
     ServiceEndpoint,
     threshold::{PeerConf, ThresholdPartyConf},
@@ -11,26 +10,20 @@ use crate::engine::context_manager::create_default_centralized_context_in_storag
 use crate::engine::threshold::service::{RealThresholdKms, new_real_threshold_kms};
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
-use crate::util::key_setup::test_tools::file_backup_vault;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
 use crate::vault::storage::StorageExt;
-use crate::vault::storage::{
-    Storage, StorageType, crypto_material::get_core_signing_key, file::FileStorage,
-};
+use crate::vault::storage::{Storage, crypto_material::get_core_signing_key, file::FileStorage};
 use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use test_utils::random_free_port::get_listeners_random_free_ports;
 use threshold_execution::endpoints::decryption::DecryptionMode;
-use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::{JoinHandle, JoinSet};
 use tonic::server::NamedService;
@@ -39,9 +32,6 @@ use tonic_health::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::server::HealthReporter;
-
-#[cfg(feature = "slow_tests")]
-use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 
 // Put gRPC size limit to 100 MB.
 // We need a high limit because ciphertexts may be large after SnS.
@@ -804,48 +794,6 @@ pub(crate) async fn setup_centralized<
     (server_handle, client)
 }
 
-/// Spin up a centralized KMS server with the custodian-flavored backup vault and
-/// return the server handle, gRPC client, and internal client.
-pub async fn centralized_custodian_handles(
-    param: &DKGParams,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    test_data_path: Option<&Path>,
-    pub_storage_prefix: Option<&str>,
-    backup_storage_prefix: Option<&str>,
-) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let backup_vault = file_backup_vault(
-        Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
-        test_data_path,
-        test_data_path,
-        pub_storage_prefix,
-        backup_storage_prefix,
-    )
-    .await;
-
-    let priv_storage = FileStorage::new(test_data_path, StorageType::PRIV, None).unwrap();
-    let pub_storage = FileStorage::new(test_data_path, StorageType::PUB, None).unwrap();
-
-    ensure_testing_material_exists(test_data_path).await;
-    #[cfg(feature = "slow_tests")]
-    ensure_default_material_exists().await;
-
-    let (kms_server, kms_client) = setup_centralized(
-        pub_storage,
-        priv_storage,
-        Some(backup_vault),
-        rate_limiter_conf,
-    )
-    .await;
-    let pub_storage = HashMap::from_iter([(
-        1,
-        FileStorage::new(test_data_path, StorageType::PUB, None).unwrap(),
-    )]);
-    let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
-    let internal_client = Client::new_client(client_storage, pub_storage, param, None)
-        .await
-        .unwrap();
-    (kms_server, kms_client, internal_client)
-}
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
 /// Note that this method may panic if the server does not become ready within a certain time frame.
 pub async fn await_server_ready(service_name: &str, port: u16) {
