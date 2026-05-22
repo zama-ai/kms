@@ -88,7 +88,7 @@ fn internal_custodian_setup_message_serialization_is_deterministic() {
                 public_key,
                 private_key,
             )
-            .expect("Custodian::new");
+            .expect("Custodian::new is actually infallible");
             let setup_message = custodian
                 .generate_setup_message_with_timestamp(
                     &mut rng,
