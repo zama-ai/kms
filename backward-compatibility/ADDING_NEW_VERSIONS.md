@@ -170,7 +170,7 @@ Or run individual generators:
 make generate-backward-compatibility-v0.14.0
 ```
 
-⚠️ **Important**: Frozen generator crates can still be run directly for historical investigation, but their output may be non-deterministic and should not be committed.
+⚠️ **Important**: Frozen generator crates can still be run directly for historical investigation, but their output may be non-deterministic and should not be committed. Additionally, running deterministic generators is idempotent for all generators listed in `DETERMINISTIC_BWC_VERSIONS` and if that is not the case, it must be fixed.
 
 ## Best Practices
 
