@@ -8,13 +8,13 @@
   "skip_cells": [],
   "producer_overrides": {
     "v0.13.3": {
-      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "testing", "-o", "./test-material"]
+      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "--output", "./test-material", "--verbose", "testing"]
     },
     "v0.13.10": {
-      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "testing", "-o", "./test-material"]
+      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "--output", "./test-material", "--verbose", "testing"]
     },
     "v0.13.20-0": {
-      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "testing", "-o", "./test-material"]
+      "generate_test_material": ["cargo", "run", "-p", "generate-test-material", "--", "--output", "./test-material", "--verbose", "testing"]
     }
   }
 }

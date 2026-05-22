@@ -12,6 +12,9 @@ name: compat-matrix
 # (already covered by wasm-testing.yml).
 
 on:
+  push:
+    branches:
+      - kc1212/chore/tkms-compatibility-matrix
   workflow_dispatch:
     inputs:
       versions:
@@ -71,6 +74,7 @@ jobs:
     needs: setup
     if: needs.setup.outputs.pairs_count != '0' || inputs.producer_only
     runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    environment: main
     permissions:
       contents: read
     timeout-minutes: 90
@@ -106,6 +110,8 @@ jobs:
 
       - name: Detect Rust toolchain
         id: rust
+        env:
+          MATRIX_VERSION: ${{ matrix.version }}
         run: |
           set -euo pipefail
           if [[ -f src/rust-toolchain.toml ]]; then
@@ -116,7 +122,7 @@ jobs:
               channel="stable"
           fi
           echo "channel=${channel}" >> "$GITHUB_OUTPUT"
-          echo "matrix.version=${{ matrix.version }} -> rust channel ${channel}"
+          echo "matrix.version=${MATRIX_VERSION} -> rust channel ${channel}"
 
       - name: Set up Rust and Protoc
         uses: ./.github/actions/setup-rust-and-protoc
@@ -131,10 +137,12 @@ jobs:
           prefix-key: compat-matrix-producer-${{ matrix.version }}
 
       - name: Run producer recipe
+        env:
+          MATRIX_VERSION: ${{ matrix.version }}
         run: |
           set -euo pipefail
           ci/scripts/compat_matrix_producer.sh \
-              "${{ matrix.version }}" \
+              "${MATRIX_VERSION}" \
               "src" \
               "ci/compat-matrix.json"
 
@@ -172,6 +180,7 @@ jobs:
     needs: [setup, producer]
     if: ${{ inputs.producer_only != true && needs.setup.outputs.pairs_count != '0' }}
     runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    environment: main
     permissions:
       contents: read
     timeout-minutes: 30
@@ -264,13 +273,17 @@ jobs:
           echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Emit result.json
+        env:
+          PRODUCER_VERSION: ${{ matrix.pair.a }}
+          CONSUMER_VERSION: ${{ matrix.pair.b }}
+          RUN_EXIT: ${{ steps.run.outputs.exit }}
         run: |
           set -euo pipefail
           mkdir -p result-out
           ci/scripts/compat_matrix_emit_result.sh \
-              "${{ matrix.pair.a }}" \
-              "${{ matrix.pair.b }}" \
-              "${{ steps.run.outputs.exit }}" \
+              "${PRODUCER_VERSION}" \
+              "${CONSUMER_VERSION}" \
+              "${RUN_EXIT}" \
               "src/core/service/node-test.log" \
               "result-out/result.json"
           cp src/core/service/node-test.log result-out/node-test.log || true
