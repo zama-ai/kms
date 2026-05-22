@@ -95,7 +95,7 @@ fn internal_custodian_setup_message_serialization_is_deterministic() {
                     "custodian-1".to_string(),
                     FIXED_TIMESTAMP,
                 )
-                .expect("generate_setup_message_with_timestamp");
+                .expect("generate_setup_message_with_timestamp is actually infallible");
             encode_versioned(&setup_message)
         })
         .collect();
