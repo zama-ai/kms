@@ -65,6 +65,8 @@ pub const TEST_DKG_PARAMS_SNS: DKGParamsSnSTest = DKGParamsSnSTest {
     },
 };
 
+/// This function (and the messages passed to this function) should ensure the
+/// encoding is deterministic.
 pub fn save_bcode<Data: Serialize, P: AsRef<Path>>(msg: &Data, path: P) {
     // Use bincode 2.x API with legacy config to match bc2wrap behavior
     let config = bincode::config::legacy().with_fixed_int_encoding();

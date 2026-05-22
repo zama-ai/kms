@@ -2,6 +2,7 @@
 
 use std::{
     borrow::Cow,
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -15,7 +16,7 @@ use backward_compatibility::{
         ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
         SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
     },
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    Testcase, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
 };
 
 // Parameters set for tests in kms-core 0.9, found in `PARAMS_TEST_BK_SNS`. However, for stability
@@ -115,9 +116,9 @@ macro_rules! define_store_versioned_auxiliary_fn {
 }
 define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_7);
 
-pub fn store_metadata<Meta, P>(new_data: &Vec<Meta>, path: P)
+pub fn store_metadata<T, P>(new_data: &Vec<Testcase<T>>, path: P)
 where
-    Meta: Serialize + serde::de::DeserializeOwned + Clone,
+    T: Serialize + serde::de::DeserializeOwned + Clone,
     P: AsRef<Path>,
 {
     let path = path.as_ref();
@@ -130,15 +131,25 @@ where
         return;
     }
 
-    // Load existing metadata
+    // Replace any existing entries for the versions being regenerated; leave
+    // every other version (notably the frozen ones) untouched. Without this,
+    // re-running the generator would append duplicate rows for the same
+    // version on every invocation.
+    let versions_being_written: HashSet<&str> = new_data
+        .iter()
+        .map(|t| t.kms_core_version_min.as_str())
+        .collect();
+
     let existing_content = fs::read_to_string(path).unwrap();
-    let mut combined_data: Vec<Meta> =
+    let existing: Vec<Testcase<T>> =
         ron::from_str(&existing_content).expect("Failed to deserialize existing metadata");
 
-    // Append new entries
+    let mut combined_data: Vec<Testcase<T>> = existing
+        .into_iter()
+        .filter(|t| !versions_being_written.contains(t.kms_core_version_min.as_str()))
+        .collect();
     combined_data.extend_from_slice(new_data);
 
-    // Write combined data
     let serialized =
         ron::ser::to_string_pretty(&combined_data, ron::ser::PrettyConfig::default()).unwrap();
     fs::write(path, serialized).unwrap();

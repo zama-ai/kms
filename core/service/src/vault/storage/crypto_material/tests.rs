@@ -80,7 +80,7 @@ where
 
 fn dummy_info() -> KeyGenMetadata {
     let req_id = derive_request_id("dummy_info").unwrap();
-    KeyGenMetadata::new(req_id, req_id, HashMap::new(), vec![], vec![])
+    KeyGenMetadata::new(req_id, req_id, BTreeMap::new(), vec![], vec![])
 }
 
 fn ram_threshold_storage(
