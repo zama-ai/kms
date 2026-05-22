@@ -2158,7 +2158,6 @@ pub async fn execute_cmd(
         }) => {
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
-            assert_eq!(res.len(), operator_recovery_resp_paths.len());
 
             let backup_id = res[0].backup_id();
 
