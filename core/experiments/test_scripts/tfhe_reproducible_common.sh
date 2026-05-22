@@ -4,8 +4,78 @@
 #   SESSION_TYPE   — "small" or "large"
 #   EXPECTED_KEY_HASH  — expected sha256 of pk.bin
 #   DDEC_MODES     — space-separated decryption modes (e.g. "noise-flood-small bit-dec-small")
+#   NUM_PARTIES, THRESHOLD, NUM_SESSIONS, PERCENTAGE_OFFLINE
+#                  — recorded in BENCH_PARAMS.txt; the bench scripts use
+#                    NUM_SESSIONS / PERCENTAGE_OFFLINE values that match the
+#                    hardcoded mobygo args below.
 
 echo "Running test script on config file $1".
+
+# Per-run output folder. Each invocation gets its own folder that holds
+# BENCH_PARAMS.txt and the moved session_stats_<i>.txt files; the parser
+# scans these folders to build a campaign's CSVs. The folder name embeds
+# the experiment (derived from the config filename) and a UTC timestamp so
+# multiple runs in the same campaign don't collide. The wrapper script
+# (threshold-test-params.sh) sets RUN_DEST explicitly to land each run into
+# its campaign folder; standalone invocations fall back to a per-run folder
+# under ./temp/session_stats/.
+EXPERIMENT_NAME="$(basename "$1" .toml)"
+RUN_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DEST="${RUN_DEST:-./temp/session_stats/${EXPERIMENT_NAME}_${RUN_DATE}}"
+mkdir -p "$RUN_DEST"
+
+# The session_stats files live at ./temp/session_stats/session_stats_<i>.txt
+# (a docker compose mount writes them from inside each party container). On
+# exit, sweep them into the per-run folder so they end up next to this run's
+# BENCH_PARAMS.txt. The trap fires whether the script succeeds or aborts.
+_move_session_stats() {
+    mv ./temp/session_stats/session_stats_*.txt "$RUN_DEST/" 2>/dev/null || true
+}
+trap _move_session_stats EXIT
+
+# Detect mem/malicious runs from the experiment name so the parser doesn't
+# have to re-parse the name. Both end up in BENCH_PARAMS.txt below.
+MEASURE_MEMORY_FLAG=0
+case "$EXPERIMENT_NAME" in
+    *-mem) MEASURE_MEMORY_FLAG=1 ;;
+esac
+MALICIOUS_FLAG=0
+case "$EXPERIMENT_NAME" in
+    *-malicious-*) MALICIOUS_FLAG=1 ;;
+esac
+
+# HAS_PRSS_INIT mirrors the conditional below: small sessions PRSS-init twice,
+# large sessions skip PRSS init entirely. The parser uses this flag to know
+# how many leading metric lines to expect.
+if [ "$SESSION_TYPE" = "small" ]; then
+    HAS_PRSS_INIT_FLAG=1
+else
+    HAS_PRSS_INIT_FLAG=0
+fi
+# This common script always runs CRS gen and Reshare; record so the parser
+# can build the expected operation schedule without re-parsing this file.
+HAS_CRS_FLAG=1
+HAS_RESHARE_FLAG=1
+
+cat > "$RUN_DEST/BENCH_PARAMS.txt" <<EOF
+=== ${RUN_DATE} ===
+EXPERIMENT_NAME=${EXPERIMENT_NAME}
+PROTOCOL=tfhe
+SESSION_TYPE=${SESSION_TYPE}
+NUM_PARTIES=${NUM_PARTIES}
+THRESHOLD=${THRESHOLD}
+MALICIOUS=${MALICIOUS_FLAG}
+MEASURE_MEMORY=${MEASURE_MEMORY_FLAG}
+PARAMS=${PARAMS}
+NUM_CTXTS=${NUM_CTXTS}
+NUM_SESSIONS=${NUM_SESSIONS}
+PERCENTAGE_OFFLINE=${PERCENTAGE_OFFLINE}
+DDEC_MODES=${DDEC_MODES}
+HAS_PRSS_INIT=${HAS_PRSS_INIT_FLAG}
+HAS_CRS=${HAS_CRS_FLAG}
+HAS_RESHARE=${HAS_RESHARE_FLAG}
+EOF
+
 #build mobygo
 cargo build --bin mobygo
 ROOT_DIR=$(cargo locate-project --workspace -q --message-format plain|grep -o '.*/')

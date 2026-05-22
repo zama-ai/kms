@@ -10,7 +10,44 @@ KEY_PATH="${MAIN_PATH}/key"
 CTXT_PATH="${MAIN_PATH}/ctxt"
 SEED=42
 NUM_CTXTS=${NUM_CTXTS:-10}
+NUM_SESSIONS=5
+PERCENTAGE_OFFLINE=100
+NUM_PARTIES=4
+THRESHOLD=1
 CTXT_VALUE=12345
+
+# Per-run output folder. See the TFHE reproducible common script for the
+# rationale — same convention so the parser sees one shape across protocols.
+EXPERIMENT_NAME="$(basename "$1" .toml)"
+RUN_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DEST="${RUN_DEST:-./temp/session_stats/${EXPERIMENT_NAME}_${RUN_DATE}}"
+mkdir -p "$RUN_DEST"
+
+_move_session_stats() {
+    mv ./temp/session_stats/session_stats_*.txt "$RUN_DEST/" 2>/dev/null || true
+}
+trap _move_session_stats EXIT
+
+MEASURE_MEMORY_FLAG=0
+case "$EXPERIMENT_NAME" in
+    *-mem) MEASURE_MEMORY_FLAG=1 ;;
+esac
+
+cat > "$RUN_DEST/BENCH_PARAMS.txt" <<EOF
+=== ${RUN_DATE} ===
+EXPERIMENT_NAME=${EXPERIMENT_NAME}
+PROTOCOL=bgv
+NUM_PARTIES=${NUM_PARTIES}
+THRESHOLD=${THRESHOLD}
+MALICIOUS=0
+MEASURE_MEMORY=${MEASURE_MEMORY_FLAG}
+NUM_CTXTS=${NUM_CTXTS}
+NUM_SESSIONS=${NUM_SESSIONS}
+PERCENTAGE_OFFLINE=${PERCENTAGE_OFFLINE}
+HAS_PRSS_INIT=1
+HAS_CRS=0
+HAS_RESHARE=0
+EOF
 
 mkdir -p $KEY_PATH
 mkdir -p $CTXT_PATH

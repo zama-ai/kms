@@ -43,6 +43,34 @@ PATH_TO_ROOT="$PATH_TO_HERE/.."
 # Set current workdirectory as root of experiments
 cd "$PATH_TO_ROOT"
 
+# Create a campaign folder that collects this invocation's per-run subfolders
+# (one per test_script call). Each per-run subfolder will end up holding the
+# session_stats_<i>.txt files moved in by the test_script's EXIT trap plus
+# the BENCH_PARAMS.txt the test_script wrote. The parser is invoked at the
+# end on the campaign folder to produce a single CSV set for this campaign.
+CAMPAIGN_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
+CAMPAIGN_DIR="temp/session_stats/campaign_${CAMPAIGN_DATE}"
+mkdir -p "$CAMPAIGN_DIR"
+# Helper that runs a test_script with RUN_DEST pointed at a fresh per-run
+# subfolder under the campaign folder. The folder name embeds the
+# experiment_name (basename of the .toml) and a UTC timestamp.
+function run_in_campaign {
+    local script="$1"
+    local conf="$2"
+    local extra="${3:-}"
+    local experiment
+    experiment="$(basename "$conf" .toml)"
+    local run_date
+    run_date="$(date -u +%Y%m%dT%H%M%SZ)"
+    export RUN_DEST="$CAMPAIGN_DIR/${experiment}_${run_date}"
+    if [ -n "$extra" ]; then
+        env $extra "$script" "$conf" GEN
+    else
+        "$script" "$conf" GEN
+    fi
+    unset RUN_DEST
+}
+
 # Start with cleaning up any leftover containers for the targeted benchmark compose files
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
@@ -58,7 +86,7 @@ cargo make tfhe-docker-image-degree-3
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-4p
 # Run the test script
-./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml GEN
+run_in_campaign ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 
@@ -66,7 +94,7 @@ cleanup_docker "temp/tfhe-bench-run-4p.yml"
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-5p
 # Run the test script
-./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml GEN
+run_in_campaign ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
 
@@ -74,7 +102,7 @@ cleanup_docker "temp/tfhe-bench-run-5p.yml"
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-4p-malicious-bcast
 # Run the test script
-./test_scripts/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml GEN
+run_in_campaign ./test_scripts/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
 
@@ -85,7 +113,7 @@ cargo make bgv-docker-image
 # Create the test setup and starts the docker containers
 cargo make bgv-bench-run
 # Run the test script
-./test_scripts/bgv_reproducible.sh temp/bgv-bench-run.toml GEN
+run_in_campaign ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run.toml
 # Teardown docker
 cleanup_docker "temp/bgv-bench-run.yml"
 
@@ -99,7 +127,7 @@ cargo make tfhe-docker-image-degree-3-mem
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-4p-mem
 # Run the test script
-NUM_CTXTS=1 ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml GEN
+run_in_campaign ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml "NUM_CTXTS=1"
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 
@@ -107,7 +135,7 @@ cleanup_docker "temp/tfhe-bench-run-4p.yml"
 # Create the test setup and starts the docker containers
 cargo make tfhe-bench-run-5p-mem
 # Run the test script
-NUM_CTXTS=1 ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml GEN
+run_in_campaign ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml "NUM_CTXTS=1"
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
 
@@ -118,13 +146,17 @@ cargo make bgv-docker-image-mem
 # Create the test setup and starts the docker containers
 cargo make bgv-bench-run-mem
 # Run the test script
-NUM_CTXTS=1 ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run-mem.toml GEN
+run_in_campaign ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run-mem.toml "NUM_CTXTS=1"
 # Teardown docker
 cleanup_docker "temp/bgv-bench-run.yml"
 
 
 ### Run stats parser
-python3 "$PATH_TO_HERE/session-stats-parser.py" --output-dir "$PATH_TO_HERE/threshold" "$PATH_TO_ROOT/temp/session_stats" TestParams
+# Point the parser at this campaign's folder so the CSVs reflect just this
+# invocation. The campaign folder contains one subfolder per test_script call;
+# each subfolder has BENCH_PARAMS.txt + session_stats_<i>.txt and is enough
+# for the parser to build a row per (run, ciphertext_type/parallelism).
+python3 "$PATH_TO_HERE/session-stats-parser.py" --output-dir "$PATH_TO_HERE/threshold" "$PATH_TO_ROOT/$CAMPAIGN_DIR" TestParams
 
 
 

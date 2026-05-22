@@ -9,6 +9,13 @@ MAIN_PATH="./temp/tfhe_small_reproducible"
 PARAMS="params-test-bk-sns"
 SEED=42
 NUM_CTXTS=${NUM_CTXTS:-10}
+# Cluster identity / preproc knobs recorded in BENCH_PARAMS.txt by the common
+# script. NUM_SESSIONS / PERCENTAGE_OFFLINE mirror the hardcoded mobygo args
+# below; if you change one, change the other.
+NUM_PARTIES=4
+THRESHOLD=1
+NUM_SESSIONS=5
+PERCENTAGE_OFFLINE=100
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/tfhe_reproducible_common.sh"

@@ -218,10 +218,12 @@ cargo make --env EXPERIMENT_NAME=my_experiment start-parties-healthy
 ```
 
 `setup` creates `temp/telemetry/export.json` and per-party
-`temp/session_stats/session_stats_<i>.txt` files (with a `NEW_RUN:` marker
-header) that the parties append timing/network metrics to during the run.
-Those files are what `NIST_scripts/session-stats-parser.py` consumes after
-the experiment.
+`temp/session_stats/session_stats_<i>.txt` files that the parties append
+timing/network metrics to during the run. The reproducible test scripts
+(below) and `threshold-test-params.sh` group these flat files into per-run
+folders (`temp/session_stats/<EXPERIMENT>_<TS>/`), each with its own
+`BENCH_PARAMS.txt`; that's the layout `NIST_scripts/session-stats-parser.py`
+consumes.
 
 For convenience, the Makefile bundles `setup → gen-test-certs →
 *-gen-experiment → experiment-name → start-parties-healthy` into a few
@@ -298,14 +300,19 @@ results:
 - `build.sh` — provisions a clean Ubuntu 24.04 host (swap, docker, rust,
   `cargo-make`, `cargo-criterion`) and clones the repository.
 - `threshold-test-params.sh` — one-shot driver that, in sequence:
-  1. builds the `tfhe-core-degree-3` image,
-  2. runs the small / large / small-malicious TFHE reproducible scripts
+  1. creates `temp/session_stats/campaign_<UTC_TS>/` for this campaign,
+  2. builds the `tfhe-core-degree-3` image,
+  3. runs the small / large / small-malicious TFHE reproducible scripts
      (using `tfhe-bench-run-4p`, `tfhe-bench-run-5p` and
-     `tfhe-bench-run-4p-malicious-bcast` respectively),
-  3. builds the `bgv-core` image and runs the BGV reproducible script via
+     `tfhe-bench-run-4p-malicious-bcast` respectively), routing each run's
+     `BENCH_PARAMS.txt` + `session_stats_<i>.txt` into a per-run subfolder
+     under the campaign folder via the `RUN_DEST` env var,
+  4. builds the `bgv-core` image and runs the BGV reproducible script via
      `bgv-bench-run`,
-  4. invokes `session-stats-parser.py` to turn the per-party
-     `temp/session_stats/` files into the threshold result CSVs.
+  5. invokes `session-stats-parser.py` on the campaign folder; the parser
+     reads each subfolder's `BENCH_PARAMS.txt` for run identity (protocol,
+     session type, num parties, malicious flag, num ctxts, …) and emits the
+     threshold result CSVs.
 
   Between each phase it tears the docker containers down via
   `cleanup_docker`, so each cluster starts from a clean slate.
@@ -320,6 +327,57 @@ results:
 - `non-threshold-parser.py` / `session-stats-parser.py` — post-process the
   raw benchmark / session-stats output into the CSVs expected by the
   submission.
+
+#### What makes a run usable to `session-stats-parser.py`
+
+A per-run subfolder is only accepted (aggregated and turned into CSV rows)
+if every participating party's `session_stats_<i>.txt` carries exactly the
+right number of metric lines for the run's declared schedule. Anything off
+— a wrong count, a missing party file — and the run is skipped (with a
+warning under `--warn`). The schedule is built from `BENCH_PARAMS.txt`'s
+`PROTOCOL` + `SESSION_TYPE` + `HAS_PRSS_INIT` / `HAS_CRS` / `HAS_RESHARE`
+flags + the modes listed in `DDEC_MODES`, in the order the test scripts
+call `mobygo` / `stairwayctl`.
+
+For TFHE runs (`PROTOCOL=tfhe`):
+
+1. `PRSS_INIT_Z64` — only if `HAS_PRSS_INIT=1` (small sessions only)
+2. `PRSS_INIT_Z128` — only if `HAS_PRSS_INIT=1` (small sessions only)
+3. `DKG_PREPROC`
+4. `DKG`
+5. `CRS_GEN` — only if `HAS_CRS=1`
+6. `RESHARE_PREPROC` — only if `HAS_RESHARE=1`
+7. `RESHARE` — only if `HAS_RESHARE=1`
+8. Then, for each mode in `DDEC_MODES` (typically `noise-flood-X` then
+   `bit-dec-X`), for each TFHE type in `bool, u4, u8, u16, u32, u64`:
+   - `<MODE>_<TYPE>_PREPROC`
+   - `<MODE>_<TYPE>_DDEC`
+
+That gives **31 lines** for a small-session run (2 PRSS + 2 DKG + 1 CRS + 2
+reshare + 2×6×2 DDEC sweep) and **29 lines** for a large-session run (no
+PRSS init).
+
+For BGV runs (`PROTOCOL=bgv`):
+
+1. `PRSS_INIT_LEVEL_ONE` — only if `HAS_PRSS_INIT=1`
+2. `PRSS_INIT_LEVEL_KSW` — only if `HAS_PRSS_INIT=1`
+3. `DKG_PREPROC`
+4. `DKG`
+5. `DDEC_PARALLEL_1`
+6. `DDEC_PARALLEL_2`
+7. `DDEC_PARALLEL_4`
+8. `DDEC_PARALLEL_8`
+9. `DDEC_PARALLEL_16`
+10. `DDEC_PARALLEL_32`
+
+That gives **10 lines** for any BGV run that does PRSS init (both kms
+reproducible and bench_nist do).
+
+Malicious runs (`MALICIOUS=1`, currently only
+`tfhe-bench-run-4p-malicious-bcast`): the parser drops the party with the
+fewest metric lines (the malicious party truncates early) and averages
+over the remaining `NUM_PARTIES - 1` files, which must each carry the
+full expected schedule.
 
 **NOTE**: The docker container also runs telemetry tools, therefore when
 running experiments, all telemetry data are exported to
