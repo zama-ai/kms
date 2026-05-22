@@ -188,7 +188,6 @@ pub(crate) mod tests {
     };
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
     use algebra::galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128};
-    #[cfg(feature = "slow_tests")]
     use algebra::matrix::VdmMatrix;
     use algebra::structure_traits::{One, Zero};
     use algebra::{
