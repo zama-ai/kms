@@ -135,7 +135,7 @@ impl MetaStoreStatusServiceImpl {
     /// - A request ID was not found in the store
     /// - There was an error accessing the store
     async fn get_store_status<T: Clone>(
-        store: &Arc<RwLock<MetaStore<T>>>,
+        store: &RwLock<MetaStore<T>>,
         store_type: MetaStoreType,
         request_ids: &[String],
     ) -> Result<Vec<RequestStatusInfo>, tonic::Status> {
@@ -246,7 +246,7 @@ impl MetaStoreStatusServiceImpl {
     /// - The page token is invalid
     /// - The store is not available
     async fn list_store_requests<T: Clone>(
-        store: &Arc<RwLock<MetaStore<T>>>,
+        store: &RwLock<MetaStore<T>>,
         store_type: MetaStoreType,
         status_filter: Option<RequestProcessingStatus>,
         max_results: Option<i32>,
@@ -384,7 +384,7 @@ impl MetaStoreStatusServiceImpl {
     /// # Returns
     /// A `MetaStoreInfo` containing the store's type, capacity, and current item count
     async fn get_store_info<T: Clone>(
-        store: &Arc<RwLock<MetaStore<T>>>,
+        store: &RwLock<MetaStore<T>>,
         store_type: MetaStoreType,
     ) -> MetaStoreInfo {
         let store_guard = store.read().await;

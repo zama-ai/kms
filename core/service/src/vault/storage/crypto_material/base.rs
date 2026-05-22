@@ -1065,7 +1065,7 @@ where
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
     meta_data: MetaT,
-    meta_store: &Arc<RwLock<MetaStore<MetaT>>>,
+    meta_store: &RwLock<MetaStore<MetaT>>,
     permit: MetaStorePermit,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {

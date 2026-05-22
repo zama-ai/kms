@@ -607,7 +607,7 @@ impl<
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
     /// This method also does NOT delete the preprocessing entry from the meta store
     async fn retrieve_preproc_handle(
-        bucket_metastore: &Arc<RwLock<MetaStore<BucketMetaStore>>>,
+        bucket_metastore: &RwLock<MetaStore<BucketMetaStore>>,
         key_req_id: RequestId,
         preproc_id: RequestId,
         params: Option<i32>,

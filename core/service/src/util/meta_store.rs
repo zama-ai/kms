@@ -472,7 +472,7 @@ impl<T> MetaStore<T> {
 
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn add_req_to_meta_store<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<MetaStorePermit, MetricedError> {
@@ -497,7 +497,7 @@ pub(crate) async fn update_req_in_meta_store<
     T,
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
 >(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit,
     result: Result<T, E>,
     request_metric: &'static str,
@@ -512,7 +512,7 @@ pub(crate) async fn update_req_in_meta_store<
 
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn update_ok_req_in_meta_store<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit,
     result: T,
     request_metric: &'static str,
@@ -535,7 +535,7 @@ pub(crate) async fn update_ok_req_in_meta_store<T>(
 /// Returns true if the update was successful, false otherwise.
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn update_err_req_in_meta_store<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit,
     error: String,
     request_metric: &'static str,
@@ -555,7 +555,7 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
 
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn delete_in_meta_store<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit,
     error: String,
     request_metric: &'static str,
@@ -586,7 +586,7 @@ pub(crate) async fn delete_in_meta_store<T>(
 /// sleeping, so other writers are not blocked.
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn retrieve_from_meta_store<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
     metric_scope: &'static str,
 ) -> Result<Arc<T>, MetricedError> {
@@ -621,7 +621,7 @@ enum PollOutcome<T> {
 
 #[cfg(feature = "non-wasm")]
 async fn poll_entry<T>(
-    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
     metric_scope: &'static str,
 ) -> PollOutcome<T> {
