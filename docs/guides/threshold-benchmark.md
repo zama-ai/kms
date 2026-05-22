@@ -379,6 +379,58 @@ fewest metric lines (the malicious party truncates early) and averages
 over the remaining `NUM_PARTIES - 1` files, which must each carry the
 full expected schedule.
 
+#### Output-column semantics
+
+The CSV columns are not raw cross-party averages — the parser applies a few
+transformations driven by the per-run `BENCH_PARAMS.txt`. Reading the CSVs
+without knowing these will yield wrong-looking numbers.
+
+1. **DKG offline cells are scaled by `100 / PERCENTAGE_OFFLINE`.** When the
+   DKG preproc was run on a fraction of the offline material to keep
+   wall-clock manageable, `session_stats` only reflects that fraction. The
+   four offline metric cells of every `DKG_PREPROC` row in
+   `TFHE_KeyGen_*.csv` / `BGV_KeyGen_*.csv`
+   (`offline_avg_latency_ms`, `offline_rounds`,
+   `offline_avg_bytes_sent_per_party`,
+   `offline_avg_bytes_received_per_party`) are therefore multiplied by
+   `100 / PERCENTAGE_OFFLINE` to project to a full offline phase. Memory
+   cells are NOT scaled (peak allocator usage doesn't grow with the offline
+   workload count). Scaling only fires for `DKG_PREPROC` — `RESHARE_PREPROC`
+   and the DDEC preproc labels always run at 100% offline.
+
+2. **TDec throughput is in LWE-ciphertexts per second.**
+   `offline_throughput_per_sec` and `online_throughput_per_sec` in
+   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` are computed as
+   `num_blocks * 1000 / per_radix_latency_ms`, where `num_blocks` is the
+   number of LWE ciphertexts a single radix message decomposes into. That
+   number is parameter-set dependent (see the parser's
+   `PARAMS_TO_BITS_PER_BLOCK` table — mirrors
+   `core/threshold-execution/src/tfhe_internals/parameters.rs::to_param`):
+   - 1 bit per block (`MessageModulus = 2`): the `nist-params-p8-*` family
+     (4 variants). A u64 message is 64 LWE blocks.
+   - 2 bits per block (`MessageModulus = 4`): everything else
+     (`nist-params-p32-*`, `bc-params-*`, `bc-params-nigel-*`,
+     `params-test-bk-sns`). A u64 message is 32 LWE blocks.
+   - `bool` is always exactly 1 LWE block regardless of params.
+
+   Unknown `PARAMS` values cause the parser to raise `ValueError` rather
+   than guess — add the new parameter set to `PARAMS_TO_BITS_PER_BLOCK` and
+   store `log2(message_modulus)` for it.
+
+3. **`num_ctxt` column carries the LWE-block count.** Despite its name and
+   its historical contents, the `num_ctxt` column in
+   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` now holds the LWE
+   ciphertext count, not the message bit-width. Combined with item 2 above,
+   `throughput == num_ctxt * 1000 / avg_latency_ms` is a built-in
+   self-check.
+
+4. **BGV metadata trailers are non-empty.** BGV runs write
+   `SESSION_TYPE=small` and `PARAMS=default` into `BENCH_PARAMS.txt` so the
+   trailing metadata columns (`session_type`, `params`) on `BGV_KeyGen` and
+   `BGV_TDec` rows are populated. The BGV `DDEC_PARALLEL_N` throughput
+   cell stays unchanged (`parallel_n * 1000 / per_ctxt_latency_ms`); BGV
+   has no radix decomposition so there's nothing to scale.
+
 **NOTE**: The docker container also runs telemetry tools, therefore when
 running experiments, all telemetry data are exported to
 [jaeger](http://localhost:16686) as well as locally exported in an
