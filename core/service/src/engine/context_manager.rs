@@ -12,7 +12,7 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
-use crate::util::meta_store::{MetaStorePermit, add_req_to_meta_store};
+use crate::util::meta_store::{MetaStorePermit, add_req_to_meta_store, delete_in_meta_store};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
@@ -210,6 +210,7 @@ where
         &self,
         request: tonic::Request<DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
+        // TODO validate thisn flow
         let context_id = parse_optional_grpc_request_id(
             &request.into_inner().context_id,
             RequestIdParsingErr::CustodianContextDestruction,
@@ -227,14 +228,9 @@ where
         // Use meta store as sync point
         let permit = {
             let mut cus_meta_store = self.custodian_meta_store.write().await;
-            cus_meta_store.lock_entry(&context_id).map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_CUSTODIAN_CONTEXT,
-                    Some(context_id),
-                    e,
-                    tonic::Code::FailedPrecondition,
-                )
-            })?
+            cus_meta_store
+                .lock_entry(&context_id)
+                .map_err(|e| e.into_metriced(OP_DESTROY_CUSTODIAN_CONTEXT))?
         };
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
@@ -264,6 +260,13 @@ where
                 tonic::Code::Internal,
             )
         })?;
+        delete_in_meta_store(
+            &self.custodian_meta_store,
+            permit,
+            "Failed to delete context".to_string(),
+            OP_DESTROY_CUSTODIAN_CONTEXT,
+        )
+        .await;
         Ok(Response::new(Empty {}))
     }
 

@@ -1,9 +1,9 @@
-use crate::{anyhow_error_and_log, some_or_err};
 use kms_grpc::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
+use thiserror::Error;
 use tracing;
 
 cfg_if::cfg_if! {
@@ -15,6 +15,83 @@ cfg_if::cfg_if! {
         use std::time::Duration;
         use tokio::sync::RwLock;
         use tokio::time::Instant;
+    }
+}
+
+/// Errors returned by [`MetaStore`] operations.
+///
+/// Each variant has a stable `tonic::Code` mapping via [`MetaStoreError::code`]
+/// (non-wasm only), so callers can convert into a `MetricedError` without
+/// hand-coding the code per callsite.
+#[derive(Error, Debug)]
+pub enum MetaStoreError {
+    /// `insert` saw an entry already stored at this request id.
+    #[error("the element with ID {req_id} already exists; cannot insert twice")]
+    AlreadyExists { req_id: RequestId },
+
+    /// `insert` could not make room: the store is at capacity and the
+    /// completed-cache is at or below its minimum size.
+    #[error(
+        "meta store is full and the completed cache is at its minimum size; cannot insert {req_id}"
+    )]
+    CapacityFull { req_id: RequestId },
+
+    /// No entry exists for this request id.
+    #[error("the element with ID {req_id} does not exist")]
+    NotFound { req_id: RequestId },
+
+    /// Entry is in an in-flight state: either still `Pending` or another
+    /// caller holds a live `MetaStorePermit`. Both situations block mutation
+    /// and the caller may want to retry once the holder is done.
+    #[error("the element with ID {req_id} is locked (pending or held by another permit)")]
+    Locked { req_id: RequestId },
+
+    /// Entry is in a state from which the requested mutation cannot proceed:
+    /// either already tombstoned (`Deleted`), or its value is already set
+    /// (`Done`) when the caller expected `Pending`. Permanent — retrying
+    /// will not unblock.
+    #[error("the element with ID {req_id} cannot be updated (deleted or already set)")]
+    CannotUpdate { req_id: RequestId },
+
+    /// Storage / queue invariant breakage. Should be unreachable in correct
+    /// execution; surfaced rather than panicked so the calling RPC can fail
+    /// gracefully while we still log loudly at the construction site.
+    #[error("meta store invariant violated: {0}")]
+    Invariant(String),
+}
+
+#[cfg(feature = "non-wasm")]
+impl MetaStoreError {
+    /// gRPC code that best describes the failure to a remote caller.
+    pub fn code(&self) -> tonic::Code {
+        use MetaStoreError::*;
+        match self {
+            AlreadyExists { .. } => tonic::Code::AlreadyExists,
+            CapacityFull { .. } => tonic::Code::ResourceExhausted,
+            NotFound { .. } => tonic::Code::NotFound,
+            Locked { .. } | CannotUpdate { .. } => tonic::Code::FailedPrecondition,
+            Invariant(_) => tonic::Code::Internal,
+        }
+    }
+
+    /// Request id this error is about, if it is request-scoped.
+    pub fn req_id(&self) -> Option<RequestId> {
+        use MetaStoreError::*;
+        match self {
+            AlreadyExists { req_id }
+            | CapacityFull { req_id }
+            | NotFound { req_id }
+            | Locked { req_id }
+            | CannotUpdate { req_id } => Some(*req_id),
+            Invariant(_) => None,
+        }
+    }
+
+    /// Convert into a [`MetricedError`] using the caller's operation metric.
+    pub fn into_metriced(self, op_metric: &'static str) -> MetricedError {
+        let code = self.code();
+        let req_id = self.req_id();
+        MetricedError::new(op_metric, req_id, self, code)
     }
 }
 
@@ -191,30 +268,35 @@ impl<T> MetaStore<T> {
     /// This ensures:
     /// 1. there are never more than [capacity] - [min_cache] elements currently being processed, and
     /// 2. there is enough time to retrieve an element before it is removed.
-    pub fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<MetaStorePermit> {
+    pub fn insert(&mut self, request_id: &RequestId) -> Result<MetaStorePermit, MetaStoreError> {
         // `Deleted` is a permanent tombstone: a request id, once deleted, may
         // not be reused for a fresh insert. Callers that need to overwrite an
         // existing entry should use [`replace_done`] instead.
         if self.storage.contains_key(request_id) {
-            return Err(anyhow::anyhow!(
-                "The element with ID {request_id} already stored exists. Can not insert it more than once.",
-            ));
+            return Err(MetaStoreError::AlreadyExists {
+                req_id: *request_id,
+            });
         }
         if self.storage.len() >= self.capacity {
             if self.complete_queue.len() <= self.min_cache {
-                return Err(anyhow_error_and_log(
-                    "The system is fully loaded and the cache of finished elements is not at minimum size yet. Cannot insert new element.",
-                ));
+                return Err(MetaStoreError::CapacityFull {
+                    req_id: *request_id,
+                });
             } else {
-                let old_request_id = some_or_err(
-                    self.complete_queue.pop_front(),
-                    "Could not remove an old request from the cache".to_string(),
-                )?;
+                let old_request_id = self.complete_queue.pop_front().ok_or_else(|| {
+                    let msg = format!(
+                        "complete_queue empty but len > min_cache while inserting {request_id}"
+                    );
+                    tracing::error!(msg);
+                    MetaStoreError::Invariant(msg)
+                })?;
                 if self.storage.remove(&old_request_id).is_none() {
                     self.complete_queue.push_front(old_request_id);
-                    return Err(anyhow_error_and_log(format!(
-                        "Failed to remove old element {old_request_id} from storage, invariant preserved"
-                    )));
+                    let msg = format!(
+                        "failed to remove old element {old_request_id} from storage while inserting {request_id}"
+                    );
+                    tracing::error!(msg);
+                    return Err(MetaStoreError::Invariant(msg));
                 }
             }
         }
@@ -228,34 +310,30 @@ impl<T> MetaStore<T> {
         Ok(permit)
     }
 
-    pub fn lock_entry(&mut self, request_id: &RequestId) -> anyhow::Result<MetaStorePermit> {
+    pub fn lock_entry(
+        &mut self,
+        request_id: &RequestId,
+    ) -> Result<MetaStorePermit, MetaStoreError> {
         let claim = {
-            let entry = self.storage.get(request_id).ok_or_else(|| {
-                anyhow_error_and_log(format!(
-                    "The element with ID {request_id} does not exist, locking is not allowed"
-                ))
-            })?;
+            let entry = self
+                .storage
+                .get(request_id)
+                .ok_or(MetaStoreError::NotFound {
+                    req_id: *request_id,
+                })?;
             match entry {
-                StoredEntry::Pending(arc) => {
+                StoredEntry::Pending(arc) | StoredEntry::Done(_, arc) => {
                     if Arc::strong_count(arc) > 1 {
-                        anyhow::bail!(
-                            "The element with ID {request_id} is currently already locked"
-                        );
-                    }
-                    Arc::clone(arc)
-                }
-                StoredEntry::Done(_, arc) => {
-                    if Arc::strong_count(arc) > 1 {
-                        anyhow::bail!(
-                            "The element with ID {request_id} is currently already locked"
-                        );
+                        return Err(MetaStoreError::Locked {
+                            req_id: *request_id,
+                        });
                     }
                     Arc::clone(arc)
                 }
                 StoredEntry::Deleted => {
-                    return Err(anyhow_error_and_log(format!(
-                        "The element with ID {request_id} has been deleted, locking is not allowed"
-                    )));
+                    return Err(MetaStoreError::CannotUpdate {
+                        req_id: *request_id,
+                    });
                 }
             }
         };
@@ -273,17 +351,18 @@ impl<T> MetaStore<T> {
     ///
     /// Returns an error if the element does not exist, has already been
     /// completed, or has been deleted.
-    fn update(&mut self, update: Result<T, String>, permit: MetaStorePermit) -> anyhow::Result<()> {
+    fn update(
+        &mut self,
+        update: Result<T, String>,
+        permit: MetaStorePermit,
+    ) -> Result<(), MetaStoreError> {
         let req_id = permit.req_id;
-        let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
-            anyhow_error_and_log(format!(
-                "The element with ID {req_id} does not exist, update is not allowed"
-            ))
-        })?;
+        let cell = self
+            .storage
+            .get_mut(&req_id)
+            .ok_or(MetaStoreError::NotFound { req_id })?;
         if !matches!(cell, StoredEntry::Pending(_)) {
-            return Err(anyhow_error_and_log(format!(
-                "The element with ID {req_id} is not in a pending state, update is not allowed"
-            )));
+            return Err(MetaStoreError::CannotUpdate { req_id });
         }
         *cell = StoredEntry::done(update.map(Arc::new));
         self.complete_queue.push_back(req_id);
@@ -301,24 +380,22 @@ impl<T> MetaStore<T> {
     /// the standard `insert → update` lifecycle. Bypasses the permit
     /// mechanism on purpose: no live permit can exist for a `Done` entry, and
     /// fresh inserts via this path are explicitly admin-scoped.
-    pub fn replace_done(&mut self, permit: MetaStorePermit, value: T) -> anyhow::Result<()> {
+    pub fn replace_done(
+        &mut self,
+        permit: MetaStorePermit,
+        value: T,
+    ) -> Result<(), MetaStoreError> {
         let request_id = permit.req_id;
         match self.storage.get(&request_id) {
             Some(StoredEntry::Pending(_)) => {
-                return Err(anyhow_error_and_log(format!(
-                    "The element with ID {request_id} is currently pending, replace_done is not allowed"
-                )));
+                return Err(MetaStoreError::Locked { req_id: request_id });
             }
             Some(StoredEntry::Deleted) => {
-                return Err(anyhow_error_and_log(format!(
-                    "The element with ID {request_id} has been deleted, replace_done is not allowed"
-                )));
+                return Err(MetaStoreError::CannotUpdate { req_id: request_id });
             }
             Some(StoredEntry::Done(_, claim)) => {
                 if Arc::strong_count(claim) > 1 {
-                    return Err(anyhow_error_and_log(format!(
-                        "The element with ID {request_id} is currently locked, replace_done is not allowed"
-                    )));
+                    return Err(MetaStoreError::Locked { req_id: request_id });
                 }
                 // Existing Done entry — overwrite in place, keep complete_queue slot.
                 self.storage
@@ -346,13 +423,14 @@ impl<T> MetaStore<T> {
     /// Mark an existing entry as deleted, regardless of whether it was Pending
     /// or Done. Consumes the permit. Returns the previous state. If the previous
     /// state was `Done`, the entry is also removed from the completion queue.
-    fn delete(&mut self, permit: MetaStorePermit) -> anyhow::Result<EntryState<T>> {
+    fn delete(&mut self, permit: MetaStorePermit) -> Result<EntryState<T>, MetaStoreError> {
         let req_id = permit.req_id;
-        let cell = self.storage.get_mut(&req_id).ok_or_else(|| {
-            anyhow::anyhow!("The element with ID {req_id} does not exist, deletion is not allowed")
-        })?;
+        let cell = self
+            .storage
+            .get_mut(&req_id)
+            .ok_or(MetaStoreError::NotFound { req_id })?;
         if matches!(cell, StoredEntry::Deleted) {
-            anyhow::bail!("The element with ID {req_id} has already been deleted");
+            return Err(MetaStoreError::CannotUpdate { req_id });
         }
         // TODO don't use mem replace
         let old = std::mem::replace(cell, StoredEntry::Deleted);
@@ -365,24 +443,27 @@ impl<T> MetaStore<T> {
     /// Like [`delete`], but for callers that do not hold a permit. Succeeds
     /// for any non-Deleted state when no live permit is outstanding. Returns
     /// the previous state.
-    pub fn try_delete(&mut self, request_id: &RequestId) -> anyhow::Result<EntryState<T>> {
+    pub fn try_delete(&mut self, request_id: &RequestId) -> Result<EntryState<T>, MetaStoreError> {
         {
-            let entry = self.storage.get(request_id).ok_or_else(|| {
-                anyhow_error_and_log(format!(
-                    "The element with ID {request_id} does not exist, deletion is not allowed"
-                ))
-            })?;
+            let entry = self
+                .storage
+                .get(request_id)
+                .ok_or(MetaStoreError::NotFound {
+                    req_id: *request_id,
+                })?;
             match entry {
                 StoredEntry::Pending(arc) => {
                     if Arc::strong_count(arc) > 1 {
-                        anyhow::bail!(
-                            "The element with ID {request_id} is currently locked and cannot be deleted"
-                        );
+                        return Err(MetaStoreError::Locked {
+                            req_id: *request_id,
+                        });
                     }
                 }
                 StoredEntry::Done(_, _) => { /* no permit possible on Done */ }
                 StoredEntry::Deleted => {
-                    anyhow::bail!("The element with ID {request_id} has already been deleted");
+                    return Err(MetaStoreError::CannotUpdate {
+                        req_id: *request_id,
+                    });
                 }
             }
         }
@@ -476,20 +557,11 @@ pub(crate) async fn add_req_to_meta_store<T>(
     req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<MetaStorePermit, MetricedError> {
-    let mut guard = meta_store.write().await;
-    if guard.exists(req_id) {
-        return Err(MetricedError::new(
-            request_metric,
-            Some(*req_id),
-            anyhow::anyhow!("Duplicate request ID in meta store"),
-            tonic::Code::AlreadyExists,
-        )); // TODO remove once we gustom error to allow to return already exits 
-    }
-    guard.insert(req_id).map_err(|e| {
-        // We likely reached capacity here
-        // TODO update
-        MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
-    })
+    meta_store
+        .write()
+        .await
+        .insert(req_id)
+        .map_err(|e| e.into_metriced(request_metric))
 }
 
 #[cfg(feature = "non-wasm")]
@@ -791,5 +863,80 @@ mod tests {
         // moved into tokio::spawn closures.
         fn assert_send<T: Send>() {}
         assert_send::<MetaStorePermit>();
+    }
+
+    #[test]
+    fn error_variants() {
+        let mut store: MetaStore<String> = MetaStore::new(1, 1);
+        let id = derive_request_id("err-variant").unwrap();
+        let permit = store.insert(&id).unwrap();
+        assert!(matches!(
+            store.insert(&id),
+            Err(MetaStoreError::AlreadyExists { .. })
+        ));
+        let id2 = derive_request_id("err-variant-2").unwrap();
+        assert!(matches!(
+            store.insert(&id2),
+            Err(MetaStoreError::CapacityFull { .. })
+        ));
+
+        let missing = derive_request_id("err-missing").unwrap();
+        assert!(matches!(
+            store.lock_entry(&missing),
+            Err(MetaStoreError::NotFound { .. })
+        ));
+        assert!(matches!(
+            store.lock_entry(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+
+        // Drop the permit, mark id done, then attempt update again to hit CannotUpdate.
+        store.update(Ok("OK".to_string()), permit).unwrap();
+        let permit2 = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.update(Ok("again".to_string()), permit2),
+            Err(MetaStoreError::CannotUpdate { .. })
+        ));
+
+        // After deletion, try_delete reports CannotUpdate.
+        store.try_delete(&id).unwrap();
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::CannotUpdate { .. })
+        ));
+    }
+
+    #[cfg(feature = "non-wasm")]
+    #[test]
+    fn error_code_mapping() {
+        let id = RequestId::zeros();
+        assert_eq!(
+            MetaStoreError::AlreadyExists { req_id: id }.code(),
+            tonic::Code::AlreadyExists
+        );
+        assert_eq!(
+            MetaStoreError::CapacityFull { req_id: id }.code(),
+            tonic::Code::ResourceExhausted
+        );
+        assert_eq!(
+            MetaStoreError::NotFound { req_id: id }.code(),
+            tonic::Code::NotFound
+        );
+        assert_eq!(
+            MetaStoreError::Locked { req_id: id }.code(),
+            tonic::Code::FailedPrecondition
+        );
+        assert_eq!(
+            MetaStoreError::CannotUpdate { req_id: id }.code(),
+            tonic::Code::FailedPrecondition
+        );
+        assert_eq!(
+            MetaStoreError::Invariant("x".into()).code(),
+            tonic::Code::Internal
+        );
     }
 }
