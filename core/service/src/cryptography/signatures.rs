@@ -4,14 +4,12 @@ use crate::{
     impl_generic_versionize,
 };
 use ::signature::{Signer, Verifier};
-use aes_prng::AesRng;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
-use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use std::sync::Arc;
 use strum_macros::Display;
@@ -266,25 +264,18 @@ struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
 impl Zeroize for WrappedSigningKey {
-    // We want to allow unused assignments here as we are intentionally overwriting the key material
-    #[warn(unused_assignments)]
     fn zeroize(&mut self) {
-        let mut rng = AesRng::seed_from_u64(0);
-        // The simplest way is to overwrite the entire key with a random, static key, since we cannot directly zerorize the content of the key
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        // SAFETY: We're modifying a local copy of the key bytes, but this does not modify the actual key in memory.
-        // To securely zeroize the key, use the Zeroize trait on the underlying scalar or key type if available.
-        unsafe {
-            std::ptr::write(self, sk.sk);
-        }
+        // Swap in a known-valid dummy and let the original drop —
+        // `SigningKey<Secp256k1>: ZeroizeOnDrop` wipes its scalar.
+        // `[1u8; 32]` is `0x0101…01` ≪ secp256k1 order `n`, so
+        // `from_slice` accepts it (rejects only len ≠ 32, scalar = 0,
+        // or scalar ≥ n; length is fixed by `FieldBytesSize = U32`).
+        let dummy = SigningKey::from_slice(&[1u8; 32]).expect("0x0101…01 < secp256k1 n");
+        let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
 
-impl Drop for WrappedSigningKey {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
+impl zeroize::ZeroizeOnDrop for WrappedSigningKey {}
 
 impl Serialize for WrappedSigningKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

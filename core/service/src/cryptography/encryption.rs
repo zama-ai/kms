@@ -302,26 +302,19 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
 pub struct PrivateEncKey<C: KemCore>(pub(crate) C::DecapsulationKey);
 
+// Swap in a dummy and let the original drop —
+// `ml_kem::DecapsulationKey: ZeroizeOnDrop` (workspace `zeroize` feature)
+// wipes `dk_pke` and `z` on the replaced value. The dummy is built from
+// zero `Encoded<DecapsulationKey>` bytes; `from_bytes` is infallible
+// (it only splits the input into the key's structural fields).
 impl<C: KemCore> Zeroize for PrivateEncKey<C> {
     fn zeroize(&mut self) {
-        // Directly zeroize the underlying key bytes without creating copies
-        // This is more secure as it avoids temporary allocations of sensitive data
-        let key_bytes_ptr = self.0.as_bytes().as_ptr() as *mut u8;
-        let key_len = self.0.as_bytes().len();
-
-        // SAFETY: We're zeroizing the memory that belongs to this struct
-        // The pointer is valid and the length is correct from as_bytes()
-        unsafe {
-            std::ptr::write_bytes(key_bytes_ptr, 0, key_len);
-        }
+        let dummy = C::DecapsulationKey::from_bytes(&Default::default());
+        let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
 
-impl<C: KemCore> Drop for PrivateEncKey<C> {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
+impl<C: KemCore> zeroize::ZeroizeOnDrop for PrivateEncKey<C> {}
 
 impl<C: KemCore> Clone for PrivateEncKey<C> {
     fn clone(&self) -> Self {
