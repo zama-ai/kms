@@ -1,7 +1,8 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
-use crate::backup::operator::DSEP_BACKUP_RECOVERY;
+use crate::backup::operator::BackupMaterial;
 use crate::consts::DEFAULT_EPOCH_ID;
+use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
@@ -21,7 +22,6 @@ use crate::{
             Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
         },
         signatures::{PrivateSigKey, PublicSigKey},
-        signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
     },
     engine::{
         base::BaseKmsStruct, threshold::service::ThresholdFheKeys, traits::BackupOperator,
@@ -38,6 +38,7 @@ use crate::{
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
     RequestId,
@@ -123,8 +124,6 @@ where
         let recovery_request = RecoveryRequest {
             ephem_op_enc_key: serialized_pub_key,
             cts: grpc_cts,
-            backup_id: Some(backup_id.into()),
-            operator_verification_key: bc2wrap::serialize(&self.base_kms.verf_key())?,
         };
         tracing::info!(
             "Generated outer recovery request for backup_id/context_id={}",
@@ -137,16 +136,16 @@ where
         ))
     }
 
+    /// Validate the recovery request from the custodian and return the fully-validated, decrypted
+    /// per-role `BackupMaterial`s.
+    ///
+    /// Returns (validated_rec, operator).
     pub(crate) async fn validate_custodian_backup_recovery_request(
         &self,
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(
-        RequestId,
-        RecoveryValidationMaterial,
-        HashMap<Role, InternalCustodianRecoveryOutput>,
-    )> {
+    ) -> anyhow::Result<(HashMap<Role, BackupMaterial>, Operator)> {
         let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -159,32 +158,37 @@ where
             )
             .await?
         };
-        let parsed_custodian_rec = {
-            filter_custodian_data(
-                req.custodian_recovery_outputs,
-                &recovery_material,
-                &self.base_kms.verf_key(),
-                ephemeral_dec_key,
-                ephemeral_enc_key,
-            )
-            .await?
-        };
-        // Check that we have enough valid recovery outputs
-        if parsed_custodian_rec.len()
-            < (recovery_material.custodian_context().threshold as usize) + 1
-        {
+        // The MPC context to validate against is taken from the operator-signed `RecoveryValidationMaterial`
+        // stored at backup time. `filter_custodian_data` enforces the per-share equality.
+        let mpc_context_id = recovery_material.mpc_context();
+        if !mpc_context_id.is_valid() {
             return Err(anyhow::anyhow!(
-                "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-                parsed_custodian_rec.len(),
-                recovery_material.custodian_context().threshold
+                "Invalid MPC context ID in recovery validation material"
             ));
         }
 
-        Ok((
-            custodian_context_id,
-            recovery_material,
-            parsed_custodian_rec,
-        ))
+        let amount_custodians = recovery_material.custodian_context().custodian_nodes.len();
+        let operator = Operator::new_for_validating(
+            recovery_material
+                .custodian_context()
+                .custodian_nodes
+                .values()
+                .cloned()
+                .collect_vec(),
+            (*self.base_kms.verf_key()).clone(),
+            recovery_material.custodian_context().threshold as usize,
+            amount_custodians,
+        )?;
+
+        let validated_rec = filter_custodian_data(
+            req.custodian_recovery_outputs,
+            &operator,
+            &recovery_material,
+            ephemeral_dec_key,
+            ephemeral_enc_key,
+        )
+        .await?;
+        Ok((validated_rec, operator))
     }
 }
 
@@ -351,7 +355,7 @@ where
             }
         };
         let inner = request.into_inner();
-        let (context_id, recovery_material, parsed_custodian_rec) = self
+        let (parsed_custodian_rec, operator) = self
             .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
@@ -372,43 +376,16 @@ where
                     backup_vault.lock().await;
                 match backup_vault.keychain {
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
-                        // Amount of custodians get defined during context creation
-                        let amount_custodians = recovery_material
-                            .payload
-                            .custodian_context
-                            .custodian_nodes
-                            .len();
-                        let operator = Operator::new_for_validating(
-                            recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
-                            (*self.base_kms.verf_key()).clone(),
-                            recovery_material.custodian_context().threshold as usize,
-                            amount_custodians,
-                        ).map_err(|e| {
-                            MetricedError::new(
-                                OP_CUSTODIAN_BACKUP_RECOVERY,
-                                None,
-                                anyhow::anyhow!("Failed to create operator for secret sharing based decryption: {e}"),
-                                tonic::Code::Internal,
-                            )
-                        })?;
-                        let custodian_outputs: Vec<InternalCustodianRecoveryOutput> =
-                            parsed_custodian_rec.values().cloned().collect();
                         let serialized_dec_key = operator
-                            .verify_and_recover(
-                                &custodian_outputs,
-                                &recovery_material,
-                                context_id,
-                                &ephemeral_dec_key,
-                                &ephemeral_enc_key,
-                            )
+                            .recover_from_validated(&parsed_custodian_rec)
                             .map_err(|e| {
                                 MetricedError::new(
                                     OP_CUSTODIAN_BACKUP_RECOVERY,
                                     None,
                                     anyhow::anyhow!(
-                                        "Failed to verify the backup decryption request: {e}"
+                                        "Failed to reconstruct the backup decryption key: {e}"
                                     ),
-                                    tonic::Code::Unauthenticated,
+                                    tonic::Code::Internal,
                                 )
                             })?;
                         let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
@@ -519,7 +496,7 @@ where
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
-    custodian_context_id: &RequestId,
+    custodian_context_id: &ContextId,
     verf_key: &Arc<PublicSigKey>,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
@@ -528,11 +505,11 @@ where
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
         .read_data(
-            custodian_context_id,
+            &(*custodian_context_id).into(),
             &PubDataType::RecoveryMaterial.to_string(),
         )
         .await?;
-    if &recovery_material.custodian_context().context_id != custodian_context_id {
+    if recovery_material.custodian_context().context_id != (*custodian_context_id).into() {
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
     }
     if !recovery_material.validate(verf_key) {
@@ -541,31 +518,23 @@ where
     Ok(recovery_material)
 }
 
-/// Filter and validate the custodian recovery outputs, returning a map from custodian role to recovery output
-/// Each output is verified to be correctly signed by the custodian and to be intended for the current operator role.
+/// Proto-side adapter for the operator-side validator.
+/// Validates and unsigncrypts the [`BackupMaterial`] of the custodians.
 async fn filter_custodian_data(
     custodian_recovery_outputs: Vec<CustodianRecoveryOutput>,
+    operator: &Operator,
     recovery_material: &RecoveryValidationMaterial,
-    my_verf_key: &PublicSigKey,
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
-) -> anyhow::Result<HashMap<Role, InternalCustodianRecoveryOutput>> {
-    let mut parsed_custodian_rec: HashMap<Role, InternalCustodianRecoveryOutput> = HashMap::new();
+) -> anyhow::Result<HashMap<Role, BackupMaterial>> {
+    // Use the number of custodian nodes that was part of the context, not the amount we have received from
+    let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
+    let mut parsed_custodian_rec: HashMap<Role, BackupMaterial> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
+
     for cur_recovery_output in &custodian_recovery_outputs {
-        let current_verf_key: PublicSigKey =
-            bc2wrap::deserialize_safe(&cur_recovery_output.operator_verification_key)?;
-        if current_verf_key != *my_verf_key {
-            tracing::warn!(
-                "Received recovery output for operator {}, but current server is {}. The output will be ignored.",
-                current_verf_key.address(),
-                my_verf_key.address(),
-            );
-            skip_reasons.push(RecoverySkipReason::WrongOperator);
-            continue;
-        }
         if cur_recovery_output.custodian_role == 0
-            || cur_recovery_output.custodian_role > custodian_recovery_outputs.len() as u64
+            || cur_recovery_output.custodian_role > outputs_len as u64
         {
             tracing::warn!(
                 "Received recovery output with invalid custodian role {}. The output will be ignored.",
@@ -574,28 +543,9 @@ async fn filter_custodian_data(
             skip_reasons.push(RecoverySkipReason::InvalidRole);
             continue;
         }
-        let cur_verf = match recovery_material.custodian_context().custodian_nodes.get(
-            &Role::indexed_from_one(cur_recovery_output.custodian_role as usize),
-        ) {
-            Some(custodian_setup_msg) => &custodian_setup_msg.public_verf_key,
-            None => {
-                tracing::warn!(
-                    "Could not find verification key for custodian role {}",
-                    cur_recovery_output.custodian_role
-                );
-                skip_reasons.push(RecoverySkipReason::MissingVerificationKey);
-                continue;
-            }
-        };
+        let role = Role::indexed_from_one(cur_recovery_output.custodian_role as usize);
 
-        let verf_key_id = my_verf_key.verf_key_id();
-        let unsign_key = UnifiedUnsigncryptionKey::new(
-            ephemeral_dec_key,
-            ephemeral_enc_key,
-            cur_verf,
-            &verf_key_id,
-        );
-        let cur_signcryption = match &cur_recovery_output.backup_output {
+        let cur_signcryption: UnifiedSigncryption = match &cur_recovery_output.backup_output {
             Some(cur_op_out) => cur_op_out.try_into()?,
             None => {
                 tracing::warn!(
@@ -606,40 +556,29 @@ async fn filter_custodian_data(
                 continue;
             }
         };
-        if unsign_key
-            .validate_signcryption(&DSEP_BACKUP_RECOVERY, &cur_signcryption)
-            .is_err()
-        {
-            tracing::warn!(
-                "Could not validate signcryption for custodian role {}",
-                cur_recovery_output.custodian_role
-            );
-            skip_reasons.push(RecoverySkipReason::InvalidSigncryption);
-            continue;
-        }
-        match <InternalCustodianRecoveryOutput as TryFrom<_>>::try_from(
-            cur_recovery_output.to_owned(),
+        let internal = InternalCustodianRecoveryOutput {
+            signcryption: cur_signcryption,
+            custodian_role: role,
+        };
+
+        match operator.validate_one_recovery_output(
+            &internal,
+            recovery_material,
+            ephemeral_dec_key,
+            ephemeral_enc_key,
         ) {
-            Ok(output) => match parsed_custodian_rec.entry(output.custodian_role) {
+            Ok(backup_material) => match parsed_custodian_rec.entry(role) {
                 std::collections::hash_map::Entry::Occupied(_) => {
                     tracing::warn!(
-                        "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
-                        current_verf_key.address(),
+                        "Received multiple recovery outputs for custodian role {role}. Only the first one will be used."
                     );
                     skip_reasons.push(RecoverySkipReason::DuplicateRole);
                 }
                 std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(output);
+                    vacant_entry.insert(backup_material);
                 }
             },
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
-                    current_verf_key.address(),
-                );
-                skip_reasons.push(RecoverySkipReason::ParseError);
-                continue;
-            }
+            Err(reason) => skip_reasons.push(reason),
         }
     }
     let threshold = recovery_material.custodian_context().threshold as usize;
@@ -1232,21 +1171,14 @@ mod tests {
         (rec_material, verf_key, dec_key, enc_key)
     }
 
-    fn dummy_output_for_operator(
-        custodian_role: u64,
-        operator_verification_key: PublicSigKey,
-    ) -> CustodianRecoveryOutput {
+    fn dummy_output_for_operator(custodian_role: u64) -> CustodianRecoveryOutput {
         CustodianRecoveryOutput {
             custodian_role,
-            // TODO(zama-ai/kms-internal/issues/2836)
-            // we may change how the verification key is serialized
-            operator_verification_key: bc2wrap::serialize(&operator_verification_key).unwrap(),
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],
                 pke_type: 0,
                 signing_type: 0,
             }),
-            mpc_context_id: Some(kms_grpc::RequestId::from_bytes([7u8; 32]).into()),
         }
     }
 
@@ -1264,104 +1196,117 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_filter_custodian_missing_cus_output() {
-        let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let mut outputs = vec![dummy_output_for_operator(1, verf_key.clone())];
-        let cus_2 = CustodianRecoveryOutput {
-            custodian_role: 2,
-            operator_verification_key: bc2wrap::serialize(&verf_key).unwrap(),
-            backup_output: None, // Missing backup output for custodian role 2
-            mpc_context_id: Some(kms_grpc::RequestId::from_bytes([7u8; 32]).into()),
-        };
-        outputs.push(cus_2);
+    /// Build the recovering `Operator` from a `RecoveryValidationMaterial` for tests that call
+    /// `filter_custodian_data` directly.
+    fn build_operator_from_recovery_material(
+        recovery_material: &RecoveryValidationMaterial,
+        verf_key: &PublicSigKey,
+    ) -> Operator {
+        let amount_custodians = recovery_material.custodian_context().custodian_nodes.len();
+        Operator::new_for_validating(
+            recovery_material
+                .custodian_context()
+                .custodian_nodes
+                .values()
+                .cloned()
+                .collect_vec(),
+            verf_key.clone(),
+            recovery_material.custodian_context().threshold as usize,
+            amount_custodians,
+        )
+        .expect("operator construction for test")
+    }
+
+    async fn run_filter_expect_skip(
+        outputs: Vec<CustodianRecoveryOutput>,
+        recovery_material: &RecoveryValidationMaterial,
+        verf_key: &PublicSigKey,
+        dec_key: &UnifiedPrivateEncKey,
+        enc_key: &UnifiedPublicEncKey,
+        expected: RecoverySkipReason,
+    ) {
+        let operator = build_operator_from_recovery_material(recovery_material, verf_key);
         let result =
-            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
+            filter_custodian_data(outputs, &operator, recovery_material, dec_key, enc_key).await;
         let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
         assert_eq!(received, 0);
         assert!(
-            skipped.contains(&RecoverySkipReason::MissingSigncryption),
-            "expected MissingSigncryption in skip reasons: {skipped:?}"
+            skipped.contains(&expected),
+            "expected {expected:?} in skip reasons: {skipped:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_filter_custodian_missing_cus_output() {
+        let (rec, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
+        let outputs = vec![
+            dummy_output_for_operator(1),
+            CustodianRecoveryOutput {
+                custodian_role: 2,
+                backup_output: None,
+            },
+        ];
+        run_filter_expect_skip(
+            outputs,
+            &rec,
+            &verf_key,
+            &dec_key,
+            &enc_key,
+            RecoverySkipReason::MissingSigncryption,
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
-        let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let outputs = vec![dummy_output_for_operator(1, verf_key.clone())];
+        let (rec, _verf_key, dec_key, enc_key) = dummy_recovery_material(1);
         let (bad_verf_key, _bad_sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(42));
-        let result = filter_custodian_data(
-            outputs,
-            &recovery_material,
+        run_filter_expect_skip(
+            vec![dummy_output_for_operator(1)],
+            &rec,
             &bad_verf_key,
             &dec_key,
             &enc_key,
+            RecoverySkipReason::InvalidSigncryption,
         )
         .await;
-        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
-        assert_eq!(received, 0);
-        assert!(
-            skipped.contains(&RecoverySkipReason::WrongOperator),
-            "expected WrongOperator in skip reasons: {skipped:?}"
-        );
     }
 
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
-        let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let outputs = vec![
-            dummy_output_for_operator(0, verf_key.clone()), // custodian_role == 0
-            dummy_output_for_operator(99, verf_key.clone()), // custodian_role out of bounds
-        ];
-        let result =
-            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
-        assert_eq!(received, 0);
-        assert!(
-            skipped.contains(&RecoverySkipReason::InvalidRole),
-            "expected InvalidRole in skip reasons: {skipped:?}"
-        );
+        let (rec, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
+        run_filter_expect_skip(
+            vec![
+                dummy_output_for_operator(0),  // custodian_role == 0
+                dummy_output_for_operator(99), // custodian_role out of bounds
+            ],
+            &rec,
+            &verf_key,
+            &dec_key,
+            &enc_key,
+            RecoverySkipReason::InvalidRole,
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_signature() {
-        let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let outputs = vec![
-            dummy_output_for_operator(1, verf_key.clone()),
-            dummy_output_for_operator(2, verf_key.clone()),
-            dummy_output_for_operator(3, verf_key.clone()),
-        ];
-        let result =
-            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
-        assert_eq!(received, 0);
-        assert!(
-            skipped.contains(&RecoverySkipReason::InvalidSigncryption),
-            "expected InvalidSigncryption in skip reasons: {skipped:?}"
-        );
+        let (rec, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
+        run_filter_expect_skip(
+            vec![
+                dummy_output_for_operator(1),
+                dummy_output_for_operator(2),
+                dummy_output_for_operator(3),
+            ],
+            &rec,
+            &verf_key,
+            &dec_key,
+            &enc_key,
+            RecoverySkipReason::InvalidSigncryption,
+        )
+        .await;
     }
 
-    #[tokio::test]
-    async fn test_filter_custodian_data_missing_verification_key() {
-        let (mut recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        recovery_material
-            .payload
-            .custodian_context
-            .custodian_nodes
-            .remove(&Role::indexed_from_one(2));
-        let outputs = vec![
-            dummy_output_for_operator(1, verf_key.clone()),
-            dummy_output_for_operator(2, verf_key.clone()),
-        ];
-        let result =
-            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
-        assert_eq!(received, 0);
-        assert!(
-            skipped.contains(&RecoverySkipReason::MissingVerificationKey),
-            "expected MissingVerificationKey in skip reasons: {skipped:?}"
-        );
-    }
     #[tokio::test]
     async fn test_update_backup_vault() {
         let mut priv_storage = RamStorage::new();
