@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 
 
 # TFHE message types and their bit widths. bool is reported with bit_width = 1.
+# Both the operation-schedule builder and the TDec row emitter iterate
+# TFHE_TYPES, so this list must match the DDEC loop in the bench scripts
+# (kms tfhe_reproducible_common.sh / bench_nist tfhe_bench_common.sh).
 TFHE_TYPES = ["bool", "u4", "u8", "u16", "u32", "u64"]
 TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "bool": 1,
@@ -58,12 +61,77 @@ TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "u32": 32,
     "u64": 64,
 }
-# Bit widths kept in the aggregated TDecOne/TDecTwo CSVs. u128 is intentionally dropped.
-TDEC_BIT_WIDTHS = [1, 4, 8, 16, 32, 64]
 
 # Parallelism factors of the BGV ``DDEC_PARALLEL_N`` benchmark lines, one row
 # per factor in the BGV TDec CSV.
 BGV_DDEC_PARALLEL_FACTORS = [1, 2, 4, 8, 16, 32]
+
+
+# ---------------------------------------------------------------------------
+# Parameter set -> bits per LWE block
+# ---------------------------------------------------------------------------
+#
+# A TFHE radix ciphertext is a vector of LWE ciphertexts, one per "block". The
+# number of bits a block carries is determined by the parameter set's
+# message_modulus: bits_per_block = log2(message_modulus). Two groups across
+# the parameter sets the kms scripts can use (see
+# core/threshold-execution/src/tfhe_internals/parameters.rs::to_param, and the
+# raw MessageModulus values in raw_parameters.rs):
+#
+#   * NIST_PARAMS_P8_* (4 variants): MessageModulus = 2 -> 1 bit / block
+#   * Everything else (NIST_PARAMS_P32_*, BC_PARAMS*, BC_PARAMS_NIGEL*,
+#     PARAMS_TEST_BK_SNS):              MessageModulus = 4 -> 2 bits / block
+#
+# So a u64 message is 64 LWE blocks under P8 params but only 32 under
+# everything else. ``bool`` is always one LWE block regardless of params.
+# Mirrors the kms helper ``fhe_types_to_num_blocks`` in core/grpc/src/rpc_types.rs.
+PARAMS_TO_BITS_PER_BLOCK: Dict[str, int] = {
+    "nist-params-p8-no-sns-fglwe": 1,
+    "nist-params-p8-sns-fglwe":    1,
+    "nist-params-p8-no-sns-lwe":   1,
+    "nist-params-p8-sns-lwe":      1,
+    "nist-params-p32-no-sns-fglwe": 2,
+    "nist-params-p32-sns-fglwe":    2,
+    "nist-params-p32-no-sns-lwe":   2,
+    "nist-params-p32-sns-lwe":      2,
+    "bc-params-no-sns":         2,
+    "bc-params-sns":            2,
+    "bc-params-nigel-no-sns":   2,
+    "bc-params-nigel-sns":      2,
+    "params-test-bk-sns":       2,
+}
+
+
+def _bits_per_block(params: str) -> int:
+    """Bits per LWE block for ``params``.
+
+    Raises ``ValueError`` if ``params`` isn't in ``PARAMS_TO_BITS_PER_BLOCK``;
+    we refuse to guess because the value directly affects every TDec
+    throughput cell in the CSV (LWE blocks/sec). Add the new parameter set to
+    the table — read its ``MessageModulus`` from
+    ``core/threshold-execution/src/tfhe_internals/parameters.rs::to_param``
+    and store ``log2(message_modulus)``.
+    """
+    bpb = PARAMS_TO_BITS_PER_BLOCK.get(params.lower())
+    if bpb is None:
+        raise ValueError(
+            f"Unknown PARAMS={params!r}; cannot compute LWE-block throughput. "
+            f"Add it to PARAMS_TO_BITS_PER_BLOCK in session-stats-parser.py "
+            f"(known values: {sorted(PARAMS_TO_BITS_PER_BLOCK)})."
+        )
+    return bpb
+
+
+def _num_blocks(bit_width: int, bits_per_block: int) -> int:
+    """Number of LWE blocks a message of ``bit_width`` decomposes into.
+
+    ``bool`` is always one block regardless of bits_per_block. All other
+    supported widths (4, 8, 16, 32, 64) are clean multiples of 1 or 2 bits;
+    we use ceil-div as a safety net if an odd width is ever added.
+    """
+    if bit_width <= 1:
+        return 1
+    return -(-bit_width // bits_per_block)
 
 
 # ---------------------------------------------------------------------------
@@ -691,7 +759,7 @@ TWO_PHASE_HEADERS = [
 TDEC_HEADERS = [
     "malicious",
     "num_parties",
-    "num_ctxt",  # bit-width of the message — kept for historical reasons
+    "num_ctxt",  # number of LWE ciphertexts (blocks) per message — depends on PARAMS
     "offline_avg_latency_ms",
     "offline_throughput_per_sec",
     "online_avg_latency_ms",
@@ -729,11 +797,17 @@ def _has_offline_phase(preproc: AggregatedOperation) -> bool:
     return preproc.avg_num_rounds != 0
 
 
-def _throughput_bits_per_sec(bit_width: int, per_ctxt_latency_ms: float) -> float:
-    """Throughput in bits/sec given per-ciphertext latency in ms and message bit width."""
-    if per_ctxt_latency_ms <= 0:
+def _throughput_lwe_per_sec(num_blocks: int, per_radix_latency_ms: float) -> float:
+    """LWE-blocks-per-second throughput.
+
+    The ``per_radix_latency_ms`` is the time for one full radix ciphertext
+    (covering all ``num_blocks`` LWE-block decryptions). Multiplying by
+    ``num_blocks`` converts to LWE-blocks-per-second; multiplying by 1000
+    converts ms to seconds.
+    """
+    if per_radix_latency_ms <= 0:
         return 0.0
-    return bit_width * 1000.0 / per_ctxt_latency_ms
+    return num_blocks * 1000.0 / per_radix_latency_ms
 
 
 def _two_phase_row(
@@ -747,17 +821,36 @@ def _two_phase_row(
     Memory cells are filled from ``mem_run`` when available and default to
     ``-1`` otherwise. Offline cells become ``-1`` when the preproc line has
     ``num_rounds == 0`` (means the run skipped real preprocessing).
+
+    DKG preprocessing is often run on only a subset of the offline material
+    (``percentage_offline < 100``) to keep wall-clock manageable. The session
+    stats then report the time/rounds/bytes for that subset, so we scale the
+    four offline metric cells by ``100 / percentage_offline`` to project to a
+    full offline phase. Rounds stays integer. Memory cells are NOT scaled —
+    peak allocator usage doesn't grow with the offline workload count.
+    Scaling only applies to ``DKG_PREPROC``; other preproc labels (Reshare,
+    DDEC preproc) already run their full offline phase.
     """
     offline_present = _has_offline_phase(preproc)
     offline_max_mem, offline_avg_mem = _peak_mem_kb_for(preproc.label, mem_run)
     online_max_mem, online_avg_mem = _peak_mem_kb_for(online.label, mem_run)
+
+    if preproc.label == "DKG_PREPROC" and bp.percentage_offline > 0:
+        offline_scale = 100.0 / bp.percentage_offline
+    else:
+        offline_scale = 1.0
+    offline_time = preproc.avg_time_active_ms * offline_scale
+    offline_rounds = int(round(preproc.avg_num_rounds * offline_scale))
+    offline_sent = preproc.avg_network_sent_B * offline_scale
+    offline_recv = preproc.avg_network_received_B * offline_scale
+
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        preproc.avg_time_active_ms if offline_present else -1,
-        preproc.avg_num_rounds if offline_present else -1,
-        preproc.avg_network_sent_B if offline_present else -1,
-        preproc.avg_network_received_B if offline_present else -1,
+        offline_time if offline_present else -1,
+        offline_rounds if offline_present else -1,
+        offline_sent if offline_present else -1,
+        offline_recv if offline_present else -1,
         offline_max_mem if offline_present else -1,
         offline_avg_mem if offline_present else -1,
         online.avg_time_active_ms,
@@ -771,7 +864,7 @@ def _two_phase_row(
 
 def _tdec_one_row(
     bp: BenchParams,
-    bit_width: int,
+    num_blocks: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
     mem_run: Optional[Run],
@@ -780,7 +873,10 @@ def _tdec_one_row(
 
     Offline is the PREPROC line (``-1`` when its ``num_rounds`` is 0); online
     is the sum of PREPROC + DDEC (latency, rounds, bytes summed; throughput
-    recomputed from the summed per-ctxt latency).
+    recomputed from the summed per-radix latency). ``num_blocks`` is the LWE
+    ciphertext count for this message type under the run's parameter set; it
+    goes into the ``num_ctxt`` column and into the throughput math (LWE blocks
+    per second = ``num_blocks * 1000 / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
     online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
@@ -796,11 +892,11 @@ def _tdec_one_row(
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        bit_width,
+        num_blocks,
         preproc.avg_time_active_ms if offline_present else -1,
-        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        _throughput_lwe_per_sec(num_blocks, preproc.avg_time_active_ms) if offline_present else -1,
         online_latency_ms,
-        _throughput_bits_per_sec(bit_width, online_latency_ms),
+        _throughput_lwe_per_sec(num_blocks, online_latency_ms),
         preproc.avg_num_rounds if offline_present else -1,
         online_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
@@ -814,7 +910,7 @@ def _tdec_one_row(
 
 def _tdec_two_row(
     bp: BenchParams,
-    bit_width: int,
+    num_blocks: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
     mem_run: Optional[Run],
@@ -822,7 +918,10 @@ def _tdec_two_row(
     """Row for ``TFHE_TDecTwo_*`` (BIT_DEC).
 
     Offline is the PREPROC line (``-1`` when ``num_rounds`` is 0); online is
-    the DDEC line.
+    the DDEC line. ``num_blocks`` is the LWE ciphertext count for this message
+    type under the run's parameter set; it goes into the ``num_ctxt`` column
+    and into the throughput math (LWE blocks per second = ``num_blocks * 1000
+    / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
@@ -830,11 +929,11 @@ def _tdec_two_row(
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        bit_width,
+        num_blocks,
         preproc.avg_time_active_ms if offline_present else -1,
-        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        _throughput_lwe_per_sec(num_blocks, preproc.avg_time_active_ms) if offline_present else -1,
         ddec.avg_time_active_ms,
-        _throughput_bits_per_sec(bit_width, ddec.avg_time_active_ms),
+        _throughput_lwe_per_sec(num_blocks, ddec.avg_time_active_ms),
         preproc.avg_num_rounds if offline_present else -1,
         ddec.avg_num_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
@@ -924,22 +1023,31 @@ def _emit_rows(
             nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
             bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
 
+            # Bits per LWE block is parameter-set dependent. Compute once per
+            # run; ``_num_blocks(bit_width, bits_per_block)`` converts the
+            # message bit-width into the LWE-block count that goes into both
+            # the ``num_ctxt`` column and the throughput math.
+            bits_per_block = _bits_per_block(bp.params)
+
             for tfhe_type in TFHE_TYPES:
                 bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
-                if bit_width not in TDEC_BIT_WIDTHS:
-                    continue
+                num_blocks = _num_blocks(bit_width, bits_per_block)
 
                 if nf_prefix is not None:
                     nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
                     nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
                     if nf_pp is not None and nf_dd is not None:
-                        tdec_one_rows.append(_tdec_one_row(bp, bit_width, nf_pp, nf_dd, mem_run))
+                        tdec_one_rows.append(
+                            _tdec_one_row(bp, num_blocks, nf_pp, nf_dd, mem_run)
+                        )
 
                 if bd_prefix is not None:
                     bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
                     bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
                     if bd_pp is not None and bd_dd is not None:
-                        tdec_two_rows.append(_tdec_two_row(bp, bit_width, bd_pp, bd_dd, mem_run))
+                        tdec_two_rows.append(
+                            _tdec_two_row(bp, num_blocks, bd_pp, bd_dd, mem_run)
+                        )
 
         elif bp.protocol == "bgv":
             # BGV KeyGen
