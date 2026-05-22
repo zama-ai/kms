@@ -59,6 +59,9 @@ make test-backward-compatibility-local
 Create a new generator crate for the incompatible version:
 
 1. **Copy the closest previous generator**:
+
+For eaxample:
+
 ```bash
 cp -r backward-compatibility/generate-v0.13.20 backward-compatibility/generate-v0.14.0
 ```
