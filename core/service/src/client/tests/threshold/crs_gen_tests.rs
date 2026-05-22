@@ -1,32 +1,24 @@
-cfg_if::cfg_if! {
-   if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
-    use std::collections::HashMap;
-
-    use futures_util::future::join_all;
-    use itertools::Itertools;
-
-
-    use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-
-
-    use crate::client::client_wasm::Client;
-    use crate::client::tests::{threshold::common::{poll_with_retries}};
-    use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-    use crate::dummy_domain;
-    use crate::engine::base::derive_request_id;
-    use crate::util::key_setup::max_threshold;
-    use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::CrsGenRequest;
-    use kms_grpc::kms::v1::{Empty, FheParameter};
-    use kms_grpc::kms::v1::CrsInfo;
-    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::RequestId;
-    use std::path::Path;
-    use threshold_execution::tfhe_internals::parameters::DKGParams;
-    use tokio::task::JoinSet;
-    use tonic::transport::Channel;
-    use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
-}}
+use crate::client::client_wasm::Client;
+use crate::client::tests::threshold::common::poll_with_retries;
+use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+use crate::dummy_domain;
+use crate::engine::base::derive_request_id;
+use crate::util::key_setup::max_threshold;
+use crate::vault::storage::{StorageType, file::FileStorage};
+use futures_util::future::join_all;
+use itertools::Itertools;
+use kms_grpc::RequestId;
+use kms_grpc::kms::v1::CrsGenRequest;
+use kms_grpc::kms::v1::CrsInfo;
+use kms_grpc::kms::v1::{Empty, FheParameter};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use std::collections::HashMap;
+use std::path::Path;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use tokio::task::JoinSet;
+use tonic::transport::Channel;
 
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
@@ -35,8 +27,6 @@ cfg_if::cfg_if! {
     use crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL;
     use crate::util::key_setup::test_tools::purge;
 }}
-
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
     use crate::consts::TEST_PARAM;
@@ -181,7 +171,6 @@ pub(crate) async fn crs_gen(
     amount_parties: usize,
     parameter: FheParameter,
     max_bits: Option<u32>,
-    insecure: bool,
     iterations: usize,
     concurrent: bool,
 ) {
@@ -189,7 +178,7 @@ pub(crate) async fn crs_gen(
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     for i in 0..iterations {
         let req_crs: RequestId = derive_request_id(&format!(
-            "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
+            "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}"
         ))
         .unwrap();
         purge(
@@ -215,7 +204,7 @@ pub(crate) async fn crs_gen(
         let mut crs_set = JoinSet::new();
         for i in 0..iterations {
             let cur_id: RequestId = derive_request_id(&format!(
-                "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
+                "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}"
             ))
             .unwrap();
             crs_set.spawn({
@@ -226,7 +215,7 @@ pub(crate) async fn crs_gen(
                         parameter,
                         &clients_clone,
                         &internalclient_clone,
-                        insecure,
+                        false,
                         &cur_id,
                         max_bits,
                         None,
@@ -240,14 +229,14 @@ pub(crate) async fn crs_gen(
     } else {
         for i in 0..iterations {
             let cur_id: RequestId = derive_request_id(&format!(
-                "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
+                "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}"
             ))
             .unwrap();
             let _ = run_crs(
                 parameter,
                 &kms_clients,
                 &internal_client,
-                insecure,
+                false,
                 &cur_id,
                 max_bits,
                 None,
@@ -256,8 +245,6 @@ pub(crate) async fn crs_gen(
         }
     }
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn run_crs(
     parameter: FheParameter,
@@ -287,8 +274,6 @@ pub async fn run_crs(
     )
     .await
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 async fn launch_crs(
     req: &CrsGenRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -301,16 +286,9 @@ async fn launch_crs(
         let req_clone = req.clone();
         tasks_gen.spawn(async move {
             if insecure {
-                #[cfg(feature = "insecure")]
-                {
-                    cur_client
-                        .insecure_crs_gen(tonic::Request::new(req_clone))
-                        .await
-                }
-                #[cfg(not(feature = "insecure"))]
-                {
-                    panic!("Asked for insecure crs gen but feature 'insecure' is not active.")
-                }
+                cur_client
+                    .insecure_crs_gen(tonic::Request::new(req_clone))
+                    .await
             } else {
                 cur_client.crs_gen(tonic::Request::new(req_clone)).await
             }
@@ -324,8 +302,6 @@ async fn launch_crs(
     assert_eq!(responses_gen.len(), amount_parties);
     responses_gen
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub async fn wait_for_crsgen_result(
     reqs: &[CrsGenRequest],
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -533,8 +509,6 @@ pub async fn wait_for_crsgen_result(
     }
     results
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn set_signatures(
     crs_res_storage: &mut [(kms_grpc::kms::v1::CrsGenResult, FileStorage)],
     count: usize,
@@ -544,8 +518,6 @@ fn set_signatures(
         crs_gen_result.external_signature = sig.to_vec();
     }
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn set_digests(
     crs_res_storage: &mut [(kms_grpc::kms::v1::CrsGenResult, FileStorage)],
     count: usize,

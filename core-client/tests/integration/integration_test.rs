@@ -1829,12 +1829,12 @@ fn extract_seed_phrase(out: Output) -> String {
         .to_string()
 }
 
-/// Native implementation: Initialize custodian backup using isolated config
+/// Native implementation: Initialize custodian backup using isolated config.
 async fn custodian_backup_init(
     config_path: &Path,
     test_path: &Path,
     operator_recovery_resp_paths: Vec<PathBuf>,
-) -> String {
+) {
     let config = cmd_config(
         config_path,
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
@@ -1843,10 +1843,10 @@ async fn custodian_backup_init(
         }),
         200,
     );
-    run_cmd(&config, test_path, "backup init")
+    let results = execute_cmd(&config, test_path)
         .await
-        .unwrap()
-        .to_string()
+        .expect("backup init: execute_cmd failed");
+    assert_eq!(results.len(), 1, "backup init: expected 1 result");
 }
 
 /// Native implementation: Re-encrypt custodian backups using kms-custodian binary directly
@@ -2199,20 +2199,19 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     create_dir_all(operator_recovery_resp_path.parent().unwrap())?;
 
     // Initialize custodian backup
-    let init_backup_id = custodian_backup_init(
+    custodian_backup_init(
         &config_path,
         temp_path,
         vec![operator_recovery_resp_path.clone()],
     )
     .await;
-    assert_eq!(cus_backup_id, init_backup_id);
 
     // Re-encrypt with custodian keys
     let recovery_output_paths = custodian_reencrypt(
         temp_path,
         1,
         amount_custodians,
-        init_backup_id.parse()?,
+        RequestId::from_str(&cus_backup_id)?,
         *DEFAULT_MPC_CONTEXT,
         &seeds,
         &[operator_recovery_resp_path],
@@ -2596,20 +2595,19 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     }
 
     // Initialize custodian backup
-    let init_backup_id = custodian_backup_init(
+    custodian_backup_init(
         &config_path,
         temp_path,
         operator_recovery_resp_paths.clone(),
     )
     .await;
-    assert_eq!(cus_backup_id, init_backup_id);
 
     // Re-encrypt with custodian keys
     let recovery_output_paths = custodian_reencrypt(
         temp_path,
         amount_operators,
         amount_custodians,
-        init_backup_id.parse()?,
+        RequestId::from_str(&cus_backup_id)?,
         *DEFAULT_MPC_CONTEXT,
         &seeds,
         &operator_recovery_resp_paths,
