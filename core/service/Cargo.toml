@@ -188,7 +188,6 @@ wasm_tests = ["testing"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
-    "threshold-execution/testing",
     "threshold-networking/testing",
-    "dep:nsm-nitro-enclave-utils"
+    "dep:nsm-nitro-enclave-utils",
 ]

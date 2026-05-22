@@ -3,7 +3,6 @@ use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::{ServerHandle, centralized_custodian_handles};
-#[cfg(feature = "insecure")]
 use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
 use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
@@ -136,14 +135,10 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
 }
-
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backup_after_crs_central() {
     backup_after_crs(5, 2).await;
 }
-
-#[cfg(feature = "insecure")]
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let mut env = CentralizedBackupTestEnv::new(
         &format!("backup_after_crs_central_{amount_custodians}_{threshold}"),
@@ -261,6 +256,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let cus_rec_req = emulate_custodian(
         &mut rng,
         recovery_req_resp,
+        env.req_new_cus,
         env.mnemonics.clone(),
         env.test_path(),
     )
@@ -356,6 +352,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let mut cus_rec_req = emulate_custodian(
         &mut rng,
         recovery_req_resp,
+        env.req_new_cus,
         env.mnemonics.clone(),
         env.test_path(),
     )
@@ -406,7 +403,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 
 /// Test that FHE key material is present in the custodian backup vault
 /// immediately after key generation (centralized mode).
-#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_keygen_backup_presence_central() {
     let mut env = CentralizedBackupTestEnv::new("test_keygen_backup_presence_central", 3, 1).await;
@@ -515,10 +511,10 @@ async fn test_mpc_context_backup_central() {
 async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_request: RecoveryRequest,
+    custodian_context_id: RequestId,
     mnemonics: Vec<String>,
     test_path: Option<&Path>,
 ) -> CustodianRecoveryRequest {
-    let backup_id = recovery_request.backup_id.clone().unwrap();
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
         let custodian: Custodian =
@@ -541,17 +537,15 @@ async fn emulate_custodian(
             .verify_reencrypt(
                 rng,
                 &cur_cus_reenc.to_owned().try_into().unwrap(),
-                kms_grpc::RequestId::from_bytes([7u8; 32]),
                 &verf_key,
                 &cur_enc_key,
-                backup_id.clone().try_into().unwrap(),
             )
             .unwrap();
         // Add the result from this custodian to the map of results to the correct operator
         cus_outputs.push(cur_out.try_into().unwrap());
     }
     CustodianRecoveryRequest {
-        custodian_context_id: Some(backup_id.clone()),
+        custodian_context_id: Some(custodian_context_id.into()),
         custodian_recovery_outputs: cus_outputs,
     }
 }
