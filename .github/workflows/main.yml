@@ -229,6 +229,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install safe-chain
+# Safe-chain proxies npm and python package installs and checks for malware. Defense against supply-chain attacks.
         run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/download/1.5.3/install-safe-chain.sh | sh -s -- --ci
       - run: python3 -m pip install linkcheckmd
       - name: Check dead-link
