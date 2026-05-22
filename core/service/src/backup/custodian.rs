@@ -301,10 +301,8 @@ impl Custodian {
         self.verify_reencrypt_inner(
             rng,
             backup,
-            mpc_context_id,
             operator_verification_key,
             operator_ephem_enc_key,
-            backup_id,
         )
     }
 
@@ -316,10 +314,8 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
-        mpc_context_id: RequestId,
         operator_verification_key: &PublicSigKey,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
-        backup_id: RequestId,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         tracing::debug!(
             "Verifying and re-encrypting backup for operator: {}",
