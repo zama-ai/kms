@@ -8,7 +8,7 @@
 #
 # Subcommands:
 #   check
-#     Main CI/local gate. Generates one snapshot from --base-ref and one from
+#     Generates one snapshot from --base-ref and one from
 #     the current checkout, then runs `tfhe-backward-compat-checker check`.
 #   report
 #     Same snapshot generation as `check`, but writes a markdown report instead
@@ -26,6 +26,7 @@
 #
 # Configuration env vars (defaults shown):
 #   SNAPSHOT_PACKAGES="kms kms-grpc threshold-execution threshold-algebra threshold-networking threshold-types"
+# To narrow the packages, override `SNAPSHOT_PACKAGES`.
 #=============================================================================
 
 set -euo pipefail
@@ -149,7 +150,7 @@ generate_in_cwd() {
                 --pattern utils/tfhe-lints/snapshot \
                 --all \
                 --no-deps \
-                -p "${package}" -- --all-features
+                -p "${package}"
     done
 }
 

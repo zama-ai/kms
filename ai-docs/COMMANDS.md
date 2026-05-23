@@ -82,7 +82,7 @@ Run against locally regenerated vectors — does NOT pull LFS:
 make test-backward-compatibility-local
 ```
 
-Generate and compare `VersionsDispatch` snapshots between a base ref and the current checkout. This complements the frozen-vector tests by detecting removed version variants and suspicious type-layout or upgrade-body changes before new vectors are generated:
+Generate and compare `VersionsDispatch` snapshots between a base ref and the current checkout. This detects removed version variants and suspicious type-layout or upgrade-body changes:
 
 ```
 make backward-snapshot-check BASE_REF=origin/main

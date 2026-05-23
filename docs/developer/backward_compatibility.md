@@ -12,7 +12,7 @@ The objects are serialized using bincode only because it supports large arrays a
 
 For any additional documentation, feel free to take a look at the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project.
 
-## Usage - Testing backward compatibility
+## Testing backward compatibility
 
 At the repo's root, run the following command to run the backwards compatibility tests:
 
@@ -22,10 +22,10 @@ make test-backward-compatibility
 
 This will load existing objects from git LFS versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
 
-## Usage - Checking versioned type snapshots
+## Checking for breaking changes using snapshots
 
-The freeze-and-replay tests are complemented by a Dylint snapshot check for types that derive `VersionsDispatch`.
-The snapshot check compares the current branch against a base ref and reports:
+The breaking-change tests are complemented by a Dylint snapshot check for types that derive `VersionsDispatch`.
+The snapshot check compares the current branch against a base ref (usually main) and reports:
 - removed version variants as errors, because old serialized data could no longer be deserialized;
 - removed versioned enums, changed versioned type layouts, changed upgrade bodies, and removed upgrades as warnings for review;
 - new versioned enums, variants, and upgrades as neutral changes.
@@ -42,28 +42,13 @@ To generate a markdown report:
 make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
 ```
 
-Snapshots are generated into temporary directories from `BASE_REF` and the current checkout. They are not committed to the repository.
+Snapshots are generated into temporary directories from `BASE_REF` and the current checkout.
 
-### Snapshot command reference
+Internally, the make command uses the `ci/scripts/backward_snapshot.sh`, which
+in turn uses a binary from tfhe-rs `tfhe-backward-compat-checker` to detect
+breaking changes. More documentation can be found by running
+`ci/scripts/backward_snapshot.sh --help`.
 
-The Make targets above call `ci/scripts/backward_snapshot.sh`, which exposes two subcommands:
-
-- `check --base-ref <ref>` is the CI-style gate. It generates a snapshot from `<ref>` in a temporary detached worktree, generates another from the current checkout, then runs `tfhe-backward-compat-checker check`.
-- `report --base-ref <ref> --output <file>` uses the same base/head snapshots as `check`, but writes a markdown report. Use it when reviewing warnings or sharing the full diff with a reviewer.
-
-By default, both subcommands install `cargo-dylint`, `dylint-link`, and `tfhe-backward-compat-checker` before running. The tfhe-rs git/tag pin is read from the root `dylint.toml` entry for `utils/tfhe-lints/lints`; the snapshot lint is loaded from the same tfhe-rs source without being added to normal `make lint-dylint` runs.
-
-For local iteration after tools are already installed, set:
-
-```shell
-SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 make backward-snapshot-check BASE_REF=origin/main
-```
-
-To narrow the packages during a smoke test, override `SNAPSHOT_PACKAGES`:
-
-```shell
-SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 SNAPSHOT_PACKAGES=threshold-types make backward-snapshot-check BASE_REF=origin/main
-```
 
 ## Versioning this module
 
