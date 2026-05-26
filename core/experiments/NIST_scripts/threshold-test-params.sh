@@ -71,6 +71,22 @@ function run_in_campaign {
     unset RUN_DEST
 }
 
+# Like run_in_campaign but for the crs_reproducible_*.sh wrappers, which
+# don't take a "GEN" positional arg. The per-run folder name uses the
+# basename of the .toml plus a `_crs` suffix so it doesn't shadow the
+# matching tfhe_reproducible_* run on the same .toml.
+function run_crs_in_campaign {
+    local script="$1"
+    local conf="$2"
+    local experiment
+    experiment="$(basename "$conf" .toml)"
+    local run_date
+    run_date="$(date -u +%Y%m%dT%H%M%SZ)"
+    export RUN_DEST="$CAMPAIGN_DIR/${experiment}_crs_${run_date}"
+    "$script" "$conf"
+    unset RUN_DEST
+}
+
 # Start with cleaning up any leftover containers for the targeted benchmark compose files
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
@@ -87,6 +103,13 @@ cargo make tfhe-docker-image-degree-3
 cargo make tfhe-bench-run-4p
 # Run the test script
 run_in_campaign ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml
+# CRS-gen sweep on the same cluster topology (parameters + expected hashes
+# are hardcoded inside the wrapper). We bring the cluster down + up again
+# between the two runs so each test_script sees a clean cluster, matching
+# the rest of this script's pattern.
+cleanup_docker "temp/tfhe-bench-run-4p.yml"
+cargo make tfhe-bench-run-4p
+run_crs_in_campaign ./test_scripts/crs_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 
@@ -95,6 +118,10 @@ cleanup_docker "temp/tfhe-bench-run-4p.yml"
 cargo make tfhe-bench-run-5p
 # Run the test script
 run_in_campaign ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml
+# CRS-gen sweep on the large-session cluster.
+cleanup_docker "temp/tfhe-bench-run-5p.yml"
+cargo make tfhe-bench-run-5p
+run_crs_in_campaign ./test_scripts/crs_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
 
@@ -103,6 +130,10 @@ cleanup_docker "temp/tfhe-bench-run-5p.yml"
 cargo make tfhe-bench-run-4p-malicious-bcast
 # Run the test script
 run_in_campaign ./test_scripts/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml
+# CRS-gen sweep on the small-session cluster with one malicious party.
+cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
+cargo make tfhe-bench-run-4p-malicious-bcast
+run_crs_in_campaign ./test_scripts/crs_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
 
@@ -128,6 +159,12 @@ cargo make tfhe-docker-image-degree-3-mem
 cargo make tfhe-bench-run-4p-mem
 # Run the test script
 run_in_campaign ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml "NUM_CTXTS=1"
+# CRS-gen mem sweep on the same topology. The wrapper detects `-mem` on
+# the .toml basename and propagates MEASURE_MEMORY=1 + the `-mem` suffix on
+# EXPERIMENT_NAME so the parser pairs this run with the non-mem twin.
+cleanup_docker "temp/tfhe-bench-run-4p.yml"
+cargo make tfhe-bench-run-4p-mem
+run_crs_in_campaign ./test_scripts/crs_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 
@@ -136,6 +173,10 @@ cleanup_docker "temp/tfhe-bench-run-4p.yml"
 cargo make tfhe-bench-run-5p-mem
 # Run the test script
 run_in_campaign ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml "NUM_CTXTS=1"
+# CRS-gen mem sweep on the large-session topology.
+cleanup_docker "temp/tfhe-bench-run-5p.yml"
+cargo make tfhe-bench-run-5p-mem
+run_crs_in_campaign ./test_scripts/crs_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml
 # Teardown docker
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
 
