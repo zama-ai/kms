@@ -417,19 +417,16 @@ without knowing these will yield wrong-looking numbers.
    than guess — add the new parameter set to `PARAMS_TO_BITS_PER_BLOCK` and
    store `log2(message_modulus)` for it.
 
-3. **`num_ctxt` column carries the LWE-block count.** Despite its name and
-   its historical contents, the `num_ctxt` column in
-   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` now holds the LWE
-   ciphertext count, not the message bit-width. Combined with item 2 above,
+3. **`num_ctxt` column carries the LWE-block count.** The `num_ctxt` column in
+   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` holds the LWE
+   ciphertext count (not the message bit-width!). Combined with item 2 above,
    `throughput == num_ctxt * 1000 / avg_latency_ms` is a built-in
    self-check.
 
 4. **BGV metadata trailers are non-empty.** BGV runs write
    `SESSION_TYPE=small` and `PARAMS=default` into `BENCH_PARAMS.txt` so the
    trailing metadata columns (`session_type`, `params`) on `BGV_KeyGen` and
-   `BGV_TDec` rows are populated. The BGV `DDEC_PARALLEL_N` throughput
-   cell stays unchanged (`parallel_n * 1000 / per_ctxt_latency_ms`); BGV
-   has no radix decomposition so there's nothing to scale.
+   `BGV_TDec` rows are populated. BGV has no radix decomposition so there's nothing to scale.
 
 **NOTE**: The docker container also runs telemetry tools, therefore when
 running experiments, all telemetry data are exported to
