@@ -76,7 +76,7 @@ jobs:
         with:
           report-path: '/tmp/junit/**/*.xml'
           title: 'Consolidated Tests Results ${{ env.TIMESTAMP }}'
-          overwrite-comment: true
+          overwrite-comment: false
           summary-report: false
           github-report: true
           pull-request-report: true
