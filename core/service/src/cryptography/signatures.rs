@@ -16,7 +16,7 @@ use strum_macros::Display;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
@@ -259,7 +259,7 @@ impl HasSigningScheme for PrivateSigKey {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
@@ -274,12 +274,6 @@ impl Zeroize for WrappedSigningKey {
         let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
-
-// `k256::ecdsa::SigningKey: ZeroizeOnDrop` unconditionally (via the `ecdsa`
-// crate's own impl), so Rust drop glue wipes the inner scalar when the
-// wrapper drops — no explicit `Drop` impl on the wrapper is needed. The
-// marker simply forwards that guarantee at the wrapper layer.
-impl zeroize::ZeroizeOnDrop for WrappedSigningKey {}
 
 impl Serialize for WrappedSigningKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
