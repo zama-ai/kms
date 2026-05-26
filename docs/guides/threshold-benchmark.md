@@ -274,6 +274,26 @@ the NIST flow:
   - `tfhe_reproducible_small_session_malicious.sh` (4 parties, t = 1, with a
     `malicious_broadcast` party 1, otherwise identical to the small session).
   - `bgv_reproducible.sh` (4 parties, t = 1, real BGV parameters).
+  - `crs_reproducible_common.sh` + `crs_reproducible_{small,large,small_malicious}_session.sh`
+    — standalone CRS-generation sweep, mirroring the `tfhe_reproducible_*`
+    common-plus-wrappers pattern. Each wrapper hardcodes the parameter
+    sets to sweep (`CRS_PARAMS_LIST`) and the matching expected SHA-256
+    hashes (`EXPECTED_CRS_HASHES`); edit both together when extending the
+    sweep. The wrappers differ by cluster topology and malicious flag:
+    `small` = 4 parties / honest, `large` = 5 parties / honest,
+    `small_malicious` = 4 parties / party 1 misbehaves. Hashes are
+    independent per wrapper because the topology can change the CRS-gen
+    protocol path. The common body iterates `mobygo crs-gen` over every
+    entry in one cluster lifecycle, bumping SID + seed by one per
+    iteration — so the hash for a given params depends on its position
+    in `CRS_PARAMS_LIST`. No PRSS init, no DKG, no Reshare, no DDEC —
+    the run produces one labeled `CRS_GEN_<PARAMS_UPPER>` line per
+    parameter set, which `session-stats-parser.py` turns into one row
+    per param in `CRS_<suffix>.csv` (each row carrying its own `params`
+    value in the metadata trailer). The `tfhe_reproducible_*` scripts no
+    longer generate a CRS themselves — run the matching
+    `crs_reproducible_*_session.sh` wrapper to collect CRS metrics for
+    that topology.
 
 Large and small here identifies the underlying protocols used for performing the various pre-processing phases.
 When the number of parties is *small* (i.e. less than $20$ parties) we can rely on PRSS-based protocols and
@@ -335,17 +355,23 @@ if every participating party's `session_stats_<i>.txt` carries exactly the
 right number of metric lines for the run's declared schedule. Anything off
 — a wrong count, a missing party file — and the run is skipped (with a
 warning under `--warn`). The schedule is built from `BENCH_PARAMS.txt`'s
-`PROTOCOL` + `SESSION_TYPE` + `HAS_PRSS_INIT` / `HAS_CRS` / `HAS_RESHARE`
-flags + the modes listed in `DDEC_MODES`, in the order the test scripts
-call `mobygo` / `stairwayctl`.
+`PROTOCOL` + `SESSION_TYPE` + `HAS_PRSS_INIT` / `HAS_DKG` / `HAS_CRS` /
+`HAS_RESHARE` flags + the modes listed in `DDEC_MODES`, in the order the
+test scripts call `mobygo` / `stairwayctl`. `HAS_DKG` defaults to `1` for
+backward compatibility — only the standalone `crs_reproducible.sh` script
+sets it to `0`.
 
 For TFHE runs (`PROTOCOL=tfhe`):
 
 1. `PRSS_INIT_Z64` — only if `HAS_PRSS_INIT=1` (small sessions only)
 2. `PRSS_INIT_Z128` — only if `HAS_PRSS_INIT=1` (small sessions only)
-3. `DKG_PREPROC`
-4. `DKG`
-5. `CRS_GEN` — only if `HAS_CRS=1`
+3. `DKG_PREPROC` — only if `HAS_DKG=1`
+4. `DKG` — only if `HAS_DKG=1`
+5. CRS gen — only if `HAS_CRS=1`. One line per entry of `CRS_PARAMS`
+   labeled `CRS_GEN_<PARAMS_UPPER>` (used by the sweep script). If
+   `CRS_PARAMS` is empty, a single plain `CRS_GEN` line instead (kept
+   for backward compatibility with archives from before the CRS gen
+   was extracted out of `tfhe_reproducible_*`).
 6. `RESHARE_PREPROC` — only if `HAS_RESHARE=1`
 7. `RESHARE` — only if `HAS_RESHARE=1`
 8. Then, for each mode in `DDEC_MODES` (typically `noise-flood-X` then
@@ -353,9 +379,11 @@ For TFHE runs (`PROTOCOL=tfhe`):
    - `<MODE>_<TYPE>_PREPROC`
    - `<MODE>_<TYPE>_DDEC`
 
-That gives **31 lines** for a small-session run (2 PRSS + 2 DKG + 1 CRS + 2
-reshare + 2×6×2 DDEC sweep) and **29 lines** for a large-session run (no
-PRSS init).
+That gives **30 lines** for a small-session `tfhe_reproducible_*` run
+(2 PRSS + 2 DKG + 2 reshare + 2×6×2 DDEC sweep — no CRS, which moved
+out), **28 lines** for the large-session variant (no PRSS init), and
+**N lines** for a `crs_reproducible.sh` sweep run with `CRS_PARAMS`
+listing N parameter sets (no PRSS, no DKG, no Reshare, no DDEC).
 
 For BGV runs (`PROTOCOL=bgv`):
 

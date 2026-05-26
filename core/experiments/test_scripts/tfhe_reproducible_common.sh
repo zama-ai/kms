@@ -52,9 +52,10 @@ if [ "$SESSION_TYPE" = "small" ]; then
 else
     HAS_PRSS_INIT_FLAG=0
 fi
-# This common script always runs CRS gen and Reshare; record so the parser
-# can build the expected operation schedule without re-parsing this file.
-HAS_CRS_FLAG=1
+# CRS generation has been factored out to test_scripts/crs_reproducible.sh
+# (it sweeps multiple parameter sets in one cluster lifecycle). This common
+# script therefore no longer emits a CRS_GEN line.
+HAS_CRS_FLAG=0
 HAS_RESHARE_FLAG=1
 
 cat > "$RUN_DEST/BENCH_PARAMS.txt" <<EOF
@@ -83,7 +84,6 @@ MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
 KEY_PATH="${MAIN_PATH}/key"
 RESHARED_KEY_PATH="${MAIN_PATH}/key-reshared"
-CRS_PATH="${MAIN_PATH}/crs"
 CTXT_PATH="${MAIN_PATH}/ctxt"
 
 INIT_VALUE=1
@@ -91,7 +91,6 @@ KEY_SID=0
 
 mkdir -p $KEY_PATH
 mkdir -p $RESHARED_KEY_PATH
-mkdir -p $CRS_PATH
 mkdir -p $CTXT_PATH
 
 export RUN_MODE=dev
@@ -158,23 +157,12 @@ else
     echo "Skipping ctxt generation"
 fi
 
-### CRS generation
-echo "Generating CRS"
-$MOBYGO_EXEC -c $1 crs-gen --parameters $PARAMS --sid $CURR_SID --seed $SEED
-$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true
-$MOBYGO_EXEC -c $1 crs-gen-result --sid $CURR_SID  --storage-path $CRS_PATH
+# CRS generation lives in test_scripts/crs_reproducible.sh now. The bumps
+# below replace what CRS-gen used to consume so the Reshare step downstream
+# picks up the same (sid, seed) pair it did before this refactor — that
+# keeps EXPECTED_RESHARED_KEY_HASH stable.
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
-
-# Make sure the generated CRS has the expected hash
-CRS_HASH=$(sha256sum $CRS_PATH/crs.bin|cut -d ' ' -f 1)
-if [ "$CRS_HASH" != "$EXPECTED_CRS_HASH" ]; then
-    echo "❌ CRS hash does not match expected value. Got $CRS_HASH, expected $EXPECTED_CRS_HASH"
-    exit 1
-else
-    echo "✅ CRS hash matches expected value: $CRS_HASH"
-fi
-
 
 ### Reshare
 echo "Resharing key"
