@@ -149,7 +149,7 @@ for P in "${CRS_PARAMS_LIST[@]}"; do
     CRS_HASH=$(sha256sum "$CRS_DIR/crs.bin" | cut -d ' ' -f 1)
     if [ "$CRS_HASH" != "$EXPECTED_HASH" ]; then
         echo "❌ CRS hash for ${P} does not match expected. Got ${CRS_HASH}, expected ${EXPECTED_HASH}"
-        #exit 1
+        exit 1
     fi
     echo "✅ CRS hash for ${P} matches expected: ${CRS_HASH}"
 
