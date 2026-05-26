@@ -11,11 +11,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
   cancel-in-progress: true
 
-permissions:
-  actions: read
-  contents: read
-  pull-requests: read
-  packages: read
+permissions: {} # No permissions required for this workflow
 
 jobs:
   generate-test-material:
@@ -561,9 +557,9 @@ jobs:
     uses: ./.github/workflows/test-reporter.yml
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
-      packages: read
-      issues: write
-      pull-requests: write
-      actions: read
-      contents: read
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
     secrets: inherit
