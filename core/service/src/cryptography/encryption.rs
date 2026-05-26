@@ -298,39 +298,51 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 }
 
 // Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
-// server's encrypted payload
-// The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
-pub struct PrivateEncKey<C: KemCore>(pub(crate) C::DecapsulationKey);
+// server's encrypted payload.
+// The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys.
+//
+// The `where C::DecapsulationKey: zeroize::ZeroizeOnDrop` clause on the
+// struct itself makes `PrivateEncKey<C>` un-instantiable for any `KemCore`
+// whose inner key doesn't wipe on drop — the wipe-on-drop guarantee is
+// enforced at type construction rather than only at `.zeroize()` call sites.
+// `#[derive(zeroize::ZeroizeOnDrop)]` then expands to a `Drop` impl calling
+// `self.zeroize()` plus the marker; the constraint propagates because every
+// impl block below repeats it.
+#[derive(zeroize::ZeroizeOnDrop)]
+pub struct PrivateEncKey<C>(pub(crate) C::DecapsulationKey)
+where
+    C: KemCore,
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop;
 
-impl<C: KemCore> Zeroize for PrivateEncKey<C> {
+// `Zeroize` provides the wipe primitive called from the derived `Drop`.
+// The inner `DecapsulationKey` only impls `ZeroizeOnDrop` (marker) — not
+// `Zeroize` (method) — so we can't call `self.0.zeroize()`; instead, the
+// `mem::replace`-then-drop pattern lets the inner's `Drop` do the actual
+// zeroing.
+impl<C: KemCore> Zeroize for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn zeroize(&mut self) {
-        // Directly zeroize the underlying key bytes without creating copies
-        // This is more secure as it avoids temporary allocations of sensitive data
-        let key_bytes_ptr = self.0.as_bytes().as_ptr() as *mut u8;
-        let key_len = self.0.as_bytes().len();
-
-        // SAFETY: We're zeroizing the memory that belongs to this struct
-        // The pointer is valid and the length is correct from as_bytes()
-        unsafe {
-            std::ptr::write_bytes(key_bytes_ptr, 0, key_len);
-        }
+        let dummy = C::DecapsulationKey::from_bytes(&Default::default());
+        let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
 
-impl<C: KemCore> Drop for PrivateEncKey<C> {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl<C: KemCore> Clone for PrivateEncKey<C> {
+impl<C: KemCore> Clone for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn clone(&self) -> Self {
         let buf = self.0.as_bytes();
         PrivateEncKey(C::DecapsulationKey::from_bytes(&buf))
     }
 }
 
-impl<C: KemCore> std::fmt::Debug for PrivateEncKey<C> {
+impl<C: KemCore> std::fmt::Debug for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PrivateEncKey")
             .field("decapsulation_key", &"ommitted")
@@ -338,7 +350,10 @@ impl<C: KemCore> std::fmt::Debug for PrivateEncKey<C> {
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Versionize for PrivateEncKey<C> {
+impl<C: KemCore> tfhe_versionable::Versionize for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     type Versioned<'vers>
         = &'vers PrivateEncKey<C>
     where
@@ -349,14 +364,20 @@ impl<C: KemCore> tfhe_versionable::Versionize for PrivateEncKey<C> {
     }
 }
 
-impl<C: KemCore> tfhe_versionable::VersionizeOwned for PrivateEncKey<C> {
+impl<C: KemCore> tfhe_versionable::VersionizeOwned for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     type VersionedOwned = PrivateEncKey<C>;
     fn versionize_owned(self) -> Self::VersionedOwned {
         self
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C> {
+impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn unversionize(
         versioned: Self::VersionedOwned,
     ) -> Result<Self, tfhe_versionable::UnversionizeError> {
@@ -364,7 +385,10 @@ impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C> {
     }
 }
 
-impl<C: KemCore> Serialize for PrivateEncKey<C> {
+impl<C: KemCore> Serialize for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -373,7 +397,10 @@ impl<C: KemCore> Serialize for PrivateEncKey<C> {
     }
 }
 
-impl<'de, C: KemCore> Deserialize<'de> for PrivateEncKey<C> {
+impl<'de, C: KemCore> Deserialize<'de> for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -383,7 +410,10 @@ impl<'de, C: KemCore> Deserialize<'de> for PrivateEncKey<C> {
 }
 
 struct PrivateEncKeyVisitor<C: KemCore>(std::marker::PhantomData<C>);
-impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C> {
+impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     type Value = PrivateEncKey<C>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
