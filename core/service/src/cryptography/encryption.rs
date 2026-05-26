@@ -314,7 +314,13 @@ impl<C: KemCore> Zeroize for PrivateEncKey<C> {
     }
 }
 
-impl<C: KemCore> zeroize::ZeroizeOnDrop for PrivateEncKey<C> {}
+// Only valid where the inner `DecapsulationKey` itself impls `ZeroizeOnDrop`.
+// Satisfied by `ml_kem::MlKem{512,1024}` with the workspace `zeroize` feature;
+// any other `KemCore` impl without that guarantee simply won't qualify.
+impl<C: KemCore> zeroize::ZeroizeOnDrop for PrivateEncKey<C> where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop
+{
+}
 
 impl<C: KemCore> Clone for PrivateEncKey<C> {
     fn clone(&self) -> Self {

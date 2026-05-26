@@ -275,6 +275,10 @@ impl Zeroize for WrappedSigningKey {
     }
 }
 
+// `k256::ecdsa::SigningKey: ZeroizeOnDrop` unconditionally (via the `ecdsa`
+// crate's own impl), so Rust drop glue wipes the inner scalar when the
+// wrapper drops — no explicit `Drop` impl on the wrapper is needed. The
+// marker simply forwards that guarantee at the wrapper layer.
 impl zeroize::ZeroizeOnDrop for WrappedSigningKey {}
 
 impl Serialize for WrappedSigningKey {
