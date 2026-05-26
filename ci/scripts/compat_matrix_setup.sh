@@ -9,7 +9,8 @@
 # Writes to $GITHUB_OUTPUT (when set, else stdout):
 #   producers     JSON array of versions (Y-axis)
 #   consumers     JSON array of versions (X-axis, same set as producers)
-#   pairs         JSON array of {a, b} for the off-diagonal, non-skipped cells
+#   pairs         JSON array of {a, b} for every non-skipped cell, including
+#                 same-version (a == b) cells which act as a sanity check
 #   pairs_count   integer
 
 set -euo pipefail
@@ -40,7 +41,6 @@ pairs="$(jq -nc \
     | [
         $versions[] as $a
         | $versions[] as $b
-        | select($a != $b)
         | select($skipmap[$a + "|" + $b] != true)
         | {a: $a, b: $b}
       ]
@@ -62,4 +62,4 @@ emit consumers "${raw_versions}"
 emit pairs "${pairs}"
 emit pairs_count "${pairs_count}"
 
-echo "compat-matrix setup: $(jq 'length' <<<"${raw_versions}") versions, ${pairs_count} off-diagonal pairs" >&2
+echo "compat-matrix setup: $(jq 'length' <<<"${raw_versions}") versions, ${pairs_count} pairs" >&2

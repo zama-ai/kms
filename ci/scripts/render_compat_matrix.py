@@ -8,9 +8,9 @@ Reads:
   config_path   ci/compat-matrix.json (for the canonical version list, the
                 explicit skip_cells list, and ordering).
 
-Writes Markdown to stdout. Exits 0 if every cell is pass / fail / skip /
-diagonal, exits 1 if any cell is `error` (workflow-level problem that needs
-operator attention).
+Writes Markdown to stdout. Exits 0 if every cell is pass / fail / skip,
+exits 1 if any cell is `error` (workflow-level problem that needs operator
+attention).
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from pathlib import Path
 PASS = "✅"
 FAIL = "❌"
 ERROR = "⚠️"
-DIAGONAL = "—"
 SKIP = "⊘"
 MISSING = "⚠️ missing"
 
@@ -75,9 +74,9 @@ def render(results_dir: Path, config_path: Path) -> tuple[str, bool]:
     lines.append(
         "Rows: kms producer (server) version. "
         "Columns: node-tkms consumer (client) version. "
+        "Same-version cells are run as a sanity check. "
         f"Legend: {PASS} pass, {FAIL} incompatible, "
-        f"{ERROR} workflow error, {DIAGONAL} diagonal (covered by `wasm-testing.yml`), "
-        f"{SKIP} explicitly skipped."
+        f"{ERROR} workflow error, {SKIP} explicitly skipped."
     )
     lines.append("")
 
@@ -89,9 +88,6 @@ def render(results_dir: Path, config_path: Path) -> tuple[str, bool]:
     for a in versions:
         row = [f"**`{a}`**"]
         for b in versions:
-            if a == b:
-                row.append(DIAGONAL)
-                continue
             if (a, b) in skips:
                 row.append(SKIP)
                 continue

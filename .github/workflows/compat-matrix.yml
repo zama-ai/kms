@@ -4,12 +4,12 @@ name: compat-matrix
 # `kms` (server). Every kms release is also a node-tkms release of the same
 # version (see npm-release.yml: the publishable package is built from this
 # repo's core/service). This workflow picks a list of versions, runs the wasm
-# test suite for every off-diagonal (producer, consumer) pair, and produces a
-# 2D pass/fail table on the run summary.
+# test suite for every (producer, consumer) pair -- including same-version
+# pairs as a sanity check -- and produces a 2D pass/fail table on the run
+# summary.
 #
 # Manually dispatched. Edit ci/compat-matrix.json to change the default
-# version list and per-version producer overrides. Diagonal cells are skipped
-# (already covered by wasm-testing.yml).
+# version list and per-version producer overrides.
 
 on:
   push:
