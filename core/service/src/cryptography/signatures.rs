@@ -267,11 +267,19 @@ impl Zeroize for WrappedSigningKey {
     fn zeroize(&mut self) {
         // Swap in a known-valid dummy and let the original drop —
         // `SigningKey<Secp256k1>: ZeroizeOnDrop` wipes its scalar.
-        // `[1u8; 32]` is `0x0101…01` ≪ secp256k1 order `n`, so
-        // `from_slice` accepts it (rejects only len ≠ 32, scalar = 0,
-        // or scalar ≥ n; length is fixed by `FieldBytesSize = U32`).
-        let dummy = SigningKey::from_slice(&[1u8; 32]).expect("0x0101…01 < secp256k1 n");
-        let _wiped = std::mem::replace(&mut self.0, dummy);
+        // `[1u8; 32]` is `0x0101…01` ≪ secp256k1 order `n`, so the
+        // constructor is in practice infallible; `if let Ok` keeps the
+        // Drop path panic-free at the type level — future edits to the
+        // constant or to the underlying type can't introduce a panic
+        // surface inside `Drop` (this method is called from the
+        // `#[derive(ZeroizeOnDrop)]`-generated `Drop` impl).
+        if let Ok(dummy) = SigningKey::from_slice(&[1u8; 32]) {
+            let _wiped = std::mem::replace(&mut self.0, dummy);
+        }
+        // If construction ever failed (unreachable today), `self.0` would
+        // be untouched here — and Rust's drop glue still wipes the
+        // original via `SigningKey<Secp256k1>: ZeroizeOnDrop` when the
+        // generated `Drop` returns. No security loss.
     }
 }
 

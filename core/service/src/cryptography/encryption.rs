@@ -302,21 +302,23 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
 pub struct PrivateEncKey<C: KemCore>(pub(crate) C::DecapsulationKey);
 
-// Swap in a dummy and let the original drop —
-// `ml_kem::DecapsulationKey: ZeroizeOnDrop` (workspace `zeroize` feature)
-// wipes `dk_pke` and `z` on the replaced value. The dummy is built from
-// zero `Encoded<DecapsulationKey>` bytes; `from_bytes` is infallible
-// (it only splits the input into the key's structural fields).
-impl<C: KemCore> Zeroize for PrivateEncKey<C> {
+// Both `Zeroize` and `ZeroizeOnDrop` are bounded on the inner
+// `DecapsulationKey` actually wiping on drop: `mem::replace` here only
+// produces a real wipe if the dropped original's `Drop` zeroes its secret
+// state. Satisfied by `ml_kem::MlKem{512,1024}` with the workspace
+// `zeroize` feature; any other `KemCore` impl without that guarantee
+// simply won't get either trait, so callers can't accidentally rely on a
+// wipe that wouldn't happen.
+impl<C: KemCore> Zeroize for PrivateEncKey<C>
+where
+    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+{
     fn zeroize(&mut self) {
         let dummy = C::DecapsulationKey::from_bytes(&Default::default());
         let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
 
-// Only valid where the inner `DecapsulationKey` itself impls `ZeroizeOnDrop`.
-// Satisfied by `ml_kem::MlKem{512,1024}` with the workspace `zeroize` feature;
-// any other `KemCore` impl without that guarantee simply won't qualify.
 impl<C: KemCore> zeroize::ZeroizeOnDrop for PrivateEncKey<C> where
     C::DecapsulationKey: zeroize::ZeroizeOnDrop
 {
