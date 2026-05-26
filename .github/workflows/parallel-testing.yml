@@ -1,4 +1,4 @@
-name: new_main
+name: parallel-testing
 
 on:
   schedule:
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   generate-test-material:
-    name: new_main/generate-test-material
+    name: parallel-testing/generate-test-material
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry
@@ -92,7 +92,7 @@ jobs:
           echo "efs-test-material-path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
 
   test-matrix:
-    name: new_main/${{ matrix.job_name }}
+    name: parallel-testing/${{ matrix.job_name }}
     needs: [generate-test-material]
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
@@ -555,7 +555,7 @@ jobs:
     secrets: inherit
 
   test-reporter:
-    name: new_main/test-reporter
+    name: parallel-testing/test-reporter
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs: [test-matrix]
     uses: ./.github/workflows/test-reporter.yml
