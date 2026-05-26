@@ -30,7 +30,7 @@ use tokio_rustls::rustls::{
 use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem};
 
 #[derive(VersionsDispatch, Clone, Debug, Serialize, Deserialize)]
-pub enum ReleasePCRValuesVersioned {
+pub enum ReleasePCRValuesVersions {
     V0(ReleasePCRValues),
 }
 
@@ -42,7 +42,7 @@ pub enum ReleasePCRValuesVersioned {
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Versionize, Hash, Eq)]
-#[versionize(ReleasePCRValuesVersioned)]
+#[versionize(ReleasePCRValuesVersions)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePCRValues {
     // EIF hash

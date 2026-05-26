@@ -1,7 +1,7 @@
 use super::utils::ArrayVisitor;
 use crate::{
     base_ring::ToZ64,
-    bivariate::compute_powers_list,
+    matrix::compute_powers_list,
     poly::Poly,
     structure_traits::{
         BaseRing, Derive, FromU128, Invert, One, QuotientMaximalIdeal, Ring,
@@ -44,7 +44,7 @@ use zeroize::Zeroize;
 ///
 /// This is also the 'value' of a single ShamirShare.
 #[derive(Clone, Copy, PartialEq, Hash, Eq, Debug, Zeroize, Versionize)]
-#[versionize(ResiduePolyVersioned)]
+#[versionize(ResiduePolyVersions)]
 pub struct ResiduePoly<Z, const EXTENSION_DEGREE: usize> {
     pub coefs: [Z; EXTENSION_DEGREE],
 }
@@ -88,7 +88,7 @@ impl<'a, Z: Deserialize<'a>, const EXTENSION_DEGREE: usize> Deserialize<'a>
 }
 
 #[derive(Serialize, Deserialize, Clone, VersionsDispatch)]
-pub enum ResiduePolyVersioned<Z, const EXTENSION_DEGREE: usize> {
+pub enum ResiduePolyVersions<Z, const EXTENSION_DEGREE: usize> {
     V0(ResiduePoly<Z, EXTENSION_DEGREE>),
 }
 

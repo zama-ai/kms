@@ -1,5 +1,5 @@
 use super::{
-    bivariate::compute_powers_list,
+    matrix::compute_powers_list,
     poly::Poly,
     sharing::shamir::ShamirFieldPoly,
     structure_traits::{Field, Ring},

@@ -13,7 +13,7 @@ use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
 };
 use algebra::{
-    bivariate::{BivariateEval, BivariatePoly},
+    bivariate::BivariatePoly,
     poly::Poly,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
@@ -197,9 +197,7 @@ async fn malicious_round_1<Z: RingWithExceptionalSequence, S: BaseSessionHandles
     let mut rng = AesRng::seed_from_u64(0);
     let bivariate_poly = secrets
         .iter()
-        .map(|secret| {
-            BivariatePoly::from_secret(&mut rng, *secret, session.threshold() as usize).unwrap()
-        })
+        .map(|secret| BivariatePoly::from_secret(&mut rng, *secret, session.threshold() as usize))
         .collect_vec();
     let map_double_shares: MapRoleDoublePoly<Z> = session
         .roles()
@@ -207,14 +205,7 @@ async fn malicious_round_1<Z: RingWithExceptionalSequence, S: BaseSessionHandles
         .map(|r| {
             let embedded_role = Z::embed_role_to_exceptional_sequence(r).unwrap();
             let correct_bpolys = (0..num_secrets)
-                .map(|i| DoublePoly {
-                    share_in_x: bivariate_poly[i]
-                        .partial_y_evaluation(embedded_role)
-                        .unwrap(),
-                    share_in_y: bivariate_poly[i]
-                        .partial_x_evaluation(embedded_role)
-                        .unwrap(),
-                })
+                .map(|i| DoublePoly::from_bivariate(&bivariate_poly[i], embedded_role))
                 .collect_vec();
             if roles_to_lie_to.contains(r) {
                 // we only lie for one of the polynomials, the first one
@@ -325,10 +316,10 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
         // to an honest behaviour.
         let degree = session.threshold() as usize + 1;
         //Sample the bivariate polynomials Vec<F(X,Y)>
-        let bivariate_poly = secrets
+        let bivariate_poly: Vec<_> = secrets
             .iter()
             .map(|s| BivariatePoly::from_secret(session.rng(), *s, degree))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
         //Evaluate the bivariate poly in its first and second variables
         //to create a mapping role -> Vec<(F(X,alpha_role), F(alpha_role,Y))>
         let map_double_shares: MapRoleDoublePoly<Z> = session
@@ -338,12 +329,7 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
                 let embedded_role = Z::embed_role_to_exceptional_sequence(r)?;
                 let mut vec_map = Vec::with_capacity(bivariate_poly.len());
                 for p in &bivariate_poly {
-                    let share_in_x = p.partial_y_evaluation(embedded_role)?;
-                    let share_in_y = p.partial_x_evaluation(embedded_role)?;
-                    vec_map.push(DoublePoly {
-                        share_in_x,
-                        share_in_y,
-                    });
+                    vec_map.push(DoublePoly::from_bivariate(p, embedded_role));
                 }
                 Ok::<(Role, Vec<DoublePoly<Z>>), anyhow::Error>((*r, vec_map))
             })

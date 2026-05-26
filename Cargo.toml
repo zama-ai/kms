@@ -153,7 +153,6 @@ k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ do
 minijinja = { version = "=2.11.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
 ml-kem = { version = "=0.2.2", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
-ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
@@ -197,6 +196,7 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
+# NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
 tfhe = "=1.6.1"  # Fully Homomorphic Encryption library - LOW RISK: Zama
 tfhe-csprng = "=0.9.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-versionable = "=0.7.0"  # TFHE versioning support - LOW RISK: Zama

@@ -19,12 +19,12 @@ pub const KMS_CUSTODIAN: &str = "kms-custodian";
 pub const SEED_PHRASE_DESC: &str = "The SECRET seed phrase for the custodian keys is: ";
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
-pub enum BackupCiphertextVersioned {
+pub enum BackupCiphertextVersions {
     V0(BackupCiphertext),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(BackupCiphertextVersioned)]
+#[versionize(BackupCiphertextVersions)]
 pub struct BackupCiphertext {
     pub ciphertext: UnifiedCipher,
     pub priv_data_type: PrivDataType,
