@@ -160,7 +160,13 @@ class BenchParams:
     percentage_offline: int
     params: str  # TFHE parameter set name; "" for bgv
     ddec_modes: List[str]  # e.g. ["noise-flood-small", "bit-dec-small"]
+    # CRS sweep: when non-empty, the run emits one CRS_GEN_<UPPER_PARAMS>
+    # line per entry in order (used by the standalone crs_reproducible.sh
+    # script). When empty and ``has_crs`` is set, the run emits a single
+    # plain ``CRS_GEN`` line using ``params``.
+    crs_params: List[str]
     has_prss_init: bool
+    has_dkg: bool
     has_crs: bool
     has_reshare: bool
 
@@ -217,6 +223,9 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
     ddec_modes_raw = raw.get("DDEC_MODES", "")
     ddec_modes = [m for m in ddec_modes_raw.split() if m]
 
+    crs_params_raw = raw.get("CRS_PARAMS", "")
+    crs_params = [p for p in crs_params_raw.split() if p]
+
     return BenchParams(
         experiment_name=raw.get("EXPERIMENT_NAME", os.path.basename(folder)),
         protocol=protocol,
@@ -230,7 +239,12 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
         percentage_offline=_maybe_int(raw.get("PERCENTAGE_OFFLINE", ""), 100),
         params=raw.get("PARAMS", ""),
         ddec_modes=ddec_modes,
+        crs_params=crs_params,
         has_prss_init=_truthy(raw.get("HAS_PRSS_INIT", ""), True),
+        # has_dkg defaults to True for backward compatibility with older
+        # BENCH_PARAMS.txt files that pre-date the standalone CRS script.
+        # The new crs_reproducible.sh writes HAS_DKG=0 explicitly.
+        has_dkg=_truthy(raw.get("HAS_DKG", ""), True),
         has_crs=_truthy(raw.get("HAS_CRS", ""), has_crs_default),
         has_reshare=_truthy(raw.get("HAS_RESHARE", ""), has_reshare_default),
     )
@@ -253,13 +267,31 @@ def _mode_to_label_prefix(mode: str) -> str:
     return mode.upper().replace("-", "_")
 
 
+def _crs_label_for(params: str) -> str:
+    """Schedule label for a CRS_GEN line tied to a specific parameter set.
+
+    Used when CRS gen is swept over multiple parameter sets in one run
+    (standalone ``crs_reproducible.sh``); the single-CRS case keeps the
+    plain ``CRS_GEN`` label for backward compatibility.
+    """
+    return f"CRS_GEN_{params.upper().replace('-', '_')}"
+
+
 def _build_tfhe_labels(bp: BenchParams) -> List[str]:
     labels: List[str] = []
     if bp.has_prss_init:
         labels.extend(["PRSS_INIT_Z64", "PRSS_INIT_Z128"])
-    labels.extend(["DKG_PREPROC", "DKG"])
+    if bp.has_dkg:
+        labels.extend(["DKG_PREPROC", "DKG"])
     if bp.has_crs:
-        labels.append("CRS_GEN")
+        if bp.crs_params:
+            # CRS sweep: one labeled CRS_GEN per parameter set, in order.
+            for p in bp.crs_params:
+                labels.append(_crs_label_for(p))
+        else:
+            # Single CRS gen (existing TFHE flow before the standalone
+            # script was extracted; kept for backward compatibility).
+            labels.append("CRS_GEN")
     if bp.has_reshare:
         # Reshare emits two consecutive session-stats lines: the preprocessing
         # phase followed by the online phase.
@@ -276,7 +308,8 @@ def _build_bgv_labels(bp: BenchParams) -> List[str]:
     labels: List[str] = []
     if bp.has_prss_init:
         labels.extend(["PRSS_INIT_LEVEL_ONE", "PRSS_INIT_LEVEL_KSW"])
-    labels.extend(["DKG_PREPROC", "DKG"])
+    if bp.has_dkg:
+        labels.extend(["DKG_PREPROC", "DKG"])
     for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
         labels.append(f"DDEC_PARALLEL_{parallel_n}")
     return labels
@@ -725,6 +758,21 @@ def _meta_cells(bp: BenchParams) -> List[object]:
     ]
 
 
+def _meta_cells_with_params(bp: BenchParams, override_params: str) -> List[object]:
+    """Like ``_meta_cells`` but with ``bp.params`` replaced by
+    ``override_params``. Used for CRS sweep rows where each row in the same
+    run carries its own param-set name in the ``params`` column.
+    """
+    return [
+        bp.experiment_name,
+        bp.session_type,
+        override_params,
+        bp.num_sessions,
+        bp.percentage_offline,
+        bp.num_ctxts,
+    ]
+
+
 CRS_HEADERS = [
     "malicious",
     "num_parties",
@@ -987,26 +1035,46 @@ def _emit_rows(
         mem_run = mem_index.get(_base_experiment_name(bp.experiment_name))
 
         if bp.protocol == "tfhe":
-            # CRS
+            # CRS — either a single CRS_GEN (existing TFHE flow, uses
+            # bp.params) or a sweep with one CRS_GEN_<P> per entry in
+            # bp.crs_params (each row carries its own param name).
             if bp.has_crs:
-                crs_op = _find_operation(r.aggregates, "CRS_GEN")
-                if crs_op is not None:
-                    crs_max_mem, _ = _peak_mem_kb_for("CRS_GEN", mem_run)
-                    crs_rows.append([
-                        1 if bp.malicious else 0,
-                        bp.num_parties,
-                        crs_op.avg_time_active_ms,
-                        crs_op.avg_num_rounds,
-                        crs_op.avg_network_sent_B,
-                        crs_op.avg_network_received_B,
-                        crs_max_mem,
-                    ] + _meta_cells(bp))
+                if bp.crs_params:
+                    for p in bp.crs_params:
+                        label = _crs_label_for(p)
+                        crs_op = _find_operation(r.aggregates, label)
+                        if crs_op is not None:
+                            crs_max_mem, _ = _peak_mem_kb_for(label, mem_run)
+                            crs_rows.append([
+                                1 if bp.malicious else 0,
+                                bp.num_parties,
+                                crs_op.avg_time_active_ms,
+                                crs_op.avg_num_rounds,
+                                crs_op.avg_network_sent_B,
+                                crs_op.avg_network_received_B,
+                                crs_max_mem,
+                            ] + _meta_cells_with_params(bp, p))
+                else:
+                    crs_op = _find_operation(r.aggregates, "CRS_GEN")
+                    if crs_op is not None:
+                        crs_max_mem, _ = _peak_mem_kb_for("CRS_GEN", mem_run)
+                        crs_rows.append([
+                            1 if bp.malicious else 0,
+                            bp.num_parties,
+                            crs_op.avg_time_active_ms,
+                            crs_op.avg_num_rounds,
+                            crs_op.avg_network_sent_B,
+                            crs_op.avg_network_received_B,
+                            crs_max_mem,
+                        ] + _meta_cells(bp))
 
-            # KeyGen
-            preproc = _find_operation(r.aggregates, "DKG_PREPROC")
-            dkg = _find_operation(r.aggregates, "DKG")
-            if preproc is not None and dkg is not None:
-                keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
+            # KeyGen (only when the run actually did DKG; standalone CRS runs
+            # skip this).
+            if bp.has_dkg:
+                preproc = _find_operation(r.aggregates, "DKG_PREPROC")
+                dkg = _find_operation(r.aggregates, "DKG")
+                if preproc is not None and dkg is not None:
+                    keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
 
             # Reshare
             if bp.has_reshare:
@@ -1019,42 +1087,47 @@ def _emit_rows(
             # one ddec mode pair (noise-flood-X + bit-dec-X) matching its
             # session type; we pick the matching uppercase prefix from
             # session_type and look up the per-tfhe-type PREPROC/DDEC pairs.
-            session_upper = bp.session_type.upper() if bp.session_type else ""
-            nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
-            bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
+            # Skipped entirely when the run has no DDEC modes (e.g. standalone
+            # CRS runs), which also lets PARAMS be empty without tripping the
+            # LWE-block lookup.
+            if bp.ddec_modes:
+                session_upper = bp.session_type.upper() if bp.session_type else ""
+                nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
+                bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
 
-            # Bits per LWE block is parameter-set dependent. Compute once per
-            # run; ``_num_blocks(bit_width, bits_per_block)`` converts the
-            # message bit-width into the LWE-block count that goes into both
-            # the ``num_ctxt`` column and the throughput math.
-            bits_per_block = _bits_per_block(bp.params)
+                # Bits per LWE block is parameter-set dependent. Compute once
+                # per run; ``_num_blocks(bit_width, bits_per_block)`` converts
+                # the message bit-width into the LWE-block count that goes into
+                # both the ``num_ctxt`` column and the throughput math.
+                bits_per_block = _bits_per_block(bp.params)
 
-            for tfhe_type in TFHE_TYPES:
-                bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
-                num_blocks = _num_blocks(bit_width, bits_per_block)
+                for tfhe_type in TFHE_TYPES:
+                    bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
+                    num_blocks = _num_blocks(bit_width, bits_per_block)
 
-                if nf_prefix is not None:
-                    nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
-                    nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
-                    if nf_pp is not None and nf_dd is not None:
-                        tdec_one_rows.append(
-                            _tdec_one_row(bp, num_blocks, nf_pp, nf_dd, mem_run)
-                        )
+                    if nf_prefix is not None:
+                        nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
+                        nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
+                        if nf_pp is not None and nf_dd is not None:
+                            tdec_one_rows.append(
+                                _tdec_one_row(bp, num_blocks, nf_pp, nf_dd, mem_run)
+                            )
 
-                if bd_prefix is not None:
-                    bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
-                    bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
-                    if bd_pp is not None and bd_dd is not None:
-                        tdec_two_rows.append(
-                            _tdec_two_row(bp, num_blocks, bd_pp, bd_dd, mem_run)
-                        )
+                    if bd_prefix is not None:
+                        bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
+                        bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
+                        if bd_pp is not None and bd_dd is not None:
+                            tdec_two_rows.append(
+                                _tdec_two_row(bp, num_blocks, bd_pp, bd_dd, mem_run)
+                            )
 
         elif bp.protocol == "bgv":
-            # BGV KeyGen
-            preproc = _find_operation(r.aggregates, "DKG_PREPROC")
-            dkg = _find_operation(r.aggregates, "DKG")
-            if preproc is not None and dkg is not None:
-                bgv_keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
+            # BGV KeyGen (only when the run actually did DKG).
+            if bp.has_dkg:
+                preproc = _find_operation(r.aggregates, "DKG_PREPROC")
+                dkg = _find_operation(r.aggregates, "DKG")
+                if preproc is not None and dkg is not None:
+                    bgv_keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
 
             # BGV TDec — one row per parallelism factor.
             for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
