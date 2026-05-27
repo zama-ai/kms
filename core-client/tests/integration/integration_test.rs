@@ -2045,6 +2045,70 @@ fn config_conformance_client_local_threshold() {
     }
 }
 
+/// Backward compatibility: TOMLs may still carry `party_id` keys (stale or out
+/// of order). The deserializer must ignore the supplied values and derive each
+/// core's party_id from its 1-based position in the `cores` list.
+#[test]
+fn deserialize_overwrites_supplied_party_id() {
+    // Threshold config whose party_id values are stale and out of order.
+    let raw = r#"
+kms_type = "threshold"
+num_majority = 2
+num_reconstruct = 3
+fhe_params = "Test"
+
+[[cores]]
+party_id = 3
+address = "localhost:50100"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p1"
+
+[[cores]]
+party_id = 99
+address = "localhost:50200"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p2"
+
+[[cores]]
+party_id = 1
+address = "localhost:50300"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p3"
+
+[[cores]]
+party_id = 2
+address = "localhost:50400"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p4"
+"#;
+    let conf: CoreClientConfig =
+        toml::from_str(raw).expect("threshold config with stale party_id should still parse");
+    let ids: Vec<usize> = conf.cores.iter().map(|c| c.party_id).collect();
+    assert_eq!(
+        ids,
+        vec![1, 2, 3, 4],
+        "party_id must be derived from list position, not the values in the file"
+    );
+
+    // Centralized config with a wrong party_id must be normalized to party 1.
+    let raw_central = r#"
+kms_type = "centralized"
+num_majority = 1
+num_reconstruct = 1
+fhe_params = "Test"
+
+[[cores]]
+party_id = 7
+address = "localhost:50051"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB"
+"#;
+    let conf: CoreClientConfig = toml::from_str(raw_central)
+        .expect("centralized config with stale party_id should still parse");
+    assert_eq!(conf.cores.len(), 1);
+    assert_eq!(conf.cores[0].party_id, 1);
+}
+
 // ============================================================================
 // TESTS
 // ============================================================================
