@@ -135,8 +135,31 @@ pub struct CoreConf {
 fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
     // The number of parties in the configuration, this may not be the actual number of KMS parties IRL. But is just the ones we currently communicate with.
     let num_parties = conf.cores.len();
+    let mut seen_party_ids = vec![false; num_parties];
 
     for cur_core in &conf.cores {
+        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
+            return Err(ValidationError::new("Party ID Range Error").with_message(
+                format!(
+                    "Party ID {} must be between 1 and {}.",
+                    cur_core.party_id, num_parties
+                )
+                .into(),
+            ));
+        }
+
+        let party_idx = cur_core.party_id - 1;
+        if seen_party_ids[party_idx] {
+            return Err(ValidationError::new("Duplicate Party ID").with_message(
+                format!(
+                    "Party ID {} is duplicated in the configuration.",
+                    cur_core.party_id
+                )
+                .into(),
+            ));
+        }
+        seen_party_ids[party_idx] = true;
+
         if conf
             .cores
             .iter()
