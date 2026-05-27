@@ -118,7 +118,7 @@ pub(crate) async fn fetch_kms_verification_keys(
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?
         };
-        keys_map.insert(cur_core.party_id, vk);
+        keys_map.insert(cur_core.party_id.get(), vk);
     }
 
     Ok(keys_map)
@@ -155,7 +155,7 @@ pub(crate) async fn fetch_kms_signing_keys(
                 .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
                 .await?
         };
-        keys_map.insert(cur_core.party_id, sk);
+        keys_map.insert(cur_core.party_id.get(), sk);
     }
     Ok(keys_map)
 }

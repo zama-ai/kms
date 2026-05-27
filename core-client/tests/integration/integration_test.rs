@@ -18,6 +18,7 @@ use observability::conf::Settings;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::write;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
@@ -229,7 +230,7 @@ fn generate_centralized_cli_config(
     let cfg = CoreClientConfig {
         kms_type: KmsType::Centralized,
         cores: vec![CoreConf {
-            party_id: 1,
+            party_id: NonZeroUsize::MIN,
             address: format!("localhost:{}", server.service_port),
             s3_endpoint: format!("file://{}", canonical_path.display()),
             object_folder: "PUB".to_string(),
@@ -496,7 +497,7 @@ fn generate_threshold_cli_config(
         write_core_config_toml(&server_config_path, &core_config)?;
 
         cores.push(CoreConf {
-            party_id: i,
+            party_id: NonZeroUsize::new(i).unwrap(),
             address: format!("localhost:{}", server.service_port),
             s3_endpoint: format!("file://{}", material_dir.path().display()),
             object_folder: format!("PUB-p{i}"),
@@ -881,7 +882,7 @@ async fn setup_party_resharing_servers(
             let server = servers.get(&(i as u32)).unwrap();
             let server_config_path = material_dir.path().join(format!("compose_{i}.toml"));
             CoreConf {
-                party_id: i,
+                party_id: NonZeroUsize::new(i).unwrap(),
                 address: format!("localhost:{}", server.service_port),
                 s3_endpoint: format!("file://{}", material_dir.path().display()),
                 object_folder: format!("PUB-p{i}"),
@@ -918,7 +919,7 @@ async fn setup_party_resharing_servers(
         .map(|(party_id, server_id, compose_path)| {
             let server = servers.get(server_id).unwrap();
             CoreConf {
-                party_id: *party_id,
+                party_id: NonZeroUsize::new(*party_id).unwrap(),
                 address: format!("localhost:{}", server.service_port),
                 s3_endpoint: format!("file://{}", material_dir.path().display()),
                 object_folder: format!("PUB-p{server_id}"),
@@ -2012,7 +2013,7 @@ fn config_conformance_client_local_centralized() {
     assert_eq!(loaded.cores.len(), 1);
     assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
     // party_id is not present in the TOML; the single core must be derived as party 1.
-    assert_eq!(loaded.cores[0].party_id, 1);
+    assert_eq!(loaded.cores[0].party_id.get(), 1);
 }
 
 #[test]
@@ -2041,7 +2042,7 @@ fn config_conformance_client_local_threshold() {
     // party_id is not present in the TOML; it must be derived from each core's
     // 1-based position in the cores list.
     for (i, core) in loaded.cores.iter().enumerate() {
-        assert_eq!(core.party_id, i + 1);
+        assert_eq!(core.party_id.get(), i + 1);
     }
 }
 
@@ -2083,7 +2084,7 @@ object_folder = "PUB-p4"
 "#;
     let conf: CoreClientConfig =
         toml::from_str(raw).expect("threshold config with stale party_id should still parse");
-    let ids: Vec<usize> = conf.cores.iter().map(|c| c.party_id).collect();
+    let ids: Vec<usize> = conf.cores.iter().map(|c| c.party_id.get()).collect();
     assert_eq!(
         ids,
         vec![1, 2, 3, 4],
@@ -2106,7 +2107,7 @@ object_folder = "PUB"
     let conf: CoreClientConfig = toml::from_str(raw_central)
         .expect("centralized config with stale party_id should still parse");
     assert_eq!(conf.cores.len(), 1);
-    assert_eq!(conf.cores[0].party_id, 1);
+    assert_eq!(conf.cores[0].party_id.get(), 1);
 }
 
 // ============================================================================

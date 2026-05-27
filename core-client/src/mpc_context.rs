@@ -81,10 +81,10 @@ pub async fn create_test_context_info_from_core_config(
         let peers = threshold_config
             .peers
             .ok_or_else(|| anyhow::anyhow!("Peers not set for core {}", c.party_id))?;
-        let peer = peers.get(c.party_id - 1).ok_or_else(|| {
+        let peer = peers.get(c.party_id.get() - 1).ok_or_else(|| {
             anyhow::anyhow!(
                 "Peer index {} out of bounds (peers len: {}) for core {}",
-                c.party_id - 1,
+                c.party_id.get() - 1,
                 peers.len(),
                 c.party_id
             )

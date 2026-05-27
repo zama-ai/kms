@@ -51,6 +51,7 @@ use observability::conf::Settings;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -102,13 +103,20 @@ pub struct CoreClientConfig {
     pub fhe_params: Option<FheParameter>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
+/// Placeholder party ID used before [`CoreClientConfig`] deserialization
+/// overwrites it with the core's position-derived ID. `party_id` is `skip`ped
+/// during deserialization, so serde needs a default for it.
+fn placeholder_party_id() -> NonZeroUsize {
+    NonZeroUsize::MIN
+}
+
+#[derive(Deserialize, Serialize, Clone, Validate, Debug, Hash, PartialEq, Eq)]
 pub struct CoreConf {
     /// The 1-based ID of the KMS server. This is not read from the config file;
     /// it is derived from this core's position in the `cores` list during
     /// deserialization (the first core is party 1, the second party 2, etc.).
-    #[serde(default)]
-    pub party_id: usize,
+    #[serde(skip, default = "placeholder_party_id")]
+    pub party_id: NonZeroUsize,
 
     /// The address of the given KMS server, including the port
     #[validate(length(min = 1))]
@@ -138,7 +146,7 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     let mut seen_party_ids = vec![false; num_parties];
 
     for cur_core in &conf.cores {
-        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
+        if cur_core.party_id.get() > num_parties {
             return Err(ValidationError::new("Party ID Range Error").with_message(
                 format!(
                     "Party ID {} must be between 1 and {}.",
@@ -148,7 +156,7 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
             ));
         }
 
-        let party_idx = cur_core.party_id - 1;
+        let party_idx = cur_core.party_id.get() - 1;
         if seen_party_ids[party_idx] {
             return Err(ValidationError::new("Duplicate Party ID").with_message(
                 format!(
@@ -265,7 +273,8 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
         // ignoring any value present in the config file.
         let mut cores = temp.cores;
         for (idx, core) in cores.iter_mut().enumerate() {
-            core.party_id = idx + 1;
+            // idx + 1 >= 1, so this is always a valid NonZeroUsize.
+            core.party_id = NonZeroUsize::new(idx + 1).expect("idx + 1 is always >= 1");
         }
 
         let conf = CoreClientConfig {
@@ -1584,7 +1593,7 @@ pub async fn execute_cmd(
                     core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
                     pub_storage.insert(
-                        cur_core.party_id as u32,
+                        cur_core.party_id.get() as u32,
                         FileStorage::new(
                             Some(destination_prefix),
                             StorageType::PUB,
@@ -2625,7 +2634,7 @@ mod tests {
         let cc_conf = CoreClientConfig {
             kms_type: KmsType::Threshold,
             cores: vec![CoreConf {
-                party_id: 1,
+                party_id: NonZeroUsize::MIN,
                 address: "127.0.0.1:0".to_string(),
                 s3_endpoint: format!("file://{}", remote_root.path().display()),
                 object_folder: object_folder.to_string(),

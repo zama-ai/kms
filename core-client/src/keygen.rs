@@ -238,7 +238,8 @@ pub(crate) async fn fetch_and_check_keygen(
     let first_party_id = party_confs
         .first()
         .ok_or_else(|| anyhow::anyhow!("no party configs returned from fetch_public_elements"))?
-        .party_id as usize;
+        .party_id
+        .get();
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     // Even if we did not download all keys, we still check that they are identical
