@@ -1975,9 +1975,8 @@ struct StrictCheckedInCoreClientToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)] // Presence validated by deny_unknown_fields; only party_id asserted in tests
+#[allow(dead_code)] // Presence/absence of keys validated by deny_unknown_fields
 struct StrictCheckedInCoreToml {
-    party_id: usize,
     address: String,
     s3_endpoint: String,
     object_folder: String,
@@ -2000,7 +1999,6 @@ fn config_conformance_client_local_centralized() {
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
     assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
     assert_eq!(strict.cores.len(), 1);
-    assert_eq!(strict.cores[0].party_id, 1);
     // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
     // the load.  This avoids the need for unsafe env::remove_var and lets the
     // test run concurrently with other tests that read the environment.
@@ -2013,6 +2011,8 @@ fn config_conformance_client_local_centralized() {
     assert_eq!(loaded.kms_type, KmsType::Centralized);
     assert_eq!(loaded.cores.len(), 1);
     assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
+    // party_id is not present in the TOML; the single core must be derived as party 1.
+    assert_eq!(loaded.cores[0].party_id, 1);
 }
 
 #[test]
@@ -2028,9 +2028,6 @@ fn config_conformance_client_local_threshold() {
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
     assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
     assert_eq!(strict.cores.len(), 4);
-    for (i, core) in strict.cores.iter().enumerate() {
-        assert_eq!(core.party_id, i + 1);
-    }
     // Use an inert env_prefix — see config_conformance_client_local_centralized.
     let loaded: CoreClientConfig = Settings::builder()
         .path(path.to_str().expect("utf8 path"))
@@ -2041,6 +2038,11 @@ fn config_conformance_client_local_threshold() {
     assert_eq!(loaded.kms_type, KmsType::Threshold);
     assert_eq!(loaded.cores.len(), 4);
     assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
+    // party_id is not present in the TOML; it must be derived from each core's
+    // 1-based position in the cores list.
+    for (i, core) in loaded.cores.iter().enumerate() {
+        assert_eq!(core.party_id, i + 1);
+    }
 }
 
 // ============================================================================

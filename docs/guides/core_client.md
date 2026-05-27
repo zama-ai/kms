@@ -45,8 +45,7 @@ Values inside the TOML configs are:
 - `num_reconstruct` - The minimum number of responses required to reconstruct a value (e.g. in user decryption).
 - `decryption_mode` - For a threshold deployment this must match to what is deployed on the threshold servers. Valid values are `NoiseFloodSmall` (default), `NoiseFloodLarge`, `BitDecSmall`, and `BitDecLarge`.
 - `fhe_params` - The set of FHE parameters to use. Can be either `Default` (for large, secure parameters) or `Test` (for smaller, insecure testing parameters).
-- Each KMS core is configured under a separate `[[cores]]` section containing the following values:
-  - `party_id` - The MPC party id, starting from 1 going up to n.
+- Each KMS core is configured under a separate `[[cores]]` section containing the following values. The MPC party id (from 1 up to n) is derived from the order of the `[[cores]]` sections: the first section is party 1, the second party 2, and so on.
   - `address`- The host name or IP address and port of the cores service interface. Example: `address = "localhost:50100"`.
   - `s3_endpoint` - The host name or IP address and port of the S3 endpoint that is used for public data (public keys, CRS, etc.). Example: `s3_endpoint = "http://localhost:9000/kms"`.
   - `object_folder` - The folder on the S3 endpoint where public key material for this party is stored. Example: `object_folder = "PUB-p1"`.

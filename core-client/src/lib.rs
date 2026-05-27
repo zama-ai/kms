@@ -104,8 +104,10 @@ pub struct CoreClientConfig {
 
 #[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
 pub struct CoreConf {
-    /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
-    #[validate(range(min = 1))]
+    /// The 1-based ID of the KMS server. This is not read from the config file;
+    /// it is derived from this core's position in the `cores` list during
+    /// deserialization (the first core is party 1, the second party 2, etc.).
+    #[serde(default)]
     pub party_id: usize,
 
     /// The address of the given KMS server, including the port
@@ -135,30 +137,6 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     let num_parties = conf.cores.len();
 
     for cur_core in &conf.cores {
-        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
-            return Err(ValidationError::new("Incorrect Party ID").with_message(
-                format!(
-                    "Party ID must be between 1 and the number of parties ({}), but was {}.",
-                    num_parties, cur_core.party_id
-                )
-                .into(),
-            ));
-        }
-        if conf
-            .cores
-            .iter()
-            .filter(|x| x.party_id == cur_core.party_id)
-            .count()
-            > 1
-        {
-            return Err(ValidationError::new("Duplicate Party ID").with_message(
-                format!(
-                    "Party ID {} is duplicated in the configuration.",
-                    cur_core.party_id
-                )
-                .into(),
-            ));
-        }
         if conf
             .cores
             .iter()
@@ -215,17 +193,6 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
                     ),
                 );
             }
-            if conf.cores.first().expect("no party IDs found").party_id != 1 {
-                return Err(
-                    ValidationError::new("Centralized Party ID Error").with_message(
-                        format!(
-                    "Party ID of the single core in a centralized config must be 1, but was {}.",
-                    conf.cores.first().unwrap().party_id
-                )
-                        .into(),
-                    ),
-                );
-            }
         }
     }
 
@@ -271,9 +238,16 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
 
+        // Derive each core's 1-based party ID from its position in the list,
+        // ignoring any value present in the config file.
+        let mut cores = temp.cores;
+        for (idx, core) in cores.iter_mut().enumerate() {
+            core.party_id = idx + 1;
+        }
+
         let conf = CoreClientConfig {
             kms_type: temp.kms_type,
-            cores: temp.cores,
+            cores,
             decryption_mode: temp.decryption_mode,
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
