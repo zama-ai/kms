@@ -57,9 +57,12 @@ jobs:
       - name: Install
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build wasm with tests
+      # Build the same artifact that gets published (no `wasm_tests`): the JS tests load a
+      # stable JSON vector and only exercise the stable public API, so the transcript helpers
+      # are not needed in the wasm package.
+      - name: Build wasm
         working-directory: ./core/service
-        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+        run: wasm-pack build --target nodejs . --no-default-features
 
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0

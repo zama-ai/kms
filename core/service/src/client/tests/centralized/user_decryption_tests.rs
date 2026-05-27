@@ -323,10 +323,7 @@ pub(crate) async fn user_decryption_centralized(
             use kms_grpc::kms::v1::TypedPlaintext;
             use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
-            use crate::{
-                client::user_decryption_wasm::TestingUserDecryptionTranscript,
-                util::file_handling::write_element,
-            };
+            use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
             let transcript = TestingUserDecryptionTranscript {
                 server_addrs: internal_client.get_server_addrs(),
                 client_address: internal_client.client_address,
@@ -347,13 +344,20 @@ pub(crate) async fn user_decryption_centralized(
                 agg_resp: vec![resp_response_vec.first().unwrap().1.clone()],
             };
 
-            let path_prefix = if *dkg_params != PARAMS_TEST_BK_SNS {
-                crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
+            let (path_prefix, fhe_parameter) = if *dkg_params != PARAMS_TEST_BK_SNS {
+                (
+                    crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH,
+                    "default",
+                )
             } else {
-                crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH
+                (crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH, "test")
             };
-            let path = format!("{}.{}", path_prefix, msg.bits());
-            write_element(&path, &transcript).await.unwrap();
+            let path = format!("{}.{}.json", path_prefix, msg.bits());
+            let vector = transcript.to_stable_test_vector(fhe_parameter).unwrap();
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&vector).unwrap()).unwrap();
         }
     }
 

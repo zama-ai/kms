@@ -12,8 +12,6 @@ use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
-#[cfg(feature = "wasm_tests")]
-use crate::util::file_handling::write_element;
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -536,13 +534,20 @@ pub(crate) async fn user_decryption_threshold(
                 eph_pk: reqs[0].clone().1,
                 agg_resp,
             };
-            let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
-                crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
+            let (path_prefix, fhe_parameter) = if dkg_params != PARAMS_TEST_BK_SNS {
+                (
+                    crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH,
+                    "default",
+                )
             } else {
-                crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
+                (crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH, "test")
             };
-            let path = format!("{}.{}", path_prefix, msg.bits());
-            write_element(&path, &transcript).await.unwrap();
+            let path = format!("{}.{}.json", path_prefix, msg.bits());
+            let vector = transcript.to_stable_test_vector(fhe_parameter).unwrap();
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&vector).unwrap()).unwrap();
         }
     }
 
