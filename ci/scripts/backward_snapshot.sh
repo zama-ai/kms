@@ -144,9 +144,9 @@ install_tools() {
 #=============================================================================
 # Snapshot generation
 #
-# Runs the tfhe-rs snapshot Dylint library over each package in
-# $SNAPSHOT_PACKAGES, writing lint_enum_snapshots_*.json into $1. The cwd at
-# call time determines which checkout is snapshotted.
+# Runs the tfhe-rs snapshot Dylint library over all packages in
+# $SNAPSHOT_PACKAGES as primary packages, writing lint_enum_snapshots_*.json
+# into $1. The cwd at call time determines which checkout is snapshotted.
 #
 # Precondition: $1 must be an existing, empty, absolute directory. The checker
 # globs every `lint_enum_snapshots_*.json` it finds, so any stale file for a
@@ -170,29 +170,22 @@ generate_in_cwd() {
     local source_git source_tag
     read -r source_git source_tag < <(tfhe_lints_source)
 
+    local package_args=()
     for package in ${SNAPSHOT_PACKAGES}; do
-        log_info "Generating snapshot for ${package} in $(pwd)"
-        # Per-package clean is necessary: `cargo dylint --no-deps -p X` only
-        # runs the lint when cargo actually (re)compiles X. After the first
-        # iteration, later packages in $SNAPSHOT_PACKAGES are already cached as
-        # transitive deps of earlier ones (same workspace, default features), so
-        # without this clean the lint silently no-ops on every package except
-        # the first. A single clean outside the loop would not help — the first
-        # iteration would re-cache the rest. Targets the isolated
-        # $CARGO_TARGET_DIR under the per-snapshot tmpdir, never the user's
-        # workspace target/ (so criterion baselines etc. are untouched).
-        CARGO_TARGET_DIR="${target_dir}" \
-            cargo clean -p "${package}" --profile dev
-        CARGO_TARGET_DIR="${target_dir}" \
-        TFHE_BACKWARD_COMPAT_DATA_DIR="${output_dir}" \
-            cargo dylint \
-                --git "${source_git}" \
-                --tag "${source_tag}" \
-                --pattern utils/tfhe-lints/snapshot \
-                --all \
-                --no-deps \
-                -p "${package}"
+        package_args+=("-p" "${package}")
     done
+    [[ ${#package_args[@]} -gt 0 ]] || die "SNAPSHOT_PACKAGES must not be empty"
+
+    log_info "Generating snapshot for ${SNAPSHOT_PACKAGES} in $(pwd)"
+    CARGO_TARGET_DIR="${target_dir}" \
+    TFHE_BACKWARD_COMPAT_DATA_DIR="${output_dir}" \
+        cargo dylint \
+            --git "${source_git}" \
+            --tag "${source_tag}" \
+            --pattern utils/tfhe-lints/snapshot \
+            --all \
+            --no-deps \
+            "${package_args[@]}"
 }
 
 # generate_snapshot <abs-output-dir> [<base-ref>]
