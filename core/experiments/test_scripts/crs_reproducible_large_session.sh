@@ -21,8 +21,6 @@ CRS_PARAMS_LIST=(
 
 # Per-params expected SHA-256 of crs.bin under the large-session cluster.
 # Different topology from the small wrapper, so the hashes generally differ.
-# TODO: replace the placeholder zeros with the actual hashes after the first
-# successful run; the script's hash check prints the produced hash on mismatch.
 declare -A EXPECTED_CRS_HASHES=(
     ["nist-params-p8-sns-fglwe"]="402d2596dd2a01949cb6446d343d156134e4fc682b5317765b1ce17c4a477ccf"
     ["nist-params-p8-sns-lwe"]="96b63f5d88ad7e633d56c601246ef51f4ad9b88e5332adabb87d2099e3e9433c"

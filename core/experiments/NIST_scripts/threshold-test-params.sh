@@ -176,7 +176,7 @@ function run_bgv_variant {
 # wedge our cluster bring-up. Drop anything we might want to spin up.
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
-cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
+cleanup_docker "temp/tfhe-bench-run-4p-malicious-drop.yml"
 cleanup_docker "temp/bgv-bench-run.yml"
 
 # --- KAT section: hash-checked reproducible runs ---------------------------
@@ -193,7 +193,7 @@ run_tfhe_variant \
     crs_reproducible_large_session.sh \
     0
 run_tfhe_variant \
-    tfhe-bench-run-4p-malicious-bcast \
+    tfhe-bench-run-4p-malicious-drop \
     tfhe_reproducible_small_session_malicious.sh \
     crs_reproducible_small_session_malicious.sh \
     0
@@ -217,7 +217,7 @@ if [ "$MODE" = "all" ]; then
         crs_reproducible_large_session.sh \
         1
     run_tfhe_variant \
-        tfhe-bench-run-4p-malicious-bcast \
+        tfhe-bench-run-4p-malicious-drop \
         tfhe_reproducible_small_session_malicious.sh \
         crs_reproducible_small_session_malicious.sh \
         1
