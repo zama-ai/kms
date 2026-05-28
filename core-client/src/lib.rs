@@ -1491,7 +1491,11 @@ pub async fn execute_cmd(
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
     let mut rng = AesRng::from_entropy();
-    let num_parties = cc_conf.cores.len();
+    // the total number of deployed KMS parties as explicitly set in the provided config file
+    let num_parties = cc_conf.num_parties;
+
+    // the number of cores the core-client will talk to, as specified in `[[cores]]` sections of the config file
+    let num_cores = cc_conf.cores.len();
 
     ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
 
@@ -1640,8 +1644,9 @@ pub async fn execute_cmd(
         };
     }
     tracing::info!(
-        "Parties: {}. FHE Parameters: {}",
+        "Total #Parties: {}. #Cores to talk to: {}. FHE Parameters: {}",
         num_parties,
+        num_cores,
         fhe_params.as_str_name()
     );
 
@@ -2217,8 +2222,8 @@ pub async fn execute_cmd(
         }) => {
             assert_eq!(
                 operator_recovery_resp_paths.len(),
-                num_parties,
-                "Number of operator recovery response paths must match number of operators in the configuration files"
+                num_cores,
+                "Number of operator recovery response paths must match number of operators (cores) in the configuration files"
             );
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
