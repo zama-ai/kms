@@ -95,6 +95,11 @@ pub struct CoreClientConfig {
     #[validate(length(min = 1))]
     pub cores: Vec<CoreConf>,
     pub decryption_mode: Option<DecryptionMode>,
+    /// Total number of parties in the KMS deployment. May exceed `cores.len()`
+    /// when the client only communicates with a subset of the parties. When
+    /// omitted from the TOML, defaults to `cores.len()` for backward compatibility.
+    #[validate(range(min = 1))]
+    pub num_parties: usize,
     #[validate(range(min = 1))]
     pub num_majority: usize,
     #[validate(range(min = 1))]
@@ -131,8 +136,21 @@ pub struct CoreConf {
 }
 
 fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
-    // The number of parties in the configuration, this may not be the actual number of KMS parties IRL. But is just the ones we currently communicate with.
-    let num_parties = conf.cores.len();
+    // Total number of parties in the deployment, taken from the TOML (or defaulted
+    // to `cores.len()` at deserialization time for backward compatibility). This
+    // may exceed `conf.cores.len()` when the client only communicates with a subset.
+    let num_parties = conf.num_parties;
+
+    if conf.cores.len() > num_parties {
+        return Err(ValidationError::new("Core Count Error").with_message(
+            format!(
+                "Number of configured cores ({}) must not exceed num_parties ({}).",
+                conf.cores.len(),
+                num_parties
+            )
+            .into(),
+        ));
+    }
 
     for cur_core in &conf.cores {
         if cur_core.party_id == 0 || cur_core.party_id > num_parties {
@@ -176,10 +194,10 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
         }
     }
     if conf.num_majority > num_parties {
-        return Err(ValidationError::new("Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be smaller than or equal to the number of parties the CLI communicates with ({}).", conf.num_majority, num_parties).into()));
+        return Err(ValidationError::new("Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be smaller than or equal to num_parties ({}).", conf.num_majority, num_parties).into()));
     }
     if conf.num_reconstruct > num_parties {
-        return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be smaller than or equal to the number of parties the CLI communicates with ({}).", conf.num_reconstruct, num_parties).into()));
+        return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be smaller than or equal to num_parties ({}).", conf.num_reconstruct, num_parties).into()));
     }
     if conf.num_reconstruct < conf.num_majority {
         return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be greater than or equal to the number of majority votes ({}).", conf.num_reconstruct, conf.num_majority).into()));
@@ -188,7 +206,13 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     if num_parties > 1 {
         // Should be a threshold config
         if conf.kms_type != KmsType::Threshold {
-            return Err(ValidationError::new("KMS Type Error").with_message(format!("KMS mode must be 'threshold' when there are multiple cores ({} cores configured).", num_parties).into()));
+            return Err(ValidationError::new("KMS Type Error").with_message(
+                format!(
+                    "KMS mode must be 'threshold' when num_parties > 1 (num_parties = {}).",
+                    num_parties
+                )
+                .into(),
+            ));
         }
     } else {
         // We may be in the centralized or threshold mode (communicating with a single server)
@@ -264,6 +288,8 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             // List of configurations for the cores
             pub cores: Vec<CoreConf>,
             pub decryption_mode: Option<DecryptionMode>,
+            // Optional in the TOML for backward compatibility — defaults to `cores.len()`.
+            pub num_parties: Option<usize>,
             pub num_majority: usize,
             pub num_reconstruct: usize,
             pub fhe_params: Option<FheParameter>,
@@ -271,10 +297,13 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
 
+        let num_parties = temp.num_parties.unwrap_or(temp.cores.len());
+
         let conf = CoreClientConfig {
             kms_type: temp.kms_type,
             cores: temp.cores,
             decryption_mode: temp.decryption_mode,
+            num_parties,
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
             fhe_params: temp.fhe_params,
@@ -2638,6 +2667,7 @@ mod tests {
                 config_path: None,
             }],
             decryption_mode: None,
+            num_parties: 1,
             num_majority: 1,
             num_reconstruct: 1,
             fhe_params: Some(FheParameter::Test),
