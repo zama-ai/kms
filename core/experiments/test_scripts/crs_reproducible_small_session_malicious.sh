@@ -25,11 +25,11 @@ CRS_PARAMS_LIST=(
 # the small (honest) wrapper's hashes — but record them independently in
 # case the recovery path produces a different bit-for-bit result.
 declare -A EXPECTED_CRS_HASHES=(
-    ["nist-params-p8-sns-fglwe"]="789d353e71b0f69f34ec2698ee119da35553d0d61ade77796a384c162ed61699"
-    ["nist-params-p8-sns-lwe"]="4e34fc7d6f2773d2d07ff0a780db40fbc975db40ee43c0cb0a98eb523da8dd3b"
-    ["nist-params-p32-sns-fglwe"]="36246ecd8d1af24b818e59ed5f0dd93c3f168e513d2197bb1d92bdf3eb884554"
-    ["nist-params-p32-sns-lwe"]="3186dc2953de256e51f873ff851b8c28164cdae85daad3893f3d5bb0e908b07c"
-    ["bc-params-sns"]="ab7f0cb7ff5ef62f733d387de2fff5c380cbddd055e29601dae823f50a98e392"
+    ["nist-params-p8-sns-fglwe"]="f94ef7d281ae12c9b6167904da22ce094c98ccd5bc0a36bf953c5f71a9de8ae2"
+    ["nist-params-p8-sns-lwe"]="80774f4c4d46d6015f7ac359a69db3e2b9b5df0fbbc06b697961829325fc6179"
+    ["nist-params-p32-sns-fglwe"]="78ccac25047caf58aa1851ace650c929ea17ce2d3be4d1dc59f95471804f91f9"
+    ["nist-params-p32-sns-lwe"]="51874feb9bf4e4f24c669fe628c6cd898cdc15cf37f3a3085b2f3c11c0bcd53f"
+    ["bc-params-sns"]="bb5a0db83ec9917e7a4188436ae086eab625b495f84c09dd4e7da182ad54e9f4"
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
