@@ -24,9 +24,6 @@
 # Tool installation runs by default before any snapshot-producing subcommand.
 # Set SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 to suppress it during local iteration.
 #
-# Configuration env vars (defaults shown):
-#   SNAPSHOT_PACKAGES="kms kms-grpc threshold-execution threshold-algebra threshold-networking threshold-types"
-# To narrow the packages, override `SNAPSHOT_PACKAGES`.
 #=============================================================================
 
 set -euo pipefail
@@ -36,8 +33,6 @@ set -euo pipefail
 #=============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-
-SNAPSHOT_PACKAGES="${SNAPSHOT_PACKAGES:-kms kms-grpc threshold-execution threshold-algebra threshold-networking threshold-types}"
 
 #=============================================================================
 # Logging
@@ -78,12 +73,10 @@ Subcommands:
 Examples:
   $0 check --base-ref origin/main
   $0 report --base-ref origin/main --output /tmp/kms-backward-snapshot-report.md
-  SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 SNAPSHOT_PACKAGES=threshold-types \\
-      $0 check --base-ref origin/main
+  SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1 $0 check --base-ref origin/main
 
 Environment:
   SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1   Skip the implicit install-tools step.
-  SNAPSHOT_PACKAGES                    Space-separated package list to snapshot.
 
 The tfhe-rs git/tag pin is read from the root dylint.toml entry for
 utils/tfhe-lints/lints. The snapshot lint is loaded from the same source without
@@ -144,14 +137,14 @@ install_tools() {
 #=============================================================================
 # Snapshot generation
 #
-# Runs the tfhe-rs snapshot Dylint library over all packages in
-# $SNAPSHOT_PACKAGES as primary packages, writing lint_enum_snapshots_*.json
-# into $1. The cwd at call time determines which checkout is snapshotted.
+# Runs the tfhe-rs snapshot Dylint library over every package in the current
+# Cargo workspace, writing lint_enum_snapshots_*.json into $1. The cwd at call
+# time determines which checkout is snapshotted.
 #
 # Precondition: $1 must be an existing, empty, absolute directory. The checker
 # globs every `lint_enum_snapshots_*.json` it finds, so any stale file for a
-# crate that is no longer in $SNAPSHOT_PACKAGES would silently contaminate the
-# comparison. Callers create one via `mktemp -d` per invocation.
+# crate that is no longer emitted by the workspace run would silently
+# contaminate the comparison. Callers create one via `mktemp -d` per invocation.
 #=============================================================================
 generate_in_cwd() {
     local output_dir="$1"
@@ -170,13 +163,7 @@ generate_in_cwd() {
     local source_git source_tag
     read -r source_git source_tag < <(tfhe_lints_source)
 
-    local package_args=()
-    for package in ${SNAPSHOT_PACKAGES}; do
-        package_args+=("-p" "${package}")
-    done
-    [[ ${#package_args[@]} -gt 0 ]] || die "SNAPSHOT_PACKAGES must not be empty"
-
-    log_info "Generating snapshot for ${SNAPSHOT_PACKAGES} in $(pwd)"
+    log_info "Generating snapshot for all workspace packages in $(pwd)"
     CARGO_TARGET_DIR="${target_dir}" \
     TFHE_BACKWARD_COMPAT_DATA_DIR="${output_dir}" \
         cargo dylint \
@@ -185,7 +172,7 @@ generate_in_cwd() {
             --pattern utils/tfhe-lints/snapshot \
             --all \
             --no-deps \
-            "${package_args[@]}"
+            --workspace
 }
 
 # generate_snapshot <abs-output-dir> [<base-ref>]

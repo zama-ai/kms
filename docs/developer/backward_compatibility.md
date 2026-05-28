@@ -46,7 +46,8 @@ Snapshots are generated into temporary directories from `BASE_REF` and the curre
 
 Internally, the make command uses the `ci/scripts/backward_snapshot.sh`, which
 in turn uses a binary from tfhe-rs `tfhe-backward-compat-checker` to detect
-breaking changes. More documentation can be found by running
+breaking changes. The script runs the snapshot lint across all Cargo workspace
+packages. More documentation can be found by running
 `ci/scripts/backward_snapshot.sh --help`.
 
 
