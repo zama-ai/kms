@@ -919,24 +919,47 @@ def _tdec_one_row(
 ) -> List[object]:
     """Row for ``TFHE_TDecOne_*`` (NOISE_FLOOD).
 
-    Offline is the PREPROC line (``-1`` when its ``num_rounds`` is 0); online
-    is the sum of PREPROC + DDEC (latency, rounds, bytes summed; throughput
-    recomputed from the summed per-radix latency). ``num_blocks`` is the LWE
-    ciphertext count for this message type under the run's parameter set; it
-    goes into the ``num_ctxt`` column and into the throughput math (LWE blocks
-    per second = ``num_blocks * 1000 / per_radix_latency_ms``).
+    The online column depends on whether the PREPROC line did real work
+    (detected by ``num_rounds != 0``):
+
+      * **Offline phase present** (e.g. ``noise-flood-large``, where the
+        preprocessing has its own rounds): offline cells carry the PREPROC
+        line's metrics, online cells carry just the DDEC line's metrics —
+        the two phases are reported separately, same shape as TDecTwo.
+      * **No offline phase** (e.g. ``noise-flood-small`` where PREPROC has
+        ``num_rounds == 0``): offline cells are ``-1`` and online cells
+        carry ``PREPROC + DDEC`` (the residual PREPROC cost folds into the
+        online column because there's no separate phase to attribute it to).
+
+    ``num_blocks`` is the LWE ciphertext count for this message type under
+    the run's parameter set; it goes into the ``num_ctxt`` column and into
+    the throughput math (LWE blocks per second =
+    ``num_blocks * 1000 / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
-    online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
-    online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
-    online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
-    online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
     ddec_max_mem, _ = _peak_mem_kb_for(ddec.label, mem_run)
-    if offline_max_mem == -1 and ddec_max_mem == -1:
-        online_max_mem: float = -1
+
+    if offline_present:
+        # Two phases, reported separately.
+        online_latency_ms = ddec.avg_time_active_ms
+        online_rounds = ddec.avg_num_rounds
+        online_bytes_sent = ddec.avg_network_sent_B
+        online_bytes_received = ddec.avg_network_received_B
+        # Online phase's memory = DDEC's peak only (PREPROC ran separately).
+        online_max_mem: float = ddec_max_mem
     else:
-        online_max_mem = max(offline_max_mem, ddec_max_mem)
+        # PREPROC has no rounds (folded online); sum its residual cost in.
+        online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
+        online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
+        online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
+        online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
+        # Online phase's memory = peak across the folded PREPROC + DDEC.
+        if offline_max_mem == -1 and ddec_max_mem == -1:
+            online_max_mem = -1
+        else:
+            online_max_mem = max(offline_max_mem, ddec_max_mem)
+
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
