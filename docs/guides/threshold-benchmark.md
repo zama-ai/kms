@@ -375,31 +375,40 @@ For TFHE runs (`PROTOCOL=tfhe`):
 6. `RESHARE_PREPROC` — only if `HAS_RESHARE=1`
 7. `RESHARE` — only if `HAS_RESHARE=1`
 8. Then, for each mode in `DDEC_MODES` (typically `noise-flood-X` then
-   `bit-dec-X`), for each TFHE type in `bool, u4, u8, u16, u32, u64`:
+   `bit-dec-X`), for each TFHE type in the run's `CTXT_TYPES` list
+   (e.g. `bool u4 u8 u16 u32 u64`):
    - `<MODE>_<TYPE>_PREPROC`
    - `<MODE>_<TYPE>_DDEC`
 
 That gives **30 lines** for a small-session `tfhe_reproducible_*` run
-(2 PRSS + 2 DKG + 2 reshare + 2×6×2 DDEC sweep — no CRS, which moved
-out), **28 lines** for the large-session variant (no PRSS init), and
-**N lines** for a `crs_reproducible.sh` sweep run with `CRS_PARAMS`
-listing N parameter sets (no PRSS, no DKG, no Reshare, no DDEC).
+with the default 6-entry `CTXT_TYPES` (2 PRSS + 2 DKG + 2 reshare +
+2×6×2 DDEC sweep — no CRS, which moved out), **28 lines** for the
+large-session variant (no PRSS init), and **N lines** for a
+`crs_reproducible.sh` sweep run with `CRS_PARAMS` listing N parameter
+sets (no PRSS, no DKG, no Reshare, no DDEC). `CTXT_TYPES` is the
+single source of truth: editing the bench script's `CTXT_TYPES_LIST`
+bash array changes both the DDEC loop and the parser's expected
+schedule (via the `CTXT_TYPES=` line written into `BENCH_PARAMS.txt`),
+so the two stay in lock-step automatically. The parser raises if any
+entry isn't a known TFHE type. Older `BENCH_PARAMS.txt` files without
+a `CTXT_TYPES` line fall back to the default 6-entry sweep.
 
 For BGV runs (`PROTOCOL=bgv`):
 
 1. `PRSS_INIT_LEVEL_ONE` — only if `HAS_PRSS_INIT=1`
 2. `PRSS_INIT_LEVEL_KSW` — only if `HAS_PRSS_INIT=1`
-3. `DKG_PREPROC`
-4. `DKG`
-5. `DDEC_PARALLEL_1`
-6. `DDEC_PARALLEL_2`
-7. `DDEC_PARALLEL_4`
-8. `DDEC_PARALLEL_8`
-9. `DDEC_PARALLEL_16`
-10. `DDEC_PARALLEL_32`
+3. `DKG_PREPROC` — only if `HAS_DKG=1`
+4. `DKG` — only if `HAS_DKG=1`
+5. One `DDEC_PARALLEL_<N>` line per entry of `BGV_DDEC_PARALLEL` (the
+   field is a space-separated list of positive ints, e.g. `1 2 4 8 16
+   32`). Required for `PROTOCOL=bgv`. Each entry becomes one row in
+   `BGV_TDec_*.csv`.
 
-That gives **10 lines** for any BGV run that does PRSS init (both kms
-reproducible and bench_nist do).
+That gives **10 lines** for a default BGV run (2 PRSS + 2 DKG + 6
+parallelism factors) when both kms reproducible and bench_nist set
+`BGV_DDEC_PARALLEL=1 2 4 8 16 32`. Editing the bash script's
+`BGV_DDEC_PARALLEL_LIST` array changes both the BGV DDEC loop and the
+parser's expected schedule.
 
 Malicious runs (`MALICIOUS=1`, currently only
 `tfhe-bench-run-4p-malicious-bcast`): the parser drops the party with the
@@ -445,11 +454,13 @@ without knowing these will yield wrong-looking numbers.
    than guess — add the new parameter set to `PARAMS_TO_BITS_PER_BLOCK` and
    store `log2(message_modulus)` for it.
 
-3. **`num_ctxt` column carries the LWE-block count.** The `num_ctxt` column in
-   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` holds the LWE
-   ciphertext count (not the message bit-width!). Combined with item 2 above,
-   `throughput == num_ctxt * 1000 / avg_latency_ms` is a built-in
-   self-check.
+3. **`ptxt_type` + `num_ctxt` together identify each TDec row.**
+   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` carry a `ptxt_type` column
+   (e.g. `bool`, `u4`, `u8`, …) sourced from the run's `CTXT_TYPES` line
+   in `BENCH_PARAMS.txt`. The adjacent `num_ctxt` column holds the LWE
+   ciphertext count derived from `(bit_width, PARAMS)` — not the message
+   bit-width. Combined with item 2 above, `throughput == num_ctxt * 1000
+   / avg_latency_ms` is a built-in self-check.
 
 4. **BGV metadata trailers are non-empty.** BGV runs write
    `SESSION_TYPE=small` and `PARAMS=default` into `BENCH_PARAMS.txt` so the
