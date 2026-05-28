@@ -58,6 +58,13 @@ fi
 HAS_CRS_FLAG=0
 HAS_RESHARE_FLAG=1
 
+# Message types decrypted per DDEC mode. Recorded in BENCH_PARAMS.txt so
+# the parser drives the expected schedule + the ptxt_type CSV column off
+# it (rather than hardcoding the list on its side). The DDEC loop at the
+# bottom of this script iterates this same array, so it's the single
+# source of truth for "which TFHE types this run decrypts".
+CTXT_TYPES_LIST=(bool u4 u8 u16 u32 u64 u128)
+
 cat > "$RUN_DEST/BENCH_PARAMS.txt" <<EOF
 === ${RUN_DATE} ===
 EXPERIMENT_NAME=${EXPERIMENT_NAME}
@@ -72,7 +79,9 @@ NUM_CTXTS=${NUM_CTXTS}
 NUM_SESSIONS=${NUM_SESSIONS}
 PERCENTAGE_OFFLINE=${PERCENTAGE_OFFLINE}
 DDEC_MODES=${DDEC_MODES}
+CTXT_TYPES=${CTXT_TYPES_LIST[*]}
 HAS_PRSS_INIT=${HAS_PRSS_INIT_FLAG}
+HAS_DKG=1
 HAS_CRS=${HAS_CRS_FLAG}
 HAS_RESHARE=${HAS_RESHARE_FLAG}
 EOF
@@ -116,7 +125,7 @@ fi
 ##KEY GEN
 echo "Generating keys"
 #Create preproc for dkg with test parameters
-$MOBYGO_EXEC -c $1 preproc-key-gen --dkg-params $PARAMS --num-sessions 5 --session-type $SESSION_TYPE --sid $CURR_SID --seed $SEED
+$MOBYGO_EXEC -c $1 preproc-key-gen --dkg-params $PARAMS --num-sessions $NUM_SESSIONS --session-type $SESSION_TYPE --sid $CURR_SID --seed $SEED
 #Checking every 30s
 $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 30
 CURR_SID=$(( CURR_SID + 1 ))
@@ -186,7 +195,7 @@ for DDEC_MODE in $DDEC_MODES
  do
     VALUE=$INIT_VALUE
     echo "### STARTING REQUESTS ON DDEC MODE $DDEC_MODE ###"
-    for CTXT_TYPE in bool u4 u8 u16 u32 u64
+    for CTXT_TYPE in "${CTXT_TYPES_LIST[@]}"
     do
         echo "#TYPE $CTXT_TYPE#"
         #Create preproc
