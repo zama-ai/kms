@@ -1,66 +1,84 @@
 #!/bin/bash
 
-# A script that runs the reproducible tests (i.e. fixed seed) for
-# - tfhe-rs with small sessions (4 parties, threshold 1) with test parameters
-# - tfhe-rs with large sessions (5 parties, threshold 1) with test parameters
-# - tfhe-rs with small sessions and 1 malicious party (4 parties, threshold 1) with test parameters
-# - BGV (4 parties, threshold 1) with real parameters
-# Each of these tests runs :
-# - Necessary PRSS init(s) (except for large sessions)
-# - A preprocessing phase for the DKG
-# - The DKG
-# - (For tfhe only) a CRS gen
-# - (For tfhe only) a resharing of the key generated during DKG
-# - A bunch of decryptons
+# Campaign driver for the kms reproducible threshold benchmarks.
 #
-# We note that the key generation and the CRS and reshare (when applicable) are checked against a
-# known hash to ensure they were done correctly.
+# Usage:
+#   ./threshold-test-params.sh             # full run: KAT + memory benchmarks
+#   ./threshold-test-params.sh --kat-only  # skip the memory section
 #
-# At the end of the scripts, the timing resulsts are parsed and put in the threshold folder with the tag "TestParams".
-# We do not perform a memory benchmark on top of these tests as memory benchmark are much slower.
+# A "full" run executes, for every TFHE variant (small, large,
+# small_malicious) and for BGV, both the reproducible session (KAT — hash
+# assertions on keys / reshare / CRS) and a memory-instrumented twin.
+# `--kat-only` runs the KAT section only — faster, no peak-allocator
+# instrumentation.
+#
+# Each TFHE variant runs in lock-step:
+#   1. spin up the cluster
+#   2. run the tfhe_reproducible_<variant>.sh test_script
+#   3. tear the cluster down
+#   4. spin the cluster up again
+#   5. run the crs_reproducible_<variant>.sh sweep
+#   6. tear the cluster down
+#
+# Key generation, CRS, and reshare are all checked against pinned SHA-256
+# hashes (see each wrapper's EXPECTED_*_HASH / EXPECTED_CRS_HASHES table)
+# so a drift in any of those phases fails the campaign loudly.
+#
+# At the end the per-run subfolders under temp/session_stats/campaign_<TS>/
+# are passed to session-stats-parser.py, which emits seven CSVs into
+# core/experiments/NIST_scripts/threshold/ tagged with "TestParams".
 
-# Function to stop and remove docker containers for a specific compose file
+set -e
+
+# --- CLI -------------------------------------------------------------------
+MODE="all"
+if [ "${1:-}" = "--kat-only" ]; then
+    MODE="kat-only"
+elif [ -n "${1:-}" ]; then
+    echo "Usage: $0 [--kat-only]" >&2
+    exit 2
+fi
+
+# --- Path setup ------------------------------------------------------------
+# Scripts are in test_scripts folder; this script lives in NIST_scripts/.
+PATH_TO_HERE="$(cd "$(dirname "$0")" && pwd)"
+PATH_TO_ROOT="$PATH_TO_HERE/.."
+cd "$PATH_TO_ROOT"
+
+# Campaign folder collects this invocation's per-run subfolders. Each
+# subfolder is created by a single test_script call and holds the
+# session_stats_<i>.txt files moved in by that script's EXIT trap plus the
+# BENCH_PARAMS.txt the script wrote. The parser at the end consumes the
+# campaign folder and emits one CSV set for this invocation.
+CAMPAIGN_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
+CAMPAIGN_DIR="temp/session_stats/campaign_${CAMPAIGN_DATE}"
+mkdir -p "$CAMPAIGN_DIR"
+
+# --- Helpers ---------------------------------------------------------------
+# Stop + remove docker containers for a specific compose file. Safe to call
+# when the file doesn't exist (no-op).
 function cleanup_docker {
     local compose_file="$1"
-
     if [ -z "$compose_file" ]; then
         echo "cleanup_docker requires a docker-compose file path"
         return 1
     fi
-
     if [ ! -f "$compose_file" ]; then
         return 0
     fi
-
     echo "Cleaning up docker containers for $compose_file..."
     docker compose --progress=quiet -f "$compose_file" down --remove-orphans
 }
 
-# Scripts are in test_scripts folder
-PATH_TO_HERE="$(cd "$(dirname "$0")" && pwd)"
-PATH_TO_ROOT="$PATH_TO_HERE/.."
-
-# Set current workdirectory as root of experiments
-cd "$PATH_TO_ROOT"
-
-# Create a campaign folder that collects this invocation's per-run subfolders
-# (one per test_script call). Each per-run subfolder will end up holding the
-# session_stats_<i>.txt files moved in by the test_script's EXIT trap plus
-# the BENCH_PARAMS.txt the test_script wrote. The parser is invoked at the
-# end on the campaign folder to produce a single CSV set for this campaign.
-CAMPAIGN_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
-CAMPAIGN_DIR="temp/session_stats/campaign_${CAMPAIGN_DATE}"
-mkdir -p "$CAMPAIGN_DIR"
-# Helper that runs a test_script with RUN_DEST pointed at a fresh per-run
-# subfolder under the campaign folder. The folder name embeds the
-# experiment_name (basename of the .toml) and a UTC timestamp.
+# Run a test_script that takes a "GEN" positional arg (the
+# tfhe_reproducible_* and bgv_reproducible scripts), with RUN_DEST pointed
+# at a fresh per-run subfolder under the campaign folder.
 function run_in_campaign {
     local script="$1"
     local conf="$2"
     local extra="${3:-}"
-    local experiment
+    local experiment run_date
     experiment="$(basename "$conf" .toml)"
-    local run_date
     run_date="$(date -u +%Y%m%dT%H%M%SZ)"
     export RUN_DEST="$CAMPAIGN_DIR/${experiment}_${run_date}"
     if [ -n "$extra" ]; then
@@ -71,133 +89,147 @@ function run_in_campaign {
     unset RUN_DEST
 }
 
-# Like run_in_campaign but for the crs_reproducible_*.sh wrappers, which
-# don't take a "GEN" positional arg. The per-run folder name uses the
-# basename of the .toml plus a `_crs` suffix so it doesn't shadow the
+# Like run_in_campaign but for the crs_reproducible_* wrappers (no "GEN"
+# arg). Per-run folder name gets a `_crs` suffix so it doesn't shadow the
 # matching tfhe_reproducible_* run on the same .toml.
 function run_crs_in_campaign {
     local script="$1"
     local conf="$2"
-    local experiment
+    local experiment run_date
     experiment="$(basename "$conf" .toml)"
-    local run_date
     run_date="$(date -u +%Y%m%dT%H%M%SZ)"
     export RUN_DEST="$CAMPAIGN_DIR/${experiment}_crs_${run_date}"
     "$script" "$conf"
     unset RUN_DEST
 }
 
-# Start with cleaning up any leftover containers for the targeted benchmark compose files
+# Run one TFHE variant end-to-end: cluster-up, reproducible session,
+# cluster-down, cluster-up, CRS sweep, cluster-down. The cluster lifecycle
+# pattern matches what each test_script expects (single use per cluster).
+#
+# Args:
+#   $1 cluster_base  — base name used for both the cargo-make target and
+#                       the docker-compose .yml file, e.g.
+#                       "tfhe-bench-run-4p". When with_mem=1 the cargo
+#                       target gets `-mem` appended (so the right docker
+#                       image is loaded); the .yml filename stays bare,
+#                       matching the existing convention.
+#   $2 repro_script  — test_scripts/<this>.sh, the tfhe_reproducible_*
+#                       wrapper for this variant
+#   $3 crs_script    — test_scripts/<this>.sh, the crs_reproducible_*
+#                       wrapper for this variant
+#   $4 with_mem      — 0 (regular) or 1 (memory bench: appends -mem to
+#                       the cargo target + .toml; forces NUM_CTXTS=1 on
+#                       the reproducible session)
+function run_tfhe_variant {
+    local cluster_base="$1"
+    local repro_script="$2"
+    local crs_script="$3"
+    local with_mem="$4"
+
+    local target="$cluster_base"
+    local toml="temp/${cluster_base}.toml"
+    local extra=""
+    if [ "$with_mem" = "1" ]; then
+        target="${cluster_base}-mem"
+        toml="temp/${cluster_base}-mem.toml"
+        extra="NUM_CTXTS=1"
+    fi
+    local yml="temp/${cluster_base}.yml"
+
+    # Reproducible session
+    cargo make "$target"
+    run_in_campaign "./test_scripts/${repro_script}" "$toml" "$extra"
+    cleanup_docker "$yml"
+
+    # CRS sweep on the same topology — fresh cluster so the test_script
+    # contract (single use) holds.
+    cargo make "$target"
+    run_crs_in_campaign "./test_scripts/${crs_script}" "$toml"
+    cleanup_docker "$yml"
+}
+
+# Run the BGV variant. Simpler than TFHE — no CRS sweep, just the
+# reproducible session.
+#
+# Args:
+#   $1 with_mem — 0 or 1.
+function run_bgv_variant {
+    local with_mem="$1"
+
+    local target="bgv-bench-run"
+    local toml="temp/bgv-bench-run.toml"
+    local extra=""
+    if [ "$with_mem" = "1" ]; then
+        target="bgv-bench-run-mem"
+        toml="temp/bgv-bench-run-mem.toml"
+        extra="NUM_CTXTS=1"
+    fi
+
+    cargo make "$target"
+    run_in_campaign ./test_scripts/bgv_reproducible.sh "$toml" "$extra"
+    cleanup_docker "temp/bgv-bench-run.yml"
+}
+
+# --- Pre-cleanup -----------------------------------------------------------
+# Leftover containers from a previous (possibly aborted) campaign would
+# wedge our cluster bring-up. Drop anything we might want to spin up.
 cleanup_docker "temp/tfhe-bench-run-4p.yml"
 cleanup_docker "temp/tfhe-bench-run-5p.yml"
 cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
 cleanup_docker "temp/bgv-bench-run.yml"
 
-### All but memory benchmarks
+# --- KAT section: hash-checked reproducible runs ---------------------------
 ### TFHE
-# Prepare the tfhe docker image
 cargo make tfhe-docker-image-degree-3
-
-## small session
-# Create the test setup and starts the docker containers
-cargo make tfhe-bench-run-4p
-# Run the test script
-run_in_campaign ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml
-# CRS-gen sweep on the same cluster topology (parameters + expected hashes
-# are hardcoded inside the wrapper). We bring the cluster down + up again
-# between the two runs so each test_script sees a clean cluster, matching
-# the rest of this script's pattern.
-cleanup_docker "temp/tfhe-bench-run-4p.yml"
-cargo make tfhe-bench-run-4p
-run_crs_in_campaign ./test_scripts/crs_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml
-# Teardown docker
-cleanup_docker "temp/tfhe-bench-run-4p.yml"
-
-## large session
-# Create the test setup and starts the docker containers
-cargo make tfhe-bench-run-5p
-# Run the test script
-run_in_campaign ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml
-# CRS-gen sweep on the large-session cluster.
-cleanup_docker "temp/tfhe-bench-run-5p.yml"
-cargo make tfhe-bench-run-5p
-run_crs_in_campaign ./test_scripts/crs_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml
-# Teardown docker
-cleanup_docker "temp/tfhe-bench-run-5p.yml"
-
-## small session with malicious party
-# Create the test setup and starts the docker containers
-cargo make tfhe-bench-run-4p-malicious-bcast
-# Run the test script
-run_in_campaign ./test_scripts/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml
-# CRS-gen sweep on the small-session cluster with one malicious party.
-cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
-cargo make tfhe-bench-run-4p-malicious-bcast
-run_crs_in_campaign ./test_scripts/crs_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml
-# Teardown docker
-cleanup_docker "temp/tfhe-bench-run-4p-malicious-bcast.yml"
+run_tfhe_variant \
+    tfhe-bench-run-4p \
+    tfhe_reproducible_small_session.sh \
+    crs_reproducible_small_session.sh \
+    0
+run_tfhe_variant \
+    tfhe-bench-run-5p \
+    tfhe_reproducible_large_session.sh \
+    crs_reproducible_large_session.sh \
+    0
+run_tfhe_variant \
+    tfhe-bench-run-4p-malicious-bcast \
+    tfhe_reproducible_small_session_malicious.sh \
+    crs_reproducible_small_session_malicious.sh \
+    0
 
 ### BGV
-# Prepare the bgv docker image
 cargo make bgv-docker-image
+run_bgv_variant 0
 
-# Create the test setup and starts the docker containers
-cargo make bgv-bench-run
-# Run the test script
-run_in_campaign ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run.toml
-# Teardown docker
-cleanup_docker "temp/bgv-bench-run.yml"
+# --- Memory section --------------------------------------------------------
+if [ "$MODE" = "all" ]; then
+    ### TFHE
+    cargo make tfhe-docker-image-degree-3-mem
+    run_tfhe_variant \
+        tfhe-bench-run-4p \
+        tfhe_reproducible_small_session.sh \
+        crs_reproducible_small_session.sh \
+        1
+    run_tfhe_variant \
+        tfhe-bench-run-5p \
+        tfhe_reproducible_large_session.sh \
+        crs_reproducible_large_session.sh \
+        1
+    run_tfhe_variant \
+        tfhe-bench-run-4p-malicious-bcast \
+        tfhe_reproducible_small_session_malicious.sh \
+        crs_reproducible_small_session_malicious.sh \
+        1
 
+    ### BGV
+    cargo make bgv-docker-image-mem
+    run_bgv_variant 1
+fi
 
-### Memory benchmarks
-### TFHE
-# Prepare the tfhe docker image
-cargo make tfhe-docker-image-degree-3-mem
-
-## small session
-# Create the test setup and starts the docker containers
-cargo make tfhe-bench-run-4p-mem
-# Run the test script
-run_in_campaign ./test_scripts/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml "NUM_CTXTS=1"
-# CRS-gen mem sweep on the same topology. The wrapper detects `-mem` on
-# the .toml basename and propagates MEASURE_MEMORY=1 + the `-mem` suffix on
-# EXPERIMENT_NAME so the parser pairs this run with the non-mem twin.
-cleanup_docker "temp/tfhe-bench-run-4p.yml"
-cargo make tfhe-bench-run-4p-mem
-run_crs_in_campaign ./test_scripts/crs_reproducible_small_session.sh temp/tfhe-bench-run-4p-mem.toml
-# Teardown docker
-cleanup_docker "temp/tfhe-bench-run-4p.yml"
-
-## large session
-# Create the test setup and starts the docker containers
-cargo make tfhe-bench-run-5p-mem
-# Run the test script
-run_in_campaign ./test_scripts/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml "NUM_CTXTS=1"
-# CRS-gen mem sweep on the large-session topology.
-cleanup_docker "temp/tfhe-bench-run-5p.yml"
-cargo make tfhe-bench-run-5p-mem
-run_crs_in_campaign ./test_scripts/crs_reproducible_large_session.sh temp/tfhe-bench-run-5p-mem.toml
-# Teardown docker
-cleanup_docker "temp/tfhe-bench-run-5p.yml"
-
-### BGV
-# Prepare the bgv docker image
-cargo make bgv-docker-image-mem
-
-# Create the test setup and starts the docker containers
-cargo make bgv-bench-run-mem
-# Run the test script
-run_in_campaign ./test_scripts/bgv_reproducible.sh temp/bgv-bench-run-mem.toml "NUM_CTXTS=1"
-# Teardown docker
-cleanup_docker "temp/bgv-bench-run.yml"
-
-
-### Run stats parser
-# Point the parser at this campaign's folder so the CSVs reflect just this
-# invocation. The campaign folder contains one subfolder per test_script call;
-# each subfolder has BENCH_PARAMS.txt + session_stats_<i>.txt and is enough
-# for the parser to build a row per (run, ciphertext_type/parallelism).
+# --- Parser ----------------------------------------------------------------
+# Aggregate every per-run subfolder under the campaign folder into one
+# CSV set tagged "TestParams" under NIST_scripts/threshold/. The parser
+# pairs mem twins to their non-mem siblings (by the `-mem` suffix on
+# EXPERIMENT_NAME) so memory cells land in the same rows.
 python3 "$PATH_TO_HERE/session-stats-parser.py" --output-dir "$PATH_TO_HERE/threshold" "$PATH_TO_ROOT/$CAMPAIGN_DIR" TestParams
-
-
-
