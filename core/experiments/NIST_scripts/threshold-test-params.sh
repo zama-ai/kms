@@ -216,11 +216,6 @@ if [ "$MODE" = "all" ]; then
         tfhe_reproducible_large_session.sh \
         crs_reproducible_large_session.sh \
         1
-    run_tfhe_variant \
-        tfhe-bench-run-4p-malicious-drop \
-        tfhe_reproducible_small_session_malicious.sh \
-        crs_reproducible_small_session_malicious.sh \
-        1
 
     ### BGV
     cargo make bgv-docker-image-mem
