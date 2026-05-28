@@ -324,7 +324,7 @@ results:
   2. builds the `tfhe-core-degree-3` image,
   3. runs the small / large / small-malicious TFHE reproducible scripts
      (using `tfhe-bench-run-4p`, `tfhe-bench-run-5p` and
-     `tfhe-bench-run-4p-malicious-bcast` respectively), routing each run's
+     `tfhe-bench-run-4p-malicious-drop` respectively), routing each run's
      `BENCH_PARAMS.txt` + `session_stats_<i>.txt` into a per-run subfolder
      under the campaign folder via the `RUN_DEST` env var,
   4. builds the `bgv-core` image and runs the BGV reproducible script via
@@ -411,7 +411,7 @@ parallelism factors) when both kms reproducible and bench_nist set
 parser's expected schedule.
 
 Malicious runs (`MALICIOUS=1`, currently only
-`tfhe-bench-run-4p-malicious-bcast`): the parser drops the party with the
+`tfhe-bench-run-4p-malicious-drop`): the parser drops the party with the
 fewest metric lines (the malicious party truncates early) and averages
 over the remaining `NUM_PARTIES - 1` files, which must each carry the
 full expected schedule.
