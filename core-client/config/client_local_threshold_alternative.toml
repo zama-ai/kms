@@ -5,6 +5,9 @@
 # The type of the KMS ("centralized" or "threshold")
 kms_type = "threshold"
 
+# The number of parties (cores) that are deployed in total
+num_parties = 4
+
 # The minimum number of matching responses required to have an honest majority
 num_majority = 2
 
