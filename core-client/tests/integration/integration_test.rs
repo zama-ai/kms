@@ -1970,6 +1970,7 @@ async fn custodian_backup_recovery(
 #[serde(deny_unknown_fields)]
 struct StrictCheckedInCoreClientToml {
     kms_type: String,
+    num_parties: usize,
     num_majority: usize,
     num_reconstruct: usize,
     decryption_mode: Option<String>,
@@ -1999,6 +2000,7 @@ fn config_conformance_client_local_centralized() {
         "strict TOML parse of client_local_centralized.toml failed (unknown or extra keys?)",
     );
     assert_eq!(strict.kms_type, "centralized");
+    assert_eq!(strict.num_parties, 1);
     assert_eq!(strict.num_majority, 1);
     assert_eq!(strict.num_reconstruct, 1);
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
@@ -2027,6 +2029,7 @@ fn config_conformance_client_local_threshold() {
     let strict: StrictCheckedInCoreClientToml = toml::from_str(&raw)
         .expect("strict TOML parse of client_local_threshold.toml failed (unknown or extra keys?)");
     assert_eq!(strict.kms_type, "threshold");
+    assert_eq!(strict.num_parties, 4);
     assert_eq!(strict.num_majority, 2);
     assert_eq!(strict.num_reconstruct, 3);
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
