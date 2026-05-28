@@ -1493,7 +1493,6 @@ pub async fn execute_cmd(
     let mut rng = AesRng::from_entropy();
     // the total number of deployed KMS parties as explicitly set in the provided config file
     let num_parties = cc_conf.num_parties;
-
     // the number of cores the core-client will talk to, as specified in `[[cores]]` sections of the config file
     let num_cores = cc_conf.cores.len();
 
@@ -2484,183 +2483,109 @@ mod tests {
         assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
     }
 
-    /// Minimal threshold TOML body without the `num_parties` line, for backward-compat tests.
-    /// Caller can prepend extra top-level keys.
-    fn threshold_toml_no_num_parties(n: usize) -> String {
-        let mut s = String::from(
-            "kms_type = \"threshold\"\n\
-             num_majority = 2\n\
-             num_reconstruct = 3\n",
-        );
-        for i in 1..=n {
+    /// Build a `CoreClientConfig` TOML string. Pass `None` for `num_parties` to omit
+    /// the line (exercises the backward-compat fallback).
+    fn build_test_toml(
+        kms_type: &str,
+        num_parties: Option<usize>,
+        num_majority: usize,
+        num_reconstruct: usize,
+        core_party_ids: &[usize],
+    ) -> String {
+        let mut s = String::new();
+        if let Some(n) = num_parties {
+            s.push_str(&format!("num_parties = {n}\n"));
+        }
+        s.push_str(&format!("kms_type = \"{kms_type}\"\n"));
+        s.push_str(&format!("num_majority = {num_majority}\n"));
+        s.push_str(&format!("num_reconstruct = {num_reconstruct}\n"));
+        for &pid in core_party_ids {
             s.push_str(&format!(
                 "[[cores]]\n\
-                 party_id = {i}\n\
+                 party_id = {pid}\n\
                  address = \"localhost:{port}\"\n\
                  s3_endpoint = \"http://localhost:9000/kms\"\n\
-                 object_folder = \"PUB-p{i}\"\n",
-                port = 50000 + i
+                 object_folder = \"PUB-p{pid}\"\n",
+                port = 50000 + pid,
             ));
         }
         s
     }
 
+    // Columns: desc, kms_type, num_parties, num_majority, num_reconstruct, core_ids, ...trailing per-test fields
+    type ValidCase = (
+        &'static str,
+        &'static str,
+        Option<usize>,
+        usize,
+        usize,
+        &'static [usize],
+        usize, // expected num_parties
+        usize, // expected cores.len()
+    );
+    type InvalidCase = (
+        &'static str,
+        &'static str,
+        Option<usize>,
+        usize,
+        usize,
+        &'static [usize],
+        &'static str, // expected error substring
+    );
+
     #[test]
-    fn num_parties_defaults_to_cores_len_centralized() {
-        let toml_str = "kms_type = \"centralized\"\n\
-                        num_majority = 1\n\
-                        num_reconstruct = 1\n\
-                        [[cores]]\n\
-                        party_id = 1\n\
-                        address = \"localhost:50051\"\n\
-                        s3_endpoint = \"http://localhost:9000/kms\"\n\
-                        object_folder = \"PUB\"\n";
-        let conf: CoreClientConfig = toml::from_str(toml_str).expect("should parse");
-        assert_eq!(conf.num_parties, 1);
-        assert_eq!(conf.cores.len(), 1);
+    fn valid_configs_accepted() {
+        #[rustfmt::skip]
+        // Columns: desc, kms_type, num_parties, num_majority, num_reconstruct, core_ids, expected num_parties, expected num_parties, expected cores.len()
+        let cases: &[ValidCase] = &[
+            // backward-compat: omitted num_parties defaults to cores.len()
+            ("centralized default", "centralized", None,    1, 1, &[1],          1, 1),
+            ("threshold default",   "threshold",   None,    2, 3, &[1, 2, 3, 4], 4, 4),
+            // subset communication: explicit num_parties > cores.len()
+            ("subset comm",         "threshold",   Some(4), 2, 3, &[1, 2],       4, 2),
+            // explicit num_parties matches cores.len()
+            ("explicit matches",    "threshold",   Some(4), 2, 3, &[1, 2, 3, 4], 4, 4),
+        ];
+        for &(desc, kt, np, maj, rec, ids, exp_np, exp_cores) in cases {
+            let toml_str = build_test_toml(kt, np, maj, rec, ids);
+            let conf: CoreClientConfig =
+                toml::from_str(&toml_str).unwrap_or_else(|e| panic!("{desc}: parse failed: {e}"));
+            assert_eq!(conf.num_parties, exp_np, "{desc}: num_parties");
+            assert_eq!(conf.cores.len(), exp_cores, "{desc}: cores.len()");
+        }
     }
 
     #[test]
-    fn num_parties_defaults_to_cores_len_threshold() {
-        let toml_str = threshold_toml_no_num_parties(4);
-        let conf: CoreClientConfig = toml::from_str(&toml_str).expect("should parse");
-        assert_eq!(conf.num_parties, 4);
-        assert_eq!(conf.cores.len(), 4);
-    }
-
-    #[test]
-    fn num_parties_explicit_exceeds_cores_len_is_allowed() {
-        // Client communicates with a subset (2 of 4 parties) — should be accepted.
-        let mut toml_str = String::from("num_parties = 4\n");
-        toml_str.push_str(&threshold_toml_no_num_parties(2));
-        let conf: CoreClientConfig = toml::from_str(&toml_str).expect("subset should parse");
-        assert_eq!(conf.num_parties, 4);
-        assert_eq!(conf.cores.len(), 2);
-    }
-
-    #[test]
-    fn num_parties_explicit_matches_cores_len() {
-        let mut toml_str = String::from("num_parties = 4\n");
-        toml_str.push_str(&threshold_toml_no_num_parties(4));
-        let conf: CoreClientConfig = toml::from_str(&toml_str).expect("should parse");
-        assert_eq!(conf.num_parties, 4);
-    }
-
-    #[test]
-    fn num_parties_zero_rejected() {
-        let mut toml_str = String::from("num_parties = 0\n");
-        toml_str.push_str(&threshold_toml_no_num_parties(4));
-        let err = toml::from_str::<CoreClientConfig>(&toml_str).expect_err("zero must fail");
-        assert!(
-            err.to_string().contains("num_parties"),
-            "error should mention num_parties, got: {err}"
-        );
-    }
-
-    #[test]
-    fn cores_exceeding_num_parties_rejected() {
-        // num_parties=2 but 3 cores listed.
-        let mut toml_str = String::from("num_parties = 2\n");
-        toml_str.push_str(&threshold_toml_no_num_parties(3));
-        let err =
-            toml::from_str::<CoreClientConfig>(&toml_str).expect_err("over-subscribed must fail");
-        assert!(
-            err.to_string().contains("must not exceed num_parties"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn party_id_exceeding_num_parties_rejected() {
-        // num_parties=2 but one core has party_id=5.
-        let toml_str = "num_parties = 2\n\
-                        kms_type = \"threshold\"\n\
-                        num_majority = 2\n\
-                        num_reconstruct = 2\n\
-                        [[cores]]\n\
-                        party_id = 1\n\
-                        address = \"localhost:50001\"\n\
-                        s3_endpoint = \"http://localhost:9000/kms\"\n\
-                        object_folder = \"PUB-p1\"\n\
-                        [[cores]]\n\
-                        party_id = 5\n\
-                        address = \"localhost:50005\"\n\
-                        s3_endpoint = \"http://localhost:9000/kms\"\n\
-                        object_folder = \"PUB-p5\"\n";
-        let err = toml::from_str::<CoreClientConfig>(toml_str).expect_err("party_id>n must fail");
-        assert!(
-            err.to_string().contains("Party ID must be between"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn num_majority_exceeding_num_parties_rejected() {
-        let toml_str = "num_parties = 4\n\
-                        kms_type = \"threshold\"\n\
-                        num_majority = 5\n\
-                        num_reconstruct = 5\n\
-                        [[cores]]\n\
-                        party_id = 1\n\
-                        address = \"localhost:50001\"\n\
-                        s3_endpoint = \"http://localhost:9000/kms\"\n\
-                        object_folder = \"PUB-p1\"\n";
-        let err = toml::from_str::<CoreClientConfig>(toml_str).expect_err("majority>n must fail");
-        assert!(
-            err.to_string().contains("Number for majority votes"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn num_reconstruct_exceeding_num_parties_rejected() {
-        let toml_str = "num_parties = 4\n\
-                        kms_type = \"threshold\"\n\
-                        num_majority = 2\n\
-                        num_reconstruct = 5\n\
-                        [[cores]]\n\
-                        party_id = 1\n\
-                        address = \"localhost:50001\"\n\
-                        s3_endpoint = \"http://localhost:9000/kms\"\n\
-                        object_folder = \"PUB-p1\"\n";
-        let err =
-            toml::from_str::<CoreClientConfig>(toml_str).expect_err("reconstruct>n must fail");
-        assert!(
-            err.to_string().contains("Number for reconstruction shares"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn multi_party_centralized_rejected() {
-        // num_parties > 1 must imply threshold mode.
-        // Single core but num_parties=4 means kms_type must be threshold.
-        let toml_str = String::from(
-            "num_parties = 4\n\
-        kms_type = \"centralized\"\n\
-        num_majority = 1\n\
-        num_reconstruct = 1\n\
-        [[cores]]\n\
-        party_id = 1\n\
-        address = \"localhost:50001\"\n\
-        s3_endpoint = \"http://localhost:9000/kms\"\n\
-        object_folder = \"PUB\"\n",
-        );
-        let err = toml::from_str::<CoreClientConfig>(&toml_str)
-            .expect_err("centralized with n>1 must fail");
-        assert!(
-            err.to_string().contains("KMS mode must be 'threshold'"),
-            "unexpected error: {err}"
-        );
+    fn invalid_configs_rejected() {
+        #[rustfmt::skip]
+        // Columns: desc, kms_type, num_parties, num_majority, num_reconstruct, core_ids, expected num_parties, expected error substring
+        let cases: &[InvalidCase] = &[
+            ("num_parties = 0",              "threshold",   Some(0), 2, 3, &[1, 2, 3, 4], "num_parties"),
+            ("cores > num_parties",          "threshold",   Some(2), 2, 2, &[1, 2, 3],    "must not exceed num_parties"),
+            ("party_id > num_parties",       "threshold",   Some(2), 2, 2, &[1, 5],       "Party ID must be between"),
+            ("num_majority > num_parties",   "threshold",   Some(4), 5, 5, &[1],          "Number for majority votes"),
+            ("num_reconstruct > num_parties","threshold",   Some(4), 2, 5, &[1],          "Number for reconstruction shares"),
+            ("centralized with n>1",         "centralized", Some(4), 1, 1, &[1],          "KMS mode must be 'threshold'"),
+        ];
+        for &(desc, kt, np, maj, rec, ids, expected_substr) in cases {
+            let toml_str = build_test_toml(kt, np, maj, rec, ids);
+            let err = match toml::from_str::<CoreClientConfig>(&toml_str) {
+                Ok(_) => panic!("{desc}: expected failure but parsed OK"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string().contains(expected_substr),
+                "{desc}: got '{err}', expected substring '{expected_substr}'"
+            );
+        }
     }
 
     #[test]
     fn malformed_toml_rejected() {
-        let toml_str = String::from(
-            "[[cores]]\n\
-        [[cores]]",
-        );
-        let err = toml::from_str::<CoreClientConfig>(&toml_str).expect_err("empty cores must fail");
+        let toml_str = r#"[[cores]]
+        [[cores]]
+        "#;
+        let err = toml::from_str::<CoreClientConfig>(toml_str).expect_err("empty cores must fail");
         assert!(
             err.to_string().contains("missing field `party_id`"),
             "unexpected error: {err}"
