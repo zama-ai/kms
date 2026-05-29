@@ -57,6 +57,7 @@ spec:
           args:
             - -c
             - |
+              apk add --no-cache iproute2 > /dev/null 2>&1
               ip route show | while IFS= read -r route; do
                 ip route change $route quickack 1 2>/dev/null || true
               done
