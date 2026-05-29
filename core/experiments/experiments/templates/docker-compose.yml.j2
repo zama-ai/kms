@@ -4,14 +4,17 @@ services:
     image: {{image_name}}:latest
     pull_policy: missing
     hostname: core1.p{{ i+1 }}
+    user: root
     cap_add:
       - NET_ADMIN
-    command:
-      - "{{protocol}}"
-      - "--expected-num-parties"
-      - "{{n_parties}}"
-      - "--expected-threshold"
-      - "{{threshold}}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ip route show | while IFS= read -r route; do
+          ip route change $$route quickack 1 2>/dev/null || true
+        done
+        exec {{protocol}} --expected-num-parties {{n_parties}} --expected-threshold {{threshold}} "$$@"
     environment:
       - RUST_BACKTRACE=1
       - RUN_MODE=dev
