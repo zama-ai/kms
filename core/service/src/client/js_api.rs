@@ -31,15 +31,15 @@
 //! u128, anyhow::Result, and so on cannot be used.
 //!
 //! Testing:
-//! Due to the way user_decryption is designed,
-//! we cannot test everything directly in JS.
-//! The strategy we use is to run Rust tests to generate a *stable* JSON test
-//! vector (see [crate::client::user_decryption_wasm::TestingUserDecryptionTranscript::to_stable_test_vector]),
-//! and then load it into the JS test (tests/js/test.js) to run the actual tests.
-//! The JSON vector only carries the stable public-API shapes, so the wasm package
-//! under test does *not* need the `wasm_tests` feature and may even be an older
-//! published `tkms`/`node-tkms` build than the KMS that produced the vector.
-//! The steps below must be followed for the JS tests to work.
+//! Due to the way user_decryption is designed, we cannot test everything
+//! directly in JS. The strategy we use is to run Rust tests to generate a JSON
+//! test vector (see
+//! [crate::client::user_decryption_wasm::TestingUserDecryptionTranscript::to_stable_test_vector]),
+//! and then load it into the JS test (tests/js/test.js) to run the actual
+//! tests. The JSON vector only carries the stable public-API so an older
+//! published `tkms`/`node-tkms` build can be used to test against a more recent
+//! kms that generates the JSON test vector. The steps below must be followed
+//! for the JS tests to work.
 //!
 //! 1. Install wasm-pack and node (version 20)
 //!    the preferred way is to use nvm (which is on homebrew)
