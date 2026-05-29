@@ -455,7 +455,6 @@ pub fn process_user_decryption_resp_from_js(
 ///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
-#[wasm_bindgen]
 pub fn process_user_decryption_resp(
     client: &mut Client,
     request: Option<ParsedUserDecryptionRequest>,
