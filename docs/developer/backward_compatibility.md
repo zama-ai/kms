@@ -12,7 +12,7 @@ The objects are serialized using bincode only because it supports large arrays a
 
 For any additional documentation, feel free to take a look at the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project.
 
-## Usage - Testing backward compatibility
+## Testing backward compatibility
 
 At the repo's root, run the following command to run the backwards compatibility tests:
 
@@ -21,6 +21,39 @@ make test-backward-compatibility
 ```
 
 This will load existing objects from git LFS versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
+
+## Checking for breaking changes using snapshots
+
+The breaking-change tests are complemented by a Dylint snapshot check for types that derive `VersionsDispatch`.
+The snapshot check compares the current branch against a base ref (usually main) and reports:
+- removed version variants as errors, because old serialized data could no longer be deserialized;
+- removed versioned enums, changed versioned type layouts, changed upgrade bodies, and removed upgrades as warnings for review;
+- new versioned enums, variants, and upgrades as neutral changes.
+
+At the repo's root, run:
+
+```shell
+make backward-snapshot-check BASE_REF=origin/main
+```
+
+To generate a markdown report:
+
+```shell
+make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
+```
+
+### How it works internally
+
+The make targets are thin wrappers around `ci/scripts/backward_snapshot.sh`. The script's job is to produce two snapshots — one for the base ref and one for the current checkout — then diff them. Concretely, each invocation does the following:
+
+1. **Resolve the tfhe-rs source.** Both the Dylint snapshot library and the comparison binary live in [tfhe-rs](https://github.com/zama-ai/tfhe-rs) under `utils/tfhe-lints/`. The script parses the workspace `dylint.toml` (the `utils/tfhe-lints/lints` entry) to extract the git URL and tag, so the snapshot lint is automatically pinned to the same tfhe-rs revision that `make lint-dylint` already uses. Updating the tag in `dylint.toml` updates both — there is no separate version constant in the script. Currently this is pinned to tag `tfhe-rs-1.6.1`.
+2. **Install tools** (skippable via `SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1`): `cargo-dylint`, `dylint-link`, and the `tfhe-backward-compat-checker` binary built from the pinned tfhe-rs tag.
+3. **Snapshot the base ref.** The script creates a temporary detached `git worktree` at `BASE_REF`, `cd`s into it, and runs the snapshot Dylint library (`utils/tfhe-lints/snapshot` from tfhe-rs) over every workspace package with `cargo dylint --all --no-deps --workspace`. The library statically inspects each crate's `#[derive(VersionsDispatch)]` enums and their associated `Upgrade` impls, then writes one `lint_enum_snapshots_<crate>.json` file per crate into a fresh `mktemp -d` directory. The worktree is removed when the function returns.
+4. **Snapshot the current checkout** the same way, into a separate temp directory.
+5. **Diff the two snapshot directories** with `tfhe-backward-compat-checker check` (or `diff-report` for the markdown variant). The checker globs every `lint_enum_snapshots_*.json` it finds in each directory, which is why the script asserts the output directory is empty before running — a stale file from a removed crate would silently contaminate the comparison.
+
+Both temp directories are removed on exit via a trap, so no state is left between runs. Pass `--help` to the script for the full flag reference.
+
 
 ## Versioning this module
 
