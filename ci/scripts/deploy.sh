@@ -46,7 +46,7 @@ PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
 TLS="${TLS:-false}"
 
 # Build defaults (for local image building)
-RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.95}"
+RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.96}"
 
 # AWS/Tailscale Defaults
 TAILSCALE_HOSTNAME="tailscale-operator-zws-dev.diplodocus-boa.ts.net"
