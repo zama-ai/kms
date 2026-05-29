@@ -17,6 +17,7 @@ cfg_if::cfg_if! {
         use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
+        use itertools::Itertools;
         use kms_grpc::identifiers::EpochId;
         use std::sync::Arc;
         use tfhe::Seed;
@@ -37,7 +38,6 @@ use crate::vault::storage::{
     Storage, StorageReader, StorageType, file::FileStorage, read_all_data_versioned,
     store_text_at_request_id, store_versioned_at_request_id,
 };
-use itertools::Itertools;
 use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -645,8 +645,6 @@ where
 pub enum ThresholdSigningKeyConfig {
     /// All parties participate in signing (requires list of party identifiers)
     AllParties(Vec<String>),
-    /// Only one designated party participates in signing (party index, party identifier)
-    OneParty(usize, String),
 }
 
 /// Generates and stores threshold server signing and verification keys.
@@ -687,18 +685,12 @@ where
         tracing::error!(msg);
         panic!("{}", msg);
     }
-    let parties = match config {
-        ThresholdSigningKeyConfig::AllParties(parties) => {
-            (1..=parties.len()).zip_eq(parties).collect_vec()
-        }
-        ThresholdSigningKeyConfig::OneParty(i, subject) => {
-            std::iter::once((i, subject)).collect_vec()
-        }
-    };
+
+    let ThresholdSigningKeyConfig::AllParties(parties) = config;
 
     // Validate party indices
-    for &(i, _) in &parties {
-        if i == 0 || i > pub_storages.len() {
+    for i in 1..=parties.len() {
+        if i > pub_storages.len() {
             let msg = format!(
                 "Invalid party index: {} (must be between 1 and {})",
                 i,
@@ -709,201 +701,247 @@ where
         }
     }
 
-    for (i, subject_str) in parties {
-        let mut rng = get_rng(deterministic, Some(i as u64));
-
-        // Check if keys already exist with error handling
-        let temp: HashMap<RequestId, PrivateSigKey> = match read_all_data_versioned(
-            &priv_storages[i - 1],
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        {
-            Ok(keys) => keys,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to read existing server signing keys for party {}: {}",
-                    { i },
-                    e
-                );
-                continue; // Skip this party but try others
-            }
-        };
-
-        if !temp.is_empty() {
-            // If signing keys already exist, then do nothing
-            log_data_exists(
-                priv_storages[i - 1].info(),
-                None::<String>,
-                "",
-                "Threshold server signing keys",
-            );
-            // Even if signing keys exist, CA certificates and VerfAddress might not
-            if let Some(sk) = temp.get(request_id) {
-                // Regenerate VerfAddress if missing
-                if !pub_storages[i - 1]
-                    .data_exists(request_id, &PubDataType::VerfAddress.to_string())
-                    .await?
-                {
-                    let pk = sk.verf_key();
-                    let ethereum_address = pk.address();
-                    if let Err(store_err) = store_text_at_request_id(
-                        &mut pub_storages[i - 1],
-                        request_id,
-                        &ethereum_address.to_string(),
-                        &PubDataType::VerfAddress.to_string(),
-                    )
-                    .await
-                    {
-                        tracing::error!(
-                            "Failed to regenerate VerfAddress for party {}: {}",
-                            i,
-                            store_err
-                        );
-                    } else {
-                        tracing::info!(
-                            "Regenerated VerfAddress {} for party {} from existing signing key",
-                            ethereum_address,
-                            i
-                        );
-                    }
-                }
-
-                // Regenerate VerfKey if missing
-                if !pub_storages[i - 1]
-                    .data_exists(request_id, &PubDataType::VerfKey.to_string())
-                    .await?
-                {
-                    let pk = sk.verf_key();
-                    if let Err(store_err) = store_versioned_at_request_id(
-                        &mut pub_storages[i - 1],
-                        request_id,
-                        &pk,
-                        &PubDataType::VerfKey.to_string(),
-                    )
-                    .await
-                    {
-                        tracing::error!(
-                            "Failed to regenerate VerfKey for party {}: {}",
-                            i,
-                            store_err
-                        );
-                    } else {
-                        tracing::info!(
-                            "Regenerated VerfKey for party {} from existing signing key",
-                            i
-                        );
-                    }
-                }
-
-                // Regenerate CA certificate if missing
-                if !pub_storages[i - 1]
-                    .data_exists(request_id, &PubDataType::CACert.to_string())
-                    .await?
-                {
-                    ensure_ca_cert_exists(
-                        &mut pub_storages[i - 1],
-                        sk,
-                        request_id,
-                        subject_str,
-                        tls_wildcard,
-                    )
-                    .await?;
-                }
-            } else {
-                tracing::error!(
-                    "Failed to regenerate CA certificate from existing server signing key for party {i}"
-                )
-            };
-
-            continue;
-        }
-
-        let (pk, sk) = gen_sig_keys(&mut rng);
-
-        // Store public verification key
-        if let Err(store_err) = store_versioned_at_request_id(
-            &mut pub_storages[i - 1],
+    for (storage_index, subject) in parties.into_iter().enumerate() {
+        ensure_threshold_server_signing_key_for_party(
+            &mut pub_storages[storage_index],
+            &mut priv_storages[storage_index],
             request_id,
-            &pk,
-            &PubDataType::VerfKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store public verification key for party {}: {}",
-                { i },
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        log_storage_success(
-            request_id,
-            pub_storages[i - 1].info(),
-            "server signing key",
-            true,
-            true,
-        );
-
-        let ethereum_address = pk.address();
-
-        // Store ethereum address (derived from public key), needed for KMS signature verification
-        if let Err(store_err) = store_text_at_request_id(
-            &mut pub_storages[i - 1],
-            request_id,
-            &ethereum_address.to_string(),
-            &PubDataType::VerfAddress.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store ethereum address for party {}: {}",
-                i,
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        tracing::info!(
-            "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
-            ethereum_address,
-            request_id,
-            pub_storages[i - 1].info()
-        );
-
-        // Store private signing key
-        if let Err(store_err) = store_versioned_at_request_id(
-            &mut priv_storages[i - 1],
-            request_id,
-            &sk,
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store private signing key for party {}: {}",
-                i,
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        log_storage_success(
-            request_id,
-            priv_storages[i - 1].info(),
-            "server signing key",
-            false,
-            true,
-        );
-
-        // Generate CA certificate
-        ensure_ca_cert_exists(
-            &mut pub_storages[i - 1],
-            &sk,
-            request_id,
-            subject_str,
+            deterministic,
+            storage_index + 1,
+            subject,
             tls_wildcard,
         )
         .await?;
     }
+    Ok(true)
+}
+
+/// Generates and stores the threshold server signing and verification key for
+/// one configured storage.
+///
+/// This is used by deployment paths where the storage backend already selects
+/// the physical party destination (for example with a per-party storage
+/// prefix). The `party_id` remains the logical 1-based party identifier used
+/// for deterministic test seeding and certificate/log context.
+pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
+    request_id: &RequestId,
+    deterministic: bool,
+    party_id: usize,
+    subject: String,
+    tls_wildcard: bool,
+) -> anyhow::Result<bool>
+where
+    PubS: Storage,
+    PrivS: Storage,
+{
+    ensure_threshold_server_signing_key_for_party(
+        pub_storage,
+        priv_storage,
+        request_id,
+        deterministic,
+        party_id,
+        subject,
+        tls_wildcard,
+    )
+    .await
+}
+
+async fn ensure_threshold_server_signing_key_for_party<PubS, PrivS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
+    request_id: &RequestId,
+    deterministic: bool,
+    party_id: usize,
+    subject: String,
+    tls_wildcard: bool,
+) -> anyhow::Result<bool>
+where
+    PubS: Storage,
+    PrivS: Storage,
+{
+    if party_id == 0 {
+        let msg = "Invalid party index: 0 (must be at least 1)";
+        tracing::error!(msg);
+        panic!("{}", msg);
+    }
+
+    let mut rng = get_rng(deterministic, Some(party_id as u64));
+
+    // Check if keys already exist with error handling
+    let temp: HashMap<RequestId, PrivateSigKey> =
+        match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
+            Ok(keys) => keys,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to read existing server signing keys for party {}: {}",
+                    party_id,
+                    e
+                );
+                return Ok(true);
+            }
+        };
+
+    if !temp.is_empty() {
+        // If signing keys already exist, then do nothing
+        log_data_exists(
+            priv_storage.info(),
+            None::<String>,
+            "",
+            "Threshold server signing keys",
+        );
+        // Even if signing keys exist, CA certificates and VerfAddress might not
+        if let Some(sk) = temp.get(request_id) {
+            // Regenerate VerfAddress if missing
+            if !pub_storage
+                .data_exists(request_id, &PubDataType::VerfAddress.to_string())
+                .await?
+            {
+                let pk = sk.verf_key();
+                let ethereum_address = pk.address();
+                if let Err(store_err) = store_text_at_request_id(
+                    pub_storage,
+                    request_id,
+                    &ethereum_address.to_string(),
+                    &PubDataType::VerfAddress.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to regenerate VerfAddress for party {}: {}",
+                        party_id,
+                        store_err
+                    );
+                } else {
+                    tracing::info!(
+                        "Regenerated VerfAddress {} for party {} from existing signing key",
+                        ethereum_address,
+                        party_id
+                    );
+                }
+            }
+
+            // Regenerate VerfKey if missing
+            if !pub_storage
+                .data_exists(request_id, &PubDataType::VerfKey.to_string())
+                .await?
+            {
+                let pk = sk.verf_key();
+                if let Err(store_err) = store_versioned_at_request_id(
+                    pub_storage,
+                    request_id,
+                    &pk,
+                    &PubDataType::VerfKey.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to regenerate VerfKey for party {}: {}",
+                        party_id,
+                        store_err
+                    );
+                } else {
+                    tracing::info!(
+                        "Regenerated VerfKey for party {} from existing signing key",
+                        party_id
+                    );
+                }
+            }
+
+            // Regenerate CA certificate if missing
+            if !pub_storage
+                .data_exists(request_id, &PubDataType::CACert.to_string())
+                .await?
+            {
+                ensure_ca_cert_exists(pub_storage, sk, request_id, subject, tls_wildcard).await?;
+            }
+        } else {
+            tracing::error!(
+                "Failed to regenerate CA certificate from existing server signing key for party {party_id}"
+            )
+        };
+
+        return Ok(true);
+    }
+
+    let (pk, sk) = gen_sig_keys(&mut rng);
+
+    // Store public verification key
+    if let Err(store_err) = store_versioned_at_request_id(
+        pub_storage,
+        request_id,
+        &pk,
+        &PubDataType::VerfKey.to_string(),
+    )
+    .await
+    {
+        tracing::error!(
+            "Failed to store public verification key for party {}: {}",
+            party_id,
+            store_err
+        );
+        return Ok(true);
+    }
+    log_storage_success(
+        request_id,
+        pub_storage.info(),
+        "server signing key",
+        true,
+        true,
+    );
+
+    let ethereum_address = pk.address();
+
+    // Store ethereum address (derived from public key), needed for KMS signature verification
+    if let Err(store_err) = store_text_at_request_id(
+        pub_storage,
+        request_id,
+        &ethereum_address.to_string(),
+        &PubDataType::VerfAddress.to_string(),
+    )
+    .await
+    {
+        tracing::error!(
+            "Failed to store ethereum address for party {}: {}",
+            party_id,
+            store_err
+        );
+        return Ok(true);
+    }
+    tracing::info!(
+        "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
+        ethereum_address,
+        request_id,
+        pub_storage.info()
+    );
+
+    // Store private signing key
+    if let Err(store_err) = store_versioned_at_request_id(
+        priv_storage,
+        request_id,
+        &sk,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await
+    {
+        tracing::error!(
+            "Failed to store private signing key for party {}: {}",
+            party_id,
+            store_err
+        );
+        return Ok(true);
+    }
+    log_storage_success(
+        request_id,
+        priv_storage.info(),
+        "server signing key",
+        false,
+        true,
+    );
+
+    // Generate CA certificate
+    ensure_ca_cert_exists(pub_storage, &sk, request_id, subject, tls_wildcard).await?;
     Ok(true)
 }
 
