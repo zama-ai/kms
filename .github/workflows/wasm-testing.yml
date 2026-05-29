@@ -84,8 +84,11 @@ jobs:
           cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --lib
 
       - name: Test wasm
-        working-directory: ./core/service
-        run: node --test tests/js
+        # Run from inside the test dir so `node --test` searches cwd recursively.
+        # Newer Node (>= 23) treats a positional dir arg as a file to load rather
+        # than a directory to glob, so `node --test tests/js` fails there.
+        working-directory: ./core/service/tests/js
+        run: node --test
 
       # NPM package handling
       - name: Set NPM version tag to latest
