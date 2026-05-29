@@ -552,33 +552,26 @@ def _select_party_files(
 ) -> List[str]:
     """Choose which party files participate in the cross-party average.
 
-    On malicious runs we expect one party's log to be short or malformed.
-    We rank by the number of well-formed metric lines and keep the top
-    ``num_parties - 1`` files. On honest runs we keep every file that has
-    the expected line count; mismatches are warned about and the run is
-    dropped by the caller.
+    On malicious runs party 1 (``session_stats_1.txt``) is always the
+    malicious party — all bench scripts configure the first party as the
+    adversary. We unconditionally drop that file and average over the
+    remaining ``num_parties - 1`` honest parties. On honest runs we keep
+    every file; mismatches are warned about and the run is dropped by
+    the caller.
     """
     party_files = sorted(glob.glob(os.path.join(folder, "session_stats_*.txt")))
     if not party_files:
         return []
 
     if bp.malicious and bp.num_parties > 1:
-        target = bp.num_parties - 1
-        if len(party_files) > target:
-            # Rank by metric-line count, keep the top ``target`` files.
-            ranked = sorted(
-                party_files,
-                key=lambda p: len(parse_session_stats_file(p)),
-                reverse=True,
-            )
-            kept = ranked[:target]
-            dropped = ranked[target:]
+        malicious_file = os.path.join(folder, "session_stats_1.txt")
+        if malicious_file in party_files:
+            party_files = [p for p in party_files if p != malicious_file]
             logger.warning(
                 "run=%s identified as malicious; dropping %s from averaging",
                 bp.experiment_name,
-                dropped,
+                malicious_file,
             )
-            party_files = kept
 
     return party_files
 
