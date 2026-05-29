@@ -44,6 +44,23 @@ spec:
       serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
       subdomain: {{ include "kmsCoreName" . }}
       initContainers:
+        {{- if .Values.kmsCore.quickack.enabled }}
+        - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
+          name: kms-core-init-quickack
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              ip route show | while IFS= read -r route; do
+                ip route change $route quickack 1 2>/dev/null || true
+              done
+        {{- end }}
         - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
           imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
           name: kms-core-init-load-env

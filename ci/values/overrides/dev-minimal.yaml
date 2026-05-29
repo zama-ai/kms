@@ -2,6 +2,8 @@
 # Used automatically when running with --target kind-local
 
 kmsCore:
+  quickack:
+    enabled: true
   thresholdMode:
     numSessionsPreproc: 2
 

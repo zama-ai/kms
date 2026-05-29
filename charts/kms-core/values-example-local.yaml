@@ -20,6 +20,8 @@ kmsCoreClient:
 kmsCore:
   nameOverride: kms-core
   addressOverride:
+  quickack:
+    enabled: true
   image:
     name: ghcr.io/zama-ai/kms-service
     tag: latest-dev

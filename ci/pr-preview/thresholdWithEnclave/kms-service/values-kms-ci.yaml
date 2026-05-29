@@ -3,6 +3,8 @@ kmsPeers:
   count: 1
 
 kmsCore:
+  quickack:
+    enabled: true
   thresholdMode:
     enabled: true
     # peersList is generated dynamically by deploy.sh and should not be set here

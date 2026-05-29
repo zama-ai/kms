@@ -109,6 +109,10 @@ kmsCore:
     # Number of sessions to pre-process should be equal to number of vCPUs
     numSessionsPreproc: 100
     decryptionMode: "NoiseFloodSmall"
+  # Enable quickack to disable TCP delayed ACK (40ms penalty)
+  # Requires NET_ADMIN capability on the init container
+  quickack:
+    enabled: true
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:

@@ -12,6 +12,8 @@ kmsCoreClient:
     tag: <version>
 
 kmsCore:
+  quickack:
+    enabled: true
   image:
     name: hub.zama.org/ghcr/zama-ai/kms/core-service
     tag: <version>
