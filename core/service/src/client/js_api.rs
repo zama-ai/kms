@@ -41,12 +41,12 @@
 //! kms that generates the JSON test vector. The steps below must be followed
 //! for the JS tests to work.
 //!
-//! 1. Install wasm-pack and node (version 20)
+//! 1. Install wasm-pack and node (version 24.16.0)
 //!    the preferred way is to use nvm (which is on homebrew)
-//!    and the node version must be 20
+//!    and the node version must be 24.16.0
 //! ```
 //! cargo install wasm-pack
-//! nvm install 20
+//! nvm install 24.16.0
 //! ```
 //! Observe that if you are using Brew you might also need to run the following command to get
 //! access to nvm:
