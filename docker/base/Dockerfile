@@ -1,7 +1,7 @@
 FROM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 ARG RUST_IMAGE_VERSION=stable
-ARG SCCACHE_VERSION=v0.10.0
+ARG SCCACHE_VERSION=v0.15.0
 
 # Install essential tools and dependencies
 USER root
