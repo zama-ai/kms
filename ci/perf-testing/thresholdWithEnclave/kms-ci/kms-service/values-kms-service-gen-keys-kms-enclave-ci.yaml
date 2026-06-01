@@ -49,4 +49,4 @@ kmsGenCertAndKeys:
 kubeUtils:
   image:
     name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
-    tag: v0.4.0
+    tag: v0.4.5
