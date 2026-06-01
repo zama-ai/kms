@@ -9,9 +9,13 @@ FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS k
 ARG LTO_RELEASE=release
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3
-ARG SCCACHE_S3_KEY_PREFIX
+ARG SCCACHE_S3_PREFIX
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_IDLE_TIMEOUT=0
+ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
+ENV SCCACHE_REGION=${SCCACHE_REGION}
+ENV SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_PREFIX}
+ENV AWS_REGION=${SCCACHE_REGION}
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
@@ -30,23 +34,16 @@ RUN mkdir -p /app/kms/core/service/bin
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
-    AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" \
-    AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" \
-    AWS_REGION="${SCCACHE_REGION}" \
-    SCCACHE_BUCKET="${SCCACHE_BUCKET}" \
-    SCCACHE_REGION="${SCCACHE_REGION}" \
-    SCCACHE_S3_KEY_PREFIX="${SCCACHE_S3_KEY_PREFIX}" \
+    set -eu && \
+    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
+    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
     cargo fetch --locked
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
-    AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" \
-    AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" \
-    AWS_REGION="${SCCACHE_REGION}" \
-    SCCACHE_BUCKET="${SCCACHE_BUCKET}" \
-    SCCACHE_REGION="${SCCACHE_REGION}" \
-    SCCACHE_S3_KEY_PREFIX="${SCCACHE_S3_KEY_PREFIX}" \
-    sccache --start-server && \
+    set -eu && \
+    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
+    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms \
       --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
       --bin kms-custodian --bin kms-gen-keys \

@@ -7,9 +7,13 @@ FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS b
 
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3
-ARG SCCACHE_S3_KEY_PREFIX
+ARG SCCACHE_S3_PREFIX
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_IDLE_TIMEOUT=0
+ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
+ENV SCCACHE_REGION=${SCCACHE_REGION}
+ENV SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_PREFIX}
+ENV AWS_REGION=${SCCACHE_REGION}
 
 WORKDIR /app/kms-core-client
 
@@ -20,14 +24,10 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
-    AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" \
-    AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" \
-    AWS_REGION="${SCCACHE_REGION}" \
-    SCCACHE_BUCKET="${SCCACHE_BUCKET}" \
-    SCCACHE_REGION="${SCCACHE_REGION}" \
-    SCCACHE_S3_KEY_PREFIX="${SCCACHE_S3_KEY_PREFIX}" \
+    set -eu && \
+    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
+    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
     mkdir -p /app/kms-core-client/bin && \
-    sccache --start-server && \
     cargo install --locked --path core/service --root tools/service --bin kms-custodian && \
     cargo install --locked --path core-client --root core-client --bins -F threshold-execution/testing && \
     cargo install --locked --path tools/kms-health-check --root tools/kms-health-check --bins && \
