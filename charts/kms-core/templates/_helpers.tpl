@@ -50,10 +50,9 @@ command:
   - /bin/sh
   - -c
   - |
-    ip route show | while IFS= read -r route; do
-      ip route change "$route" quickack 1 2>/dev/null || true
-    done
-  - socat
+    ip route show | while IFS= read -r route; do ip route change $route quickack 1; done
+    exec socat "$@"
+  - --
 args:
   - -d0
 {{- if and (eq .name "grpc-peer-proxy") .timeout }}
