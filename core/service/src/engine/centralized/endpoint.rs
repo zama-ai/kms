@@ -409,6 +409,8 @@ impl<
         &self,
         _request: Request<kms_grpc::kms::v1::BandwidthBenchmarkRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::BandwidthBenchmarkResponse>, Status> {
-        unimplemented!("Bandwidth benchmark is not supported in centralized KMS");
+        Result::Err(Status::unimplemented(
+            "Bandwidth benchmark is not supported in centralized KMS",
+        ))
     }
 }

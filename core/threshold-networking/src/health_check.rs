@@ -2,6 +2,7 @@ use super::ggen::gnetworking_client::GnetworkingClient;
 use crate::grpc::HealthTag;
 use error_utils::anyhow_error_and_log;
 use observability::telemetry::ContextPropagator;
+use rand::RngCore;
 use std::{collections::HashMap, time::Duration};
 use threshold_types::party::Identity;
 use threshold_types::role::RoleTrait;
@@ -124,10 +125,11 @@ impl<R: RoleTrait> HealthCheckSession<R> {
 
         // Be safe and use random bytes as payload to avoid any compression that
         // could happen before TLS layer
-        let payload = (0..payload_size)
-            .map(|_| rand::random::<u8>())
-            .collect::<Vec<u8>>();
-
+        let mut payload = vec![0; payload_size];
+        {
+            let mut rng = rand::thread_rng();
+            rng.fill_bytes(&mut payload);
+        }
         for ((role, id), client) in self.connection_channels.iter() {
             let (role, id, client, tag_serialized, timeout) = (
                 *role,

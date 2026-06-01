@@ -57,11 +57,11 @@ enum Commands {
         #[arg(short, long)]
         config: PathBuf,
     },
-    /// Runs a bandwidth benchmark against a lit of KMS endpoints.
+    /// Runs a bandwidth benchmark against a list of KMS endpoints.
     /// NOTE: It makes more sense to run it on all the parties at the same time to emulate real bandwidth usage, but it can be run on a subset of parties as well.
     BandwidthBench {
         /// KMS endpoints to test (e.g., --endpoints host1:50100 --endpoints host2:50100)
-        #[arg(short, long)]
+        #[arg(short, long, required = true)]
         endpoints: Vec<String>,
 
         /// Context id of the MPC context to test

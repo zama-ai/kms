@@ -20,8 +20,8 @@ pub(crate) async fn run_bandwidth_benchmark(
     request: Request<BandwidthBenchmarkRequest>,
     session_maker: ImmutableSessionMaker,
 ) -> Result<Response<BandwidthBenchmarkResponse>, Status> {
-    tracing::info!("Received bandwidth benchmark request: {:?}", request);
     let request = request.into_inner();
+    tracing::info!("Received bandwidth benchmark request: {:?}", request);
     let context_id: ContextId =
         parse_optional_grpc_request_id(&request.context_id, RequestIdParsingErr::Context)?;
     let payload_size = request.payload_size_per_session as usize;
@@ -76,7 +76,7 @@ pub(crate) async fn run_bandwidth_benchmark(
     let peers_info = results
         .into_iter()
         .map(|((role, id), (bytes_sent, durations, status))| {
-            // Fill up tha latency struct
+            // Fill up the latency struct
             let latency = make_latency(status)
                 .inspect_err(|e| tracing::warn!("Error computing latency info: {}", e))
                 .ok();
