@@ -183,7 +183,7 @@ jobs:
     if: |
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@61b537f324598725e0cf8697604977353ac67df1 # v1.0.7
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@2fb5af42a1369587096e212896f4765e5cbe31eb # v1.0.7
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -289,7 +289,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@61b537f324598725e0cf8697604977353ac67df1 # v1.0.7
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@2fb5af42a1369587096e212896f4765e5cbe31eb # v1.0.7
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -327,7 +327,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@61b537f324598725e0cf8697604977353ac67df1 # v1.0.7
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@2fb5af42a1369587096e212896f4765e5cbe31eb # v1.0.7
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
