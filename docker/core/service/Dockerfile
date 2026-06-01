@@ -5,7 +5,7 @@
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
 
 # By default, cargo build --release.
-# But you can provide --build-arg LTO_RELEASE="--profile release-lto-thin" locally to build locally
+# But you can provide --build-arg LTO_RELEASE="release-lto-thin" locally to build locally
 ARG LTO_RELEASE=release-lto-thin
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3

@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1
 
 ################################################################
-# Shared base stage: golden image + sccache config + workspace source.
-# Every parallel build stage descends from this so the source COPYs
-# are done once and reused.
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS src
+### Multistage build to reduce image size
+## First stage sets up basic Rust build environment
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
 
+# Cargo profile to build with. Override at build time with
+# `--build-arg LTO_RELEASE=<profile>` to use a different profile,
+# e.g. `release-lto-off` for faster CI link times.
+ARG LTO_RELEASE=release-lto-thin
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3
 ARG SCCACHE_S3_PREFIX
@@ -18,6 +21,7 @@ ENV AWS_REGION=${SCCACHE_REGION}
 
 WORKDIR /app/kms-core-client
 
+# Workspace source (everything needed to resolve and build the workspace).
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY backward-compatibility ./backward-compatibility
 COPY bc2wrap ./bc2wrap
@@ -26,46 +30,44 @@ COPY core-client ./core-client
 COPY observability ./observability
 COPY tools ./tools
 
-################################################################
-# Three independent build stages. BuildKit runs them concurrently
-# on the same runner. Each stage has its own cargo registry cache
-# (separate `id=` per stage) because cargo's registry source unpack
-# is NOT safe across parallel processes — see rust-lang/cargo#8728.
-# The cost is small: a one-time per-stage download (~50-100MB) from
-# crates.io, in-region, fully parallelized.
-# Each stage installs its binaries into /out/bin/.
-FROM src AS build-custodian
-RUN --mount=type=cache,id=kms-cargo-registry-custodian,target=/root/.cargo/registry,sharing=locked \
+# Single cargo build for all three binaries. Compared to three separate
+# `cargo install` invocations, this:
+#   - walks the workspace dep graph once instead of three times,
+#   - runs each build script once instead of three times,
+#   - lets cargo parallelize all link steps across binaries,
+#   - shares a single sccache hit set with no race conditions.
+#
+# NOTE on features: `-F threshold-execution/testing` is enabled workspace-
+# wide here, so it also applies when compiling the `threshold-execution`
+# dep pulled in by `kms-custodian` and `kms-health-check`. Previously
+# those two binaries linked against `threshold-execution` *without*
+# `testing`. If that semantic difference matters, split this into two
+# `cargo build` calls (one with the feature, one without) sharing the
+# same workspace `target/` dir.
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \
     export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
     export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
-    cargo install --locked --path core/service --root /out --bin kms-custodian
-
-FROM src AS build-core-client
-RUN --mount=type=cache,id=kms-cargo-registry-core-client,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=secret,id=sccache_aws_access_key_id \
-    --mount=type=secret,id=sccache_aws_secret_access_key \
-    set -eu && \
-    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
-    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
-    cargo install --locked --path core-client --root /out --bins -F threshold-execution/testing
-
-FROM src AS build-health-check
-RUN --mount=type=cache,id=kms-cargo-registry-health-check,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=secret,id=sccache_aws_access_key_id \
-    --mount=type=secret,id=sccache_aws_secret_access_key \
-    set -eu && \
-    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
-    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
-    cargo install --locked --path tools/kms-health-check --root /out --bins && \
+    cargo build --locked --profile=${LTO_RELEASE} \
+      -p kms              --bin kms-custodian \
+      -p kms-core-client  --bin kms-core-client \
+      -p kms-health-check --bin kms-health-check \
+      -F threshold-execution/testing && \
+    mkdir -p /app/kms-core-client/bin && \
+    cp /app/kms-core-client/target/${LTO_RELEASE}/kms-custodian \
+       /app/kms-core-client/target/${LTO_RELEASE}/kms-core-client \
+       /app/kms-core-client/target/${LTO_RELEASE}/kms-health-check \
+       /app/kms-core-client/bin/ && \
     sccache --show-stats
+
 
 ################################################################
 # Runtime Stage
 FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
+# Install only required runtime dependencies
 USER root
 RUN apk add --no-cache \
         openssl \
@@ -74,16 +76,16 @@ RUN apk add --no-cache \
         libstdc++
 
 WORKDIR /app/kms-core-client
-RUN mkdir -p /app/kms-core-client/bin
 
-# Collect binaries from the three parallel build stages.
-COPY --from=build-custodian    /out/bin/ /app/kms-core-client/bin/
-COPY --from=build-core-client  /out/bin/ /app/kms-core-client/bin/
-COPY --from=build-health-check /out/bin/ /app/kms-core-client/bin/
+# Copy binaries (all three landed in /app/kms-core-client/bin via the
+# single `cp` at the end of the build stage).
+COPY --from=builder /app/kms-core-client/bin/ /app/kms-core-client/bin/
 
+# Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \
-    adduser -D -s /bin/sh --uid 10003 -G kms kms && \
-    chown -R kms:kms /app/kms-core-client
+    adduser -D -s /bin/sh --uid 10003 -G kms kms
+
+RUN chown -R kms:kms /app/kms-core-client
 USER kms
 
 ENV PATH="/app/kms-core-client/bin:$PATH"
