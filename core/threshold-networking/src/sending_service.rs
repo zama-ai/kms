@@ -492,7 +492,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             (Instant::now() + self.conf.get_max_waiting_time_for_message_queue()).into(),
             self.conf.get_max_waiting_time_for_message_queue(),
         );
-        let mut local_packet = loop {
+        let mut returned_packet = loop {
             let packet = tokio::select! {
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
@@ -503,9 +503,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                                     return Err(anyhow_error_and_log(format!("Session {} has been aborted with {}", self.session_id, sender.get_role_kind())));
                                 }
                                 local_packet = rx.recv() => Some(local_packet)
-                            };
+                            }
+                        } else {
+                            None
                         }
-                        None
                     },
                     local_packet = rx.recv() => Some(local_packet)
             };
@@ -520,21 +521,21 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         }
         // drop old messages
         let network_round = *counter_lock;
-        while local_packet.round_counter < network_round {
-            let val_len = local_packet.value.len();
+        while returned_packet.round_counter < network_round {
+            let val_len = returned_packet.value.len();
             tracing::debug!(
                 "@ round {} - dropped value {:?} from round {}",
                 network_round,
-                local_packet.value[..if val_len < 16 { val_len } else { 16 }].to_vec(),
-                local_packet.round_counter
+                returned_packet.value[..if val_len < 16 { val_len } else { 16 }].to_vec(),
+                returned_packet.round_counter
             );
-            local_packet = rx
+            returned_packet = rx
                 .recv()
                 .await
                 .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
         }
 
-        Ok(local_packet.value)
+        Ok(returned_packet.value)
     }
 
     /// Increase the round counter
