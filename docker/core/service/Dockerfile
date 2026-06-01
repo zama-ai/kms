@@ -55,6 +55,7 @@ RUN apk update && apk add --no-cache \
     socat \
     net-tools \
     libgcc \
+    iproute2 \
     libstdc++
 
 WORKDIR /app/kms/core/service

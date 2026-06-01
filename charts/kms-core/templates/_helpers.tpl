@@ -46,6 +46,10 @@ name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
 imagePullPolicy: {{ .image.pullPolicy }}
 restartPolicy: Always
+securityContext:
+  capabilities:
+    add:
+      - NET_ADMIN
 command:
   - /bin/sh
   - -c
