@@ -206,7 +206,6 @@ pub fn print_bandwidth_benchmark_text(
     duration: u64,
     num_sessions: u32,
     payload_size: u32,
-    connections_per_peer: u32,
     results: Vec<(String, BandwidthBenchmarkResponse)>,
 ) -> Result<()> {
     let oneshot = duration == 0;
@@ -227,11 +226,6 @@ pub fn print_bandwidth_benchmark_text(
     }
     writeln!(output, "Parallel sessions:   {}", num_sessions)?;
     writeln!(output, "Payload per session: {} bytes", payload_size)?;
-    writeln!(
-        output,
-        "Connections / peer:  {}",
-        connections_per_peer.max(1)
-    )?;
 
     for (endpoint, result) in results {
         writeln!(output, "\n{}", "-".repeat(78))?;
@@ -315,7 +309,6 @@ pub fn print_bandwidth_benchmark_json(
     duration: u64,
     num_sessions: u32,
     payload_size: u32,
-    connections_per_peer: u32,
     results: Vec<(String, BandwidthBenchmarkResponse)>,
 ) -> Result<()> {
     let oneshot = duration == 0;
@@ -389,7 +382,6 @@ pub fn print_bandwidth_benchmark_json(
             "duration_secs": duration,
             "num_sessions": num_sessions,
             "payload_size_bytes": payload_size,
-            "connections_per_peer": connections_per_peer.max(1),
         },
         "endpoints": endpoints,
     });
