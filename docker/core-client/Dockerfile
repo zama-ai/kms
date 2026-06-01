@@ -18,7 +18,14 @@ ENV AWS_REGION=${SCCACHE_REGION}
 WORKDIR /app/kms-core-client
 
 # Copy entire project for workspace support
-COPY . .
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY backward-compatibility ./backward-compatibility
+COPY bc2wrap ./bc2wrap
+COPY core ./core
+COPY core-client ./core-client
+COPY observability ./observability
+COPY tools ./tools
+COPY docker ./docker
 
 # Build using cargo install with caching
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \

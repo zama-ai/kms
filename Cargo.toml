@@ -263,11 +263,11 @@ debug = true
 lto = "fat"
 
 # profile for testing and CI
-[profile.release-lto-off]
+[profile.release-lto-thin]
 # use release profile settings
 inherits = "release"
-# but set LTO to the default (off instead of fat)
-lto = "off"
+# but set LTO to the default (thin instead of fat)
+lto = "thin"
 
 [patch.crates-io]
 # MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
