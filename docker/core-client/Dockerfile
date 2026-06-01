@@ -28,11 +28,14 @@ COPY tools ./tools
 
 ################################################################
 # Three independent build stages. BuildKit runs them concurrently
-# on the same runner. They share /root/.cargo/registry via a named
-# cache mount (sharing=shared lets multiple cargo processes read it),
-# and each stage installs its binaries into /out/bin/.
+# on the same runner. Each stage has its own cargo registry cache
+# (separate `id=` per stage) because cargo's registry source unpack
+# is NOT safe across parallel processes — see rust-lang/cargo#8728.
+# The cost is small: a one-time per-stage download (~50-100MB) from
+# crates.io, in-region, fully parallelized.
+# Each stage installs its binaries into /out/bin/.
 FROM src AS build-custodian
-RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharing=shared \
+RUN --mount=type=cache,id=kms-cargo-registry-custodian,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \
@@ -41,7 +44,7 @@ RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharin
     cargo install --locked --path core/service --root /out --bin kms-custodian
 
 FROM src AS build-core-client
-RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharing=shared \
+RUN --mount=type=cache,id=kms-cargo-registry-core-client,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \
@@ -50,7 +53,7 @@ RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharin
     cargo install --locked --path core-client --root /out --bins -F threshold-execution/testing
 
 FROM src AS build-health-check
-RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharing=shared \
+RUN --mount=type=cache,id=kms-cargo-registry-health-check,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \
