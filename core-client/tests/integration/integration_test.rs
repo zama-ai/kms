@@ -1755,7 +1755,7 @@ async fn generate_custodian_keys_to_file(
     let kms_custodian_cmd = escargot::CargoBuild::new()
         .package("kms")
         .bin("kms-custodian")
-        .arg("--profile test") // Hopefully faster in CI if we build/ran tests before this
+        .args(["--profile", "test"])
         .run()?;
 
     for cus_idx in 1..=custodian_count {
@@ -1851,7 +1851,7 @@ async fn custodian_reencrypt(
     let kms_custodian_cmd = escargot::CargoBuild::new()
         .package("kms")
         .bin("kms-custodian")
-        .arg("--profile test") // Hopefully faster in CI if we build/ran tests before this
+        .args(["--profile", "test"])
         .run()?;
 
     for operator_index in 1..=amount_operators {
