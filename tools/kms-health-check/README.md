@@ -350,7 +350,6 @@ The bandwidth benchmark expects the following parameters:
 - `NUM_SESSIONS` the number of sessions spawned in parallel
 - `PAYLOAD_SIZE` the size of the payload sent over and over by each sessions (in bytes)
 - `ENDPOINT` the address of the nodes that will be sending data
-- `CONNECTIONS_PER_PEER` the number of dedicated TCP connections to the other peers
 
 The bandwidth benchmark consists in spawning `NUM_SESSIONS` sessions (each in their own tokio task) that will send a payload of `PAYLOAD_SIZE` bytes, wait for the ack from the other party and repeat.
 This is done over a period of `DURATION_SEC` after which the results are collected and displayed.
@@ -365,21 +364,20 @@ __NOTE__: The gRPC timeout between the tool and the nodes is set to be `DURATION
 
 ```bash
 # Running the bandwidth benchmark on all 4 parties at the same time
-kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...> --connections-per-peer <CONNECTIONS_PER_PEER>
+kms-health-check bandwidth-bench -c <CONTEXT_ID> -d <DURATION_SEC> -n <NUM_SESSIONS> -p <PAYLOAD_SIZE> -e localhost:50100 -e <ENDPOINT_1> -e <ENDPOINT_2> -e <...>
 ```
 
 
 An example output is:
 
 ```
-❯ ./target/release/kms-health-check bandwidth-bench -c 0700000000000000000000000000000000000000000000000000000000000001 -d 30 -n 100 -p 100000 -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400 --connections-per-peer 3
+❯ ./target/release/kms-health-check bandwidth-bench -c 0700000000000000000000000000000000000000000000000000000000000001 -d 30 -n 100 -p 100000 -e localhost:50100 -e localhost:50200 -e localhost:50300 -e localhost:50400
 
 [KMS BANDWIDTH BENCHMARK]
 ==============================================================================
 Benchmark type:      Duration-based (30 seconds)
 Parallel sessions:   100
 Payload per session: 100000 bytes
-Connections / peer:  3
 
 ------------------------------------------------------------------------------
 Endpoint: localhost:50400
