@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 
 ################################################################
-### Multistage build to reduce image size
-## First stage sets up basic Rust build environment
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
+# Shared base stage: golden image + sccache config + workspace source.
+# Every parallel build stage descends from this so the source COPYs
+# are done once and reused.
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS src
 
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3
@@ -17,7 +18,6 @@ ENV AWS_REGION=${SCCACHE_REGION}
 
 WORKDIR /app/kms-core-client
 
-# Copy entire project for workspace support
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY backward-compatibility ./backward-compatibility
 COPY bc2wrap ./bc2wrap
@@ -25,27 +25,44 @@ COPY core ./core
 COPY core-client ./core-client
 COPY observability ./observability
 COPY tools ./tools
-COPY docker ./docker
 
-# Build using cargo install with caching
-RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+################################################################
+# Three independent build stages. BuildKit runs them concurrently
+# on the same runner. They share /root/.cargo/registry via a named
+# cache mount (sharing=shared lets multiple cargo processes read it),
+# and each stage installs its binaries into /out/bin/.
+FROM src AS build-custodian
+RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharing=shared \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \
     export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
     export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
-    mkdir -p /app/kms-core-client/bin && \
-    cargo install --locked --path core/service --root tools/service --bin kms-custodian && \
-    cargo install --locked --path core-client --root core-client --bins -F threshold-execution/testing && \
-    cargo install --locked --path tools/kms-health-check --root tools/kms-health-check --bins && \
-    sccache --show-stats
+    cargo install --locked --path core/service --root /out --bin kms-custodian
 
+FROM src AS build-core-client
+RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharing=shared \
+    --mount=type=secret,id=sccache_aws_access_key_id \
+    --mount=type=secret,id=sccache_aws_secret_access_key \
+    set -eu && \
+    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
+    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
+    cargo install --locked --path core-client --root /out --bins -F threshold-execution/testing
+
+FROM src AS build-health-check
+RUN --mount=type=cache,id=kms-cargo-registry,target=/root/.cargo/registry,sharing=shared \
+    --mount=type=secret,id=sccache_aws_access_key_id \
+    --mount=type=secret,id=sccache_aws_secret_access_key \
+    set -eu && \
+    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
+    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
+    cargo install --locked --path tools/kms-health-check --root /out --bins && \
+    sccache --show-stats
 
 ################################################################
 # Runtime Stage
 FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
-# Install only required runtime dependencies
 USER root
 RUN apk add --no-cache \
         openssl \
@@ -54,17 +71,16 @@ RUN apk add --no-cache \
         libstdc++
 
 WORKDIR /app/kms-core-client
+RUN mkdir -p /app/kms-core-client/bin
 
-# Copy binaries
-COPY --from=builder /app/kms-core-client/core-client/bin/ /app/kms-core-client/bin/
-COPY --from=builder /app/kms-core-client/tools/kms-health-check/bin/ /app/kms-core-client/bin/
-COPY --from=builder /app/kms-core-client/tools/service/bin/ /app/kms-core-client/bin/
+# Collect binaries from the three parallel build stages.
+COPY --from=build-custodian    /out/bin/ /app/kms-core-client/bin/
+COPY --from=build-core-client  /out/bin/ /app/kms-core-client/bin/
+COPY --from=build-health-check /out/bin/ /app/kms-core-client/bin/
 
-# Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \
-    adduser -D -s /bin/sh --uid 10003 -G kms kms
-
-RUN chown -R kms:kms /app/kms-core-client
+    adduser -D -s /bin/sh --uid 10003 -G kms kms && \
+    chown -R kms:kms /app/kms-core-client
 USER kms
 
 ENV PATH="/app/kms-core-client/bin:$PATH"
