@@ -6,8 +6,6 @@ kmsConnector:
   enabled: false
 
 kmsCore:
-  quickack:
-    enabled: true
   image:
     name: hub.zama.org/ghcr/zama-ai/kms/core-service-enclave
     tag: <version>
