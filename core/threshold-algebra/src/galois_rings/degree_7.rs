@@ -11,9 +11,9 @@ use std::{
 use crate::galois_rings::ExceptionalSetMap;
 use crate::{
     base_ring::{Z64, Z128},
-    bivariate::compute_powers,
     error_correction::MemoizedExceptionals,
     galois_fields::gf128::{GF128, GF128_FROM_GENERATOR},
+    matrix::compute_powers,
     poly::{BitWiseEval, BitwisePoly},
     structure_traits::{
         BaseRing, One, QuotientMaximalIdeal, Ring, RingWithExceptionalSequence, Solve1, ZConsts,

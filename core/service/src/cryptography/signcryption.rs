@@ -95,12 +95,12 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
 #[derive(
     Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
 )]
-pub enum UnifiedSigncryptionKeyOwnedVersioned {
+pub enum UnifiedSigncryptionKeyOwnedVersions {
     V0(UnifiedSigncryptionKeyOwned),
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize, Versionize)]
-#[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
+#[versionize(UnifiedSigncryptionKeyOwnedVersions)]
 pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
     pub receiver_enc_key: UnifiedPublicEncKey,
@@ -216,12 +216,12 @@ impl HasSigningScheme for UnifiedUnsigncryptionKey<'_> {
 #[derive(
     Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
 )]
-pub enum UnifiedUnsigncryptionKeyOwnedVersioned {
+pub enum UnifiedUnsigncryptionKeyOwnedVersions {
     V0(UnifiedUnsigncryptionKeyOwned),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(UnifiedUnsigncryptionKeyOwnedVersioned)]
+#[versionize(UnifiedUnsigncryptionKeyOwnedVersions)]
 pub struct UnifiedUnsigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
@@ -275,12 +275,12 @@ impl HasSigningScheme for UnifiedUnsigncryptionKeyOwned {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum UnifiedSigncryptionVersioned {
+pub enum UnifiedSigncryptionVersions {
     V0(UnifiedSigncryption),
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Versionize)]
-#[versionize(UnifiedSigncryptionVersioned)]
+#[versionize(UnifiedSigncryptionVersions)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
     pub pke_type: PkeSchemeType,
@@ -297,7 +297,7 @@ impl UnifiedSigncryption {
 }
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, VersionsDispatch)]
-pub enum SigncryptionPayloadVersioned {
+pub enum SigncryptionPayloadVersions {
     V0(SigncryptionPayload),
 }
 
@@ -350,7 +350,7 @@ pub enum SigncryptionPayloadVersioned {
 /// - Both tests MUST pass before any changes to this type
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Versionize)]
-#[versionize(SigncryptionPayloadVersioned)]
+#[versionize(SigncryptionPayloadVersions)]
 pub struct SigncryptionPayload {
     pub plaintext: TypedPlaintext,
     pub link: Vec<u8>,

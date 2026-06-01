@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
+use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
-use crate::client::tests::common::{OptKeySetConfigAccessor, TIME_TO_SLEEP_MS};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
@@ -95,8 +95,6 @@ async fn decompression_key_gen_centralized(
         keygen: 100,
         new_epoch: 1,
     };
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-
     let env = crate::testing::setup::CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()
@@ -215,7 +213,6 @@ pub(crate) async fn key_gen_centralized(
         keygen: 100,
         new_epoch: 1,
     };
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let env = crate::testing::setup::CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()

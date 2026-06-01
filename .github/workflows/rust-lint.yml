@@ -24,6 +24,9 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
+          # Full history so the backward-snapshot step can `git worktree add` the
+          # PR base SHA; a shallow clone would not contain that commit.
+          fetch-depth: 0
 
       - name: Get Rust version
         env:
@@ -54,12 +57,19 @@ jobs:
           echo "EXECUTING: cargo clippy --workspace --all-targets --all-features -- -D warnings"
           cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Install cargo-dylint
+      - name: Install Dylint
         run: |
-          echo "EXECUTING: cargo install cargo-dylint dylint-link --locked"
-          cargo install cargo-dylint dylint-link --locked
+          echo "EXECUTING: make install-dylint"
+          make install-dylint
 
       - name: Dylint
         run: |
-          echo "EXECUTING: cargo dylint --all"
-          cargo dylint --all
+          echo "EXECUTING: make lint-dylint"
+          make lint-dylint
+
+      - name: Check backward snapshot compatibility
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          echo "EXECUTING: make backward-snapshot-check BASE_REF=${BASE_SHA}"
+          make backward-snapshot-check "BASE_REF=${BASE_SHA}"

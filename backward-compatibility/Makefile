@@ -11,7 +11,7 @@ check-git-lfs:
 pull-lfs-files: check-git-lfs
 	git lfs pull
 
-linting:
+lint:
 	RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-features -- -D warnings
 
 generate-data: check-duplicate

@@ -31,14 +31,22 @@ mkdir -p $TARGET_DIR
 : > "$MEMORY_OUTPUT_FILE"
 
 # Run the latency benchmarks
+echo "Running TFHE speed benchmarks → $OUTPUT_FILE"
 for bench in "${SPEED_BENCH_LIST[@]}"; do
     cargo-criterion --bench $bench --message-format json >> $OUTPUT_FILE
 done
 
 ## Run the memory benchmarks
+echo ""
+echo "Running TFHE memory benchmarks → $MEMORY_OUTPUT_FILE"
 for bench in "${MEMORY_BENCH_LIST[@]}"; do
     cargo bench --bench $bench --features=measure_memory >> $MEMORY_OUTPUT_FILE
 done
 
 
+echo ""
+echo "Parsing results into CSV → $TARGET_DIR/output/"
 python3 non-threshold-parser.py $TARGET_DIR
+
+echo ""
+echo "Done. Results saved to $TARGET_DIR"

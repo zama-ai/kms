@@ -57,7 +57,7 @@ impl fmt::Display for KMSType {
 
 /// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum SignedPubDataHandleInternalVersioned {
+pub enum SignedPubDataHandleInternalVersions {
     V0(SignedPubDataHandleInternal),
 }
 
@@ -67,7 +67,7 @@ pub enum SignedPubDataHandleInternalVersioned {
 /// It's needed because we are not able to derive versioned
 /// for the protobuf type.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SignedPubDataHandleInternalVersioned)]
+#[versionize(SignedPubDataHandleInternalVersions)]
 pub struct SignedPubDataHandleInternal {
     // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
     // This lower-case hex values without the 0x prefix.
@@ -105,7 +105,7 @@ impl SignedPubDataHandleInternal {
 /// for more details.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Version)]
 #[repr(transparent)]
-pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInternal);
+pub struct CrsGenMetadataV0(pub SignedPubDataHandleInternal);
 
 // This function needs to use the non-wasm feature because tonic is not available in wasm builds.
 #[cfg(feature = "non-wasm")]
@@ -190,7 +190,7 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
     Deserialize,
     VersionsDispatch,
 )]
-pub enum PubDataTypeVersioned {
+pub enum PubDataTypeVersions {
     V0(PubDataType),
 }
 
@@ -217,7 +217,7 @@ pub enum PubDataTypeVersioned {
     EnumIter,
     Versionize,
 )]
-#[versionize(PubDataTypeVersioned)]
+#[versionize(PubDataTypeVersions)]
 pub enum PubDataType {
     ServerKey,
     PublicKey,
@@ -277,7 +277,7 @@ impl Default for PubDataType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum PrivDataTypeVersioned {
+pub enum PrivDataTypeVersions {
     V0(PrivDataTypeV0),
     V1(PrivDataType),
 }
@@ -294,7 +294,7 @@ pub enum PrivDataTypeVersioned {
 /// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
 /// compromise the entire system.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
-#[versionize(PrivDataTypeVersioned)]
+#[versionize(PrivDataTypeVersions)]
 pub enum PrivDataType {
     SigningKey,
     FheKeyInfo, // Only for the threshold case

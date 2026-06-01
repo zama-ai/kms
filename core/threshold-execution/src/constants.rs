@@ -7,7 +7,7 @@ cfg_if::cfg_if! {
         pub(crate) const B_SWITCH_SQUASH: u128 = 1 << LOG_B_SWITCH_SQUASH;
 
         /// maximum number of PRSS party sets (n choose t) before the precomputation aborts
-        pub(crate) const PRSS_SIZE_MAX: usize = 8192;
+        pub(crate) const PRSS_SIZE_MAX: usize = 2047;
 
         /// statistical security parameter in bits
         pub const STATSEC: u32 = 40;

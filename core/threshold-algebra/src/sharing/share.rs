@@ -9,13 +9,13 @@ use threshold_types::role::Role;
 use super::super::structure_traits::Ring;
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum ShareVersioned<Z: Clone> {
+pub enum ShareVersions<Z: Clone> {
     V0(Share<Z>),
 }
 
 /// Generic structure for shares with non-interactive methods possible to carry out on shares.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize, Zeroize, Versionize)]
-#[versionize(ShareVersioned)]
+#[versionize(ShareVersions)]
 pub struct Share<Z: Clone> {
     value: Z,
     owner: Role,

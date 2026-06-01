@@ -3,7 +3,6 @@ use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::testing::setup::CentralizedTestEnv;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use crate::{
-    client::tests::common::TIME_TO_SLEEP_MS,
     consts::TEST_PARAM,
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
@@ -70,8 +69,6 @@ async fn crs_gen_centralized_manual(
     test_name: &str,
     params: Option<FheParameter>,
 ) -> Result<()> {
-    // TODO(dp): remove this?
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let env = CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()
@@ -168,7 +165,6 @@ pub async fn crs_gen_centralized(
         keygen: 1,
         new_epoch: 1,
     };
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let env = CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()

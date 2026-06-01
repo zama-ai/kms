@@ -1,5 +1,4 @@
 use crate::client::client_wasm::ServerIdentities;
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
@@ -190,7 +189,6 @@ pub(crate) async fn user_decryption_centralized(
     secure: bool,
 ) -> Result<()> {
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let spec = match material_type {
         MaterialType::Testing => TestMaterialSpec::centralized_basic(),
         MaterialType::Default => TestMaterialSpec::centralized_default(),
@@ -325,10 +323,7 @@ pub(crate) async fn user_decryption_centralized(
             use kms_grpc::kms::v1::TypedPlaintext;
             use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
-            use crate::{
-                client::user_decryption_wasm::TestingUserDecryptionTranscript,
-                util::file_handling::write_element,
-            };
+            use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
             let transcript = TestingUserDecryptionTranscript {
                 server_addrs: internal_client.get_server_addrs(),
                 client_address: internal_client.client_address,
@@ -354,8 +349,8 @@ pub(crate) async fn user_decryption_centralized(
             } else {
                 crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH
             };
-            let path = format!("{}.{}", path_prefix, msg.bits());
-            write_element(&path, &transcript).await.unwrap();
+            let path = format!("{}.{}.json", path_prefix, msg.bits());
+            transcript.write_stable_test_vector_json(&path).unwrap();
         }
     }
 

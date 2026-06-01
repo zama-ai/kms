@@ -1,236 +1,15 @@
-use crate::client::client_wasm::Client;
-use crate::client::test_tools::ServerHandle;
-use crate::conf::{Keychain, SecretSharingKeychain};
-use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT,
-    PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
-};
-use crate::engine::base::derive_request_id;
-use crate::util::key_setup::test_tools::file_backup_vault;
-#[cfg(feature = "slow_tests")]
-use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
-use crate::util::key_setup::test_tools::setup::{ensure_dir_exist, ensure_testing_material_exists};
-use crate::util::key_setup::{
-    ThresholdSigningKeyConfig, ensure_client_keys_exist,
-    ensure_threshold_server_signing_keys_exist, max_threshold,
-};
-use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::Vault;
-use crate::vault::storage::delete_at_request_id;
-use crate::vault::storage::{StorageType, file::FileStorage};
+use core::future::Future;
+
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MAX_TRIES};
+use kms_grpc::RequestId;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::PrivDataType;
 use std::collections::HashMap;
-use std::path::Path;
-use tfhe::core_crypto::commons::utils::ZipChecked;
-use threshold_execution::endpoints::decryption::DecryptionMode;
-use threshold_execution::tfhe_internals::parameters::DKGParams;
+use std::pin::Pin;
 use tonic::transport::Channel;
+use tonic::{Request, Response, Status};
 
-#[allow(clippy::too_many_arguments)]
-async fn threshold_handles_w_vaults(
-    params: DKGParams,
-    amount_parties: usize,
-    ensure_default_prss: bool,
-    generate_test_material: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    decryption_mode: Option<DecryptionMode>,
-    vaults: Vec<Option<Vault>>,
-    test_data_path: Option<&Path>,
-) -> (
-    HashMap<u32, ServerHandle>,
-    HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    Client,
-) {
-    // Compute threshold < amount_parties/3
-    let threshold = max_threshold(amount_parties);
-    let mut pub_storage = Vec::new();
-    let mut priv_storage = Vec::new();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    for (pub_prefix, priv_prefix) in pub_storage_prefixes
-        .iter()
-        .zip(priv_storage_prefixes.iter())
-    {
-        pub_storage.push(
-            FileStorage::new(test_data_path, StorageType::PUB, pub_prefix.as_deref()).unwrap(),
-        );
-        let mut cur_priv_storage =
-            FileStorage::new(test_data_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-        if ensure_default_prss {
-            // Note that migration will move legacy prss (whose ID depends on amount of parties) to the new type, which does not
-            // this means that when mixing tests of different amount of parties using the same storage, we need to redo PRSS
-            // Since migation is only done for the 13/4 configuration this is the only legacy PRSS we need to clear
-            let req_z64 =
-                derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID)).unwrap();
-            let req_z128 =
-                derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))
-                    .unwrap();
-            delete_at_request_id(
-                &mut cur_priv_storage,
-                &req_z64,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await
-            .unwrap();
-            delete_at_request_id(
-                &mut cur_priv_storage,
-                &req_z128,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await
-            .unwrap();
-            delete_at_request_id(
-                &mut cur_priv_storage,
-                &(*DEFAULT_EPOCH_ID).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap();
-        }
-        priv_storage.push(cur_priv_storage);
-    }
-    if generate_test_material {
-        ensure_testing_material_exists(test_data_path).await;
-        #[cfg(feature = "slow_tests")]
-        ensure_default_material_exists().await;
-    } else {
-        // Only ensure that the signing key is there s.t. the KMS can start
-        // TODO(#2491) this will be handled better when we add contexts s.t. we have different signing keys
-        ensure_dir_exist(test_data_path).await;
-        ensure_client_keys_exist(test_data_path, &SIGNING_KEY_ID, true).await;
-        let _ = ensure_threshold_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-            ThresholdSigningKeyConfig::AllParties(
-                (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
-            ),
-            true,
-        )
-        .await
-        .unwrap();
-    }
-
-    let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
-        threshold as u8,
-        pub_storage,
-        priv_storage,
-        vaults,
-        ensure_default_prss,
-        rate_limiter_conf,
-        decryption_mode,
-    )
-    .await;
-    let mut pub_storage = HashMap::with_capacity(amount_parties);
-    for (i, prefix) in pub_storage_prefixes.iter().enumerate() {
-        pub_storage.insert(
-            (i + 1) as u32,
-            FileStorage::new(test_data_path, StorageType::PUB, prefix.as_deref()).unwrap(),
-        );
-    }
-    let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
-    let internal_client = Client::new_client(client_storage, pub_storage, &params, decryption_mode)
-        .await
-        .unwrap();
-    (kms_servers, kms_clients, internal_client)
-}
-
-/// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
-/// of the servers, based on their ID, which starts from 1. A similar map is also returned
-/// is the client endpoints needed to talk with each of the servers, finally the internal
-/// client is returned (which is responsible for constructing requests and validating
-/// responses).
-/// This provides a setup _without_ custodian backup. Instead the backup vaults are just realized using
-/// an uncrypted file storage.
-#[cfg(feature = "slow_tests")]
-pub(crate) async fn threshold_handles(
-    params: DKGParams,
-    amount_parties: usize,
-    ensure_default_prss: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    decryption_mode: Option<DecryptionMode>,
-) -> (
-    HashMap<u32, ServerHandle>,
-    HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    Client,
-) {
-    let mut vaults = Vec::new();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    for (pub_prefix, backup_prefix) in pub_storage_prefixes
-        .iter()
-        .zip(backup_storage_prefixes.iter())
-    {
-        let cur_vault = file_backup_vault(
-            None,
-            None,
-            None,
-            pub_prefix.as_deref(),
-            backup_prefix.as_deref(),
-        )
-        .await;
-        vaults.push(Some(cur_vault));
-    }
-    threshold_handles_w_vaults(
-        params,
-        amount_parties,
-        ensure_default_prss,
-        true,
-        rate_limiter_conf,
-        decryption_mode,
-        vaults,
-        None, // Default test path
-    )
-    .await
-}
-
-/// Setup servers for backup tests
-/// This means that secret sharing based custodian backup gets setup
-/// with testing material _optionally_ being generated
-pub(crate) async fn threshold_handles_custodian_backup(
-    params: DKGParams,
-    amount_parties: usize,
-    ensure_default_prss: bool,
-    generate_test_material: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    decryption_mode: Option<DecryptionMode>,
-    test_data_path: Option<&Path>,
-) -> (
-    HashMap<u32, ServerHandle>,
-    HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    Client,
-) {
-    let mut vaults = Vec::new();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    for (pub_prefix, backup_prefix) in pub_storage_prefixes
-        .iter()
-        .zip_checked(backup_storage_prefixes.iter())
-    {
-        let cur_vault = file_backup_vault(
-            Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
-            test_data_path,
-            test_data_path,
-            pub_prefix.as_deref(),
-            backup_prefix.as_deref(),
-        )
-        .await;
-        vaults.push(Some(cur_vault));
-    }
-    threshold_handles_w_vaults(
-        params,
-        amount_parties,
-        ensure_default_prss,
-        generate_test_material,
-        rate_limiter_conf,
-        decryption_mode,
-        vaults,
-        test_data_path,
-    )
-    .await
-}
+/// RequestIds as they are represented in the current version of the ProtoBuf API.
+type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
 // =============================================================================
 // ISOLATED TEST HELPERS
@@ -442,4 +221,37 @@ pub async fn threshold_key_gen_secure(
     }
 
     Ok(responses)
+}
+
+/// Helper to retry a single poll call until it succeeds or we exhaust [`crate::consts::MAX_TRIES`].
+pub async fn poll_with_retries<R: Send>(
+    mut client: CoreServiceEndpointClient<Channel>,
+    server_id: u32,
+    req_id: ProtoRequestId,
+    poll_fn: impl for<'a> Fn(
+        &'a mut CoreServiceEndpointClient<Channel>,
+        Request<ProtoRequestId>,
+    )
+        -> Pin<Box<dyn Future<Output = Result<Response<R>, Status>> + Send + 'a>>,
+) -> (u32, ProtoRequestId, R) {
+    for count in 0..MAX_TRIES {
+        // By default our gRPC calls do not time out. Here we're giving it 2sec per poll attempt to reply.
+        tokio::select! {
+            result = poll_fn(&mut client, Request::new(req_id.clone())) => {
+                match result {
+                    Ok(resp) => return (server_id, req_id, resp.into_inner()),
+                    Err(e) => {
+                        let id_str = RequestId::try_from(req_id.clone()).unwrap().to_string();
+                        tracing::trace!("Attempt {count} for server {server_id}, req {id_str}: {e:?}");
+                    }
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
+                tracing::trace!("Attempt {count} for server {server_id} timed out");
+            }
+        }
+        // Back-off a little bit before re-trying
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+    panic!("no response for server {server_id} after {MAX_TRIES} tries");
 }

@@ -2,7 +2,7 @@
 //!
 //! These tests run in isolated temporary directories with pre-generated cryptographic material.
 
-use crate::client::tests::common::{TIME_TO_SLEEP_MS, get_pub_dec_resp, send_dec_reqs};
+use crate::client::tests::common::{get_pub_dec_resp, send_dec_reqs};
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::testing::prelude::*;
@@ -38,7 +38,6 @@ async fn test_central_health_endpoint_availability() -> Result<()> {
         .build()
         .await?;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let mut health_client = get_health_client(env.server.service_port)
         .await
         .expect("Failed to get health client");

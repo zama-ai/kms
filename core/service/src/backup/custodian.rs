@@ -32,7 +32,7 @@ pub(crate) const HEADER: &str = "ZAMA TKMS SETUP TEST OPERATORS-CUSTODIAN";
 pub(crate) const DSEP_BACKUP_CUSTODIAN: DomainSep = *b"BKUPCUST";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianRecoveryOutputVersioned {
+pub enum InternalCustodianRecoveryOutputVersions {
     V0(InternalCustodianRecoveryOutput),
 }
 
@@ -40,7 +40,7 @@ pub enum InternalCustodianRecoveryOutputVersioned {
 ///
 /// The payload of the signcryption is a `BackupMaterial` that contains the decrypted backup share for an operator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianRecoveryOutputVersioned)]
+#[versionize(InternalCustodianRecoveryOutputVersions)]
 pub struct InternalCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
@@ -89,13 +89,13 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CustodianSetupMessagePayloadVersioned {
+pub enum CustodianSetupMessagePayloadVersions {
     V0(CustodianSetupMessagePayload),
 }
 
 /// This is payload in the setup message that the custodian sends to the operators.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(CustodianSetupMessagePayloadVersioned)]
+#[versionize(CustodianSetupMessagePayloadVersions)]
 pub struct CustodianSetupMessagePayload {
     pub header: String,
     pub random_value: [u8; 32],
@@ -109,7 +109,7 @@ impl Named for CustodianSetupMessagePayload {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianSetupMessageVersioned {
+pub enum InternalCustodianSetupMessageVersions {
     V0(InternalCustodianSetupMessage),
 }
 
@@ -120,7 +120,7 @@ pub enum InternalCustodianSetupMessageVersioned {
 /// The operators need to persist this message in their storage
 /// so that they can run the backup procedure when needed.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianSetupMessageVersioned)]
+#[versionize(InternalCustodianSetupMessageVersions)]
 pub struct InternalCustodianSetupMessage {
     pub header: String,
     pub custodian_role: Role,
@@ -177,13 +177,13 @@ impl TryFrom<InternalCustodianSetupMessage> for CustodianSetupMessage {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianContextVersioned {
+pub enum InternalCustodianContextVersions {
     V0(InternalCustodianContext),
 }
 
 /// This is the internal representation of the custodian context.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianContextVersioned)]
+#[versionize(InternalCustodianContextVersions)]
 pub struct InternalCustodianContext {
     /// The custodian threshold for recovery
     pub threshold: u32,
@@ -284,14 +284,33 @@ impl Custodian {
         })
     }
 
+    /// Obtain the operator ephemeral public key for reencryption,
+    /// unsigncrypt the signcryption encrypted under the custodian's public key
+    /// and then signcrypt it it under the operator's public key
     // We allow the following lints because we are fine with mutating the rng even if
     // we end up returning an error when signing the encrypted share.
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
-    /// Obtain the operator ephemeral public key for reencryption,
-    /// unsigncrypt the signcryption encrypted under the custodian's public key
-    /// and then signcrypt it it under the operator's public key
     pub fn verify_reencrypt<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        backup: &InnerOperatorBackupOutput,
+        operator_verification_key: &PublicSigKey,
+        operator_ephem_enc_key: &UnifiedPublicEncKey,
+    ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
+        self.verify_reencrypt_inner(
+            rng,
+            backup,
+            operator_verification_key,
+            operator_ephem_enc_key,
+        )
+    }
+
+    // Keep the body private so the Dylint public API pass does not exhaust its
+    // path-search work limit on this deliberately allowed pattern.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
+    fn verify_reencrypt_inner<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
@@ -369,27 +388,35 @@ impl Custodian {
         })
     }
 
-    // We allow the following lints because we are fine with mutating the rng even if
-    // we end up returning an error when signing the encrypted share.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
     pub fn generate_setup_message<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         custodian_name: String, // This is the human readable name of the custodian to be used in the setup message
     ) -> Result<InternalCustodianSetupMessage, BackupError> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        Ok(self.generate_setup_message_with_timestamp(rng, custodian_name, timestamp))
+    }
+
+    // The timestamp is taken as an explicit argument so that callers needing deterministic
+    // output (e.g. backward-compatibility data generators) can pass a fixed value.
+    pub fn generate_setup_message_with_timestamp<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        custodian_name: String,
+        timestamp: u64,
+    ) -> InternalCustodianSetupMessage {
         let mut random_value = [0u8; 32];
         rng.fill_bytes(&mut random_value);
 
-        Ok(InternalCustodianSetupMessage {
+        InternalCustodianSetupMessage {
             header: HEADER.to_string(),
             custodian_role: self.role,
             random_value,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            timestamp,
             public_enc_key: self.enc_key.clone(),
             public_verf_key: self.verification_key().clone(),
             name: custodian_name,
-        })
+        }
     }
 
     pub fn public_dec_key(&self) -> &UnifiedPrivateEncKey {

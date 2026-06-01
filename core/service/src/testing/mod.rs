@@ -51,9 +51,7 @@ pub mod prelude {
     };
 
     // Helper functions
-    pub use super::helpers::{
-        create_test_material_manager, domain_to_msg, regenerate_central_keys,
-    };
+    pub use super::helpers::{create_test_material_manager, domain_to_msg};
 
     // Test utilities
     pub use super::utils::{

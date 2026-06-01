@@ -12,13 +12,13 @@ use threshold_types::commitment::KEY_BYTE_LEN;
 use threshold_types::session_id::SessionId;
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum PrfKeyVersioned {
+pub enum PrfKeyVersions {
     V0(PrfKey),
 }
 
 /// key for the PRF
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, Versionize)]
-#[versionize(PrfKeyVersioned)]
+#[versionize(PrfKeyVersions)]
 pub struct PrfKey(pub [u8; 16]);
 
 /// helper function that compute bit-wise xor of two byte arrays in place (overwriting the first argument `arr1`)
