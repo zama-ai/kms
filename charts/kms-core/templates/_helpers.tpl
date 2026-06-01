@@ -47,6 +47,7 @@ image: {{ .image.name }}:{{ .image.tag }}
 imagePullPolicy: {{ .image.pullPolicy }}
 restartPolicy: Always
 securityContext:
+  runAsUser: 0
   capabilities:
     add:
       - NET_ADMIN
