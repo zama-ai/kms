@@ -236,7 +236,7 @@ panic = 'abort'
 
 [profile.dev.package."*"]
 # Set the default for dependencies in Development mode.
-opt-level = 3
+opt-level = 1
 
 [profile.dev]
 # Turn on a small amount of optimization in Development mode.
