@@ -105,7 +105,7 @@ jobs:
 
       - name: Link pre-generated test material from EFS
         env:
-          EFS_TEST_MATERIAL_PATH: ${{ inputs.efs-test-material-path }}
+          EFS_TEST_MATERIAL_PATH: ${{ steps.generate-test-material.outputs.efs-test-material-path }}
         run: |
           if [ ! -d "${EFS_TEST_MATERIAL_PATH}" ]; then
             echo "::error::EFS test material path does not exist: ${EFS_TEST_MATERIAL_PATH}"
