@@ -670,7 +670,7 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     deterministic: bool,
     config: ThresholdSigningKeyConfig,
     tls_wildcard: bool,
-) -> anyhow::Result<bool>
+) -> anyhow::Result<()>
 where
     PubS: Storage,
     PrivS: Storage,
@@ -713,7 +713,7 @@ where
         )
         .await?;
     }
-    Ok(true)
+    Ok(())
 }
 
 /// Generates and stores the threshold server signing and verification key for
@@ -731,7 +731,7 @@ pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
     party_id: usize,
     subject: String,
     tls_wildcard: bool,
-) -> anyhow::Result<bool>
+) -> anyhow::Result<()>
 where
     PubS: Storage,
     PrivS: Storage,
@@ -756,32 +756,28 @@ async fn ensure_threshold_server_signing_key_for_party<PubS, PrivS>(
     party_id: usize,
     subject: String,
     tls_wildcard: bool,
-) -> anyhow::Result<bool>
+) -> anyhow::Result<()>
 where
     PubS: Storage,
     PrivS: Storage,
 {
     if party_id == 0 {
-        let msg = "Invalid party index: 0 (must be at least 1)";
-        tracing::error!(msg);
-        panic!("{}", msg);
+        anyhow::bail!("party ID cannot be 0 in the threshold setting")
     }
 
     let mut rng = get_rng(deterministic, Some(party_id as u64));
 
     // Check if keys already exist with error handling
     let temp: HashMap<RequestId, PrivateSigKey> =
-        match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
-            Ok(keys) => keys,
-            Err(e) => {
-                tracing::error!(
+        read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
                     "Failed to read existing server signing keys for party {}: {}",
                     party_id,
                     e
-                );
-                return Ok(true);
-            }
-        };
+                )
+            })?;
 
     if !temp.is_empty() {
         // If signing keys already exist, then do nothing
@@ -800,26 +796,25 @@ where
             {
                 let pk = sk.verf_key();
                 let ethereum_address = pk.address();
-                if let Err(store_err) = store_text_at_request_id(
+                store_text_at_request_id(
                     pub_storage,
                     request_id,
                     &ethereum_address.to_string(),
                     &PubDataType::VerfAddress.to_string(),
                 )
                 .await
-                {
-                    tracing::error!(
+                .map_err(|store_err| {
+                    anyhow::anyhow!(
                         "Failed to regenerate VerfAddress for party {}: {}",
                         party_id,
                         store_err
-                    );
-                } else {
-                    tracing::info!(
-                        "Regenerated VerfAddress {} for party {} from existing signing key",
-                        ethereum_address,
-                        party_id
-                    );
-                }
+                    )
+                })?;
+                tracing::info!(
+                    "Regenerated VerfAddress {} for party {} from existing signing key",
+                    ethereum_address,
+                    party_id
+                );
             }
 
             // Regenerate VerfKey if missing
@@ -828,25 +823,24 @@ where
                 .await?
             {
                 let pk = sk.verf_key();
-                if let Err(store_err) = store_versioned_at_request_id(
+                store_versioned_at_request_id(
                     pub_storage,
                     request_id,
                     &pk,
                     &PubDataType::VerfKey.to_string(),
                 )
                 .await
-                {
-                    tracing::error!(
+                .map_err(|store_err| {
+                    anyhow::anyhow!(
                         "Failed to regenerate VerfKey for party {}: {}",
                         party_id,
                         store_err
-                    );
-                } else {
-                    tracing::info!(
-                        "Regenerated VerfKey for party {} from existing signing key",
-                        party_id
-                    );
-                }
+                    )
+                })?;
+                tracing::info!(
+                    "Regenerated VerfKey for party {} from existing signing key",
+                    party_id
+                );
             }
 
             // Regenerate CA certificate if missing
@@ -857,32 +851,31 @@ where
                 ensure_ca_cert_exists(pub_storage, sk, request_id, subject, tls_wildcard).await?;
             }
         } else {
-            tracing::error!(
-                "Failed to regenerate CA certificate from existing server signing key for party {party_id}"
+            anyhow::bail!(
+                "Failed to regenerate CA certificate from existing server signing key for party {party_id}: no signing key found under request ID {request_id}"
             )
         };
 
-        return Ok(true);
+        return Ok(());
     }
 
     let (pk, sk) = gen_sig_keys(&mut rng);
 
     // Store public verification key
-    if let Err(store_err) = store_versioned_at_request_id(
+    store_versioned_at_request_id(
         pub_storage,
         request_id,
         &pk,
         &PubDataType::VerfKey.to_string(),
     )
     .await
-    {
-        tracing::error!(
+    .map_err(|store_err| {
+        anyhow::anyhow!(
             "Failed to store public verification key for party {}: {}",
             party_id,
             store_err
-        );
-        return Ok(true);
-    }
+        )
+    })?;
     log_storage_success(
         request_id,
         pub_storage.info(),
@@ -894,21 +887,20 @@ where
     let ethereum_address = pk.address();
 
     // Store ethereum address (derived from public key), needed for KMS signature verification
-    if let Err(store_err) = store_text_at_request_id(
+    store_text_at_request_id(
         pub_storage,
         request_id,
         &ethereum_address.to_string(),
         &PubDataType::VerfAddress.to_string(),
     )
     .await
-    {
-        tracing::error!(
+    .map_err(|store_err| {
+        anyhow::anyhow!(
             "Failed to store ethereum address for party {}: {}",
             party_id,
             store_err
-        );
-        return Ok(true);
-    }
+        )
+    })?;
     tracing::info!(
         "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
         ethereum_address,
@@ -917,21 +909,20 @@ where
     );
 
     // Store private signing key
-    if let Err(store_err) = store_versioned_at_request_id(
+    store_versioned_at_request_id(
         priv_storage,
         request_id,
         &sk,
         &PrivDataType::SigningKey.to_string(),
     )
     .await
-    {
-        tracing::error!(
+    .map_err(|store_err| {
+        anyhow::anyhow!(
             "Failed to store private signing key for party {}: {}",
             party_id,
             store_err
-        );
-        return Ok(true);
-    }
+        )
+    })?;
     log_storage_success(
         request_id,
         priv_storage.info(),
@@ -942,7 +933,7 @@ where
 
     // Generate CA certificate
     ensure_ca_cert_exists(pub_storage, &sk, request_id, subject, tls_wildcard).await?;
-    Ok(true)
+    Ok(())
 }
 
 /// Generates stores CA certificates that are used to issue ephemeral mTLS

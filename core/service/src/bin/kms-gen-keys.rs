@@ -389,7 +389,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.overwrite,
     )
     .await;
-    if !ensure_threshold_server_signing_key_exists(
+    ensure_threshold_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
         &SIGNING_KEY_ID,
@@ -399,10 +399,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.tls_wildcard,
     )
     .await
-    .expect("Could not access storage")
-    {
-        tracing::warn!("Threshold signing keys already exist, skipping generation");
-    }
+    .expect("Could not access storage");
 }
 
 async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
