@@ -27,6 +27,8 @@ type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 /// * `clients` - Map of party ID to gRPC client
 /// * `request_id` - Unique identifier for this key generation request
 /// * `params` - FHE parameters to use for key generation
+/// * `keyset_config` - Optional keyset configuration (defaults to compressed when `None`)
+/// * `keyset_added_info` - Optional migration info (e.g. for `UseExisting` keygen)
 ///
 /// # Returns
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
@@ -35,6 +37,8 @@ pub async fn threshold_insecure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
+    keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
+    keyset_added_info: Option<kms_grpc::kms::v1::KeySetAddedInfo>,
 ) -> anyhow::Result<
     Vec<(
         u32,
@@ -59,8 +63,8 @@ pub async fn threshold_insecure_key_gen(
             params: Some(params as i32),
             preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
             domain: Some(domain_msg.clone()),
-            keyset_config: None,
-            keyset_added_info: None,
+            keyset_config,
+            keyset_added_info: keyset_added_info.clone(),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             extra_data: default_isolated_extra_data(),

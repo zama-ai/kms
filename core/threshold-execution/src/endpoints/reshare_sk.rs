@@ -773,7 +773,7 @@ mod tests {
     };
     use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
     use crate::tfhe_internals::test_feature::{
-        ExtendedClientKey, KeySet, keygen_all_party_shares_from_keyset,
+        ClientKeyView, KeySet, keygen_all_party_shares_from_keyset,
     };
     use crate::{
         constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
@@ -1075,7 +1075,7 @@ mod tests {
             let mut keyset: KeySet =
                 read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
             truncate_client_keys(&mut keyset, new_params);
-            let oprf_key_present = ExtendedClientKey::new(&keyset.client_key)
+            let oprf_key_present = ClientKeyView::new(&keyset.client_key)
                 .raw_oprf_client_key()
                 .is_some();
             let (mut party_keyshare, expected_sk, _key_shares) =
@@ -1645,7 +1645,7 @@ mod tests {
         }
         // sanity check that we can still reconstruct
         let expected_sk = {
-            let eck = ExtendedClientKey::new(&keyset.client_key);
+            let eck = ClientKeyView::new(&keyset.client_key);
             (
                 eck.raw_glwe_client_sns_key_as_lwe()
                     .unwrap()

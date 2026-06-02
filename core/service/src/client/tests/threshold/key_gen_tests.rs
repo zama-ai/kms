@@ -208,131 +208,6 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
     Ok(())
 }
 
-/// Insecure compressed keygen that recycles an existing keyset (the `UseExisting` migration
-/// flow). First generates a compressed keyset at key id A, then runs an insecure
-/// `UseExisting + CompressedAll` keygen at key id B referencing A. The keygen helper already
-/// verifies that the regenerated compressed keyset round-trips with the re-shared private
-/// shares, which proves the reconstructed-and-reshared key is consistent. On top of that we
-/// assert the migration semantics: B keeps A's `CompactPublicKey` and tag.
-#[rstest::rstest]
-#[case(4)]
-#[tokio::test(flavor = "multi_thread")]
-async fn test_insecure_compressed_dkg_from_existing(
-    #[case] amount_parties: usize,
-) -> anyhow::Result<()> {
-    use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
-    use crate::vault::storage::crypto_material::CryptoMaterialReader;
-
-    let key_id_a: RequestId = derive_request_id(&format!(
-        "test_insecure_compressed_dkg_from_existing_A_{amount_parties}_{TEST_PARAM:?}"
-    ))?;
-    let key_id_b: RequestId = derive_request_id(&format!(
-        "test_insecure_compressed_dkg_from_existing_B_{amount_parties}_{TEST_PARAM:?}"
-    ))?;
-
-    // Test generates its own FHE keys; only signing material is needed pre-staged.
-    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
-
-    let env = ThresholdTestEnv::builder()
-        .with_test_name("test_insecure_compressed_dkg_from_existing")
-        .with_party_count(amount_parties)
-        .with_threshold(max_threshold(amount_parties) as u8)
-        .with_material_spec(spec)
-        .with_prss()
-        .build()
-        .await?;
-
-    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
-    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
-
-    // 1) Insecure compressed keygen at key id A (fresh, GenerateAll).
-    let (keyset_config, keyset_added_info) = keygen_config();
-    let _keys_a = run_threshold_keygen(
-        FheParameter::Test,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id_a,
-        keyset_config,
-        keyset_added_info,
-        true,
-        Some(material_path.as_path()),
-        0,
-    )
-    .await
-    .0;
-
-    // 2) Insecure compressed keygen at key id B reusing A's secret keyset (UseExisting), and
-    //    copy the new compressed material back onto A.
-    let keyset_config = Some(KeySetConfig {
-        keyset_type: kms_grpc::kms::v1::KeySetType::Standard.into(),
-        standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
-            compute_key_type: 0,
-            secret_key_config: kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting.into(),
-            compressed_key_config: kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into(),
-        }),
-    });
-    let keyset_added_info = Some(KeySetAddedInfo {
-        existing_keyset_id: Some(key_id_a.into()),
-        use_existing_key_tag: true,
-        copy_compressed_key_to_original: true,
-        ..KeySetAddedInfo::default()
-    });
-    let keys_b = run_threshold_keygen(
-        FheParameter::Test,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id_b,
-        keyset_config,
-        keyset_added_info,
-        true,
-        Some(material_path.as_path()),
-        0,
-    )
-    .await
-    .0;
-
-    // B must produce compressed keys (run_threshold_keygen already verified the encrypt/decrypt
-    // round-trip using the re-shared private shares).
-    let _ = keys_b.get_compressed();
-
-    // Migration semantics: B's stored CompactPublicKey must equal A's (the old public key is
-    // preserved), and B must carry A's tag.
-    let expected_tag: tfhe::Tag = key_id_a.into();
-    for (idx, prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL
-        .iter()
-        .take(amount_parties)
-        .enumerate()
-    {
-        let storage = FileStorage::new(
-            Some(material_path.as_path()),
-            StorageType::PUB,
-            prefix.as_deref(),
-        )?;
-        let pk_a: tfhe::CompactPublicKey =
-            CryptoMaterialReader::read_from_storage(&storage, &key_id_a).await?;
-        let pk_b: tfhe::CompactPublicKey =
-            CryptoMaterialReader::read_from_storage(&storage, &key_id_b).await?;
-        let digest_a = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk_a).unwrap();
-        let digest_b = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk_b).unwrap();
-        assert_eq!(
-            digest_a,
-            digest_b,
-            "party {}: insecure UseExisting migration must preserve the existing CompactPublicKey",
-            idx + 1
-        );
-        assert_eq!(
-            pk_b.tag(),
-            &expected_tag,
-            "party {}: migrated public key must carry the existing keyset tag",
-            idx + 1
-        );
-    }
-
-    Ok(())
-}
-
 /// Test compressed keygen with test parameters and 4 parties.
 /// This tests the `compressed_keygen` code path where keys are generated
 /// using XOF-seeded compression instead of the standard keygen.
@@ -1493,7 +1368,8 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
     let key_id = derive_request_id("test_insecure_dkg")?;
 
     // Generate key using insecure mode
-    let responses = threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test).await?;
+    let responses =
+        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test, None, None).await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
@@ -1551,7 +1427,8 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
 
     // Use FheParameter::Default to match MaterialType::Default
     let responses =
-        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Default).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Default, None, None)
+            .await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env
@@ -1865,7 +1742,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_oprf() -> anyhow::Result<()>
 {
-    run_secure_threshold_compressed_keygen_from_existing(false).await
+    run_threshold_compressed_keygen_from_existing(false, false).await
 }
 
 /// Test secure threshold compressed key generation from legacy existing secret shares
@@ -1874,23 +1751,35 @@ async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_oprf() 
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
 {
-    run_secure_threshold_compressed_keygen_from_existing(true).await
+    run_threshold_compressed_keygen_from_existing(false, true).await
 }
 
-/// Run secure threshold compressed key generation from existing secret shares.
+/// Same migration flow as the secure variants above, but driven through the insecure keygen
+/// endpoint (party 1 reconstructs the existing secret key and re-shares it; no preprocessing).
+/// Gated on both `slow_tests` (for the shared `threshold_key_gen_secure`/ddec machinery the
+/// generalized helper references) and `insecure` (the server must expose the insecure endpoint).
+#[tokio::test]
+#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+async fn insecure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()> {
+    run_threshold_compressed_keygen_from_existing(true, false).await
+}
+
+/// Run threshold compressed key generation from existing secret shares, over either the secure
+/// or the insecure keygen path (selected by `insecure`).
 ///
 /// Generates an uncompressed keyset first, then performs compressed key generation
 /// reusing the existing secret key shares from the first keygen. When `remove_oprf`
 /// is true, the first keyset is rewritten to mimic legacy material with no
-/// dedicated OPRF share before the servers are restarted.
+/// dedicated OPRF share before the servers are restarted (only meaningful for the secure
+/// path, which can regenerate the OPRF share from preprocessing).
 ///
 /// **Workflow:**
-/// 1. Uncompressed keygen (preprocessing + online) to produce the first keyset
-/// 2. Preprocessing for compressed keygen from existing shares
-/// 3. Compressed keygen from existing shares
-/// 4. Verify both keygens completed on all parties using ddec
+/// 1. Uncompressed keygen to produce the first keyset
+/// 2. Compressed keygen from the existing shares
+/// 3. Verify both keygens completed on all parties, the migration semantics, and ddec
 #[cfg(feature = "slow_tests")]
-async fn run_secure_threshold_compressed_keygen_from_existing(
+async fn run_threshold_compressed_keygen_from_existing(
+    insecure: bool,
     remove_oprf: bool,
 ) -> anyhow::Result<()> {
     use crate::client::tests::common::keygen_config_from_existing;
@@ -1905,31 +1794,48 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         .build()
         .await?;
 
-    // Step 1: Uncompressed keygen (preprocessing + online)
+    // Step 1: Uncompressed keygen (secure: preprocessing + online; insecure: direct)
     let preproc_id_1 = derive_request_id("compressed_existing_preproc_1")?;
     let keygen_id_1 = derive_request_id("compressed_existing_keygen_1")?;
     let (uncompressed_keyset_config, uncompressed_keyset_added_info) = uncompressed_keygen_config();
 
-    threshold_key_gen_secure(
-        &env.clients,
-        &preproc_id_1,
-        &keygen_id_1,
-        FheParameter::Test,
-        uncompressed_keyset_config,
-        uncompressed_keyset_added_info,
-        None,
-        None,
-    )
-    .await?;
+    if insecure {
+        threshold_insecure_key_gen(
+            &env.clients,
+            &keygen_id_1,
+            FheParameter::Test,
+            uncompressed_keyset_config,
+            uncompressed_keyset_added_info,
+        )
+        .await?;
+    } else {
+        threshold_key_gen_secure(
+            &env.clients,
+            &preproc_id_1,
+            &keygen_id_1,
+            FheParameter::Test,
+            uncompressed_keyset_config,
+            uncompressed_keyset_added_info,
+            None,
+            None,
+        )
+        .await?;
+    }
 
     let (mut clients, mut servers, material_path, _guard) = env.into_parts();
 
     // Verify standard keygen completed on all parties
     for client in clients.values() {
         let mut cur_client = client.clone();
-        let result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id_1.into()))
-            .await?;
+        let result = if insecure {
+            cur_client
+                .get_insecure_key_gen_result(tonic::Request::new(keygen_id_1.into()))
+                .await?
+        } else {
+            cur_client
+                .get_key_gen_result(tonic::Request::new(keygen_id_1.into()))
+                .await?
+        };
         assert_eq!(result.into_inner().request_id, Some(keygen_id_1.into()));
     }
 
@@ -1947,30 +1853,49 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         clients = restarted_clients;
     }
 
-    // Step 2: Compressed keygen from existing secret shares (preprocessing + online)
+    // Step 2: Compressed keygen from existing secret shares (secure: preprocessing + online;
+    // insecure: direct). The keyset inherits the existing tag and copies the new compressed
+    // material back onto the original key id.
     let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
     let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true, true);
 
-    threshold_key_gen_secure(
-        &clients,
-        &preproc_id_2,
-        &keygen_id_2,
-        FheParameter::Test,
-        keyset_config,
-        keyset_added_info,
-        None,
-        None,
-    )
-    .await?;
+    if insecure {
+        threshold_insecure_key_gen(
+            &clients,
+            &keygen_id_2,
+            FheParameter::Test,
+            keyset_config,
+            keyset_added_info,
+        )
+        .await?;
+    } else {
+        threshold_key_gen_secure(
+            &clients,
+            &preproc_id_2,
+            &keygen_id_2,
+            FheParameter::Test,
+            keyset_config,
+            keyset_added_info,
+            None,
+            None,
+        )
+        .await?;
+    }
 
     // Verify compressed keygen completed on all parties
     for client in clients.values() {
         let mut cur_client = client.clone();
-        let result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id_2.into()))
-            .await?;
+        let result = if insecure {
+            cur_client
+                .get_insecure_key_gen_result(tonic::Request::new(keygen_id_2.into()))
+                .await?
+        } else {
+            cur_client
+                .get_key_gen_result(tonic::Request::new(keygen_id_2.into()))
+                .await?
+        };
         assert_eq!(result.into_inner().request_id, Some(keygen_id_2.into()));
     }
 
@@ -2345,7 +2270,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     // Step 1: Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey
     let key_id_1 = derive_request_id("decom_dkg_key_1")?;
     let responses_1 =
-        threshold_insecure_key_gen(&env.clients, &key_id_1, FheParameter::Test).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id_1, FheParameter::Test, None, None).await?;
     let (keys_1, _) = verify_keygen_responses(
         responses_1,
         Some(&material_path),
@@ -2369,7 +2294,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
     let responses_2 =
-        threshold_insecure_key_gen(&env.clients, &key_id_2, FheParameter::Test).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id_2, FheParameter::Test, None, None).await?;
     let (keys_2, _) = verify_keygen_responses(
         responses_2,
         Some(&material_path),

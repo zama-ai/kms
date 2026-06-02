@@ -1311,7 +1311,7 @@ mod tests {
     use crate::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
     use crate::tfhe_internals::test_feature::{
-        ExtendedClientKey, KeySet, keygen_all_party_shares_from_keyset,
+        ClientKeyView, KeySet, keygen_all_party_shares_from_keyset,
     };
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
@@ -1367,7 +1367,7 @@ mod tests {
         let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
-            ExtendedClientKey::new(&keyset.client_key)
+            ClientKeyView::new(&keyset.client_key)
                 .raw_glwe_client_sns_key()
                 .unwrap()
                 .into_container()[0],
