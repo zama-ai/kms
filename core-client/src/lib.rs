@@ -2102,7 +2102,7 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
             let req_id: RequestId = result_parameters.request_id;
-            let resp_response_vec = get_public_decrypt_responses(
+            let (resp_response_vec, _time_to_get_responses) = get_public_decrypt_responses(
                 &core_endpoints_req,
                 None,
                 None,
@@ -2359,34 +2359,77 @@ pub async fn execute_cmd(
     Ok(res)
 }
 
+struct DurationStat {
+    avg: tokio::time::Duration,
+    median: tokio::time::Duration,
+    min: tokio::time::Duration,
+    max: tokio::time::Duration,
+}
+
+fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationStat {
+    let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
+    let mut sorted_durations = durations.to_vec();
+    sorted_durations.sort();
+    let median = if sorted_durations.len().is_multiple_of(2) {
+        (sorted_durations[sorted_durations.len() / 2 - 1]
+            + sorted_durations[sorted_durations.len() / 2])
+            / 2
+    } else {
+        sorted_durations[sorted_durations.len() / 2]
+    };
+    let min = sorted_durations[0];
+    let max = sorted_durations[sorted_durations.len() - 1];
+    DurationStat {
+        avg,
+        median,
+        min,
+        max,
+    }
+}
 // Prints the timings for the command execution, showing latency and throughput based on the measured durations.
-fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: tokio::time::Instant) {
+fn print_timings(
+    cmd: &str,
+    total_client_durations: &mut [tokio::time::Duration],
+    durations_to_get_responses: &mut [tokio::time::Duration],
+    start: tokio::time::Instant,
+) {
     // compute total time that is elapsed since we sent the first request
     let total_elapsed = start.elapsed();
 
     // compute latency values
-    let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
-    durations.sort();
-    let median = if durations.len().is_multiple_of(2) {
-        (durations[durations.len() / 2 - 1] + durations[durations.len() / 2]) / 2
-    } else {
-        durations[durations.len() / 2]
-    };
-    let min = durations[0];
-    let max = durations[durations.len() - 1];
+    let total_duration_stat = compute_stat_on_durations(total_client_durations);
+    let response_duration_stat = compute_stat_on_durations(durations_to_get_responses);
 
-    tracing::info!(
-        "Latency for {cmd}: Avg: {avg:?}, Median: {median:?}, Min: {min:?}, Max: {max:?}"
+    tracing::debug!(
+        "Client total latency for {cmd}: Avg: {:?}, Median: {:?}, Min: {:?}, Max: {:?}",
+        total_duration_stat.avg,
+        total_duration_stat.median,
+        total_duration_stat.min,
+        total_duration_stat.max
     );
 
     tracing::info!(
+        "Latency for {cmd}: Avg: {:?}, Median: {:?}, Min: {:?}, Max: {:?}",
+        response_duration_stat.avg,
+        response_duration_stat.median,
+        response_duration_stat.min,
+        response_duration_stat.max
+    );
+
+    tracing::debug!(
         "Total elapsed time for {cmd} with {} collected results: {total_elapsed:?}. Throughput: {} requests/s",
-        durations.len(),
-        durations.len() as f64 / total_elapsed.as_secs_f64()
+        total_client_durations.len(),
+        total_client_durations.len() as f64 / total_elapsed.as_secs_f64()
+    );
+
+    tracing::info!(
+        "Time to get responses for {cmd} with {} collected results: {total_elapsed:?}. Throughput: {} requests/s",
+        durations_to_get_responses.len(),
+        durations_to_get_responses.len() as f64 / response_duration_stat.max.as_secs_f64()
     );
 
     // For debugging, print all collected durations
-    tracing::debug!("All durations: {:?}", durations);
+    tracing::debug!("All durations: {:?}", total_client_durations);
 }
 
 #[cfg(test)]
