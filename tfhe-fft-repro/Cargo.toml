@@ -1,0 +1,35 @@
+# Standalone reproduction of the tfhe-fft codegen-time blowup (rustc 1.94 -> 1.96).
+#
+# Empty [workspace] keeps this crate from being absorbed by any ancestor cargo
+# workspace (e.g. the kms repo if you leave it here). No rust-toolchain file, so
+# the active toolchain is whatever `+toolchain` / RUSTUP_TOOLCHAIN selects.
+[workspace]
+
+[package]
+name = "tfhe-fft-repro"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# `default` already enables std + avx512 (-> pulp/x86-v4, the AVX-512 codegen path
+# that blows up). fft128 + serde round out the workspace's resolved feature set:
+# [avx512, default, fft128, serde, std].
+tfhe-fft = { version = "=0.10.1", default-features = true, features = ["fft128", "serde"] }
+
+# Compile dependencies the way the kms workspace does (opt-level 3, codegen-units
+# 16). This is what drives tfhe-fft's heavy codegen unit. NO lto on purpose: the
+# 200s -> 9200s blowup is per-CGU codegen, not the link-time LTO step, so adding
+# LTO would only add noise and time.
+[profile.dev]
+opt-level = 3
+codegen-units = 16
+
+[profile.dev.package."*"]
+opt-level = 3
+codegen-units = 16
+
+# A release-ish profile without LTO, in case you want to compare.
+[profile.release]
+lto = "off"
+codegen-units = 16
