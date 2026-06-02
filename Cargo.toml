@@ -110,14 +110,14 @@ async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }  # Asyn
 async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
 async_cell = "0.2.2"  # Async cell implementation - HIGH RISK: Individual maintainer, very low popularity
 attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted
-aws-config = { version = "=1.8.12" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
-aws-lc-rs = { version = "=1.16.2" } # AWS-LC dependency pinned because of an earlier version vulnerability - LOW RISK: Official AWS SDK
+aws-config = { version = "=1.8.17" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
+aws-lc-rs = { version = "=1.16.3" } # AWS-LC cryptographic library - LOW RISK: Official AWS SDK
 aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
 aws-sdk-kms = { version = "=1.98.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
 aws-sdk-s3 = { version = "=1.120.0" }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-smithy-runtime = { version = "=1.10.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
-aws-smithy-runtime-api = { version = "=1.11.6" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
-aws-smithy-types = { version = "=1.4.6" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
+aws-smithy-runtime = { version = "=1.11.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
+aws-smithy-runtime-api = { version = "=1.12.1" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
+aws-smithy-types = { version = "=1.4.8" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.8", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
@@ -171,7 +171,7 @@ proc-macro2 = "=1.0.101"  # Proc macro utilities - MEDIUM RISK: Reputable indivi
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
 proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintainers (AltSysrq, Centril), test-only dependency
 prost = "=0.14.3"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
-quote = "=1.0.40"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
+quote = "=1.0.45"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.5"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
 rasn = "=0.28.11"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
 rasn-cms = "=0.28.11"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
@@ -236,7 +236,7 @@ panic = 'abort'
 
 [profile.dev.package."*"]
 # Set the default for dependencies in Development mode.
-opt-level = 3
+opt-level = 1
 
 [profile.dev]
 # Turn on a small amount of optimization in Development mode.
