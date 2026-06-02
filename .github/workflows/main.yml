@@ -42,7 +42,7 @@ jobs:
     outputs:
       # Each output indicates if files in a specific component were modified.
       # Only outputs consumed by jobs in *this* workflow are exported here;
-      # the per-package test matrix lives in `new_main.yml`, which performs
+      # the per-package test matrix lives in `parallel-testing.yml`, which performs
       # its own change filtering as needed.
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client-nightly-tests: ${{ steps.filter.outputs.core-client-nightly-tests }}
@@ -103,6 +103,16 @@ jobs:
               - 'docs/**'
 
   ############################################################################
+  # Parallel testing pipeline
+  # Triggered by:
+  # - Changes to any of the components (filter: ci, core-client-nightly-tests, core-service, workspace-crates, docs)
+  ############################################################################
+  parallel-testing:
+    name: main/parallel-testing
+    uses: ./.github/workflows/parallel-testing.yml
+    secrets: inherit
+
+  ############################################################################
   # Docker build pipeline
   # Triggered by:
   # - Label : "Docker" on pull request
@@ -148,7 +158,7 @@ jobs:
   ############################################################################
   # Core Client nightly pipeline
   # Note: regular per-partition core-client/core-service/core-grpc/core-threshold
-  # test jobs live in `.github/workflows/new_main.yml` (see the `test-matrix`
+  # test jobs live in `.github/workflows/parallel-testing.yml` (see the `test-matrix`
   # job in that file). This workflow only keeps the schedule-driven nightly
   # job for `kms-core-client`.
   ############################################################################
@@ -249,7 +259,7 @@ jobs:
 
   # Test reporting job that runs after all tests complete.
   # Only runs on pull requests to generate test reports.
-  # Note: per-package test jobs that moved to `new_main.yml` are reported by
+  # Note: per-package test jobs that moved to `parallel-testing.yml` are reported by
   # that workflow's own `test-reporter` job. This reporter only covers the
   # jobs that still live in this workflow.
   test-reporter:

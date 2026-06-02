@@ -269,6 +269,12 @@ inherits = "release"
 # but set LTO to the default (thin instead of fat)
 lto = "thin"
 
+[profile.release-lto-off]
+# use release profile settings
+inherits = "release"
+# but set LTO to the default (thin instead of fat)
+lto = "off"
+
 [patch.crates-io]
 # MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
 attestation-doc-validation = { git = 'https://github.com/mkmks/attestation-doc-validation.git', branch = 'timestamps' }

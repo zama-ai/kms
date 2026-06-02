@@ -1,11 +1,7 @@
 name: parallel-testing
 
 on:
-  schedule:
-    - cron: '0 0 * * 1-5'
-  pull_request:
-  push:
-    branches: ['main', 'release/*']
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}

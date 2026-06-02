@@ -390,7 +390,7 @@ jobs:
     if: |
       always() &&
       github.event_name != 'schedule' &&
-      !contains(github.event.pull_request.labels.*.name, 'docker')
+      (!contains(github.event.pull_request.labels.*.name, 'docker') || !contains(github.event.pull_request.labels.*.name, 'pr-preview'))
     needs:
       - docker-build
       - kind-testing

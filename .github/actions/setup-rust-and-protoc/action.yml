@@ -56,6 +56,5 @@ runs:
 
     - name: Install cargo-nextest
       if: ${{ inputs.setup-cargo-nextest == 'true' }}
-      uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
-      with:
-        tool: cargo-nextest@0.9.133
+      shell: bash
+      run: cargo install cargo-nextest@0.9.133 --locked --force
