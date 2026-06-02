@@ -1295,9 +1295,14 @@ mod tests {
         let roles = generate_fixed_roles(num_parties);
 
         // generate key shares for all parties
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_keyset(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
 
         set_server_key(keyset.public_keys.server_key.clone());
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg, 8).unwrap();

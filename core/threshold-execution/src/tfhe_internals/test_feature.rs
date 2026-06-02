@@ -72,9 +72,21 @@ pub struct KeySet {
     pub public_keys: FhePubKeySet,
 }
 
-impl KeySet {
-    pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+/// A light borrowing wrapper around a [`tfhe::ClientKey`] that exposes the raw secret-key
+/// containers. Extraction only needs the client key, so this lets callers that hold only a
+/// `ClientKey` (e.g. reconstructed keys) reuse the same logic without materializing a full
+/// `KeySet` (and its expensive `ServerKey`). The `KeySet` getters below delegate here.
+pub struct ExtendedClientKey<'a> {
+    ck: &'a tfhe::ClientKey,
+}
+
+impl<'a> ExtendedClientKey<'a> {
+    pub fn new(ck: &'a tfhe::ClientKey) -> Self {
+        Self { ck }
+    }
+
+    pub fn raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
+        let (inner_client_key, _, _, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -90,8 +102,8 @@ impl KeySet {
 
     /// Returns the dedicated OPRF private LWE secret key embedded in the
     /// `ClientKey`, or `None` if the keyset was generated without one.
-    pub fn get_raw_oprf_client_key(&self) -> Option<LweSecretKey<Vec<u64>>> {
-        let (_, _, _, _, _, _, oprf_private_key, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_oprf_client_key(&self) -> Option<LweSecretKey<Vec<u64>>> {
+        let (_, _, _, _, _, _, oprf_private_key, _) = self.ck.clone().into_raw_parts();
         oprf_private_key.map(|sk| match sk.into_raw_parts().into_raw_parts() {
             tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(lwe) => lwe,
             tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
@@ -100,23 +112,23 @@ impl KeySet {
         })
     }
 
-    pub fn get_raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
+    pub fn raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
         // We should have this key even if the compact PKE parameters are empty
         // because we want to match the behaviour of a normal DKG.
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
         } else {
-            self.get_raw_lwe_client_key()
+            self.raw_lwe_client_key()
         }
     }
 
-    pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
+        let (_, _, compression_sk, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -125,8 +137,8 @@ impl KeySet {
         }
     }
 
-    pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
+        let (inner_client_key, _, _, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -140,27 +152,29 @@ impl KeySet {
         }
     }
 
-    pub fn get_raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, noise_squashing_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
+        let (_, _, _, noise_squashing_key, _, _, _, _) = self.ck.clone().into_raw_parts();
         noise_squashing_key.map(|sns_key| sns_key.into_raw_parts().into_raw_parts().0)
     }
 
-    pub fn get_raw_glwe_client_sns_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
-        self.get_raw_glwe_client_sns_key()
-            .map(|inner| inner.into_lwe_secret_key())
-    }
-
-    pub fn get_raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, _, sns_compression_key, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
+        let (_, _, _, _, sns_compression_key, _, _, _) = self.ck.clone().into_raw_parts();
         sns_compression_key
             .map(|sns_compression_key| sns_compression_key.into_raw_parts().into_raw_parts().0)
     }
 
-    pub fn get_raw_sns_compression_client_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
-        self.get_raw_sns_compression_client_key()
+    pub fn raw_glwe_client_sns_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
+        self.raw_glwe_client_sns_key()
             .map(|inner| inner.into_lwe_secret_key())
     }
 
+    pub fn raw_sns_compression_client_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
+        self.raw_sns_compression_client_key()
+            .map(|inner| inner.into_lwe_secret_key())
+    }
+}
+
+impl KeySet {
     pub fn get_cpu_params(&self) -> anyhow::Result<ClassicPBSParameters> {
         match self.client_key.computation_parameters() {
             shortint::AtomicPatternParameters::Standard(pbsparameters) => match pbsparameters {
@@ -367,35 +381,32 @@ struct RawKeyContainers {
 /// the other parties would continue to transfer_pk and would panic because they
 /// would receive something different from a PK.
 fn extract_key_containers(
-    keyset: Option<&KeySet>,
+    client_key: Option<&tfhe::ClientKey>,
     params: DKGParams,
 ) -> anyhow::Result<RawKeyContainers> {
     let params_basic_handle = params.get_params_basics_handle();
+    let client_key = client_key.map(ExtendedClientKey::new);
 
-    let lwe_sk_container64: Vec<u64> = keyset
-        .map(|s| s.clone().get_raw_lwe_client_key().into_container())
+    let lwe_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .map(|ck| ck.raw_lwe_client_key().into_container())
         .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
 
-    let lwe_encryption_sk_container64: Vec<u64> = keyset
-        .map(|s| {
-            s.clone()
-                .get_raw_lwe_encryption_client_key()
-                .into_container()
-        })
+    let lwe_encryption_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .map(|ck| ck.raw_lwe_encryption_client_key().into_container())
         .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_hat_dimension().0]);
 
-    let glwe_sk_container64: Vec<u64> = keyset
-        .map(|s| s.clone().get_raw_glwe_client_key().into_container())
+    let glwe_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .map(|ck| ck.raw_glwe_client_key().into_container())
         .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.glwe_sk_num_bits()]);
 
     let sns_sk_container128: Option<Vec<u128>> = if let DKGParams::WithSnS(params_sns) = params {
         Some(
-            keyset
-                .and_then(|s| {
-                    s.clone()
-                        .get_raw_glwe_client_sns_key()
-                        .map(|x| x.into_container())
-                })
+            client_key
+                .as_ref()
+                .and_then(|ck| ck.raw_glwe_client_sns_key().map(|x| x.into_container()))
                 .unwrap_or_else(|| vec![Numeric::ZERO; params_sns.glwe_sk_num_bits_sns()]),
         )
     } else {
@@ -403,8 +414,8 @@ fn extract_key_containers(
     };
 
     // Check compression key consistency
-    if let Some(ks) = keyset
-        && ks.get_raw_compression_client_key().is_none()
+    if let Some(ck) = &client_key
+        && ck.raw_compression_client_key().is_none()
         && params_basic_handle
             .get_compression_decompression_params()
             .is_some()
@@ -412,17 +423,15 @@ fn extract_key_containers(
         anyhow::bail!("Compression client key is missing when parameter is available")
     }
 
-    let compression_sk_container64: Option<Vec<u64>> = match keyset {
-        Some(s) => {
+    let compression_sk_container64: Option<Vec<u64>> = match &client_key {
+        Some(ck) => {
             if params_basic_handle
                 .get_compression_decompression_params()
                 .is_none()
             {
                 None
             } else {
-                s.clone()
-                    .get_raw_compression_client_key()
-                    .map(|x| x.into_container())
+                ck.raw_compression_client_key().map(|x| x.into_container())
             }
         }
         None => {
@@ -440,13 +449,12 @@ fn extract_key_containers(
         }
     };
 
-    let sns_compression_sk_container128: Option<Vec<u128>> = match keyset {
-        Some(s) => {
+    let sns_compression_sk_container128: Option<Vec<u128>> = match &client_key {
+        Some(ck) => {
             if params_basic_handle.get_sns_compression_params().is_none() {
                 None
             } else {
-                s.clone()
-                    .get_raw_sns_compression_client_key()
+                ck.raw_sns_compression_client_key()
                     .map(|x| x.into_container())
             }
         }
@@ -463,8 +471,9 @@ fn extract_key_containers(
         }
     };
 
-    let oprf_sk_container64: Vec<u64> = keyset
-        .and_then(|s| s.get_raw_oprf_client_key().map(|k| k.into_container()))
+    let oprf_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .and_then(|ck| ck.raw_oprf_client_key().map(|k| k.into_container()))
         .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
 
     Ok(RawKeyContainers {
@@ -486,7 +495,7 @@ fn extract_key_containers(
 async fn share_client_key_material<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
     session: &mut S,
     params: DKGParams,
-    keyset: Option<&KeySet>,
+    client_key: Option<&tfhe::ClientKey>,
 ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
@@ -496,7 +505,7 @@ where
     let own_role = session.my_role();
     let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
 
-    let raw_keys = extract_key_containers(keyset, params)?;
+    let raw_keys = extract_key_containers(client_key, params)?;
 
     // Share lwe_sk
     tracing::debug!(
@@ -740,7 +749,8 @@ where
     };
 
     // Share private keys with all parties
-    let private_key_set = share_client_key_material(session, params, keyset.as_ref()).await?;
+    let private_key_set =
+        share_client_key_material(session, params, keyset.as_ref().map(|s| &s.client_key)).await?;
 
     // Transfer the public key set
     let transferred_pub_key =
@@ -781,7 +791,7 @@ where
     let own_role = session.my_role();
 
     // Party 1 generates the compressed keyset
-    let (keyset, compressed_keyset) = if own_role.one_based() == INPUT_PARTY_ID {
+    let (client_key, compressed_keyset) = if own_role.one_based() == INPUT_PARTY_ID {
         tracing::info!("Compressed keyset generated by input party {}", own_role);
         let config = params.to_tfhe_config();
 
@@ -806,24 +816,13 @@ where
         )
         .expect("Failed to generate compressed keyset");
 
-        // Create a temporary KeySet to use the existing helper functions
-        let public_key = tfhe::CompactPublicKey::new(&client_key);
-        let server_key = tfhe::ServerKey::new(&client_key);
-        let keyset = KeySet {
-            client_key,
-            public_keys: FhePubKeySet {
-                public_key,
-                server_key,
-            },
-        };
-
-        (Some(keyset), Some(compressed_xof_keyset))
+        (Some(client_key), Some(compressed_xof_keyset))
     } else {
         (None, None)
     };
 
     // Share private keys with all parties
-    let private_key_set = share_client_key_material(session, params, keyset.as_ref()).await?;
+    let private_key_set = share_client_key_material(session, params, client_key.as_ref()).await?;
 
     // Transfer the compressed keyset
     let transferred_compressed_keyset =
@@ -966,8 +965,8 @@ where
             .await?;
 
     // Party 1 generates a fresh compressed keyset from the reconstructed key (same secret key,
-    // new public-key randomness), and builds a temporary KeySet to reuse the sharing helpers.
-    let (keyset, compressed_keyset) = if let Some(client_key) = opt_client_key {
+    // new public-key randomness).
+    let (client_key, compressed_keyset) = if let Some(client_key) = opt_client_key {
         tracing::info!(
             "Compressed keyset re-generated from existing key by input party {}",
             session.my_role()
@@ -992,24 +991,13 @@ where
         )
         .map_err(|e| anyhow!("failed to generate compressed keyset from existing key: {e:?}"))?;
 
-        // Create a temporary KeySet to use the existing helper functions
-        let public_key = tfhe::CompactPublicKey::new(&client_key);
-        let server_key = tfhe::ServerKey::new(&client_key);
-        let keyset = KeySet {
-            client_key,
-            public_keys: FhePubKeySet {
-                public_key,
-                server_key,
-            },
-        };
-
-        (Some(keyset), Some(compressed_xof_keyset))
+        (Some(client_key), Some(compressed_xof_keyset))
     } else {
         (None, None)
     };
 
     // Re-share the (same) private keys with all parties
-    let private_key_set = share_client_key_material(session, params, keyset.as_ref()).await?;
+    let private_key_set = share_client_key_material(session, params, client_key.as_ref()).await?;
 
     // Transfer the compressed keyset
     let transferred_compressed_keyset =
@@ -1461,7 +1449,7 @@ where
 /// passed as input.
 // TODO(dp): is this slow?
 pub fn keygen_all_party_shares_from_keyset<R, const EXTENSION_DEGREE: usize>(
-    keyset: &KeySet,
+    client_key: &tfhe::ClientKey,
     parameters: ClassicPBSParameters,
     rng: &mut R,
     num_parties: usize,
@@ -1472,13 +1460,14 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     R: Rng + CryptoRng,
 {
-    let lwe_secret_key = keyset.get_raw_lwe_client_key();
+    let client_key = ExtendedClientKey::new(client_key);
+    let lwe_secret_key = client_key.raw_lwe_client_key();
 
-    let lwe_encryption_secret_key = keyset.get_raw_lwe_encryption_client_key();
-    let glwe_secret_key = keyset.get_raw_glwe_client_key();
-    let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-    let glwe_secret_key_sns_compression_as_lwe = keyset.get_raw_sns_compression_client_key_as_lwe();
-    let oprf_secret_key = keyset.get_raw_oprf_client_key();
+    let lwe_encryption_secret_key = client_key.raw_lwe_encryption_client_key();
+    let glwe_secret_key = client_key.raw_glwe_client_key();
+    let glwe_secret_key_sns_as_lwe = client_key.raw_glwe_client_sns_key_as_lwe().unwrap();
+    let glwe_secret_key_sns_compression_as_lwe = client_key.raw_sns_compression_client_key_as_lwe();
+    let oprf_secret_key = client_key.raw_oprf_client_key();
     keygen_all_party_shares(
         lwe_secret_key,
         lwe_encryption_secret_key,

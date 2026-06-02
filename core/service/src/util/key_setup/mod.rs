@@ -1068,7 +1068,7 @@ where
 
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares_from_keyset(
-        &keyset,
+        &keyset.client_key,
         dkg_params
             .get_params_basics_handle()
             .to_classic_pbs_parameters(),

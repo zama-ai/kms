@@ -968,7 +968,8 @@ fn setup_threshold_store(
     // TODO(dp): should probably switch over to compressed keys here (and below).
     let keyset = gen_uncompressed_key_set(TEST_PARAM, req_id.into(), &mut rng);
     let key_shares =
-        keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
+        keygen_all_party_shares_from_keyset(&keyset.client_key, pbs_params, &mut rng, 4, 1)
+            .unwrap();
 
     let fhe_key_set = keyset.public_keys.clone();
 
