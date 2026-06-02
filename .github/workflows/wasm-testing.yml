@@ -2,6 +2,21 @@ name: wasm-testing
 
 on:
   workflow_call:
+    inputs:
+      skip-test-material:
+        # When true, skip test-material generation and the kms-custodian
+        # build. Useful for light unit-test-only jobs on crates that don't
+        # need integration test fixtures.
+        type: boolean
+        required: false
+        default: false
+      efs-test-material-path:
+        # Optional absolute path to pre-generated test material on EFS.
+        # Example: /mnt/efs/kms-test-material/<run-id>/insecure_secure_4_13
+        # When provided, this workflow links ./test-material to that path.
+        type: string
+        required: false
+        default: ''
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -26,7 +41,7 @@ jobs:
     # Long-form runs-on label. The short form (e.g. `16cpu-linux-x64`) only
     # works as an *input* to common-testing.yml, but we cannot use it in this
     # job since we're doing non-standard testing.
-    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache+efs
 
     steps:
       - name: Setup Runs-on
@@ -66,13 +81,41 @@ jobs:
         with:
           node-version: 20
 
-      # Required by `test_user_decryption_*_and_write_transcript`: the helpers
-      # they call (`user_decryption_threshold` / `user_decryption_centralized`)
-      # use `ThresholdTestEnv` / `CentralizedTestEnv`, which populate per-test
-      # tempdirs by copying from the workspace's `test-material/` directory.
-      - name: Generate test material
+      # Generate the full insecure+secure test material set for parties 4, 13.
+      - name: Generate Test Material
+        id: generate-test-material
+        env:
+          EFS_ROOT: /mnt/efs/test-material
         run: |
-          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+          df -T
+          READY_FILE="${EFS_ROOT}/ready"
+          mkdir -p "${EFS_ROOT}"
+          if [ -f "${READY_FILE}" ]; then
+            echo "Reusing existing test material at ${EFS_ROOT}"
+          else
+            # Build the generator in Cargo's built-in `test` profile so later
+            # test jobs can reuse more compiled artifacts from the rust cache.
+            echo "EXECUTING: cargo run -p generate-test-material -- --output ${EFS_ROOT} --verbose --profile insecure --parties 4,10"
+            cargo run -p generate-test-material -- --output "${EFS_ROOT}" --verbose --profile insecure --parties 4,10
+            touch "${READY_FILE}"
+          fi
+
+          du -sh "${EFS_ROOT}" || true
+          echo "efs-test-material-path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
+
+      - name: Link pre-generated test material from EFS
+        env:
+          EFS_TEST_MATERIAL_PATH: ${{ inputs.efs-test-material-path }}
+        run: |
+          if [ ! -d "${EFS_TEST_MATERIAL_PATH}" ]; then
+            echo "::error::EFS test material path does not exist: ${EFS_TEST_MATERIAL_PATH}"
+            exit 1
+          fi
+
+          rm -rf ./test-material
+          ln -s "${EFS_TEST_MATERIAL_PATH}" ./test-material
+          echo "Linked ./test-material -> ${EFS_TEST_MATERIAL_PATH}"
+          du -shL ./test-material || true
 
       - name: Generate wasm test files
         working-directory: ./core/service
