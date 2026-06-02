@@ -208,6 +208,131 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
     Ok(())
 }
 
+/// Insecure compressed keygen that recycles an existing keyset (the `UseExisting` migration
+/// flow). First generates a compressed keyset at key id A, then runs an insecure
+/// `UseExisting + CompressedAll` keygen at key id B referencing A. The keygen helper already
+/// verifies that the regenerated compressed keyset round-trips with the re-shared private
+/// shares, which proves the reconstructed-and-reshared key is consistent. On top of that we
+/// assert the migration semantics: B keeps A's `CompactPublicKey` and tag.
+#[rstest::rstest]
+#[case(4)]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_insecure_compressed_dkg_from_existing(
+    #[case] amount_parties: usize,
+) -> anyhow::Result<()> {
+    use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
+    use crate::vault::storage::crypto_material::CryptoMaterialReader;
+
+    let key_id_a: RequestId = derive_request_id(&format!(
+        "test_insecure_compressed_dkg_from_existing_A_{amount_parties}_{TEST_PARAM:?}"
+    ))?;
+    let key_id_b: RequestId = derive_request_id(&format!(
+        "test_insecure_compressed_dkg_from_existing_B_{amount_parties}_{TEST_PARAM:?}"
+    ))?;
+
+    // Test generates its own FHE keys; only signing material is needed pre-staged.
+    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_insecure_compressed_dkg_from_existing")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
+
+    // 1) Insecure compressed keygen at key id A (fresh, GenerateAll).
+    let (keyset_config, keyset_added_info) = keygen_config();
+    let _keys_a = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &key_id_a,
+        keyset_config,
+        keyset_added_info,
+        true,
+        Some(material_path.as_path()),
+        0,
+    )
+    .await
+    .0;
+
+    // 2) Insecure compressed keygen at key id B reusing A's secret keyset (UseExisting), and
+    //    copy the new compressed material back onto A.
+    let keyset_config = Some(KeySetConfig {
+        keyset_type: kms_grpc::kms::v1::KeySetType::Standard.into(),
+        standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+            compute_key_type: 0,
+            secret_key_config: kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting.into(),
+            compressed_key_config: kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into(),
+        }),
+    });
+    let keyset_added_info = Some(KeySetAddedInfo {
+        existing_keyset_id: Some(key_id_a.into()),
+        use_existing_key_tag: true,
+        copy_compressed_key_to_original: true,
+        ..KeySetAddedInfo::default()
+    });
+    let keys_b = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &key_id_b,
+        keyset_config,
+        keyset_added_info,
+        true,
+        Some(material_path.as_path()),
+        0,
+    )
+    .await
+    .0;
+
+    // B must produce compressed keys (run_threshold_keygen already verified the encrypt/decrypt
+    // round-trip using the re-shared private shares).
+    let _ = keys_b.get_compressed();
+
+    // Migration semantics: B's stored CompactPublicKey must equal A's (the old public key is
+    // preserved), and B must carry A's tag.
+    let expected_tag: tfhe::Tag = key_id_a.into();
+    for (idx, prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL
+        .iter()
+        .take(amount_parties)
+        .enumerate()
+    {
+        let storage = FileStorage::new(
+            Some(material_path.as_path()),
+            StorageType::PUB,
+            prefix.as_deref(),
+        )?;
+        let pk_a: tfhe::CompactPublicKey =
+            CryptoMaterialReader::read_from_storage(&storage, &key_id_a).await?;
+        let pk_b: tfhe::CompactPublicKey =
+            CryptoMaterialReader::read_from_storage(&storage, &key_id_b).await?;
+        let digest_a = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk_a).unwrap();
+        let digest_b = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk_b).unwrap();
+        assert_eq!(
+            digest_a,
+            digest_b,
+            "party {}: insecure UseExisting migration must preserve the existing CompactPublicKey",
+            idx + 1
+        );
+        assert_eq!(
+            pk_b.tag(),
+            &expected_tag,
+            "party {}: migrated public key must carry the existing keyset tag",
+            idx + 1
+        );
+    }
+
+    Ok(())
+}
+
 /// Test compressed keygen with test parameters and 4 parties.
 /// This tests the `compressed_keygen` code path where keys are generated
 /// using XOF-seeded compression instead of the standard keygen.
