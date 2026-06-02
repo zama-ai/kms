@@ -275,7 +275,9 @@ jobs:
           - group: crates-heavy-2-dkg
             crates: '-p threshold-bgv'
             features: '-F threshold-bgv/slow_tests'
-            partition: '-E ''test(/test_dkg_with_offline/) + test(/test_dkg_dummy_preproc/)'''
+            # No spaces/quotes: args-tests is forwarded via unquoted word-splitting,
+            # so the whole filterset must be a single shell token (`+` = union).
+            partition: '-E test(/test_dkg_with_offline/)+test(/test_dkg_dummy_preproc/)'
             threads: '2'
             runs-on: '64cpu-linux-x64'
     uses: ./.github/workflows/common-testing.yml
