@@ -237,6 +237,7 @@ fn generate_centralized_cli_config(
             config_path: None,
         }],
         decryption_mode: None,
+        num_parties: 1,
         num_majority: 1,
         num_reconstruct: 1,
         fhe_params: Some(fhe_params),
@@ -388,8 +389,8 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 ///
 /// # Note
 /// Uses Default FHE parameters (production-like, slower than Test params) with `ensure_default_prss=false`.
-/// Internally uses `TestMaterialSpec::threshold_default_no_prss` — PRSS is excluded from
-/// required material and is not used at all (no pre-generated PRSS needed).
+/// Internally uses `TestMaterialSpec::threshold_default` — PRSS is bootstrapped at runtime
+/// when `ensure_default_prss=true`.
 ///
 /// # Example
 /// ```no_run
@@ -509,6 +510,7 @@ fn generate_threshold_cli_config(
         kms_type: KmsType::Threshold,
         cores,
         decryption_mode: None,
+        num_parties: party_count,
         num_majority: majority,
         num_reconstruct: majority,
         fhe_params: Some(fhe_params),
@@ -555,7 +557,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 
     let default_material_spec = match fhe_params {
         FheParameter::Default => {
-            kms_lib::testing::material::TestMaterialSpec::threshold_default_no_prss(party_count)
+            kms_lib::testing::material::TestMaterialSpec::threshold_default(party_count)
         }
         _ => kms_lib::testing::material::TestMaterialSpec::threshold_basic(party_count),
     };
@@ -894,6 +896,7 @@ async fn setup_party_resharing_servers(
         kms_type: KmsType::Threshold,
         cores: cores_1234,
         decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
+        num_parties: 4,
         num_majority: 2,
         num_reconstruct: 3,
         fhe_params: Some(fhe_params),
@@ -931,6 +934,7 @@ async fn setup_party_resharing_servers(
         kms_type: KmsType::Threshold,
         cores: cores_5634,
         decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
+        num_parties: 4,
         num_majority: 2,
         num_reconstruct: 3,
         fhe_params: Some(fhe_params),
@@ -1966,6 +1970,7 @@ async fn custodian_backup_recovery(
 #[serde(deny_unknown_fields)]
 struct StrictCheckedInCoreClientToml {
     kms_type: String,
+    num_parties: usize,
     num_majority: usize,
     num_reconstruct: usize,
     decryption_mode: Option<String>,
@@ -1995,6 +2000,7 @@ fn config_conformance_client_local_centralized() {
         "strict TOML parse of client_local_centralized.toml failed (unknown or extra keys?)",
     );
     assert_eq!(strict.kms_type, "centralized");
+    assert_eq!(strict.num_parties, 1);
     assert_eq!(strict.num_majority, 1);
     assert_eq!(strict.num_reconstruct, 1);
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
@@ -2023,6 +2029,7 @@ fn config_conformance_client_local_threshold() {
     let strict: StrictCheckedInCoreClientToml = toml::from_str(&raw)
         .expect("strict TOML parse of client_local_threshold.toml failed (unknown or extra keys?)");
     assert_eq!(strict.kms_type, "threshold");
+    assert_eq!(strict.num_parties, 4);
     assert_eq!(strict.num_majority, 2);
     assert_eq!(strict.num_reconstruct, 3);
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));

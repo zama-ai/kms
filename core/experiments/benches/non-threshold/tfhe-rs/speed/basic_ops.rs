@@ -20,7 +20,8 @@ use tfhe::prelude::*;
 use tfhe::{ClientKey, FheUint64, set_server_key};
 
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
-use utilities::ALL_PARAMS;
+use utilities::{ALL_PARAMS, SAMPLE_SIZE};
+
 fn bench_fhe_type<FheType>(
     bench_group: &mut BenchmarkGroup<'_, WallTime>,
     client_key: &ClientKey,
@@ -111,7 +112,9 @@ fn main() {
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
-        let mut c = Criterion::default().sample_size(10).configure_from_args();
+        let mut c = Criterion::default()
+            .sample_size(SAMPLE_SIZE)
+            .configure_from_args();
 
         {
             let bench_name = format!("{bench_name}_FheUint64");

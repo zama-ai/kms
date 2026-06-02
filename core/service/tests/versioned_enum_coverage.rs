@@ -2,7 +2,7 @@
 //! best-effort solution, not a guarantee there are no coverage gaps if the
 //! tests here pass!
 //!
-//! Adding a new versionable type requires (a) a `*Versioned` dispatch enum
+//! Adding a new versionable type requires (a) a `*Versions` dispatch enum
 //! with contiguous `V0..Vn` variants, and (b) at least one `.ron` fixture
 //! entry under `backward-compatibility/data/`.
 
@@ -19,7 +19,7 @@ use syn::{Attribute, Item, Path as SynPath};
 /// One `#[derive(VersionsDispatch)]` enum discovered during the workspace scan.
 ///
 /// Carries just enough information to drive the two coverage checks:
-/// `enum_name` (e.g. `FooVersioned`) is stripped of its `Versioned` suffix to
+/// `enum_name` (e.g. `FooVersions`) is stripped of its dispatch suffix to
 /// match against `.ron` fixture entries; `variants` is inspected for the
 /// `V0..Vn` contiguity rule; `file` is reported back in error messages so the
 /// offending source location is obvious.
@@ -28,6 +28,13 @@ struct Dispatch {
     enum_name: String,
     variants: Vec<String>,
     file: PathBuf,
+}
+
+fn dispatch_underlying_type_name(enum_name: &str) -> String {
+    enum_name
+        .strip_suffix("Versions")
+        .unwrap_or(enum_name)
+        .to_string()
 }
 
 /// Types we deliberately don't require a direct `.ron` fixture for, because
@@ -286,7 +293,7 @@ fn versioned_enums_are_covered_by_ron_metadata() {
     // smooth the casing of the underlying Rust type (`PRSSSetupCombined`).
     // `TestMetadata*` derive `strum::Display`, which renders an enum value as
     // just its variant name — exactly what we need to match against
-    // `*Versioned` dispatch enums.
+    // `*Versions` dispatch enums.
     let data_dir = root.join("backward-compatibility/data");
     let mut covered: BTreeSet<String> = BTreeSet::new();
     covered.extend(load_covered_names::<TestMetadataKMS>(
@@ -302,7 +309,7 @@ fn versioned_enums_are_covered_by_ron_metadata() {
     let mut missing: Vec<(String, PathBuf)> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for d in &dispatches {
-        let underlying = d.enum_name.trim_end_matches("Versioned").to_string();
+        let underlying = dispatch_underlying_type_name(&d.enum_name);
         if !seen.insert(underlying.clone()) {
             continue;
         }
@@ -430,9 +437,15 @@ fn derives_versions_dispatch_corner_cases() {
     assert!(!derives_versions_dispatch(&[attr]));
 
     // Non-derive attributes are ignored entirely.
-    let attr: Attribute = syn::parse_quote!(#[versionize(FooVersioned)]);
+    let attr: Attribute = syn::parse_quote!(#[versionize(FooVersions)]);
     assert!(!derives_versions_dispatch(&[attr]));
 
     // No attributes at all.
     assert!(!derives_versions_dispatch(&[]));
+}
+
+#[test]
+fn dispatch_underlying_type_name_handles_dispatch_suffix() {
+    assert_eq!(dispatch_underlying_type_name("FooVersions"), "Foo");
+    assert_eq!(dispatch_underlying_type_name("Foo"), "Foo");
 }

@@ -72,14 +72,17 @@ jobs:
       - name: Install
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build wasm with tests
+      # Build the same artifact that gets published (no `wasm_tests`): the JS tests load a
+      # stable JSON vector and only exercise the stable public API, so the transcript helpers
+      # are not needed in the wasm package.
+      - name: Build wasm
         working-directory: ./core/service
-        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+        run: wasm-pack build --target nodejs . --no-default-features
 
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
-          node-version: 20
+          node-version: 24.16.0
 
       # Generate the full insecure+secure test material set for parties 4, 13.
       - name: Generate Test Material
@@ -124,8 +127,11 @@ jobs:
           cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --lib
 
       - name: Test wasm
-        working-directory: ./core/service
-        run: node --test tests/js
+        # Run from inside the test dir so `node --test` searches cwd recursively.
+        # Newer Node (>= 23) treats a positional dir arg as a file to load rather
+        # than a directory to glob, so `node --test tests/js` fails there.
+        working-directory: ./core/service/tests/js
+        run: node --test
 
       # NPM package handling
       - name: Set NPM version tag to latest

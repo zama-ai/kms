@@ -33,7 +33,7 @@ pub(crate) struct GenericPrivateKeySet<Z: Clone, const EXTENSION_DEGREE: usize> 
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum PrivateKeySetVersioned<const EXTENSION_DEGREE: usize> {
+pub enum PrivateKeySetVersions<const EXTENSION_DEGREE: usize> {
     /// V0 is the original private key set
     V0(PrivateKeySetV0<EXTENSION_DEGREE>),
     // V1 is the same as V0 with the addition of glwe_sns_compression_key
@@ -43,7 +43,7 @@ pub enum PrivateKeySetVersioned<const EXTENSION_DEGREE: usize> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Versionize)]
-#[versionize(PrivateKeySetVersioned)]
+#[versionize(PrivateKeySetVersions)]
 /// The private key set structure holding the secret key shares for each party
 /// of the DKG. The keys can be either Z64 or Z128 depending on the DKG parameters.
 /// But all keys in the set are of the same type after a DKG.
@@ -368,12 +368,12 @@ impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySet<EXTENSION_DEGREE>>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum CompressionPrivateKeySharesEnumVersioned<const EXTENSION_DEGREE: usize> {
+pub enum CompressionPrivateKeySharesEnumVersions<const EXTENSION_DEGREE: usize> {
     V0(CompressionPrivateKeySharesEnum<EXTENSION_DEGREE>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(CompressionPrivateKeySharesEnumVersioned)]
+#[versionize(CompressionPrivateKeySharesEnumVersions)]
 pub enum CompressionPrivateKeySharesEnum<const EXTENSION_DEGREE: usize> {
     Z64(CompressionPrivateKeyShares<Z64, EXTENSION_DEGREE>),
     Z128(CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>),
@@ -431,12 +431,12 @@ impl<const EXTENSION_DEGREE: usize> CompressionPrivateKeySharesEnum<EXTENSION_DE
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum LweSecretKeyShareEnumVersioned<const EXTENSION_DEGREE: usize> {
+pub enum LweSecretKeyShareEnumVersions<const EXTENSION_DEGREE: usize> {
     V0(LweSecretKeyShareEnum<EXTENSION_DEGREE>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(LweSecretKeyShareEnumVersioned)]
+#[versionize(LweSecretKeyShareEnumVersions)]
 pub enum LweSecretKeyShareEnum<const EXTENSION_DEGREE: usize> {
     Z64(LweSecretKeyShare<Z64, EXTENSION_DEGREE>),
     Z128(LweSecretKeyShare<Z128, EXTENSION_DEGREE>),
@@ -511,12 +511,12 @@ impl<const EXTENSION_DEGREE: usize> LweSecretKeyShareEnum<EXTENSION_DEGREE> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum GlweSecretKeyShareEnumVersioned<const EXTENSION_DEGREE: usize> {
+pub enum GlweSecretKeyShareEnumVersions<const EXTENSION_DEGREE: usize> {
     V0(GlweSecretKeyShareEnum<EXTENSION_DEGREE>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(GlweSecretKeyShareEnumVersioned)]
+#[versionize(GlweSecretKeyShareEnumVersions)]
 pub enum GlweSecretKeyShareEnum<const EXTENSION_DEGREE: usize> {
     Z64(GlweSecretKeyShare<Z64, EXTENSION_DEGREE>),
     Z128(GlweSecretKeyShare<Z128, EXTENSION_DEGREE>),

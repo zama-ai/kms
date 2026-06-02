@@ -47,7 +47,7 @@ pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
 const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalRecoveryRequestVersioned {
+pub enum InternalRecoveryRequestVersions {
     V0(InternalRecoveryRequest),
 }
 
@@ -61,7 +61,7 @@ impl Named for InternalRecoveryRequest {
 /// This is because we have to assume that the operator has no access to the private storage
 /// when creating this object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(InternalRecoveryRequestVersioned)]
+#[versionize(InternalRecoveryRequestVersions)]
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
@@ -165,7 +165,7 @@ impl std::fmt::Debug for Operator {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InnerOperatorBackupOutputVersioned {
+pub enum InnerOperatorBackupOutputVersions {
     V0(InnerOperatorBackupOutput),
 }
 
@@ -173,7 +173,7 @@ pub enum InnerOperatorBackupOutputVersioned {
 /// This data needs to be persisted on some public storage so that
 /// new operators can download and recover.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(InnerOperatorBackupOutputVersioned)]
+#[versionize(InnerOperatorBackupOutputVersions)]
 pub struct InnerOperatorBackupOutput {
     pub signcryption: UnifiedSigncryption,
 }
@@ -232,7 +232,7 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum RecoveryValidationMaterialVersioned {
+pub enum RecoveryValidationMaterialVersions {
     V0(RecoveryValidationMaterial),
 }
 
@@ -242,7 +242,7 @@ pub enum RecoveryValidationMaterialVersioned {
 /// Furthermore, the data is signed by the operator to allow it to verify the
 /// data upon load.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(RecoveryValidationMaterialVersioned)]
+#[versionize(RecoveryValidationMaterialVersions)]
 pub struct RecoveryValidationMaterial {
     pub(crate) payload: RecoveryValidationMaterialPayload,
     signature: Vec<u8>,
@@ -355,11 +355,11 @@ impl RecoveryValidationMaterial {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum RecoveryValidationMaterialPayloadVersioned {
+pub enum RecoveryValidationMaterialPayloadVersions {
     V0(RecoveryValidationMaterialPayload),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(RecoveryValidationMaterialPayloadVersioned)]
+#[versionize(RecoveryValidationMaterialPayloadVersions)]
 pub struct RecoveryValidationMaterialPayload {
     /// The signcrypted shares of the operators' private backup decryption key towards each custodian.
     /// I.e. the key to the map is the role of the custodian.
@@ -376,12 +376,12 @@ impl Named for RecoveryValidationMaterialPayload {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum BackupMaterialVersioned {
+pub enum BackupMaterialVersions {
     V0(BackupMaterial),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(BackupMaterialVersioned)]
+#[versionize(BackupMaterialVersions)]
 pub struct BackupMaterial {
     /// The custodian context this backup is associated with.
     pub backup_id: RequestId,

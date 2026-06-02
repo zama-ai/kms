@@ -216,11 +216,6 @@ jobs:
           # Verify the installed version
           cargo nextest --version
 
-      - name: Setup cargo dylint
-        if: matrix.cargo-check == true
-        run: |
-          cargo install cargo-dylint dylint-link --force
-
       - name: clippy and rustfmt versions
         if: matrix.cargo-check == true
         run: |
@@ -235,10 +230,6 @@ jobs:
         env:
           PACKAGE_NAME: 'kms-core-client'
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
-
-      - name: Linting dylint
-        if: matrix.cargo-check == true
-        run: cargo dylint --all
 
       # ==========================================================================
       # Test Execution

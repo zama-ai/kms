@@ -56,13 +56,13 @@ struct Context {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum PRSSSetupCombinedVersioned {
+pub enum PRSSSetupCombinedVersions {
     V0(PRSSSetupCombined),
 }
 
 /// Public because it's used by storage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(PRSSSetupCombinedVersioned)]
+#[versionize(PRSSSetupCombinedVersions)]
 pub struct PRSSSetupCombined {
     pub prss_setup_z64: PRSSSetup<ResiduePolyF4Z64>,
     pub prss_setup_z128: PRSSSetup<ResiduePolyF4Z128>,

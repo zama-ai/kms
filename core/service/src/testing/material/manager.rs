@@ -6,8 +6,8 @@ use super::spec::{KeyType, MaterialType, TestMaterialSpec};
 use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
-    OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-    TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
+    OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
+    TMP_PATH_PREFIX,
 };
 use crate::engine::base::derive_request_id;
 use crate::vault::storage::StorageType;
@@ -19,6 +19,17 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use threshold_types::role::Role;
 use tokio::fs;
+
+fn generation_hint(material_type: MaterialType) -> &'static str {
+    match material_type {
+        MaterialType::Testing => {
+            "cargo run -p generate-test-material -- --output ./test-material --profile insecure --parties 4"
+        }
+        MaterialType::Default => {
+            "cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13"
+        }
+    }
+}
 
 /// Helper function to compute storage path like FileStorage does
 fn compute_storage_path(
@@ -90,35 +101,27 @@ impl TestMaterialManager {
         Ok(temp_dir)
     }
 
-    /// Verify that source material exists for the requested material type
+    /// Verify that source material exists for the requested material type.
     #[cfg(any(test, feature = "testing"))]
     fn verify_material_exists(&self, spec: &TestMaterialSpec) -> Result<()> {
-        use super::spec::MaterialType;
+        let source_path = self.source_path.as_ref().ok_or_else(|| {
+            anyhow!(
+                "Test material source path is not configured. \
+                 Tests requiring pre-generated material need a `test-material/` directory at the workspace root.\n\
+                 Run: {}",
+                generation_hint(spec.material_type)
+            )
+        })?;
 
-        // If no source path is configured, skip verification
-        // This allows tests to work without pre-generated material
-        let source_path = match &self.source_path {
-            Some(path) => path,
-            None => {
-                tracing::debug!("No source path configured, skipping material verification");
-                return Ok(());
-            }
-        };
-
-        // Determine subdirectory based on material type
         let material_path = source_path.join(material_subdir(spec.material_type));
 
         if !material_path.exists() {
-            let generation_hint = match spec.material_type {
-                MaterialType::Testing => "generate-test-material --profile insecure --parties 4",
-                MaterialType::Default => "generate-test-material --profile secure --parties 4,13",
-            };
             return Err(anyhow!(
                 "Material not found for {:?} at: {}\n\
                  Run: {}",
                 spec.material_type,
                 material_path.display(),
-                generation_hint
+                generation_hint(spec.material_type)
             ));
         }
 
@@ -208,34 +211,24 @@ impl TestMaterialManager {
             } else {
                 Either::Right(ready(Ok(())))
             };
-        let copy_prss_setup = if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
-            Either::Left(self.copy_prss_setup(source_base_ref, dest_base, spec))
-        } else {
-            Either::Right(ready(Ok(())))
-        };
 
         tokio::try_join!(
             copy_client_keys,
             copy_signing_keys,
             copy_fhe_keys,
             copy_crs_keys,
-            copy_prss_setup
         )?;
 
         Ok(())
     }
 
-    /// Copy client keys
+    /// Copy client keys. Returns error if the folder is missing.
     async fn copy_client_keys(&self, source_base: Option<&Path>, dest_base: &Path) -> Result<()> {
         let source_client_path = compute_storage_path(source_base, StorageType::CLIENT, None);
         let dest_client_path = compute_storage_path(Some(dest_base), StorageType::CLIENT, None);
 
-        if fs::try_exists(&source_client_path).await? {
-            self.copy_directory_contents(&source_client_path, &dest_client_path)
-                .await?;
-        }
-
-        Ok(())
+        self.copy_directory_contents(&source_client_path, &dest_client_path)
+            .await
     }
 
     /// Copy signing keys
@@ -421,39 +414,7 @@ impl TestMaterialManager {
         Ok(())
     }
 
-    /// Copy PRSS setup for threshold tests
-    async fn copy_prss_setup(
-        &self,
-        source_base: Option<&Path>,
-        dest_base: &Path,
-        spec: &TestMaterialSpec,
-    ) -> Result<()> {
-        for i in 1..=spec.party_count() {
-            let role = Role::indexed_from_one(i);
-            let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
-            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
-
-            // Copy PRSS setup files
-            self.copy_key_files(
-                &source_priv,
-                &dest_priv,
-                &PrivDataType::PrssSetupCombined.to_string(),
-                PRSS_INIT_REQ_ID,
-            )
-            .await?;
-            self.copy_key_files(
-                &source_priv,
-                &dest_priv,
-                &PrivDataType::ContextInfo.to_string(),
-                PRSS_INIT_REQ_ID,
-            )
-            .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Copy specific key files (creates directories if needed)
+    /// Copy a specific key file. Errors if the source file is missing.
     async fn copy_key_files(
         &self,
         source_dir: &Path,
@@ -465,7 +426,10 @@ impl TestMaterialManager {
         let source_file = source_type_dir.join(key_id);
 
         if !fs::try_exists(&source_file).await? {
-            return Ok(());
+            return Err(anyhow!(
+                "Required test material is missing: {}",
+                source_file.display()
+            ));
         }
 
         let dest_type_dir = dest_dir.join(key_type);
@@ -483,7 +447,8 @@ impl TestMaterialManager {
         Ok(())
     }
 
-    /// Copy epoch-based key files (e.g., FhePrivateKey which is stored at {root}/{key_type}/{epoch_id}/{key_id})
+    /// Copy epoch-based key files (e.g., FhePrivateKey, stored at `{root}/{key_type}/{epoch_id}/{key_id}`). Errors when
+    /// the source type directory is missing.
     async fn copy_epoch_key_files(
         &self,
         source_dir: &Path,
@@ -496,7 +461,12 @@ impl TestMaterialManager {
 
         let mut entries = match fs::read_dir(&source_type_dir).await {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(anyhow!(
+                    "Required test material directory is missing: {}",
+                    source_type_dir.display()
+                ));
+            }
             Err(error) => return Err(error.into()),
         };
         while let Some(entry) = entries.next_entry().await? {
@@ -523,7 +493,7 @@ impl TestMaterialManager {
         Ok(())
     }
 
-    /// Copy entire directory contents
+    /// Copy entire directory contents. A missing source directory is a hard error.
     #[allow(clippy::only_used_in_recursion)]
     fn copy_directory_contents<'a>(
         &'a self,
@@ -531,11 +501,12 @@ impl TestMaterialManager {
         dest: &'a Path,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
         Box::pin(async move {
-            let mut entries = match fs::read_dir(source).await {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
+            let mut entries = fs::read_dir(source).await.with_context(|| {
+                format!(
+                    "Failed to read required test-material directory: {}",
+                    source.display()
+                )
+            })?;
 
             fs::create_dir_all(dest).await?;
 

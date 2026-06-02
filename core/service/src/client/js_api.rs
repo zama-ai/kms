@@ -31,20 +31,22 @@
 //! u128, anyhow::Result, and so on cannot be used.
 //!
 //! Testing:
-//! Due to the way user_decryption is designed,
-//! we cannot test everything directly in JS.
-//! The strategy we use is to run Rust tests to
-//! generate a transcript, and then load it into
-//! the JS test (tests/js/test.js) to run the
-//! actual tests.
-//! The steps below must be followed for the JS tests to work.
+//! Due to the way user_decryption is designed, we cannot test everything
+//! directly in JS. The strategy we use is to run Rust tests to generate a JSON
+//! test vector (see
+//! [crate::client::user_decryption_wasm::TestingUserDecryptionTranscript::to_stable_test_vector]),
+//! and then load it into the JS test (tests/js/test.js) to run the actual
+//! tests. The JSON vector only carries the stable public-API so an older
+//! published `tkms`/`node-tkms` build can be used to test against a more recent
+//! kms that generates the JSON test vector. The steps below must be followed
+//! for the JS tests to work.
 //!
-//! 1. Install wasm-pack and node (version 20)
+//! 1. Install wasm-pack and node (version 24.16.0)
 //!    the preferred way is to use nvm (which is on homebrew)
-//!    and the node version must be 20
+//!    and the node version must be 24.16.0
 //! ```
 //! cargo install wasm-pack
-//! nvm install 20
+//! nvm install 24.16.0
 //! ```
 //! Observe that if you are using Brew you might also need to run the following command to get
 //! access to nvm:
@@ -52,15 +54,15 @@
 //! source ~/.nvm/nvm.sh
 //! ```
 //!
-//! 2. Build with wasm_tests feature from the core/service directory
-//! ```
-//! wasm-pack build --target nodejs . --no-default-features -F wasm_tests
-//! ```
-//!
-//! 3. Generate the transcript
+//! 2. Generate the JSON test vector (this still needs `wasm_tests`)
 //! ```
 //! cargo test test_user_decryption_threshold_and_write_transcript -F wasm_tests --release
 //! cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --release
+//! ```
+//!
+//! 3. Build the wasm package from the core/service directory (no `wasm_tests` needed)
+//! ```
+//! wasm-pack build --target nodejs . --no-default-features
 //! ```
 //!
 //! 4. Run the JS test
@@ -68,11 +70,7 @@
 //! node --test tests/js
 //! ```
 use crate::client::client_wasm::{Client, ServerIdentities};
-use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
-#[cfg(feature = "wasm_tests")]
-use crate::client::user_decryption_wasm::{
-    ParsedUserDecryptionRequestHex, TestingUserDecryptionTranscript,
-};
+use crate::client::user_decryption_wasm::{ParsedUserDecryptionRequest, UserDecryptionResponseHex};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
     PrivateEncKey, PublicEncKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -225,109 +223,6 @@ pub fn get_client_address(client: &Client) -> String {
 }
 
 #[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn buf_to_transcript(buf: &[u8]) -> TestingUserDecryptionTranscript {
-    console_error_panic_hook::set_once();
-    bc2wrap::deserialize_safe(buf).unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_parsed_req(
-    transcript: &TestingUserDecryptionTranscript,
-) -> ParsedUserDecryptionRequest {
-    ParsedUserDecryptionRequest::try_from(transcript.request.as_ref().unwrap()).unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_parsed_req_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
-    let parsed = transcript_to_parsed_req(&transcript);
-    let parsed_hex = ParsedUserDecryptionRequestHex::from(&parsed);
-    serde_wasm_bindgen::to_value(&parsed_hex).unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_eip712domain(transcript: &TestingUserDecryptionTranscript) -> Eip712DomainMsg {
-    transcript.request.as_ref().unwrap().domain.clone().unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_eip712domain_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
-    let domain = transcript_to_eip712domain(transcript);
-    serde_wasm_bindgen::to_value(&domain).unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_response(
-    transcript: &TestingUserDecryptionTranscript,
-) -> Vec<UserDecryptionResponse> {
-    transcript.agg_resp.clone()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_response_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
-    let agg_resp = transcript_to_response(transcript);
-    resp_to_js(agg_resp)
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_enc_sk(transcript: &TestingUserDecryptionTranscript) -> PrivateEncKeyMlKem512 {
-    PrivateEncKeyMlKem512(transcript.eph_sk.clone().unwrap_ml_kem_512())
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_enc_pk(transcript: &TestingUserDecryptionTranscript) -> PublicEncKeyMlKem512 {
-    PublicEncKeyMlKem512(transcript.eph_pk.clone().unwrap_ml_kem_512())
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Client {
-    Client {
-        server_identities: ServerIdentities::Addrs(transcript.server_addrs.clone()),
-        client_address: transcript.client_address,
-        // NOTE: instead of using transcript.client_sk, it will be None in practice
-        // because wasm clients do not store the signing key, that should be stored in wallets.
-        client_sk: None,
-        params: transcript.params,
-        decryption_mode: DecryptionMode::default(),
-    }
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_server_addrs_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
-    #[derive(serde::Serialize)]
-    struct ServerIdAddr {
-        id: String,
-        addr: String,
-    }
-    let val = transcript
-        .server_addrs
-        .iter()
-        .map(|(id, addr)| ServerIdAddr {
-            id: id.to_string(),
-            addr: addr.to_checksum(None),
-        })
-        .collect::<Vec<_>>();
-    serde_wasm_bindgen::to_value(&val).unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
-pub fn transcript_to_client_addrs_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
-    let val = transcript.client_address.to_checksum(None);
-    serde_wasm_bindgen::to_value(&val).unwrap()
-}
-
-#[wasm_bindgen]
 pub fn ml_kem_pke_keygen() -> PrivateEncKeyMlKem512 {
     let mut rng = AesRng::from_entropy();
     let (dk, _ek) = hybrid_ml_kem::keygen::<ml_kem::MlKem512, _>(&mut rng);
@@ -391,32 +286,6 @@ pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8
 pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
     let ct: hybrid_ml_kem::HybridKemCt = deserialize_safe(ct).unwrap();
     hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0.0).unwrap()
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-struct UserDecryptionResponseHex {
-    // NOTE: this is the external signature
-    signature: String,
-    payload: Option<String>,
-    extra_data: Option<String>,
-}
-
-#[cfg(feature = "wasm_tests")]
-fn resp_to_js(agg_resp: Vec<UserDecryptionResponse>) -> JsValue {
-    let mut out = vec![];
-    for resp in agg_resp {
-        let r = UserDecryptionResponseHex {
-            signature: hex::encode(&resp.external_signature),
-            payload: match resp.payload {
-                Some(inner) => Some(hex::encode(bc2wrap::serialize(&inner).unwrap())),
-                None => None,
-            },
-            extra_data: Some(hex::encode(&resp.extra_data)),
-        };
-        out.push(r);
-    }
-
-    serde_wasm_bindgen::to_value(&out).unwrap()
 }
 
 // Note: normally the result type should be a JsError
@@ -586,7 +455,6 @@ pub fn process_user_decryption_resp_from_js(
 ///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
-#[wasm_bindgen]
 pub fn process_user_decryption_resp(
     client: &mut Client,
     request: Option<ParsedUserDecryptionRequest>,

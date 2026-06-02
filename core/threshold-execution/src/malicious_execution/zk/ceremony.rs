@@ -1,15 +1,12 @@
-cfg_if::cfg_if! {
-    if #[cfg(test)] {
-        use std::collections::HashSet;
-        use itertools::Itertools;
-        use tfhe_zk_pok::curve_api::bls12_446 as curve;
-        use crate::{
-            communication::broadcast::Broadcast,
-            zk::ceremony::{make_partial_proof_deterministic, PartialProof,},
-            network_value::BroadcastValue,
-        };
-    }
-}
+use crate::{
+    communication::broadcast::Broadcast,
+    network_value::BroadcastValue,
+    zk::ceremony::{PartialProof, make_partial_proof_deterministic},
+};
+use itertools::Itertools;
+use std::collections::HashSet;
+use tfhe_zk_pok::curve_api::bls12_446 as curve;
+use threshold_types::protocol::ProtocolDescription;
 
 use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
@@ -22,6 +19,13 @@ use algebra::structure_traits::Ring;
 
 #[derive(Clone, Default)]
 pub struct InsecureCeremony {}
+
+impl ProtocolDescription for InsecureCeremony {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{}-InsecureCeremony", indent)
+    }
+}
 
 #[tonic::async_trait]
 impl Ceremony for InsecureCeremony {
@@ -43,11 +47,16 @@ impl Ceremony for InsecureCeremony {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Default)]
-pub(crate) struct DroppingCeremony;
+pub struct DroppingCeremony;
 
-#[cfg(test)]
+impl ProtocolDescription for DroppingCeremony {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{}-DroppingCeremony", indent)
+    }
+}
+
 #[tonic::async_trait]
 impl Ceremony for DroppingCeremony {
     async fn execute<Z: Ring, S: BaseSessionHandles>(
@@ -64,13 +73,22 @@ impl Ceremony for DroppingCeremony {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Default)]
-pub(crate) struct RushingCeremony<BCast: Broadcast> {
-    pub(crate) broadcast: BCast,
+pub struct RushingCeremony<BCast: Broadcast> {
+    pub broadcast: BCast,
 }
 
-#[cfg(test)]
+impl<B: Broadcast + Default> ProtocolDescription for RushingCeremony<B> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!(
+            "{}-RushingCeremony:\n{}",
+            indent,
+            B::protocol_desc(depth + 1)
+        )
+    }
+}
+
 #[tonic::async_trait]
 impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
     // this implements an adversary that rushes the protocol,

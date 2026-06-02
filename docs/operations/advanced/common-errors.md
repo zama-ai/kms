@@ -312,7 +312,7 @@ If there's an `missing field <field name>` issue in ASC, for example when runnin
 It must match the proc macro above the enum variant.
 
 ```rust
-#[versionize(OperationValueVersioned)]
+#[versionize(OperationValueVersions)]
 pub enum OperationValue {
     #[strum(serialize = "verify_proven_ct")]
     #[serde(rename = "verify_proven_ct")]

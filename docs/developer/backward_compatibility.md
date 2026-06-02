@@ -12,7 +12,7 @@ The objects are serialized using bincode only because it supports large arrays a
 
 For any additional documentation, feel free to take a look at the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project.
 
-## Usage - Testing backward compatibility
+## Testing backward compatibility
 
 At the repo's root, run the following command to run the backwards compatibility tests:
 
@@ -21,6 +21,39 @@ make test-backward-compatibility
 ```
 
 This will load existing objects from git LFS versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
+
+## Checking for breaking changes using snapshots
+
+The breaking-change tests are complemented by a Dylint snapshot check for types that derive `VersionsDispatch`.
+The snapshot check compares the current branch against a base ref (usually main) and reports:
+- removed version variants as errors, because old serialized data could no longer be deserialized;
+- removed versioned enums, changed versioned type layouts, changed upgrade bodies, and removed upgrades as warnings for review;
+- new versioned enums, variants, and upgrades as neutral changes.
+
+At the repo's root, run:
+
+```shell
+make backward-snapshot-check BASE_REF=origin/main
+```
+
+To generate a markdown report:
+
+```shell
+make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
+```
+
+### How it works internally
+
+The make targets are thin wrappers around `ci/scripts/backward_snapshot.sh`. The script's job is to produce two snapshots — one for the base ref and one for the current checkout — then diff them. Concretely, each invocation does the following:
+
+1. **Resolve the tfhe-rs source.** Both the Dylint snapshot library and the comparison binary live in [tfhe-rs](https://github.com/zama-ai/tfhe-rs) under `utils/tfhe-lints/`. The script parses the workspace `dylint.toml` (the `utils/tfhe-lints/lints` entry) to extract the git URL and tag, so the snapshot lint is automatically pinned to the same tfhe-rs revision that `make lint-dylint` already uses. Updating the tag in `dylint.toml` updates both — there is no separate version constant in the script. Currently this is pinned to tag `tfhe-rs-1.6.1`.
+2. **Install tools** (skippable via `SKIP_TFHE_SNAPSHOT_TOOL_INSTALL=1`): `cargo-dylint`, `dylint-link`, and the `tfhe-backward-compat-checker` binary built from the pinned tfhe-rs tag.
+3. **Snapshot the base ref.** The script creates a temporary detached `git worktree` at `BASE_REF`, `cd`s into it, and runs the snapshot Dylint library (`utils/tfhe-lints/snapshot` from tfhe-rs) over every workspace package with `cargo dylint --all --no-deps --workspace`. The library statically inspects each crate's `#[derive(VersionsDispatch)]` enums and their associated `Upgrade` impls, then writes one `lint_enum_snapshots_<crate>.json` file per crate into a fresh `mktemp -d` directory. The worktree is removed when the function returns.
+4. **Snapshot the current checkout** the same way, into a separate temp directory.
+5. **Diff the two snapshot directories** with `tfhe-backward-compat-checker check` (or `diff-report` for the markdown variant). The checker globs every `lint_enum_snapshots_*.json` it finds in each directory, which is why the script asserts the output directory is empty before running — a stale file from a removed crate would silently contaminate the comparison.
+
+Both temp directories are removed on exit via a trap, so no state is left between runs. Pass `--help` to the script for the full flag reference.
+
 
 ## Versioning this module
 
@@ -40,21 +73,15 @@ However, this does not allow changes to be made to the test metadata scheme itse
 
 Each generator uses the exact dependencies from its target KMS version.
 
-To re-generate data for **all versions** (recommended):
+To re-generate data for all **deterministic** versions (recommended — frozen versions are intentionally skipped, see [Data Determinism](#data-determinism) below):
 
 ```shell
 make generate-backward-compatibility-all
 ```
 
-Or generate for specific versions:
+Or generate for a specific version with an existing Makefile target:
 
 ```shell
-# Generate only v0.11.0 data
-make generate-backward-compatibility-v0.11.0
-
-# Generate only v0.11.1 data
-make generate-backward-compatibility-v0.11.1
-
 # Generate only v0.13.0 data
 make generate-backward-compatibility-v0.13.0
 
@@ -68,14 +95,15 @@ make generate-backward-compatibility-v0.13.20
 make generate-backward-compatibility-v0.14.0
 
 ```
-WARNING: Generating for specific versions removes previously generated data from the `.ron` files, effectively ignoring other versions in the tests!
-Thus, changes based on generating a specific version should NEVER be committed to the repo.
+WARNING: Frozen-version targets are for exceptional investigation only. They can produce non-deterministic bytes and may append duplicate metadata with older generator code. Changes based on generating a frozen version should NEVER be committed to the repo.
 
 **Direct cargo commands:**
-The make commands are aliases for changing the directory to the respective `generate-vX.Y.Z` directory and then running `cargo run --release`, i.e. for `v0.11.0` the command is:
+The make commands are aliases for changing the directory to the respective `generate-vX.Y.Z` directory and then running `cargo run --release`, i.e. for `v0.14.0` the command is:
 ```shell
-cd backward-compatibility/generate-v0.11.0 && cargo run --release
+cd backward-compatibility/generate-v0.14.0 && cargo run --release
 ```
+
+Older frozen generator crates such as `generate-v0.11.0` and `generate-v0.11.1` still exist for historical inspection, but they do not have Makefile targets.
 
 ### Testing Generated Data
 
@@ -93,7 +121,12 @@ cargo test --test 'backward_compatibility_*' -- --include-ignored
 
 ### Data Determinism
 
-TFHE-rs' prng is seeded with a fixed seed, so the data should be identical at each generation. However, the actual serialized objects might be different because bincode does not serialize HashMap in a deterministic way (see: [this issue](https://github.com/TyOverby/bincode/issues/514)).
+Generator output falls into two categories:
+
+- **Frozen** (currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`): produced by generators that were non-deterministic across runs (e.g. `HashMap` iteration order — see [this bincode issue](https://github.com/TyOverby/bincode/issues/514) — or `SystemTime::now()` baked into serialized fields). Their `.bcode` files and `.ron` entries are committed via Git LFS and **must not** be regenerated as part of normal workflow — re-running their generators would produce different bytes for the same logical content. `make generate-backward-compatibility-all` skips these.
+- **Deterministic** (any version added going forward): produced by generators that yield byte-identical output across runs. Their entries can be safely regenerated by `-all`.
+
+The two lists live in the root `Makefile` as `FROZEN_BWC_VERSIONS` and `DETERMINISTIC_BWC_VERSIONS`.
 
 ### Why separate generator crates?
 
@@ -113,8 +146,7 @@ By maintaining separate generator crates per version, we can:
 
 ### Metadata Merging
 
-Generators **append** to existing metadata files rather than overwriting them.
-This allows multiple versions to coexist:
+Generators merge into existing metadata files rather than overwriting them, so multiple versions can coexist in a single `.ron`:
 
 ```ron
 // backward-compatibility/data/kms.ron
@@ -124,7 +156,11 @@ This allows multiple versions to coexist:
 ]
 ```
 
-The `make generate-backward-compatibility-all` target cleans old data first, then runs all generators in sequence.
+Deterministic generators (`generate-v0.14.0` and later) works as follows: any existing entries whose `kms_core_version_min` matches a version being written are dropped first, then the freshly generated entries are appended. Entries for other versions — notably the frozen ones — are preserved verbatim. This is what makes `make generate-backward-compatibility-all` idempotent: re-running it does not accumulate duplicate rows for the deterministic versions it regenerates, while still leaving frozen-version entries intact.
+
+The older frozen generators (`generate-v0.11.0` … `generate-v0.13.20`) use a plain append, which is one reason re-running them can produce duplicate `.ron` rows and why they must not be run as part of normal workflow (see [Data Determinism](#data-determinism)).
+
+The `make generate-backward-compatibility-all` target only cleans and regenerates **deterministic** versions (listed in `DETERMINISTIC_BWC_VERSIONS` in the root `Makefile`). **Frozen** versions (`FROZEN_BWC_VERSIONS`, currently everything up to and including `0.13.20`) are left untouched — their data dirs are preserved and their generators are not invoked. The shared `.ron` files are never deleted by `-all`, so committed frozen entries survive across regenerations.
 
 ## Adding a test for an existing type
 
@@ -325,7 +361,7 @@ impl TestedModule for KMS {
 A test at [`core/service/tests/versioned_enum_coverage.rs`](../../core/service/tests/versioned_enum_coverage.rs) runs as part of the `core/service` test suite, but its scan is workspace-wide: it uses `cargo metadata` to enumerate every workspace member and statically inspects each one for `#[derive(VersionsDispatch)]` enums, enforcing two invariants:
 
 1. **Contiguous variants** — variants must be named `V0`, `V1`, `V2`, … in order.
-2. **Fixture coverage** — every dispatch type (with its `Versioned` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
+2. **Fixture coverage** — every dispatch type (with its `Versions` suffix stripped) must appear as a variant of one of the `TestMetadata*` enums backing `backward-compatibility/data/{kms,kms-grpc,threshold-fhe}.ron`, *or* be explicitly listed in the `ALLOW_UNCOVERED` constant in the same test file.
 
 The default expectation when you add a new `#[derive(VersionsDispatch)]` enum is to add a direct `.ron` fixture for it, as described in [Adding a test for a new type](#adding-a-test-for-a-new-type). `ALLOW_UNCOVERED` is for inner types that are only reachable as fields of a parent type that already has a fixture.
 
@@ -359,6 +395,8 @@ Tracking ticket for replacing this manual list with structural reachability chec
 
 ⚠️ **Important**: Before adding a new version, check for dependency compatibility. See [`backward-compatibility/ADDING_NEW_VERSIONS.md`](../../backward-compatibility/ADDING_NEW_VERSIONS.md) for detailed instructions.
 
+Any non-determinism the new generator inherits from `kms-core` itself (e.g., a new versioned struct that contains a `HashMap`, or a struct field populated from `SystemTime::now()`) must be fixed in `kms-core` via a fresh version bump before the corresponding generator can be added to `DETERMINISTIC_BWC_VERSIONS`. The freeze convention exists precisely because retroactively fixing non-determinism in old generators is not safe — old data on disk would no longer match.
+
 To add data for a new released version of kms-core, you should:
 
 - **Check compatibility**: Verify the new version's dependencies (especially `serde`, `alloy`, `tfhe`) are compatible with existing generator versions
@@ -371,7 +409,10 @@ See [`backward-compatibility/ADDING_NEW_VERSIONS.md`](../../backward-compatibili
 1. Copy an existing generator: `cp -r generate-v0.11.1 generate-v0.12.0`
 2. Update `Cargo.toml`: package name, version, and KMS dependencies
 3. Update `src/data_0_11.rs`: imports and `VERSION_NUMBER`
-4. Add to root `Makefile` and `Cargo.toml` exclude list
+4. Add to `Makefile`:
+   - Append the new version number (e.g. `0.14.0`) to `DETERMINISTIC_BWC_VERSIONS`. **Do not** add it to `FROZEN_BWC_VERSIONS` — that list is closed at `0.13.20`.
+   - Add a `generate-backward-compatibility-v0.14.0` recipe matching the existing pattern.
+   - Add the crate to the root `Cargo.toml` exclude list.
 5. Test: `make generate-backward-compatibility-all`
 
 In the generator's `src/data_x_y.rs`:
@@ -410,11 +451,11 @@ The data is stored using git-lfs, so be sure to clone the kms-core repo with lfs
 
 When some breaking changes are added to a versionized type, you should update several things. Let's say that the type only had a `V0` version, then you should:
 
-- add a new version `v1` to the `XXXVersioned` enum associated to the type `XXX` (ex: `PrivateSigKeyVersioned` for `PrivateSigKey`)
+- add a new version `v1` to the `XXXVersions` enum associated to the type `XXX` (ex: `PrivateSigKeyVersions` for `PrivateSigKey`)
 - **keep** the `PrivateSigKey` old definition and rename it to `PrivateSigKeyV0`
 - replace the `Versionize` derive trait with the `Version` one (import if from `tfhe-versionable` if needed)
-- remove the `#[versionize(XXXVersioned)]` attribute
-- add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersioned)]` attribute to it
+- remove the `#[versionize(XXXVersions)]` attribute
+- add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersions)]` attribute to it
 - implement the `Upgrade` trait for the old definition (ex: `PrivateSigKeyV0`)
 
 It is important to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
@@ -423,7 +464,7 @@ It should look like the following:
 
 ```rust
 #[derive(..., VersionsDispatch)]
-pub enum PrivateSigKeyVersioned {
+pub enum PrivateSigKeyVersions {
     V0(PrivateSigKeyV0),
     V1(PrivateSigKey),
 }
@@ -436,7 +477,7 @@ pub struct PrivateSigKeyV0 {
 
 // New definition
 #[derive(..., Versionize)]
-#[versionize(PrivateSigKeyVersioned)]
+#[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     // New definition
 }
