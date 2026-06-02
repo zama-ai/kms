@@ -195,21 +195,14 @@ jobs:
       # ==========================================================================
       # Setup cache for dockerfile and inject in docker
       #
-      - name: Setup Cache
-        uses: runs-on/cache@a5f51d6f3fece787d03b7b4e981c82538a0654ed # latest commit on `v4` branch at this time
-        id: cache
-        env:
-          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
-          RUNS_ON_AWS_REGION: eu-west-3
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          path: |
-            /home/ubuntu/.cargo/bin/
-            /home/ubuntu/.cargo/registry/index/
-            /home/ubuntu/.cargo/registry/cache/
-            /home/ubuntu/.cargo/git/db/
-            ${{ github.workspace }}/target
-          key: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          # Share cache across jobs/workflows that build the same dependency set.
+          shared-key: kms-rust
+          # Temporary policy for cache validation:
+          # save on main and on internal PRs (not forks).
+          save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
       - name: Install Protoc
         uses: ./.github/actions/setup-rust-and-protoc

@@ -47,11 +47,9 @@ image: {{ .image.name }}:{{ .image.tag }}
 imagePullPolicy: {{ .image.pullPolicy }}
 restartPolicy: Always
 command:
-  - |
-    ip route show | while IFS= read -r route; do
-      ip route change "$route" quickack 1 2>/dev/null || true
-    done
-    socat -d0
+  - socat
+args:
+  - -d0
 {{- if and (eq .name "grpc-peer-proxy") .timeout }}
   - -T{{ .timeout }}
 {{- end }}
