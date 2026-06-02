@@ -109,11 +109,17 @@ jobs:
             RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
             LTO_RELEASE=release-lto-thin
             TARGETARCH=amd64
+            SCCACHE_BUCKET=${{ env.RUNS_ON_S3_BUCKET_CACHE }}
+            SCCACHE_REGION=${{ env.RUNS_ON_AWS_REGION }}
+            SCCACHE_S3_PREFIX=sccache/${{ github.repository }}/docker-scan/amd64
           context: '.'
+          # Secret IDs MUST match what the Dockerfiles `--mount=type=secret,id=…`
+          # expects (lowercase). Mismatched names = silently missing files in
+          # /run/secrets and sccache fails to authenticate to S3.
           secrets: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-            AWS_ACCESS_KEY_S3_USER=${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-            AWS_SECRET_KEY_S3_USER=${{ secrets.AWS_SECRET_KEY_S3_USER }}
+            sccache_aws_access_key_id=${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+            sccache_aws_secret_access_key=${{ secrets.AWS_SECRET_KEY_S3_USER }}
             CGR_USERNAME=${{ secrets.CGR_USERNAME }}
             CGR_PASSWORD=${{ secrets.CGR_PASSWORD }}
           file: ${{ matrix.dockerfile }}
