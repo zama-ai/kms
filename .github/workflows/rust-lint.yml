@@ -12,8 +12,45 @@ permissions:
   actions: read # Required to read workflow run information
 
 jobs:
-  rust-lint:
-    name: rust-lint/workspace
+  # Formatting only needs rustfmt: no protoc, no nextest, no workspace build.
+  # Kept as its own job so it gives near-instant feedback in parallel with the
+  # heavier clippy/dylint jobs.
+  fmt:
+    name: rust-lint/fmt
+    permissions:
+      contents: read # Required to checkout repository code
+      actions: read # Required to read workflow run information
+      id-token: write # Required for OIDC token generation
+    runs-on: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: rustfmt
+          rust-cache: "false"
+          setup-protoc: "false"
+          setup-cargo-nextest: "false"
+
+      - name: Formatting
+        run: |
+          echo "EXECUTING: cargo fmt --all -- --check"
+          cargo fmt --all -- --check
+
+  clippy:
+    name: rust-lint/clippy
     permissions:
       contents: read # Required to checkout repository code
       actions: read # Required to read workflow run information
@@ -38,24 +75,62 @@ jobs:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: rustfmt, clippy
           rust-cache: "false"
+          # cargo-nextest is not used by lint; installing it compiles it from
+          # source (~2min) for no benefit.
+          setup-cargo-nextest: "false"
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          # Share cache across jobs/workflows that build the same dependency set.
+          # Share the stable-toolchain cache with the build/test workflows.
           shared-key: kms-rust
-          # This workflow only runs on PRs; skip saves for forked PRs.
+          # Populated by the main workflow; PRs restore only.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Formatting
-        run: |
-          echo "EXECUTING: cargo fmt --all -- --check"
-          cargo fmt --all -- --check
 
       - name: Clippy
         run: |
           echo "EXECUTING: cargo clippy --workspace --all-targets --all-features -- -D warnings"
           cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  dylint:
+    name: rust-lint/dylint
+    permissions:
+      contents: read # Required to checkout repository code
+      actions: read # Required to read workflow run information
+      id-token: write # Required for OIDC token generation
+    runs-on: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: rustfmt, clippy
+          rust-cache: "false"
+          setup-cargo-nextest: "false"
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          # Dedicated key: dylint checks the workspace under its own nightly
+          # driver toolchains, so these target artifacts are incompatible with
+          # the stable `kms-rust` cache and must not pollute it.
+          shared-key: kms-rust-dylint
+          # Nothing else builds these nightly artifacts, so save on first-party
+          # PRs (not forks) to bootstrap and keep the cache warm.
+          save-if: ${{ github.event.pull_request.head.repo.fork == false }}
+          cache-bin: true
 
       - name: Install cargo-dylint
         run: |
