@@ -174,7 +174,7 @@ mod kms_gen_keys_binary_test {
         let temp_dir_pub = tempdir().unwrap();
 
         // party id 0 is invalid (parties are 1-indexed); the value parser
-        // should reject it at parse time.
+        // rejects id 0 at parse time.
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--private-storage=file")
