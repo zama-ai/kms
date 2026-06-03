@@ -54,7 +54,7 @@ pub struct CoreMetrics {
 
     // Histograms
     duration_histogram: HistogramVec,
-    size_histogram: HistogramVec, // TODO currently not used
+    size_histogram: HistogramVec, // Serialized payload sizes; see `observe_size`
 
     // Gauges
     file_descriptor_gauge: IntGauge, // Number of file descriptors of the KMS
@@ -80,6 +80,10 @@ pub struct CoreMetrics {
     cpu_load_gauge: Gauge,          // 1-minute average CPU load, divided by number of cores
     memory_usage_gauge: IntGauge,
 
+    // Static const-labels applied to every metric (from `KMS_METRICS_LABELS`), retained so they can
+    // be inspected/logged at runtime. Empty by default.
+    labels: BTreeMap<String, String>,
+
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -95,7 +99,16 @@ impl CoreMetrics {
         Self::with_config(MetricsConfig::default())
     }
 
+    /// Build metrics with `config`, registering them in the global default registry — the one the
+    /// `/metrics` endpoint scrapes.
     pub fn with_config(config: MetricsConfig) -> Self {
+        Self::with_config_in_registry(config, prometheus::default_registry())
+    }
+
+    /// Build metrics with `config`, registering every metric in `registry`. Production uses the
+    /// process-global default registry via [`CoreMetrics::with_config`]; tests pass a fresh registry
+    /// so a single instance can be inspected in isolation without colliding with that shared state.
+    fn with_config_in_registry(config: MetricsConfig, registry: &prometheus::Registry) -> Self {
         let prefix = &config.prefix;
 
         // Apply the configured labels as const-labels to every metric, so the registration sites
@@ -114,7 +127,8 @@ impl CoreMetrics {
                 .const_label("version", env!("CARGO_PKG_VERSION")),
         )
         .expect("failed to create version gauge");
-        prometheus::register(Box::new(version_gauge.clone()))
+        registry
+            .register(Box::new(version_gauge.clone()))
             .expect("failed to register version gauge");
         version_gauge.set(1.0);
 
@@ -127,7 +141,8 @@ impl CoreMetrics {
             &["operation"],
         )
         .expect("failed to create request counter");
-        prometheus::register(Box::new(request_counter.clone()))
+        registry
+            .register(Box::new(request_counter.clone()))
             .expect("failed to register request counter");
 
         let error_counter = IntCounterVec::new(
@@ -138,7 +153,8 @@ impl CoreMetrics {
             &["operation", "error"],
         )
         .expect("failed to create error counter");
-        prometheus::register(Box::new(error_counter.clone()))
+        registry
+            .register(Box::new(error_counter.clone()))
             .expect("failed to register error counter");
 
         let backup_error_counter = IntCounterVec::new(
@@ -149,7 +165,8 @@ impl CoreMetrics {
             &["operation", "error"],
         )
         .expect("failed to create backup error counter");
-        prometheus::register(Box::new(backup_error_counter.clone()))
+        registry
+            .register(Box::new(backup_error_counter.clone()))
             .expect("failed to register backup error counter");
 
         let network_rx_counter = IntCounter::with_opts(opts(
@@ -157,7 +174,8 @@ impl CoreMetrics {
             "Total number of bytes received over the network",
         ))
         .expect("failed to create network rx counter");
-        prometheus::register(Box::new(network_rx_counter.clone()))
+        registry
+            .register(Box::new(network_rx_counter.clone()))
             .expect("failed to register network rx counter");
 
         let network_tx_counter = IntCounter::with_opts(opts(
@@ -165,7 +183,8 @@ impl CoreMetrics {
             "Total number of bytes sent over the network",
         ))
         .expect("failed to create network tx counter");
-        prometheus::register(Box::new(network_tx_counter.clone()))
+        registry
+            .register(Box::new(network_tx_counter.clone()))
             .expect("failed to register network tx counter");
 
         // Histograms
@@ -178,7 +197,8 @@ impl CoreMetrics {
             DURATION_LABEL_KEYS,
         )
         .expect("failed to create duration histogram");
-        prometheus::register(Box::new(duration_histogram.clone()))
+        registry
+            .register(Box::new(duration_histogram.clone()))
             .expect("failed to register duration histogram");
 
         let size_histogram = HistogramVec::new(
@@ -190,7 +210,8 @@ impl CoreMetrics {
             &["operation"],
         )
         .expect("failed to create size histogram");
-        prometheus::register(Box::new(size_histogram.clone()))
+        registry
+            .register(Box::new(size_histogram.clone()))
             .expect("failed to register size histogram");
 
         // IntGauge (u64) metrics
@@ -199,7 +220,8 @@ impl CoreMetrics {
             "File descriptor usage for the KMS",
         ))
         .expect("failed to create file descriptor gauge");
-        prometheus::register(Box::new(file_descriptor_gauge.clone()))
+        registry
+            .register(Box::new(file_descriptor_gauge.clone()))
             .expect("failed to register file descriptor gauge");
 
         let socat_file_descriptor_gauge = IntGauge::with_opts(opts(
@@ -207,7 +229,8 @@ impl CoreMetrics {
             "Number of socat file descriptors",
         ))
         .expect("failed to create socat file descriptor gauge");
-        prometheus::register(Box::new(socat_file_descriptor_gauge.clone()))
+        registry
+            .register(Box::new(socat_file_descriptor_gauge.clone()))
             .expect("failed to register socat file descriptor gauge");
 
         let socat_task_gauge = IntGauge::with_opts(opts(
@@ -215,7 +238,8 @@ impl CoreMetrics {
             "Number of socat tasks",
         ))
         .expect("failed to create socat task gauge");
-        prometheus::register(Box::new(socat_task_gauge.clone()))
+        registry
+            .register(Box::new(socat_task_gauge.clone()))
             .expect("failed to register socat task gauge");
 
         let task_gauge = IntGauge::with_opts(opts(
@@ -223,14 +247,17 @@ impl CoreMetrics {
             "Number of tasks started by the KMS",
         ))
         .expect("failed to create task gauge");
-        prometheus::register(Box::new(task_gauge.clone())).expect("failed to register task gauge");
+        registry
+            .register(Box::new(task_gauge.clone()))
+            .expect("failed to register task gauge");
 
         let rate_limiter_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_rate_limiter_usage"),
             "Rate limiter usage for the KMS",
         ))
         .expect("failed to create rate limiter gauge");
-        prometheus::register(Box::new(rate_limiter_gauge.clone()))
+        registry
+            .register(Box::new(rate_limiter_gauge.clone()))
             .expect("failed to register rate limiter gauge");
 
         let active_session_gauge = IntGauge::with_opts(opts(
@@ -238,7 +265,8 @@ impl CoreMetrics {
             "Number of active sessions in the KMS",
         ))
         .expect("failed to create active session gauge");
-        prometheus::register(Box::new(active_session_gauge.clone()))
+        registry
+            .register(Box::new(active_session_gauge.clone()))
             .expect("failed to register active session gauge");
 
         let inactive_session_gauge = IntGauge::with_opts(opts(
@@ -246,7 +274,8 @@ impl CoreMetrics {
             "Number of inactive sessions in the KMS",
         ))
         .expect("failed to create inactive session gauge");
-        prometheus::register(Box::new(inactive_session_gauge.clone()))
+        registry
+            .register(Box::new(inactive_session_gauge.clone()))
             .expect("failed to register inactive session gauge");
 
         let meta_storage_user_dec_gauge = IntGauge::with_opts(opts(
@@ -254,7 +283,8 @@ impl CoreMetrics {
             "Number of ONGOING user decryptions in meta storage",
         ))
         .expect("failed to create meta storage user dec gauge");
-        prometheus::register(Box::new(meta_storage_user_dec_gauge.clone()))
+        registry
+            .register(Box::new(meta_storage_user_dec_gauge.clone()))
             .expect("failed to register meta storage user dec gauge");
 
         let meta_storage_pub_dec_gauge = IntGauge::with_opts(opts(
@@ -262,7 +292,8 @@ impl CoreMetrics {
             "Number of ONGOING public decryptions in meta storage",
         ))
         .expect("failed to create meta storage pub dec gauge");
-        prometheus::register(Box::new(meta_storage_pub_dec_gauge.clone()))
+        registry
+            .register(Box::new(meta_storage_pub_dec_gauge.clone()))
             .expect("failed to register meta storage pub dec gauge");
 
         let meta_storage_user_dec_total_gauge = IntGauge::with_opts(opts(
@@ -270,7 +301,8 @@ impl CoreMetrics {
             "Total number of user decryptions in meta storage",
         ))
         .expect("failed to create meta storage user dec total gauge");
-        prometheus::register(Box::new(meta_storage_user_dec_total_gauge.clone()))
+        registry
+            .register(Box::new(meta_storage_user_dec_total_gauge.clone()))
             .expect("failed to register meta storage user dec total gauge");
 
         let meta_storage_pub_dec_total_gauge = IntGauge::with_opts(opts(
@@ -278,7 +310,8 @@ impl CoreMetrics {
             "Total number of public decryptions in meta storage",
         ))
         .expect("failed to create meta storage pub dec total gauge");
-        prometheus::register(Box::new(meta_storage_pub_dec_total_gauge.clone()))
+        registry
+            .register(Box::new(meta_storage_pub_dec_total_gauge.clone()))
             .expect("failed to register meta storage pub dec total gauge");
 
         let total_cpus_gauge = IntGauge::with_opts(opts(
@@ -286,7 +319,8 @@ impl CoreMetrics {
             "Amount of CPU cores available to the system",
         ))
         .expect("failed to create total cpus gauge");
-        prometheus::register(Box::new(total_cpus_gauge.clone()))
+        registry
+            .register(Box::new(total_cpus_gauge.clone()))
             .expect("failed to register total cpus gauge");
 
         let total_memory_gauge = IntGauge::with_opts(opts(
@@ -294,7 +328,8 @@ impl CoreMetrics {
             "Amount of available memory in the system",
         ))
         .expect("failed to create total memory gauge");
-        prometheus::register(Box::new(total_memory_gauge.clone()))
+        registry
+            .register(Box::new(total_memory_gauge.clone()))
             .expect("failed to register total memory gauge");
 
         let process_memory_gauge = IntGauge::with_opts(opts(
@@ -302,7 +337,8 @@ impl CoreMetrics {
             "Memory usage for the current process",
         ))
         .expect("failed to create process memory gauge");
-        prometheus::register(Box::new(process_memory_gauge.clone()))
+        registry
+            .register(Box::new(process_memory_gauge.clone()))
             .expect("failed to register process memory gauge");
 
         let memory_usage_gauge = IntGauge::with_opts(opts(
@@ -310,7 +346,8 @@ impl CoreMetrics {
             "Memory used for KMS",
         ))
         .expect("failed to create memory usage gauge");
-        prometheus::register(Box::new(memory_usage_gauge.clone()))
+        registry
+            .register(Box::new(memory_usage_gauge.clone()))
             .expect("failed to register memory usage gauge");
 
         // Gauge (f64) metrics
@@ -319,7 +356,8 @@ impl CoreMetrics {
             "CPU usage for the current process",
         ))
         .expect("failed to create process cpu usage gauge");
-        prometheus::register(Box::new(process_cpu_usage_gauge.clone()))
+        registry
+            .register(Box::new(process_cpu_usage_gauge.clone()))
             .expect("failed to register process cpu usage gauge");
 
         let cpu_load_gauge = Gauge::with_opts(opts(
@@ -327,7 +365,8 @@ impl CoreMetrics {
             "CPU load for KMS (averaged over all CPUs)",
         ))
         .expect("failed to create cpu load gauge");
-        prometheus::register(Box::new(cpu_load_gauge.clone()))
+        registry
+            .register(Box::new(cpu_load_gauge.clone()))
             .expect("failed to register cpu load gauge");
 
         Self {
@@ -355,8 +394,15 @@ impl CoreMetrics {
             total_memory_gauge,
             process_cpu_usage_gauge,
             process_memory_gauge,
+            labels: config.labels,
             trace_guard: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The static const-labels applied to every metric (from `KMS_METRICS_LABELS`); empty if none
+    /// are configured. Reflects exactly what was attached to the metrics at construction.
+    pub fn labels(&self) -> &BTreeMap<String, String> {
+        &self.labels
     }
 
     /// Set the trace guard to keep the file handle open
@@ -682,8 +728,9 @@ impl MetricsConfig {
     }
 }
 
-/// Parse a `key=value,key=value` label list. Empty, `=`-less, empty-key, or invalidly-named entries
-/// are skipped with a warning — a bad env var must not crash metric registration.
+/// Parse a `key=value,key=value` label list. Empty, `=`-less, empty-key, invalidly-named, or
+/// reserved/colliding entries (see [`is_reserved_label_name`]) are skipped with a warning — a bad
+/// env var must not crash metric registration.
 fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
     let Some(raw) = raw else {
@@ -706,19 +753,41 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
             warn!(key, "ignoring metrics label with invalid label name");
             continue;
         }
+        if is_reserved_label_name(key) {
+            warn!(
+                key,
+                "ignoring metrics label that collides with a built-in metric label name"
+            );
+            continue;
+        }
         labels.insert(key.to_string(), value.to_string());
     }
     labels
 }
 
-/// Returns whether `name` is a valid Prometheus label name (`[a-zA-Z_][a-zA-Z0-9_]*`).
+/// Returns whether `name` is a valid, non-reserved Prometheus label name. Valid names match
+/// `[a-zA-Z_][a-zA-Z0-9_]*`; names beginning with `__` are reserved by Prometheus for internal use
+/// and are rejected so a configured label can never shadow them.
 fn is_valid_label_name(name: &str) -> bool {
+    // `__`-prefixed names are reserved by Prometheus.
+    if name.starts_with("__") {
+        return false;
+    }
     let mut chars = name.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Label names already used by built-in metrics, as variable labels (`operation`/`error`, the
+/// duration tags in [`DURATION_LABEL_KEYS`]) or const-labels (`version` on the version gauge). A
+/// configured const-label colliding with one of these makes Prometheus reject the metric at
+/// registration — which would panic the process — so such entries are skipped instead.
+fn is_reserved_label_name(name: &str) -> bool {
+    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version"];
+    DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
 #[cfg(test)]
@@ -839,6 +908,17 @@ mod tests {
                 "high-cardinality label {disallowed_label} should not be exported"
             );
         }
+
+        // No unexpected dynamic keys: every exported key must be a declared duration label or one of
+        // the process-constant const-labels. Replaces the old hard `<= 5` cap, which the (variable
+        // number of) configured const-labels would otherwise trip.
+        let configured: BTreeSet<&str> = METRICS.labels().keys().map(String::as_str).collect();
+        for &key in &actual_labels {
+            assert!(
+                expected_labels.contains(key) || configured.contains(key),
+                "unexpected label key {key} on duration histogram"
+            );
+        }
     }
 
     #[test]
@@ -880,44 +960,77 @@ mod tests {
         assert!(!is_valid_label_name("1leading_digit"));
         assert!(!is_valid_label_name("has-dash"));
         assert!(!is_valid_label_name("has.dot"));
+        // `__`-prefixed names are reserved by Prometheus.
+        assert!(!is_valid_label_name("__reserved"));
     }
 
     #[test]
-    fn from_env_has_default_prefix_and_no_labels_when_unset() {
-        // `KMS_METRICS_LABELS` is not set in the unit-test process, so no labels are applied.
+    fn reserved_label_names_are_detected() {
+        assert!(is_reserved_label_name("operation"));
+        assert!(is_reserved_label_name("error"));
+        assert!(is_reserved_label_name("version"));
+        assert!(is_reserved_label_name(TAG_OPERATION_TYPE));
+        assert!(!is_reserved_label_name("deployment_profile"));
+    }
+
+    #[test]
+    fn parse_metrics_labels_skips_reserved_and_colliding_names() {
+        // Names that collide with built-in metric labels (which would panic at registration) and
+        // `__`-reserved names are dropped; a valid custom label still survives.
+        let labels = parse_metrics_labels(Some(
+            "operation=x,error=y,version=z,operation_type=w,__r=1,deployment_profile=kind-ci",
+        ));
+        assert_eq!(
+            labels.get("deployment_profile").map(String::as_str),
+            Some("kind-ci")
+        );
+        assert_eq!(labels.len(), 1);
+    }
+
+    #[test]
+    fn from_env_uses_default_prefix_and_parses_labels_from_env() {
+        // Hermetic: assert `from_env` delegates to `parse_metrics_labels` on the current env, so the
+        // test holds whether or not `KMS_METRICS_LABELS` happens to be set in the test process.
+        let expected = parse_metrics_labels(std::env::var(METRICS_LABELS_ENV).ok().as_deref());
         let config = MetricsConfig::from_env();
         assert_eq!(config.prefix, "kms");
-        assert!(config.labels.is_empty());
+        assert_eq!(config.labels, expected);
     }
 
     #[test]
-    fn const_labels_are_attached_to_gathered_metrics() {
-        // Use a fresh registry so this does not collide with the global default registry.
-        let mut map = HashMap::new();
-        map.insert("deployment_profile".to_string(), "kind-ci".to_string());
-        let counter = IntCounter::with_opts(
-            Opts::new("kms_test_const_label_total", "help").const_labels(map),
-        )
-        .expect("failed to build counter");
-
+    fn config_labels_are_attached_to_every_metric() {
+        // Build a full `CoreMetrics` in an isolated registry — not the global default one the other
+        // tests assert against — and confirm the configured const-label flows through `with_config`
+        // onto a real metric.
+        let mut config = MetricsConfig::default();
+        config
+            .labels
+            .insert("deployment_profile".to_string(), "kind-ci".to_string());
         let registry = prometheus::Registry::new();
-        registry
-            .register(Box::new(counter.clone()))
-            .expect("failed to register counter");
-        counter.inc();
+        let metrics = CoreMetrics::with_config_in_registry(config, &registry);
 
+        // The accessor exposes exactly what was configured.
+        assert_eq!(
+            metrics
+                .labels()
+                .get("deployment_profile")
+                .map(String::as_str),
+            Some("kind-ci")
+        );
+
+        // ... and the label is actually exported (`kms_version` is always registered and set).
         let families = registry.gather();
-        let metric = families
+        let version = families
             .iter()
-            .find(|f| f.name() == "kms_test_const_label_total")
+            .find(|f| f.name() == "kms_version")
             .and_then(|f| f.get_metric().first())
-            .expect("seeded metric should be present");
+            .expect("kms_version should be registered");
         assert!(
-            metric
+            version
                 .get_label()
                 .iter()
                 .any(|l| l.name() == "deployment_profile" && l.value() == "kind-ci"),
-            "configured const-label should appear on the exported metric"
+            "configured const-label should appear on every exported metric"
         );
     }
 }

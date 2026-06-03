@@ -31,8 +31,9 @@ pub async fn safe_write_element_versioned<
     };
     let mut serialized_data = Vec::new();
     safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
-    // Record the serialized payload size, labeled by type name, so key/keyset write
-    // sizes are observable in kind-testing telemetry (kms_payload_size_bytes).
+    // Record the serialized payload size before writing, labeled by the element's type name, so
+    // versioned write sizes (keys, keysets, …) are observable in telemetry as
+    // kms_payload_size_bytes{operation="<type name>"}.
     observability::metrics::METRICS.observe_size(<T as Named>::NAME, serialized_data.len() as f64);
     tokio::fs::write(file_path, serialized_data.as_slice()).await?;
     Ok(())

@@ -125,11 +125,13 @@ Track the distribution of values:
   ```rust
   metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64)?;  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
   ```
-NOTE: `observe_size` / `{prefix}_payload_size_bytes` is wired and registered but not yet emitted by
-production code paths — it is ready to use whenever a payload size is worth tracking.
+NOTE: `{prefix}_payload_size_bytes` is emitted from the versioned-storage write paths
+(`safe_write_element_versioned` and the S3 vault `store`); there its `operation` label carries the
+serialized element's **type name** (e.g. a key/keyset type), not an operation name. Call `observe_size`
+from other paths whenever a payload size is worth tracking.
 
 Both histograms use **explicit buckets** tuned to KMS workloads: `kms_operation_duration_ms` spans
-1 ms → 5 min and `kms_payload_size_bytes` spans 1 KiB → 1 GiB. Prometheus' default buckets are
+1 ms → 5 min and `kms_payload_size_bytes` spans 1 KiB → 64 GiB. Prometheus' default buckets are
 second-scale (max `10`), so without these every KMS measurement would fall into the `+Inf` bucket and
 `histogram_quantile` (p50/p95) would be meaningless.
 
@@ -188,10 +190,10 @@ let config = MetricsConfig {
     prefix: "app".to_string(),
     ..Default::default()
 };
-let metrics = CoreMetrics::with_config(config)?;
+let metrics = CoreMetrics::with_config(config);
 
 // Now metrics will use "app" prefix
-metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;  // app_operations_total{operation="keygen_request"}
+metrics.increment_request_counter(OP_KEYGEN_REQUEST);  // app_operations_total{operation="keygen_request"}
 ```
 
 ### Duration Measurement with Tags
@@ -293,8 +295,9 @@ Conventions:
 
 In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
 env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`
-sets `deployment_profile=kind-ci`. Malformed or invalidly-named entries are skipped with a warning, so
-a typo never takes the server down. Unset/empty means no extra labels — the default for production.
+sets `deployment_profile=kind-ci`. Malformed, invalidly-named, `__`-reserved, or colliding entries
+(names already used by a built-in metric label) are skipped with a warning, so a typo never takes the
+server down. Unset/empty means no extra labels — the default for production.
 
 ## Best Practices
 
