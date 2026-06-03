@@ -43,12 +43,22 @@ pub async fn safe_write_element_versioned<
     };
     // Write to a sibling temp file first, then atomically rename into place, so a
     // crash mid-write cannot leave a partially-serialized key file at `file_path`.
-    // Per-path writes are serialized by the storage-layer mutex, so a fixed
-    // ".partial" suffix cannot collide with a concurrent write to the same path.
+    // The temp name is dot-prefixed (hidden): if a crash leaves one behind, directory
+    // listings skip it (e.g. `FileStorage::all_data_ids` ignores dot-files but parses
+    // every other name as a `RequestId`, so a non-hidden leftover would break listing).
+    // Per-path writes are serialized by the storage-layer mutex, so the fixed name
+    // cannot collide with a concurrent write to the same path.
     let tmp_path = {
-        let mut p = file_path.as_os_str().to_owned();
-        p.push(".partial");
-        PathBuf::from(p)
+        let file_name = file_path
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?;
+        let mut name = std::ffi::OsString::from(".");
+        name.push(file_name);
+        name.push(".partial");
+        match file_path.parent() {
+            Some(parent) => parent.join(name),
+            None => PathBuf::from(name),
+        }
     };
     {
         let file = std::fs::File::create(&tmp_path)

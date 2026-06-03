@@ -337,8 +337,10 @@ impl ThresholdFheKeys {
                     decompression_key: decompression_key.clone(),
                 },
                 PublicKeyMaterial::Compressed { keyset } => {
-                    let cloned = (**keyset).clone(); // TODO(dp): can possibly get rid of this later once tfhe-rs #3469 lands
-                    let (_pk, sk) = cloned
+                    // `CompressedXofKeySet::decompress` takes `&self` (tfhe 1.6.1), so we
+                    // decompress through the `Arc` directly instead of first cloning the
+                    // whole (multi-GiB) compressed keyset.
+                    let (_pk, sk) = keyset
                         .decompress()
                         .expect("Call is infallible")
                         .into_raw_parts();
