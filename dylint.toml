@@ -4,7 +4,7 @@ libraries = [
     # The nightly toolchain + components needed to build this library are read
     # from `utils/tfhe-lints/rust-toolchain` in the tfhe-rs repo at the tag
     # below, and auto-installed by rustup on first `cargo dylint --all` run.
-    { git = "https://github.com/zama-ai/tfhe-rs", tag = "tfhe-rs-1.6.1", pattern = "utils/tfhe-lints/lints" },
+    { git = "https://github.com/zama-ai/tfhe-rs", tag = "tfhe-rs-1.6.2", pattern = "utils/tfhe-lints/lints" },
 ]
 
 [non_local_effect_before_error_return]
