@@ -189,7 +189,8 @@ mod kms_gen_keys_binary_test {
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("party ID must be at least 1"));
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("invalid value '0' for '--signing-key-party-id"));
     }
 
     #[test]
