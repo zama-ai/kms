@@ -21,7 +21,7 @@ use kms_lib::{
 };
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
-use std::{path::PathBuf, sync::Arc};
+use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 use strum::EnumIs;
 use url::Url;
 
@@ -155,8 +155,8 @@ enum Mode {
     /// party.
     Threshold {
         /// Index of the party to generate keys for (1-based).
-        #[clap(long, value_parser = parse_party_id)]
-        signing_key_party_id: usize,
+        #[clap(long)]
+        signing_key_party_id: NonZeroUsize,
 
         /// Subject used in the issued TLS certificate.
         #[clap(long, default_value = "kms-party")]
@@ -182,19 +182,9 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
-    signing_key_party_id: usize,
+    signing_key_party_id: NonZeroUsize,
     tls_subject: String,
     tls_wildcard: bool,
-}
-
-fn parse_party_id(s: &str) -> Result<usize, String> {
-    let id: usize = s
-        .parse()
-        .map_err(|e: std::num::ParseIntError| e.to_string())?;
-    if id == 0 {
-        return Err("party ID must be at least 1".to_string());
-    }
-    Ok(id)
 }
 
 /// Generate the server signing keys and TLS material for a KMS deployment.
@@ -394,7 +384,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.priv_storage,
         &SIGNING_KEY_ID,
         args.deterministic,
-        args.signing_key_party_id,
+        args.signing_key_party_id.get(),
         args.tls_subject.clone(),
         args.tls_wildcard,
     )

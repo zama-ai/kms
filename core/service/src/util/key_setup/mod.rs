@@ -656,8 +656,7 @@ pub enum ThresholdSigningKeyConfig {
 /// 4. Stores keys for each server under [request_id]
 ///
 /// # Returns
-/// - `true` if new keys were generated
-/// - `false` if keys already existed
+/// - `Ok(())` if new keys were generated or keys already existed
 /// - `Err` if an operation failed
 ///
 /// # Panics
@@ -768,7 +767,7 @@ where
     let mut rng = get_rng(deterministic, Some(party_id as u64));
 
     // Check if keys already exist with error handling
-    let temp: HashMap<RequestId, PrivateSigKey> =
+    let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
         read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .map_err(|e| {
@@ -779,84 +778,87 @@ where
                 )
             })?;
 
-    if !temp.is_empty() {
-        // If signing keys already exist, then do nothing
+    if let Some(sk) = signing_keys_map.get(request_id) {
+        // If a signing key already exists under this request ID, then do nothing
         log_data_exists(
             priv_storage.info(),
             None::<String>,
             "",
             "Threshold server signing keys",
         );
-        // Even if signing keys exist, CA certificates and VerfAddress might not
-        if let Some(sk) = temp.get(request_id) {
-            // Regenerate VerfAddress if missing
-            if !pub_storage
-                .data_exists(request_id, &PubDataType::VerfAddress.to_string())
-                .await?
-            {
-                let pk = sk.verf_key();
-                let ethereum_address = pk.address();
-                store_text_at_request_id(
-                    pub_storage,
-                    request_id,
-                    &ethereum_address.to_string(),
-                    &PubDataType::VerfAddress.to_string(),
-                )
-                .await
-                .map_err(|store_err| {
-                    anyhow::anyhow!(
-                        "Failed to regenerate VerfAddress for party {}: {}",
-                        party_id,
-                        store_err
-                    )
-                })?;
-                tracing::info!(
-                    "Regenerated VerfAddress {} for party {} from existing signing key",
-                    ethereum_address,
-                    party_id
-                );
-            }
 
-            // Regenerate VerfKey if missing
-            if !pub_storage
-                .data_exists(request_id, &PubDataType::VerfKey.to_string())
-                .await?
-            {
-                let pk = sk.verf_key();
-                store_versioned_at_request_id(
-                    pub_storage,
-                    request_id,
-                    &pk,
-                    &PubDataType::VerfKey.to_string(),
-                )
-                .await
-                .map_err(|store_err| {
-                    anyhow::anyhow!(
-                        "Failed to regenerate VerfKey for party {}: {}",
-                        party_id,
-                        store_err
-                    )
-                })?;
-                tracing::info!(
-                    "Regenerated VerfKey for party {} from existing signing key",
-                    party_id
-                );
-            }
-
-            // Regenerate CA certificate if missing
-            if !pub_storage
-                .data_exists(request_id, &PubDataType::CACert.to_string())
-                .await?
-            {
-                ensure_ca_cert_exists(pub_storage, sk, request_id, subject, tls_wildcard).await?;
-            }
-        } else {
-            anyhow::bail!(
-                "Failed to regenerate CA certificate from existing server signing key for party {party_id}: no signing key found under request ID {request_id}"
+        // Even if the signing key exists, CA certificates and VerfAddress might not
+        // Regenerate VerfAddress if missing
+        if !pub_storage
+            .data_exists(request_id, &PubDataType::VerfAddress.to_string())
+            .await?
+        {
+            let pk = sk.verf_key();
+            let ethereum_address = pk.address();
+            store_text_at_request_id(
+                pub_storage,
+                request_id,
+                &ethereum_address.to_string(),
+                &PubDataType::VerfAddress.to_string(),
             )
-        };
+            .await
+            .map_err(|store_err| {
+                anyhow::anyhow!(
+                    "Failed to regenerate VerfAddress for party {}: {}",
+                    party_id,
+                    store_err
+                )
+            })?;
+            tracing::info!(
+                "Regenerated VerfAddress {} for party {} from existing signing key",
+                ethereum_address,
+                party_id
+            );
+        }
+
+        // Regenerate VerfKey if missing
+        if !pub_storage
+            .data_exists(request_id, &PubDataType::VerfKey.to_string())
+            .await?
+        {
+            let pk = sk.verf_key();
+            store_versioned_at_request_id(
+                pub_storage,
+                request_id,
+                &pk,
+                &PubDataType::VerfKey.to_string(),
+            )
+            .await
+            .map_err(|store_err| {
+                anyhow::anyhow!(
+                    "Failed to regenerate VerfKey for party {}: {}",
+                    party_id,
+                    store_err
+                )
+            })?;
+            tracing::info!(
+                "Regenerated VerfKey for party {} from existing signing key",
+                party_id
+            );
+        }
+
+        // Regenerate CA certificate if missing
+        if !pub_storage
+            .data_exists(request_id, &PubDataType::CACert.to_string())
+            .await?
+        {
+            ensure_ca_cert_exists(pub_storage, sk, request_id, subject, tls_wildcard).await?;
+        }
 
         return Ok(());
+    }
+
+    if !signing_keys_map.is_empty() {
+        tracing::warn!(
+            "Existing signing keys for party {} found under other request IDs but none under request ID {}, generating new keys",
+            party_id,
+            request_id
+        );
     }
 
     let (pk, sk) = gen_sig_keys(&mut rng);
