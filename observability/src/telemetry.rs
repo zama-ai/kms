@@ -1,5 +1,5 @@
 use crate::conf::{ENVIRONMENT, ExecutionEnvironment, TelemetryConfig};
-use crate::metrics::{METRICS, METRICS_LABELS_ENV, MetricsConfig};
+use crate::metrics::{METRICS, METRICS_LABELS_ENV};
 use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
 use axum::Json;
@@ -131,8 +131,9 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(config: &T) -> Result<(), anyh
     // Use the global METRICS instance also as a sanity check that metrics are working
     METRICS.increment_request_counter("system_startup");
 
-    // Log the active static labels so operators can confirm how this deployment's metrics are tagged.
-    let metric_labels = MetricsConfig::from_env().labels;
+    // Log the static labels actually applied to `METRICS` (initialized just above) so operators can
+    // confirm how this deployment's metrics are tagged — without re-reading/re-parsing the env.
+    let metric_labels = METRICS.labels();
     if metric_labels.is_empty() {
         info!(
             "Metrics: no static labels configured (set {METRICS_LABELS_ENV} to distinguish deployments, e.g. kind-CI)"
