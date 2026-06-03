@@ -3,6 +3,9 @@ kmsPeers:
   count: 1
 
 kmsCore:
+  # Tag this kind-CI deployment's metrics so Grafana can separate them from production. To append
+  # deployment_type/ci_run_id, escape commas for `helm --set` (`\,`) or layer another `-f` override.
+  metricsLabels: "deployment_profile=kind-ci"
   image:
     name: hub.zama.org/ghcr/zama-ai/kms/core-service
     tag:
