@@ -25,7 +25,7 @@ inputs:
   setup-cargo-nextest:
     description: Whether to install cargo-nextest
     required: false
-    default: "true"
+    default: "false"
 
 runs:
   using: composite

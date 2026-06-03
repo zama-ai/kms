@@ -40,9 +40,6 @@ jobs:
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: rustfmt
-          rust-cache: "false"
-          setup-protoc: "false"
-          setup-cargo-nextest: "false"
 
       - name: Formatting
         run: |
@@ -74,10 +71,6 @@ jobs:
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: rustfmt, clippy
-          rust-cache: "false"
-          # cargo-nextest is not used by lint; installing it compiles it from
-          # source (~2min) for no benefit.
-          setup-cargo-nextest: "false"
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -120,8 +113,6 @@ jobs:
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           rust-components: rustfmt, clippy
-          rust-cache: "false"
-          setup-cargo-nextest: "false"
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
