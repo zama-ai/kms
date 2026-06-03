@@ -1512,9 +1512,14 @@ impl<
                     }
                 };
 
+                // Wrap the compressed keyset in an `Arc` once and share the same
+                // allocation between the private-side `PublicKeyMaterial` and the
+                // public-storage `PublicKeySet` below. This previously deep-cloned
+                // the entire (multi-GiB) compressed keyset.
+                let compressed_keyset = Arc::new(compressed_keyset);
                 let threshold_fhe_keys = ThresholdFheKeys::new(
                     Arc::new(private_keys),
-                    PublicKeyMaterial::new(compressed_keyset.clone()),
+                    PublicKeyMaterial::from_arc(Arc::clone(&compressed_keyset)),
                     info,
                 );
 
@@ -1527,7 +1532,8 @@ impl<
                         threshold_fhe_keys,
                         PublicKeySet::Compressed {
                             compact_public_key: Arc::new(compact_public_key),
-                            compressed_keyset: Arc::new(compressed_keyset),
+                            // Shared `Arc` built above — no second copy of the keyset.
+                            compressed_keyset,
                         },
                         Arc::clone(&meta_store),
                         op_tag,

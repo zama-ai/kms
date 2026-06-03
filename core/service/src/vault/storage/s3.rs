@@ -149,7 +149,10 @@ impl S3Storage {
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
-        s3_put_blob(&self.s3_client, &self.bucket, key, buf.clone()).await?;
+        // Move `buf` into `s3_put_blob` (it takes ownership and wraps it in a
+        // `ByteStream`); cloning here would duplicate the full serialized blob,
+        // which is ~tens of GiB for production FHE keys.
+        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
 
         Ok(())
     }

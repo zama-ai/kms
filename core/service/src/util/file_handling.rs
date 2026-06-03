@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{Unversionize, Versionize};
@@ -18,6 +19,16 @@ pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::
 }
 
 /// This is a wrapper around safe_serialize versioned for the async use case.
+///
+/// The serialization is streamed straight to disk (into a sibling temp file that
+/// is then atomically renamed into place) instead of going through an in-memory
+/// `Vec<u8>`. For production FHE keys the serialized blob is ~tens of GiB, and
+/// buffering it in memory would roughly double peak RSS at write time by holding
+/// the full serialized copy alongside `element`. The serialize+write is run
+/// inline (synchronously): `safe_serialize` borrows `element`, so it cannot be
+/// moved into `spawn_blocking`, and `block_in_place` would panic on the
+/// current-thread runtimes used by the storage tests. Key writes happen once per
+/// keygen, so briefly blocking the worker thread here is acceptable.
 pub async fn safe_write_element_versioned<
     T: Serialize + Versionize + Named + Send,
     P: AsRef<Path>,
@@ -25,13 +36,30 @@ pub async fn safe_write_element_versioned<
     file_path: P,
     element: &T,
 ) -> anyhow::Result<()> {
+    let file_path = file_path.as_ref();
     // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.as_ref().parent() {
+    if let Some(p) = file_path.parent() {
         tokio::fs::create_dir_all(p).await?
     };
-    let mut serialized_data = Vec::new();
-    safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
-    tokio::fs::write(file_path, serialized_data.as_slice()).await?;
+    // Write to a sibling temp file first, then atomically rename into place, so a
+    // crash mid-write cannot leave a partially-serialized key file at `file_path`.
+    // Per-path writes are serialized by the storage-layer mutex, so a fixed
+    // ".partial" suffix cannot collide with a concurrent write to the same path.
+    let tmp_path = {
+        let mut p = file_path.as_os_str().to_owned();
+        p.push(".partial");
+        PathBuf::from(p)
+    };
+    {
+        let file = std::fs::File::create(&tmp_path)
+            .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", tmp_path.display()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        safe_serialize(element, &mut writer, SAFE_SER_SIZE_LIMIT)?;
+        writer
+            .flush()
+            .map_err(|e| anyhow::anyhow!("failed to flush {}: {e}", tmp_path.display()))?;
+    }
+    tokio::fs::rename(&tmp_path, file_path).await?;
     Ok(())
 }
 

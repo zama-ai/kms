@@ -175,6 +175,13 @@ impl PublicKeyMaterial {
         }
     }
 
+    /// Build compressed key material from an already-`Arc`'d keyset. Lets the
+    /// caller share one allocation with the public-storage `PublicKeySet` instead
+    /// of deep-cloning the (multi-GiB) compressed keyset.
+    pub fn from_arc(keyset: Arc<CompressedXofKeySet>) -> Self {
+        Self::Compressed { keyset }
+    }
+
     pub fn new_uncompressed(
         integer_server_key: Arc<ServerKey>,
         sns_key: Option<Arc<NoiseSquashingKey>>,
