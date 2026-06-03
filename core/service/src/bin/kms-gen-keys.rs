@@ -4,9 +4,7 @@ use futures_util::future::OptionFuture;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::{
-    conf::{
-        AwsKmsKeySpec, AwsKmsKeychain, FileStorage, Keychain, S3Storage, Storage as StorageConf,
-    },
+    conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain},
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
@@ -16,7 +14,11 @@ use kms_lib::{
         Vault,
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
-        storage::{Storage, StorageType, delete_at_request_id, make_storage, s3::build_s3_client},
+        storage::{
+            Storage, StorageProxy, StorageType, delete_at_request_id,
+            file::FileStorage,
+            s3::{S3Storage, build_s3_client},
+        },
     },
 };
 use observability::conf::TelemetryConfig;
@@ -240,28 +242,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // create storages (one pub + one priv per invocation; multi-party
     // deployments invoke this binary once per party)
-    let mut pub_storage = make_storage(
-        match args.public_storage {
-            StorageCommand::File => args.public_file_path.as_ref().map(|path| {
-                StorageConf::File(FileStorage {
-                    path: path.to_path_buf(),
-                    prefix: args.public_file_prefix.clone(),
-                })
-            }),
-            StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                // clap's `required_if_eq` on `public_s3_bucket` guarantees this
-                // is `Some` whenever public_storage == s3.
-                bucket: args
-                    .public_s3_bucket
-                    .as_ref()
-                    .expect("clap-required: public_s3_bucket")
-                    .clone(),
-                prefix: args.public_s3_prefix.clone(),
-            })),
-        },
-        StorageType::PUB,
-        s3_client.clone(),
-    )?;
+    let mut pub_storage = match args.public_storage {
+        StorageCommand::File => StorageProxy::from(FileStorage::new(
+            args.public_file_path.as_deref(),
+            StorageType::PUB,
+            args.public_file_prefix.as_deref(),
+        )?),
+        StorageCommand::S3 => StorageProxy::from(S3Storage::new(
+            // `need_s3_client` covers public_storage == s3, so the client is built above
+            s3_client
+                .clone()
+                .expect("S3 client is built when public_storage == s3"),
+            // clap's `required_if_eq` on `public_s3_bucket` guarantees this
+            // is `Some` whenever public_storage == s3.
+            args.public_s3_bucket
+                .clone()
+                .expect("clap-required: public_s3_bucket"),
+            StorageType::PUB,
+            args.public_s3_prefix.as_deref(),
+        )?),
+    };
     let private_keychain = OptionFuture::from(
         args.root_key_id
             .as_ref()
@@ -286,28 +286,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await
     .transpose()?;
     let mut priv_vault = Vault {
-        storage: make_storage(
-            match args.private_storage {
-                StorageCommand::File => args.private_file_path.as_ref().map(|path| {
-                    StorageConf::File(FileStorage {
-                        path: path.to_path_buf(),
-                        prefix: args.private_file_prefix.clone(),
-                    })
-                }),
-                StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                    // clap's `required_if_eq` on `private_s3_bucket` guarantees
-                    // this is `Some` whenever private_storage == s3.
-                    bucket: args
-                        .private_s3_bucket
-                        .as_ref()
-                        .expect("clap-required: private_s3_bucket")
-                        .clone(),
-                    prefix: args.private_s3_prefix.clone(),
-                })),
-            },
-            StorageType::PRIV,
-            s3_client.clone(),
-        )?,
+        storage: match args.private_storage {
+            StorageCommand::File => StorageProxy::from(FileStorage::new(
+                args.private_file_path.as_deref(),
+                StorageType::PRIV,
+                args.private_file_prefix.as_deref(),
+            )?),
+            StorageCommand::S3 => StorageProxy::from(S3Storage::new(
+                // `need_s3_client` covers private_storage == s3, so the client is built above
+                s3_client
+                    .clone()
+                    .expect("S3 client is built when private_storage == s3"),
+                // clap's `required_if_eq` on `private_s3_bucket` guarantees
+                // this is `Some` whenever private_storage == s3.
+                args.private_s3_bucket
+                    .clone()
+                    .expect("clap-required: private_s3_bucket"),
+                StorageType::PRIV,
+                args.private_s3_prefix.as_deref(),
+            )?),
+        },
         keychain: private_keychain,
     };
 
