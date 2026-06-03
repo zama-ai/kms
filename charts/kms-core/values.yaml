@@ -15,9 +15,9 @@ kmsCore:
   addressOverride:
   # Override the image of the core:
   image:
-    # For enclave deployment: hub.zama.org/ghcr/zama-ai/kms/core-service-enclave
-    # For non-enclave deployment: hub.zama.org/ghcr/zama-ai/kms/core-service
-    name: hub.zama.org/ghcr/zama-ai/kms/core-service
+    # For enclave deployment: hub.zama.org/zama-protocol/zama-ai/kms/core-service-enclave
+    # For non-enclave deployment: hub.zama.org/zama-protocol/zama-ai/kms/core-service
+    name: hub.zama.org/zama-protocol/zama-ai/kms/core-service
     tag: latest
     pullPolicy: Always
   # Define the service account name for the core:
@@ -232,7 +232,7 @@ kmsCoreClient:
   enabled: false
   nameOverride:
   image:
-    name: hub.zama.org/ghcr/zama-ai/kms/core-client
+    name: hub.zama.org/zama-protocol/zama-ai/kms/core-client
     tag: latest
   envFrom:
     configmap:
@@ -279,11 +279,29 @@ kmsGenKeys:
     annotations:
   resources: {}
 
-kubeUtils:
+# Used by kms-gen-keys job
+kubectl:
   image:
-    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
-    tag: v0.4.0
+    # TODO change zama-protocol
+    name: hub.zama.org/cgr/zama.ai/kubectl
+    tag: 1.35-dev
     pullPolicy: Always
+
+# Used by kms-threshold-init job
+grpcHeathProbe:
+  image:
+    # TODO change zama-protocol
+    name: hub.zama.org/cgr/zama.ai/grpc-health-probe
+    tag: v0.4-dev
+    pullPolicy: Always
+
+# Used by enclave proxy sidecars
+socat:
+  image:
+    # TODO change zama-protocol
+    name: hub.zama.org/cgr/zama.ai/socat
+    tag: v1.8.1
+    pullPolicy: IfNotPresent
 
 runMode: dev
 
