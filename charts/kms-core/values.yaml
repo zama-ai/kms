@@ -9,6 +9,9 @@ kmsPeers:
 kmsCore:
   # Add the following to enable the core:
   enabled: true
+  # Static Prometheus const-labels added to every KMS metric, as a `key=value,key=value` list
+  # (e.g. "deployment_profile=kind-ci"), to distinguish deployments. Empty = none. Sets KMS_METRICS_LABELS.
+  metricsLabels: ""
   # Override the name of the core:
   nameOverride:
   # Override the address of the core:

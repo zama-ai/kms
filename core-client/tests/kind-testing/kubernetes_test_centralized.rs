@@ -36,6 +36,13 @@
 //! 2. CLI connects to cluster via config file
 //! 3. Executes commands against real KMS services
 //! 4. Validates responses and behavior
+//!
+//! ## Metrics
+//!
+//! These tests only drive operations; the timing signal is emitted by the long-lived KMS server pod
+//! as Prometheus metrics (e.g. `kms_operation_duration_ms`) and pulled by Prometheus/Grafana — the
+//! ephemeral client is not scraped. In kind-CI every metric is tagged `deployment_profile="kind-ci"`.
+//! To add one, instrument the server path (see `docs/developer/metrics.md`); no metric code goes here.
 
 #![cfg(feature = "kind_tests")]
 

@@ -125,7 +125,13 @@ Track the distribution of values:
   ```rust
   metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64)?;  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
   ```
-NOTE: these are not fully implemented yet!
+NOTE: `observe_size` / `{prefix}_payload_size_bytes` is wired and registered but not yet emitted by
+production code paths — it is ready to use whenever a payload size is worth tracking.
+
+Both histograms use **explicit buckets** tuned to KMS workloads: `kms_operation_duration_ms` spans
+1 ms → 5 min and `kms_payload_size_bytes` spans 1 KiB → 1 GiB. Prometheus' default buckets are
+second-scale (max `10`), so without these every KMS measurement would fall into the `+Inf` bucket and
+`histogram_quantile` (p50/p95) would be meaningless.
 
 ### Gauges
 Track instantaneous values that can increase or decrease:
@@ -180,7 +186,7 @@ use observability::metrics::{CoreMetrics, MetricsConfig};
 // Initialize with custom prefix
 let config = MetricsConfig {
     prefix: "app".to_string(),
-    default_unit: None,
+    ..Default::default()
 };
 let metrics = CoreMetrics::with_config(config)?;
 
@@ -260,6 +266,36 @@ fn handle_request(request: Request) -> Result<(), Error> {
 }
 ```
 
+## Distinguishing Deployments (kind-CI vs production)
+
+Every metric can carry **static labels** that identify the deployment it came from, so a single
+Prometheus/Grafana can tell e.g. kind-CI integration-test metrics apart from production ones.
+
+These labels are read once at startup from the `KMS_METRICS_LABELS` environment variable — a
+comma-separated `key=value` list — and applied as Prometheus *const-labels* to **every** metric. No
+metric call site changes; the distinction is purely a deployment concern.
+
+```bash
+# Mark all metrics from a kind-CI threshold test deployment
+KMS_METRICS_LABELS="deployment_profile=kind-ci,deployment_type=threshold"
+```
+
+```promql
+# In Grafana, scope a query to kind-CI runs only
+histogram_quantile(0.95, sum by (le) (rate(kms_operation_duration_ms{deployment_profile="kind-ci"}[5m])))
+```
+
+Conventions:
+- `deployment_profile=kind-ci` — marks metrics produced by the kind-cluster integration tests.
+- `deployment_type=threshold|centralized` — separates the two kind test matrices.
+- Keep these **low-cardinality**. A per-run id (`ci_run_id`) is acceptable for ephemeral kind
+  clusters but should not be used in long-lived production deployments.
+
+In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
+env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`
+sets `deployment_profile=kind-ci`. Malformed or invalidly-named entries are skipped with a warning, so
+a typo never takes the server down. Unset/empty means no extra labels — the default for production.
+
 ## Best Practices
 
 ### 1. Operation Naming
@@ -321,6 +357,35 @@ When adding new metrics:
    ```
 
 This ensures consistency and maintainability of the metrics system across the codebase.
+
+### New operations vs new metric families
+
+Adding a **new operation** to an existing metric family is the common, cheap case — just add a
+constant and instrument the code path:
+
+```rust
+// metrics_names.rs
+pub const OP_MY_OPERATION: &str = "my_operation";
+
+// in the server path the operation runs on (RAII guard records on drop)
+let _timer = METRICS
+    .time_operation(OP_MY_OPERATION)
+    .tag(TAG_PARTY_ID, my_role.to_string())
+    .start();                          // kms_operation_duration_ms{operation_type="my_operation",...}
+```
+
+This reuses the existing `kms_operation_duration_ms` / `kms_operations_total` /
+`kms_payload_size_bytes` families, so the low-cardinality guard and the
+`metric_families_match_allowlist` test need **no changes**. Adding a **brand-new metric family** (a
+new metric name) additionally requires registering it in `CoreMetrics` and extending the
+`metric_families_match_allowlist` allowlist.
+
+**For kind integration tests:** metrics are produced by the long-lived KMS server (which Prometheus
+scrapes), *driven* by the operations a test triggers — not by the ephemeral test client, which cannot
+be scraped. To add a custom metric for a future kind test, instrument the server path it exercises as
+above; the `deployment_profile=kind-ci` label (see "Distinguishing Deployments") is applied
+automatically by the kind deployment, so the new metric is immediately distinguishable as a kind-test
+metric with no extra code in the test itself.
 
 ## Testing
 

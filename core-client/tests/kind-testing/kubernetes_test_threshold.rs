@@ -40,6 +40,13 @@
 //! 4. **CLI-to-Pod**: Plain gRPC via kubectl port-forward (secure tunnel)
 //!
 //! The test validates MPC operations work correctly over TLS-secured channels.
+//!
+//! ## Metrics
+//!
+//! These tests only drive operations; the timing signal is emitted by the long-lived KMS server pods
+//! as Prometheus metrics (e.g. `kms_operation_duration_ms`) and pulled by Prometheus/Grafana — the
+//! ephemeral client is not scraped. In kind-CI every metric is tagged `deployment_profile="kind-ci"`.
+//! To add one, instrument the server path (see `docs/developer/metrics.md`); no metric code goes here.
 
 #![cfg(feature = "kind_tests")]
 
