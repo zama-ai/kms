@@ -24,7 +24,8 @@ const DURATION_BUCKETS_MS: &[f64] = &[
     60_000.0, 120_000.0, 300_000.0,
 ];
 
-/// Buckets (bytes) for `kms_payload_size_bytes`, from small ciphertexts to large key/CRS payloads.
+/// Buckets (bytes) for `kms_payload_size_bytes`, from small ciphertexts up to the
+/// multi-GiB FHE key/keyset payloads written during keygen (top buckets 4/16/64 GiB).
 const SIZE_BUCKETS_BYTES: &[f64] = &[
     1_024.0,
     16_384.0,
@@ -36,6 +37,9 @@ const SIZE_BUCKETS_BYTES: &[f64] = &[
     67_108_864.0,
     268_435_456.0,
     1_073_741_824.0,
+    4_294_967_296.0,
+    17_179_869_184.0,
+    68_719_476_736.0,
 ];
 
 /// Core metrics for tracking KMS operations

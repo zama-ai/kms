@@ -149,6 +149,10 @@ impl S3Storage {
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
+        // Record the serialized payload size, labeled by type name, so key/keyset
+        // write sizes are observable in kind-testing telemetry (kms_payload_size_bytes).
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, buf.len() as f64);
+
         s3_put_blob(&self.s3_client, &self.bucket, key, buf.clone()).await?;
 
         Ok(())
