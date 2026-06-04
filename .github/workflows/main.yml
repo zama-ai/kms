@@ -40,19 +40,29 @@ jobs:
       pull-requests: read # Required to read pull request information
     runs-on: ubuntu-latest
     outputs:
-      # Each output indicates if files in a specific component were modified
+      # Each output indicates if files in a specific component were modified.
+      # Only outputs consumed by jobs in *this* workflow are exported here.
+      # NOTE: the per-package test matrix in `parallel-testing.yml` does NOT
+      # consume these outputs - it currently runs unconditionally (no change
+      # filter) so every PR exercises and warms the shared rust cache. Wire a
+      # filter back in once the caching approach is validated.
       changes-ci: ${{ steps.filter.outputs.ci }}
-      changes-core-client: ${{ steps.filter.outputs.core-client }}
       changes-core-client-nightly-tests: ${{ steps.filter.outputs.core-client-nightly-tests }}
-      changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
-      changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
       changes-workspace-crates: ${{ steps.filter.outputs.workspace-crates }}
-      changes-tools: ${{ steps.filter.outputs.tools }}
       changes-docs: ${{ steps.filter.outputs.docs }}
-      changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: |
+          echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf
+          if lsmod | grep -q algif_aead; then
+            sudo rmmod algif_aead || echo "WARNING: rmmod failed - module may be in use"
+          elif modinfo algif_aead 2>/dev/null | grep -q builtin; then
+            echo "WARNING: algif_aead built-in - modprobe.d blacklist has no effect"
+          fi
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: true
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
@@ -64,25 +74,9 @@ jobs:
             ci:
               - '.github/workflows/**'
               - 'rust-toolchain.toml'
-            core-client:
-              - 'core-client/src/**'
-              - 'core-client/config/**'
-              - 'core-client/tests/**'
-              - 'core-client/tests-utils/**'
-              - 'core-client/test-utils-cc/**'
-              - 'observability/**'
-              - 'core/thread-handles/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
             core-client-nightly-tests:
               - 'core-client/tests/kind-testing/**'
               - 'core-client/tests/integration/**'
-            core-grpc:
-              - 'core/grpc/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
             core-service:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
@@ -91,19 +85,6 @@ jobs:
               - 'core/test-utils/**'
               - 'core/thread-handles/**'
               - 'observability/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-            core-threshold:
-              - 'core/experiments/**'
-              - 'core/threshold-*/**'
-              - 'core/thread-handles/**'
-              - 'observability/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-            tools:
-              - 'tools/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -122,8 +103,24 @@ jobs:
               - 'rust-toolchain.toml'
             docs:
               - 'docs/**'
-            helm-chart:
-              - 'charts/**'
+
+  ############################################################################
+  # Parallel testing pipeline
+  # Runs UNCONDITIONALLY on every PR/push (no change filter, no `needs`): this
+  # is intentional while we validate the shared rust cache, so every run
+  # exercises and warms it. Tighten with a change filter once that's settled.
+  ############################################################################
+  parallel-testing:
+    name: main/parallel-testing
+    uses: ./.github/workflows/parallel-testing.yml
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    secrets: inherit
 
   ############################################################################
   # Docker build pipeline
@@ -144,60 +141,6 @@ jobs:
     secrets: inherit
 
   ############################################################################
-  # Helm chart pipeline
-  # Triggered by:
-  # - Changes to charts/**
-  ############################################################################
-  test-helm-chart:
-    name:
-      main/test-helm-chart
-      # job permissions
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
-      id-token: write # Required for OIDC token generation
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' ||
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
-    uses: ./.github/workflows/helm-test.yml
-
-  lint-helm-chart:
-    name:
-      main/lint-helm-chart
-      # job permissions
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
-      id-token: write # Required for OIDC token generation
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' ||
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
-    uses: ./.github/workflows/helm-lint.yml
-
-  release-helm-chart:
-    name: main/release-helm-chart
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
-      id-token: write # Required for OIDC token generation
-      packages: write # Required to publish packages
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' && github.event_name != 'pull_request' &&
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
-    uses: ./.github/workflows/helm-release.yml
-
-  ############################################################################
   # KMS Local Docs Link Check
   # Triggered by changes to docs/** (and every push to main).
   ############################################################################
@@ -213,100 +156,25 @@ jobs:
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     container:
-      image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
+      image: python:3.14-slim-bookworm@sha256:a9bee15510a364124aa24692899d269835683b883de42f7ebec8c293cf679ccb
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+      - name: Install safe-chain
+# Safe-chain proxies npm and python package installs and checks for malware. Defense against supply-chain attacks.
+        run: curl -fsSL https://github.com/AikidoSec/safe-chain/releases/download/1.5.3/install-safe-chain.sh | sh -s -- --ci
       - run: python3 -m pip install linkcheckmd
       - name: Check dead-link
         run: python3 ci/scripts/local_docs_link_check.py
 
   ############################################################################
-  # Core Client Pipeline
-  # Triggered by changes to core-client/**, core-service/**, core-threshold/**,
-  # core-grpc/**, tools/**, .github/workflows/**, or pushes to main.
+  # Core Client nightly pipeline
+  # Note: regular per-partition core-client/core-service/core-grpc/core-threshold
+  # test jobs live in `.github/workflows/parallel-testing.yml` (see the `test-matrix`
+  # job in that file). This workflow only keeps the schedule-driven nightly
+  # job for `kms-core-client`.
   ############################################################################
-  # Prepares test matrix for core-client integration tests
-  # Splits tests into two parallel jobs: threshold and centralized
-  # Features required: threshold_tests (for PRSS tests), testing (for test helpers)
-  prepare-core-client-matrix:
-    name: main/prepare-core-client-matrix
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      # PR matrix has two disjoint entries:
-      #   threshold   : threshold-named tests (skip full_gen_tests, nightly,
-      #                 k8s_, centralized, isolated_test_example, and the
-      #                 docker-tls test).
-      #   centralized : centralized-named tests (skip the same nightly/k8s
-      #                 family plus threshold).
-      # The docker-tls test runs in its own dedicated job — skip it here.
-      - name: Set matrix
-        id: set-matrix
-        run: |
-          MATRIX_JSON=$(jq -nc '{
-            include: [
-              { "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker" },
-              { "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example" }
-            ]
-          }')
-          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
-          echo "matrix=$MATRIX_JSON"
-
-  # Core client integration tests - Native execution (no Docker)
-  # Runs integration tests split across threshold and centralized jobs
-  # Uses pre-generated test material and isolated temporary directories
-  test-core-client:
-    name: main/test-core-client
-    # job permissions
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs:
-      - prepare-core-client-matrix
-      - check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
-    strategy:
-      matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      crate-names: '-p kms-core-client'
-      args-tests: ${{ matrix.args-tests }}
-      nextest-test-threads: "6"
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '64cpu-linux-x64'
-    secrets: inherit
-
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests).
   # Triggered by scheduled runs, or by PRs touching core-client/tests/{kind-testing,integration}/**.
   test-core-client-nightly:
@@ -336,371 +204,6 @@ jobs:
       nextest-profile: 'ci-nightly'
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
-    secrets: inherit
-
-  # Docker-Compose integration test. Exercises mTLS + certificate-store reload
-  # when the MPC context changes (the test brings up a 6-party cluster via
-  # docker compose). Free-standing job — does not go through common-testing.yml
-  # because it doesn't need the test-material/btrfs/minio plumbing.
-  test-core-client-docker-tls:
-    name: main/test-core-client-docker-tls
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
-    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-    timeout-minutes: 150
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_INCREMENTAL: 0
-      DOCKER_BUILDKIT: 1
-      DOCKER_BUILD_TEST_CORE_CLIENT: 1
-    steps:
-      - name: Setup Runs-on
-        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
-        with:
-          metrics: cpu,network,memory,disk,io
-
-      - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          persist-credentials: false
-
-      - name: Get Rust version
-        env:
-          GH_WORKSPACE: ${{ github.workspace }}
-        run: |
-          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
-          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Login to GitHub Container Registry
-        uses: ./.github/actions/docker-login
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Chainguard Container Registry
-        uses: ./.github/actions/docker-login
-        with:
-          registry: cgr.dev
-          username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env]
-          password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env]
-
-      - name: Set up Docker Buildx
-        uses: ./.github/actions/docker-setup-buildx
-
-      - name: Set up Rust and Protoc
-        uses: ./.github/actions/setup-rust-and-protoc
-        with:
-          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          rust-components: llvm-tools-preview, llvm-tools
-          rust-cache: "false"
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2  # zizmor: ignore[cache-poisoning]
-        with:
-          save-if: false
-
-      - name: Install nextest
-        run: cargo install cargo-nextest@0.9.133 --locked --force
-
-      - name: Run TLS-over-Docker integration test
-        run: |
-          echo "EXECUTING: env RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast -p kms-core-client --features threshold_tests --test integration_test -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'"
-          env RUST_BACKTRACE=full cargo nextest run \
-            --profile ci \
-            --no-fail-fast \
-            -p kms-core-client \
-            --features threshold_tests \
-            --test integration_test \
-            -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'
-
-  # Core client unit tests. Integration filters below skip everything that
-  # consumes kms test material, so `skip-test-material: true` is safe.
-  test-core-client-unit:
-    name: main/test-core-client-unit
-    # job permissions
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: needs.check-changes.outputs.changes-core-client == 'true'
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      crate-names: '-p kms-core-client'
-      skip-test-material: true
-      # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
-      # Also skip isolated_test_example which requires pre-generated test material
-      # Must include features to compile test code that uses feature-gated functions
-      args-tests: '--features testing -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '64cpu-linux-x64'
-    secrets: inherit
-
-  ############################################################################
-  # GRPC Testing
-  # Triggered by changes to core/grpc/** (and Cargo lockfile / toolchain).
-  ############################################################################
-  # kms-grpc tests don't consume kms test material.
-  test-grpc:
-    name: main/test-grpc
-    # job permissions
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      args-tests: '--all-features'
-      crate-names: '-p kms-grpc'
-      skip-test-material: true
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '32cpu-linux-x64'
-    secrets: inherit
-
-  ############################################################################
-  # Core Service Pipeline
-  # Triggered by changes to core/service/**, core/grpc/**, core/threshold-*/**,
-  # core/test-utils/**, core/thread-handles/**, observability/**,
-  # backward-compatibility/**, .github/workflows/**, or pushes to main.
-  # Two stages: matrix preparation, then test execution.
-  ############################################################################
-
-  # Prepares test matrix with different configurations:
-  # - For scheduled runs: Runs comprehensive nightly tests in release mode
-  # - For other events: Runs multiple test suites in parallel with specific features
-  prepare-matrix:
-    name: main/prepare-matrix
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    env:
-      EVENT_NAME: ${{ github.event_name }}
-    steps:
-      # TODO(dp): this is very problematic. We can't live with this manual feature-juggling
-      # long-term. We need a cleaner split that is maintainable long term. The below split
-      # is the outcome of custom-tooling running `cargo nextest list` for all jobs in the pipeline
-      # and then comparing the lists looking for dupes. Not ok.
-      #
-      # PR matrix has two disjoint entries:
-      #   entry 1: kind(lib), --skip nightly  → all kms lib tests minus nightly-named.
-      #   entry 2: kind(test), --skip threshold --skip nightly  → integration tests
-      #     not matching threshold/nightly. Threshold-named integration tests
-      #     run in `test-core-service-slow-threshold`. Nightly-named tests run
-      #     in the schedule entry below.
-      # Schedule entry runs everything name-matching `nightly` in --release.
-      - name: Set matrix
-        id: set-matrix
-        run: |
-          if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            MATRIX_JSON=$(jq -nc '{
-              include: [
-                { "args-tests": "--release -F slow_tests -F s3_tests -F insecure nightly" }
-              ]
-            }')
-          else
-            MATRIX_JSON=$(jq -nc '{
-              include: [
-                { "args-tests": "-F slow_tests -F s3_tests -F insecure --lib -- --skip nightly" },
-                { "args-tests": "-E kind(test) -F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly" }
-              ]
-            }')
-          fi
-          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
-          echo "matrix=$MATRIX_JSON"
-
-  # Runs core service tests based on the matrix configuration
-  # Uses big instance for better performance and includes:
-  # - MinIO for object storage testing
-  # - WASM runtime for WebAssembly tests
-  test-core-service:
-    name: main/test-core-service
-    # job permissions
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs:
-      - check-changes
-      - prepare-matrix
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
-    strategy:
-      matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      args-tests: ${{ matrix.args-tests }}
-      run-minio: true
-      crate-names: '-p kms'
-      runner-volume: '400gb'
-      rust-log-level: 'info'
-      lfs: true  # backward_compatibility_*.rs tests need the LFS fixtures
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '64cpu-linux-x64'
-      # 6-way at 50.9min total (vs 57.4min at 4-way). Floor is the slowest
-      # test (`test_new_epoch_with_reshare`, ~13min), so going past 6 is
-      # diminishing returns.
-      nextest-test-threads: "6"
-    secrets: inherit
-
-  # threshold-flavored tests with `slow_tests`.
-  test-core-service-slow-threshold:
-    name: main/test-core-service-slow-threshold
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      args-tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
-      run-minio: true
-      crate-names: '-p kms'
-      runner-volume: '400gb'
-      rust-log-level: 'info'
-      runs-on: '64cpu-linux-x64'
-      nextest-test-threads: "10"
-      lfs: true  # picks up backward_compatibility_threshold_fhe via the `threshold` filter
-    secrets: inherit
-
-  ############################################################################
-  # Core Threshold Pipeline
-  #
-  # Runs `experiments` lib tests. `experiments` doesn't consume kms test
-  # material. Triggered by changes to core/experiments/**, tools/**, this
-  # workflow, or pushes to main. (`slow_tests` for the threshold stack lives
-  # on `threshold-bgv` and is covered by
-  # `test-workspace-crates::crates-heavy-2`.)
-  ############################################################################
-  test-core-threshold:
-    name: main/test-core-threshold
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      # `experiments` lib tests use rayon internally, so each test uses more threads.
-      # Cap nextest parallelism at 4 on a 32-core runner.
-      args-tests: '--lib'
-      crate-names: '-p experiments'
-      nextest-test-threads: 4
-      skip-test-material: true
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '32cpu-linux-x64'
-    secrets: inherit
-
-  ############################################################################
-  # `experiments::integration_redis` is the only redis-touching test in the
-  # workspace; it needs the redis sidecar from `common-testing.yml`.
-  # Tests use `FLUSHALL`, so they must run sequentially (--test-threads 1).
-  #
-  ############################################################################
-  test-core-threshold-redis:
-    name: main/test-core-threshold-redis
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      args-tests: '--test integration_redis'
-      crate-names: '-p experiments'
-      run-redis: true
-      # Tests use `FLUSHALL`, so they must run sequentially.
-      nextest-test-threads: 1
-      skip-test-material: true
-      runs-on: '8cpu-linux-x64'
     secrets: inherit
 
   ############################################################################
@@ -738,48 +241,72 @@ jobs:
           # `*/slow_tests`, which is a *superset* of the default test set.
           - group: crates-normies
             crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
+            features: ''
+            partition: ''
             threads: ''
             runs-on: '64cpu-linux-x64'
 
           # Slow/heavy tests, 1/2. Big iron, lots of RAM.
-          - group: crates-heavy-1
+          # threshold-execution slow_tests, 3-way partitioned (~16min each).
+          - group: crates-heavy-1-p1
             crates: '-p threshold-execution'
             features: '-F threshold-execution/slow_tests'
-            # Cap parallelism: slow_tests are RAM-heavy. Empirical: 4 worked
-            # at ~89min; trying 8 to halve wall-clock. Back off if OOM.
+            partition: '--partition count:1/3'
+            threads: '8'
+            runs-on: '64cpu-linux-x64'
+          - group: crates-heavy-1-p2
+            crates: '-p threshold-execution'
+            features: '-F threshold-execution/slow_tests'
+            partition: '--partition count:2/3'
+            threads: '8'
+            runs-on: '64cpu-linux-x64'
+          - group: crates-heavy-1-p3
+            crates: '-p threshold-execution'
+            features: '-F threshold-execution/slow_tests'
+            partition: '--partition count:3/3'
             threads: '8'
             runs-on: '64cpu-linux-x64'
 
           # Slow/heavy tests, 2/2. Big iron, lots of RAM.
           # The `threshold-bgv` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
           # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
-          - group: crates-heavy-2
-            crates: '-p threshold-bgv -p threshold-networking'
+          - group: crates-heavy-2-fast
+            crates: '-p threshold-bgv'
             features: '-F threshold-bgv/slow_tests'
+            partition: '-- --skip test_dkg_with_offline --skip test_dkg_dummy_preproc'
             threads: '8'
+            runs-on: '64cpu-linux-x64'
+          # threshold-bgv DKG tests (~30min, NOT required for PR merge —
+          # update branch protection to drop this from required checks).
+          - group: crates-heavy-2-dkg
+            crates: '-p threshold-bgv'
+            features: '-F threshold-bgv/slow_tests'
+            # No spaces/quotes: args-tests is forwarded via unquoted word-splitting,
+            # so the whole filterset must be a single shell token (`+` = union).
+            partition: '-E test(/test_dkg_with_offline/)+test(/test_dkg_dummy_preproc/)'
+            threads: '2'
             runs-on: '64cpu-linux-x64'
     uses: ./.github/workflows/common-testing.yml
     with:
       # --no-tests=pass: no tests is not an error, but to nexttest it is and this is the fix.
-      args-tests: '--no-tests=pass ${{ matrix.features }}'
+      # matrix.partition carries per-group nextest args (e.g. `--partition count:1/3`,
+      # `-E '...'`, or `-- --skip ...`); it must be forwarded or every job runs the full suite.
+      args-tests: '--no-tests=pass ${{ matrix.features }} ${{ matrix.partition }}'
       crate-names: ${{ matrix.crates }}
       nextest-test-threads: ${{ matrix.threads }}
       skip-test-material: true
       runs-on: ${{ matrix.runs-on }}
 
-  # Test reporting job that runs after all tests complete
-  # Only runs on pull requests to generate test reports
+  # Test reporting job that runs after all tests complete.
+  # Only runs on pull requests to generate test reports.
+  # Note: per-package test jobs that moved to `parallel-testing.yml` are reported by
+  # that workflow's own `test-reporter` job. This reporter only covers the
+  # jobs that still live in this workflow.
   test-reporter:
     name: main/test-reporter
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs:
-      - test-core-client
-      - test-core-client-unit
-      - test-grpc
-      - test-core-service
-      - test-core-service-slow-threshold
-      - test-core-threshold
-      - test-core-threshold-redis
+      - test-core-client-nightly
       - test-workspace-crates
       - test-wasm
     uses: ./.github/workflows/test-reporter.yml
@@ -812,88 +339,3 @@ jobs:
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/wasm-testing.yml
     secrets: inherit
-
-  ############################################################################
-  # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
-  #██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗██╔════╝██╔══██╗
-  #███████║██████╔╝██║  ███╗██║   ██║██║     ██║  ██║
-  #██╔══██║██╔══██╗██║   ██║██║   ██║██║     ██║  ██║
-  #██║  ██║██║  ██║╚██████╔╝╚██████╔╝╚██████╗██████╔╝
-  #╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝  ╚═════╝╚═════╝
-  ############################################################################
-  # Updates ArgoCD staging environment
-  # Only runs during scheduled workflow (nightly builds)
-  # Deploys to kms-threshold-staging namespace
-  ############################################################################
-  # update-kms-core-client-argocd-staging:
-  #   name: main/update-kms-core-client-argocd-staging
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-client
-  #     - docker-core-client
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCoreClient'
-  #     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-
-  # update-kms-core-argocd-staging:
-  #   name: main/update-kms-core-argocd-staging
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-service
-  #     - docker-core-service
-  #     - docker-nitro-enclave
-  #     - update-kms-core-client-argocd-staging-with-enclave
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCore'
-  #     image-tag: ${{ needs.docker-core-service.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-
-  # update-kms-core-client-argocd-staging-with-enclave:
-  #   name: main/update-kms-core-client-argocd-staging-with-enclave
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-client
-  #     - docker-core-client
-  #     - update-kms-core-client-argocd-staging
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-enclave-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCoreClient'
-  #     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-
-  # update-kms-core-argocd-staging-with-enclave:
-  #   name: main/update-kms-core-argocd-staging-with-enclave
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-service
-  #     - docker-core-service
-  #     - docker-nitro-enclave
-  #     - update-kms-core-argocd-staging
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-enclave-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCore'
-  #     enclave-deployment: true
-  #     enclave-pcr0: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr0 }}
-  #     enclave-pcr1: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr1 }}
-  #     enclave-pcr2: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr2 }}
-  #     image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}

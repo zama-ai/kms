@@ -22,13 +22,13 @@ pub mod awskms;
 pub mod secretsharing;
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum AppKeyBlobVersioned {
+pub enum AppKeyBlobVersions {
     V0(AppKeyBlob),
 }
 
 /// Container type for encrypted application keys (such as FHE private keys)
 #[derive(Serialize, Deserialize, Versionize, PartialEq, Debug, Clone)]
-#[versionize(AppKeyBlobVersioned)]
+#[versionize(AppKeyBlobVersions)]
 pub struct AppKeyBlob {
     pub root_key_id: String,
     pub data_key_blob: Vec<u8>,
@@ -184,6 +184,11 @@ pub fn encrypt_under_data_key(
 ) -> anyhow::Result<Vec<u8>> {
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    if iv.len() != 12 {
+        return Err(anyhow_error_and_log(
+            "Invalid IV length: must be exactly 96 bits for AES-256-GCM-SIV",
+        ));
+    }
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
@@ -202,6 +207,16 @@ pub fn decrypt_under_data_key(
     #[allow(deprecated)]
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    if iv.len() != 12 {
+        return Err(anyhow_error_and_log(
+            "Invalid IV length: must be exactly 96 bits for AES-256-GCM-SIV",
+        ));
+    }
+    if auth_tag.len() != 16 {
+        return Err(anyhow_error_and_log(
+            "Invalid auth tag length: must be exactly 128 bits for AES-256-GCM-SIV",
+        ));
+    }
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     cipher
@@ -215,10 +230,139 @@ pub mod tests {
     use super::{
         RootKeyMeasurements,
         awskms::{canonicalize_iam_policy, make_root_key_policy},
-        verify_root_key_measurements,
+        decrypt_under_data_key, encrypt_under_data_key, verify_root_key_measurements,
     };
     use iam_rs::{IAMPolicy, IAMVersion};
     use threshold_networking::tls::ReleasePCRValues;
+
+    /// Sunshine test: a plaintext encrypted with a valid 32-byte key and
+    /// 12-byte IV must decrypt back to the original bytes.
+    #[test]
+    fn test_encrypt_decrypt_under_data_key_roundtrip() {
+        let key = [0x42u8; 32];
+        let iv = [0xABu8; 12];
+        let plaintext = b"hello world, this is a secret payload".to_vec();
+
+        let mut buf = plaintext.clone();
+        let auth_tag = encrypt_under_data_key(&mut buf, &key, &iv)
+            .expect("encryption should succeed with a 32-byte key and 12-byte IV");
+        assert_ne!(buf, plaintext, "ciphertext must differ from plaintext");
+
+        decrypt_under_data_key(&mut buf, &key, &iv, &auth_tag)
+            .expect("decryption should succeed with the same key, IV and auth tag");
+        assert_eq!(buf, plaintext, "decrypted bytes must match the plaintext");
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_empty_plaintext() {
+        let key = [0x42u8; 32];
+        let iv = [0xABu8; 12];
+        let mut buf: Vec<u8> = Vec::new();
+
+        let auth_tag = encrypt_under_data_key(&mut buf, &key, &iv)
+            .expect("encryption should succeed on empty plaintext");
+        assert!(
+            buf.is_empty(),
+            "ciphertext of empty plaintext must also be empty"
+        );
+        assert_eq!(auth_tag.len(), 16, "auth tag must be 128 bits");
+
+        decrypt_under_data_key(&mut buf, &key, &iv, &auth_tag)
+            .expect("decryption should succeed on empty ciphertext with valid auth tag");
+        assert!(
+            buf.is_empty(),
+            "decrypted empty ciphertext must remain empty"
+        );
+    }
+
+    #[test]
+    fn test_encrypt_same_plaintext() {
+        let key = [0x42u8; 32];
+        let iv1 = [0xAAu8; 12];
+        let iv2 = [0xBBu8; 12];
+        let plaintext = b"identical payload encrypted twice".to_vec();
+
+        let mut buf1 = plaintext.clone();
+        let tag_1 = encrypt_under_data_key(&mut buf1, &key, &iv1).expect("encryption must succeed");
+        let mut buf2 = plaintext.clone();
+        let tag_2 = encrypt_under_data_key(&mut buf2, &key, &iv2).expect("encryption must succeed");
+
+        assert_ne!(
+            buf1, buf2,
+            "ciphertexts under distinct IVs must not be identical"
+        );
+        // Tag will also be different
+        assert_ne!(
+            tag_1, tag_2,
+            "auth tags should be different under distinct IVs"
+        );
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_rejects_swapped_key_and_iv() {
+        let key = [0x42u8; 32];
+        let iv = [0xABu8; 12];
+        let mut buf = b"some payload".to_vec();
+
+        // Pass IV (12 bytes) as the key: must fail the key length check.
+        let err = encrypt_under_data_key(&mut buf, &iv, &key)
+            .expect_err("encryption must reject swapped key and IV");
+        assert!(
+            err.to_string().contains("data key length"),
+            "error should mention data key length, got: {err}"
+        );
+
+        // Same on the decryption path.
+        let auth_tag = vec![0u8; 16];
+        let err = decrypt_under_data_key(&mut buf, &iv, &key, &auth_tag)
+            .expect_err("decryption must reject swapped key and IV");
+        assert!(
+            err.to_string().contains("data key length"),
+            "error should mention data key length, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_decrypt_rejects_bitflipped_ciphertext() {
+        let key = [0x42u8; 32];
+        let iv = [0xABu8; 12];
+        let plaintext = b"sensitive payload that must not be tampered with".to_vec();
+
+        let mut buf = plaintext.clone();
+        let auth_tag =
+            encrypt_under_data_key(&mut buf, &key, &iv).expect("encryption must succeed");
+
+        // Flip a single bit in the first ciphertext byte.
+        buf[0] ^= 0x01;
+
+        let err = decrypt_under_data_key(&mut buf, &key, &iv, &auth_tag)
+            .expect_err("decryption of tampered ciphertext must fail the auth tag check");
+        assert!(
+            !err.to_string().is_empty(),
+            "must surface a decryption error, got empty message"
+        );
+        assert_ne!(
+            buf, plaintext,
+            "tampered ciphertext must not decrypt back to the original plaintext"
+        );
+    }
+
+    #[test]
+    fn test_encrypt_under_data_key_rejects_invalid_iv() {
+        let key = [0u8; 32];
+        let invalid_iv_lens = (0..12).chain([13usize, 16, 24, 32, 64]);
+        for iv_len in invalid_iv_lens {
+            let iv = vec![0u8; iv_len];
+            let mut buf = b"some payload".to_vec();
+            let err = encrypt_under_data_key(&mut buf, &key, &iv).expect_err(&format!(
+                "encryption should reject an IV of length {iv_len}"
+            ));
+            assert!(
+                err.to_string().contains("IV length"),
+                "error should mention IV length, got: {err}"
+            );
+        }
+    }
 
     #[test]
     fn test_verify_root_key_measurements() {

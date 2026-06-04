@@ -1378,31 +1378,26 @@ mod tests {
         test_large_threshold_decrypt::<4>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f3() {
         test_large_threshold_decrypt::<3>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f5() {
         test_large_threshold_decrypt::<5>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f6() {
         test_large_threshold_decrypt::<6>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f7() {
         test_large_threshold_decrypt::<7>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f8() {
         test_large_threshold_decrypt::<8>(1, 5, HashSet::new()).await
@@ -1470,31 +1465,26 @@ mod tests {
         test_small_threshold_decrypt::<4>(1, 4, HashSet::from([Role::indexed_from_zero(1)])).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f3() {
         test_small_threshold_decrypt::<3>(1, 4, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f5() {
         test_small_threshold_decrypt::<5>(1, 4, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f6() {
         test_small_threshold_decrypt::<6>(1, 4, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f7() {
         test_small_threshold_decrypt::<7>(1, 4, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f8() {
         test_small_threshold_decrypt::<8>(1, 4, HashSet::new()).await
@@ -1557,31 +1547,26 @@ mod tests {
         test_small_bitdec_threshold_decrypt::<4>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f3() {
         test_small_bitdec_threshold_decrypt::<3>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f5() {
         test_small_bitdec_threshold_decrypt::<5>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f6() {
         test_small_bitdec_threshold_decrypt::<6>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f7() {
         test_small_bitdec_threshold_decrypt::<7>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f8() {
         test_small_bitdec_threshold_decrypt::<8>(1, 5, HashSet::new()).await
@@ -1660,31 +1645,26 @@ mod tests {
         test_large_bitdec_threshold_decrypt::<4>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f3() {
         test_large_bitdec_threshold_decrypt::<3>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f5() {
         test_large_bitdec_threshold_decrypt::<5>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f6() {
         test_large_bitdec_threshold_decrypt::<6>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f7() {
         test_large_bitdec_threshold_decrypt::<7>(1, 5, HashSet::new()).await
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f8() {
         test_large_bitdec_threshold_decrypt::<8>(1, 5, HashSet::new()).await

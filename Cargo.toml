@@ -29,6 +29,7 @@ members = [
 # backward-compatibility/generate-v0.13.0 - Data generation for v0.13.0 with old KMS version dependencies
 # backward-compatibility/generate-v0.13.10 - Data generation for v0.13.10 with old KMS version dependencies
 # backward-compatibility/generate-v0.13.20 - Data generation for v0.13.20 with old KMS version dependencies
+# backward-compatibility/generate-v0.14.0 - Data generation for v0.14.0 with old KMS version dependencies
 #
 # The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
 # current workspace dependencies, creating name conflicts as described in:
@@ -37,14 +38,14 @@ members = [
 # Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0", "backward-compatibility/generate-v0.13.10", "backward-compatibility/generate-v0.13.20"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0", "backward-compatibility/generate-v0.13.10", "backward-compatibility/generate-v0.13.20", "backward-compatibility/generate-v0.14.0"]
 
 [workspace.package]
 authors = ["Zama"]
 publish = true
 edition = "2024"
 license = "BSD-3-Clause-Clear"
-version = "0.13.20-0"
+version = "0.14.0-0"
 repository = "https://github.com/zama-ai/kms"
 description = "Key Management System for the Zama Protocol."
 
@@ -109,14 +110,14 @@ async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }  # Asyn
 async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
 async_cell = "0.2.2"  # Async cell implementation - HIGH RISK: Individual maintainer, very low popularity
 attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted
-aws-config = { version = "=1.8.12" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
-aws-lc-rs = { version = "=1.16.2" } # AWS-LC dependency pinned because of an earlier version vulnerability - LOW RISK: Official AWS SDK
+aws-config = { version = "=1.8.17" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
+aws-lc-rs = { version = "=1.16.3" } # AWS-LC cryptographic library - LOW RISK: Official AWS SDK
 aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
 aws-sdk-kms = { version = "=1.98.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
 aws-sdk-s3 = { version = "=1.120.0" }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-smithy-runtime = { version = "=1.10.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
-aws-smithy-runtime-api = { version = "=1.11.6" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
-aws-smithy-types = { version = "=1.4.6" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
+aws-smithy-runtime = { version = "=1.11.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
+aws-smithy-runtime-api = { version = "=1.12.1" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
+aws-smithy-types = { version = "=1.4.8" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.8", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
@@ -124,6 +125,7 @@ backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual mai
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.2", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
 bytes = "=1.11.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
+cargo_metadata = "=0.23.1"  # Workspace metadata extraction - LOW RISK: oli-obk (rust-lang member) + community, 60M+ downloads, test-only dependency
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
 cfg-if = "=1.0.4"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.47", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
@@ -151,7 +153,6 @@ k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ do
 minijinja = { version = "=2.11.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
 ml-kem = { version = "=0.2.2", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
-ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
@@ -170,7 +171,7 @@ proc-macro2 = "=1.0.101"  # Proc macro utilities - MEDIUM RISK: Reputable indivi
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
 proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintainers (AltSysrq, Centril), test-only dependency
 prost = "=0.14.3"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
-quote = "=1.0.40"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
+quote = "=1.0.45"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.5"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
 rasn = "=0.28.11"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
 rasn-cms = "=0.28.11"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
@@ -195,10 +196,11 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.6.1"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.9.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
-tfhe-versionable = "=0.7.0"  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = "=0.8.1"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+# NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
+tfhe = "=1.6.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.9.1"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-versionable = "=0.8.0"  # TFHE versioning support - LOW RISK: Zama
+tfhe-zk-pok = "=0.8.2"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
@@ -220,6 +222,7 @@ typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maint
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
 validator = { version = "=0.20.0", features = ["derive"] }  # Struct validation - HIGH RISK: Individual maintainer (Keats), less active maintenance
+walkdir = "=2.5.0"  # Recursive directory walking - LOW RISK: BurntSushi, 250M+ downloads, test-only dependency
 wasm-bindgen = { version = "=0.2.114", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
 x509-parser = { version = "=0.18.0", features = ["verify-aws"] }  # X.509 certificate parsing - LOW RISK: rusticata team
 zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }  # Secure memory wiping - LOW RISK: RustCrypto org, critical for key management
@@ -233,7 +236,7 @@ panic = 'abort'
 
 [profile.dev.package."*"]
 # Set the default for dependencies in Development mode.
-opt-level = 3
+opt-level = 1
 
 [profile.dev]
 # Turn on a small amount of optimization in Development mode.
@@ -252,7 +255,7 @@ split-debuginfo = "unpacked"
 debug = "line-tables-only"
 
 [profile.bench]
-debug = true
+debug = "line-tables-only"
 
 # actual release profile
 [profile.release]
@@ -260,10 +263,16 @@ debug = true
 lto = "fat"
 
 # profile for testing and CI
+[profile.release-lto-thin]
+# use release profile settings
+inherits = "release"
+# but set LTO to the default (thin instead of fat)
+lto = "thin"
+
 [profile.release-lto-off]
 # use release profile settings
 inherits = "release"
-# but set LTO to the default (off instead of fat)
+# but disable LTO entirely (off instead of fat) for the fastest link times
 lto = "off"
 
 [patch.crates-io]

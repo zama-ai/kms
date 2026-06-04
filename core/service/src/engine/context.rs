@@ -19,7 +19,7 @@ const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centraliz
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
 
 #[derive(Clone, Debug, VersionsDispatch)]
-pub enum SoftwareVersionVersioned {
+pub enum SoftwareVersionVersions {
     V0(SoftwareVersion),
 }
 
@@ -27,7 +27,7 @@ pub enum SoftwareVersionVersioned {
 /// The ordering is based on the major, minor, and patch versions,
 /// the tag does not affect the ordering.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SoftwareVersionVersioned)]
+#[versionize(SoftwareVersionVersions)]
 pub struct SoftwareVersion {
     pub major: u32,
     pub minor: u32,
@@ -106,12 +106,12 @@ impl SoftwareVersion {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
-pub enum NodeInfoVersioned {
+pub enum NodeInfoVersions {
     V0(NodeInfo),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Versionize, Serialize, Deserialize)]
-#[versionize(NodeInfoVersioned)]
+#[versionize(NodeInfoVersions)]
 pub struct NodeInfo {
     pub mpc_identity: String,
     pub party_id: u32,
@@ -200,12 +200,12 @@ impl Named for NodeInfo {
 }
 
 #[derive(VersionsDispatch, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ContextInfoVersioned {
+pub enum ContextInfoVersions {
     V0(ContextInfo),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(ContextInfoVersioned)]
+#[versionize(ContextInfoVersions)]
 pub struct ContextInfo {
     pub mpc_nodes: Vec<NodeInfo>,
     pub context_id: ContextId,

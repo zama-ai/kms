@@ -1,100 +1,77 @@
-// TODO(dp): the imports here are a noisy mess — two `cfg_if!` blocks plus
-// dozens of individually `#[cfg(...)]`-gated `use` lines. Consolidate into
-// a single `cfg_if!` per feature combo (or pull the shared imports up out
-// of the gates) on a dedicated cleanup pass.
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use crate::client::tests::common::default_isolated_extra_data;
-    use crate::client::tests::threshold::common::threshold_handles;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::{DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_uncompressed_keygen};
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{
         delete_at_request_and_epoch_id, delete_at_request_id,
         read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
         store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
     };
     use crate::vault::storage::crypto_material::get_core_signing_key;
-
+    use crate::testing::helpers::domain_to_msg;
     use kms_grpc::rpc_types::PrivDataType;
+    use crate::testing::material::MaterialType;
 }}
-cfg_if::cfg_if! {
-   if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
-    use crate::client::key_gen::tests::check_conformance;
-    use crate::client::tests::common::{OptKeySetConfigAccessor};
-    use crate::client::client_wasm::Client;
-    use crate::consts::MAX_TRIES;
-    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-    use crate::dummy_domain;
-    use crate::engine::base::derive_request_id;
-    use crate::engine::base::INSECURE_PREPROCESSING_ID;
-    use crate::engine::threshold::service::ThresholdFheKeys;
-    use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
-    use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig};
-    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::rpc_types::PubDataType;
-    use kms_grpc::RequestId;
-    use std::collections::HashMap;
-    use std::str::FromStr;
-    use tfhe::integer::compression_keys::DecompressionKey;
-    use tfhe::prelude::Tagged;
-    use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
-    use threshold_types::role::Role;
-    use threshold_execution::tfhe_internals::parameters::DKGParams;
-    use threshold_execution::tfhe_internals::test_feature::to_hl_client_key;
-    use tokio::task::JoinSet;
-    use tonic::transport::Channel;
-}}
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+use crate::client::client_wasm::Client;
+use crate::client::key_gen::tests::check_conformance;
+use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{
-    TIME_TO_SLEEP_MS, decompression_keygen_config, uncompressed_keygen_config,
-};
-#[cfg(feature = "insecure")]
+use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::common::threshold_key_gen_secure;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
-#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::consts::MAX_TRIES;
 use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::default_extra_data;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
-#[cfg(feature = "insecure")]
+use crate::dummy_domain;
+use crate::engine::base::INSECURE_PREPROCESSING_ID;
+use crate::engine::base::derive_request_id;
+use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
-#[cfg(feature = "slow_tests")]
-use crate::testing::helpers::domain_to_msg;
-#[cfg(any(feature = "insecure", feature = "slow_tests"))]
-use crate::testing::material::{KeyType, TestMaterialSpec};
-#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::testing::material::TestMaterialSpec;
 use crate::testing::setup::threshold::ThresholdTestEnv;
-#[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
+use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
+use crate::vault::storage::{StorageType, file::FileStorage};
 use alloy_dyn_abi::Eip712Domain;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyGenResult;
 #[cfg(feature = "slow_tests")]
 use kms_grpc::kms::v1::KeySetType;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::PubDataType;
+use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
 #[cfg(feature = "slow_tests")]
 use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
 use tfhe::core_crypto::commons::utils::ZipChecked;
+use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe::prelude::Tagged;
+use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "slow_tests")]
 use threshold_execution::tfhe_internals::test_feature::run_decompression_test;
+use threshold_execution::tfhe_internals::test_feature::to_hl_client_key;
+use threshold_types::role::Role;
+use tokio::task::JoinSet;
+use tonic::transport::Channel;
 use tonic::{Response, Status};
 
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-#[allow(dead_code)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
@@ -108,8 +85,6 @@ pub(crate) enum TestKeyGenResult {
     ),
 }
 
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-#[allow(dead_code)]
 impl TestKeyGenResult {
     fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
         match self {
@@ -182,7 +157,6 @@ impl TestKeyGenResult {
 // preamble. A second sweep should factor that out — e.g. a `with_test_setup!`
 // macro or a `ThresholdTestEnv::for_test(name, parties, spec_kind)` helper —
 // to shrink each test back down to the part that actually varies.
-#[cfg(feature = "insecure")]
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
@@ -191,12 +165,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
         "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
     ))?;
 
-    // Test generates its own FHE keys; only signing material + PRSS are needed pre-generated.
-    let spec = {
-        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
-    };
+    // Test generates its own FHE keys; only signing material is needed pre-staged.
+    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("test_insecure_compressed_dkg")
@@ -259,7 +229,6 @@ async fn secure_threshold_compressed_keygen_test() {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) async fn run_threshold_keygen(
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -307,7 +276,6 @@ pub(crate) async fn run_threshold_keygen(
 }
 
 //Helper function to launch dkg
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 async fn launch_dkg(
     req_keygen: kms_grpc::kms::v1::KeyGenRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -320,16 +288,9 @@ async fn launch_dkg(
         let req_clone = req_keygen.clone();
         tasks_gen.spawn(async move {
             if insecure {
-                #[cfg(feature = "insecure")]
-                {
-                    cur_client
-                        .insecure_key_gen(tonic::Request::new(req_clone))
-                        .await
-                }
-                #[cfg(not(feature = "insecure"))]
-                {
-                    panic!("cannot perform insecure key gen")
-                }
+                cur_client
+                    .insecure_key_gen(tonic::Request::new(req_clone))
+                    .await
             } else {
                 cur_client.key_gen(tonic::Request::new(req_clone)).await
             }
@@ -342,8 +303,6 @@ async fn launch_dkg(
     }
     responses_gen
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 #[allow(clippy::too_many_arguments)]
 async fn wait_for_keygen_result(
     req_get_keygen: RequestId,
@@ -377,16 +336,9 @@ async fn wait_for_keygen_result(
                 (
                     i,
                     if insecure {
-                        #[cfg(feature = "insecure")]
-                        {
-                            cur_client
-                                .get_insecure_key_gen_result(tonic::Request::new(req_clone))
-                                .await
-                        }
-                        #[cfg(not(feature = "insecure"))]
-                        {
-                            panic!("cannot perform insecure keygen")
-                        }
+                        cur_client
+                            .get_insecure_key_gen_result(tonic::Request::new(req_clone))
+                            .await
                     } else {
                         cur_client
                             .get_key_gen_result(tonic::Request::new(req_clone))
@@ -493,8 +445,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
     parameter: FheParameter,
     insecure: bool,
 ) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let preproc_id_1 = if insecure {
         *INSECURE_PREPROCESSING_ID
     } else {
@@ -505,14 +455,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
-    purge(
-        None,
-        None,
-        &key_id_1,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
 
     let preproc_id_2 = if insecure {
         *INSECURE_PREPROCESSING_ID
@@ -524,14 +466,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
-    purge(
-        None,
-        None,
-        &key_id_2,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
 
     let preproc_id_3 = derive_request_id(&format!(
         "decom_dkg_preproc_{amount_parties}_{parameter:?}_3"
@@ -539,19 +473,29 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .unwrap();
     let key_id_3: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
-    purge(
-        None,
-        None,
-        &key_id_3,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
-    let (kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameter, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
+
+    let (material_dir, kms_servers, kms_clients, internal_client) = {
+        let env = ThresholdTestEnv::builder()
+            .with_test_name(format!(
+                "decom_dkg_{amount_parties}_{parameter:?}_{insecure}"
+            ))
+            .with_party_count(amount_parties)
+            .with_material_spec(spec)
+            .with_prss()
+            .build()
+            .await
+            .unwrap();
+        let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+        (env.material_dir, env.servers, env.clients, internal_client)
+    };
+    let test_path = material_dir.path();
 
     if !insecure {
         run_preproc(
@@ -577,7 +521,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         keyset_config,
         keyset_added_info,
         insecure,
-        None,
+        Some(test_path),
         0,
     )
     .await
@@ -608,7 +552,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         keyset_config,
         keyset_added_info,
         insecure,
-        None,
+        Some(test_path),
         0,
     )
     .await
@@ -639,7 +583,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         keyset_config,
         keyset_added_info,
         insecure,
-        None,
+        Some(test_path),
         0,
     )
     .await
@@ -714,8 +658,6 @@ pub(crate) async fn preproc_and_keygen(
         newly_crashed
     }
 
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut preproc_ids = vec![];
     let mut key_ids = vec![];
     for i in 0..iterations {
@@ -723,28 +665,12 @@ pub(crate) async fn preproc_and_keygen(
             "full_dkg_preproc_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
-        purge(
-            None,
-            None,
-            &req_preproc,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
         preproc_ids.push(req_preproc);
 
         let req_key: RequestId = derive_request_id(&format!(
             "full_dkg_key_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
-        purge(
-            None,
-            None,
-            &req_key,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
         key_ids.push(req_key);
     }
 
@@ -763,15 +689,28 @@ pub(crate) async fn preproc_and_keygen(
         new_epoch: 1,
     };
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        *dkg_param,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        None,
-    )
-    .await;
+    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    if matches!(parameter, FheParameter::Default) {
+        spec.material_type = MaterialType::Default;
+    }
+
+    let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
+        let env = ThresholdTestEnv::builder()
+            .with_test_name(format!(
+                "preproc_and_keygen_{amount_parties}_{parameter:?}_{compressed}_{insecure_key_gen}"
+            ))
+            .with_party_count(amount_parties)
+            .with_material_spec(spec)
+            .with_prss()
+            .with_rate_limiter(rate_limiter_conf)
+            .build()
+            .await
+            .unwrap();
+        let internal_client = env.create_internal_client(&dkg_param, None).await.unwrap();
+        (env.material_dir, env.servers, env.clients, internal_client)
+    };
+    let test_path = material_dir.path().to_path_buf();
 
     let mut expected_num_parties_crashed =
         party_ids_to_crash_preproc.as_ref().map_or(0, |v| v.len());
@@ -834,6 +773,7 @@ pub(crate) async fn preproc_and_keygen(
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
+                let path_clone = test_path.clone();
                 async move {
                     // todo proper use of insecure to skip preproc
                     (
@@ -847,7 +787,7 @@ pub(crate) async fn preproc_and_keygen(
                             keyset_config,
                             keyset_added_info,
                             insecure_key_gen,
-                            None,
+                            Some(path_clone.as_path()),
                             expected_num_parties_crashed,
                         )
                         .await
@@ -880,7 +820,7 @@ pub(crate) async fn preproc_and_keygen(
                 },
                 None,
                 1,
-                None,
+                Some(test_path.as_path()),
             )
             .await;
         }
@@ -921,7 +861,7 @@ pub(crate) async fn preproc_and_keygen(
                 keyset_config,
                 keyset_added_info,
                 insecure_key_gen,
-                None,
+                Some(test_path.as_path()),
                 expected_num_parties_crashed,
             )
             .await
@@ -945,7 +885,7 @@ pub(crate) async fn preproc_and_keygen(
                 },
                 None,
                 1,
-                None,
+                Some(test_path.as_path()),
             )
             .await;
         }
@@ -1094,7 +1034,6 @@ async fn poll_key_gen_preproc_result(
 }
 
 #[expect(clippy::type_complexity)]
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn try_reconstruct_shares(
     param: DKGParams,
     threshold: usize,
@@ -1260,7 +1199,6 @@ fn try_reconstruct_shares(
 /// Enum to hold either uncompressed or compressed public keys during verification
 // allow large enum variant for testing
 #[allow(clippy::large_enum_variant)]
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 enum RetrievedKeysForVerification {
     Uncompressed(tfhe::ServerKey, tfhe::CompactPublicKey),
     Compressed(
@@ -1268,8 +1206,6 @@ enum RetrievedKeysForVerification {
         tfhe::CompactPublicKey,
     ),
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 impl RetrievedKeysForVerification {
     fn to_bytes_for_verification(&self) -> Vec<u8> {
         match self {
@@ -1286,8 +1222,6 @@ impl RetrievedKeysForVerification {
         }
     }
 }
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn verify_keygen_responses(
     finished: Vec<(u32, Result<Response<KeyGenResult>, Status>)>,
@@ -1422,7 +1356,6 @@ pub(crate) async fn verify_keygen_responses(
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-#[cfg(feature = "insecure")]
 async fn test_insecure_dkg() -> anyhow::Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("insecure_dkg")
@@ -1474,11 +1407,11 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 /// - Pre-generated secure material:
 ///   `generate-test-material --profile secure --parties 4,13`
 #[tokio::test]
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 async fn default_insecure_dkg() -> anyhow::Result<()> {
     // Use Default material spec for production-like keys.
     // PRSS is generated at server startup via `with_prss()`.
-    let spec = TestMaterialSpec::threshold_default_no_prss(4);
+    let spec = TestMaterialSpec::threshold_default(4);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("default_insecure_dkg")

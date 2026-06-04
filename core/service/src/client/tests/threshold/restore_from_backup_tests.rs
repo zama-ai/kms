@@ -9,7 +9,6 @@
 //! - CRS backup and restore flow
 
 use crate::client::tests::common::wait_for_storage;
-#[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -42,7 +41,6 @@ use tokio::task::JoinSet;
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-#[cfg(feature = "insecure")]
 async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = ThresholdTestEnv::builder()
@@ -253,7 +251,6 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-#[cfg(feature = "insecure")]
 async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = ThresholdTestEnv::builder()

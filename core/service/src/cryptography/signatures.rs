@@ -4,21 +4,19 @@ use crate::{
     impl_generic_versionize,
 };
 use ::signature::{Signer, Verifier};
-use aes_prng::AesRng;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
-use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use std::sync::Arc;
 use strum_macros::Display;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
@@ -27,12 +25,12 @@ pub trait HasSigningScheme {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum SigningSchemeTypeVersioned {
+pub enum SigningSchemeTypeVersions {
     V0(SigningSchemeType),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
-#[versionize(SigningSchemeTypeVersioned)]
+#[versionize(SigningSchemeTypeVersions)]
 pub enum SigningSchemeType {
     Ecdsa256k1,
     // Eventually we will support post quantum signatures as well
@@ -62,14 +60,14 @@ impl TryFrom<i32> for SigningSchemeType {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum PublicSigKeyVersioned {
+pub enum PublicSigKeyVersions {
     V0(PublicSigKey),
 }
 
 // Struct wrapping signature verification key used by both the user's wallet and server
 #[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, Versionize)]
-#[versionize(PublicSigKeyVersioned)]
+#[versionize(PublicSigKeyVersions)]
 pub struct PublicSigKey {
     pk: WrappedVerifyingKey,
 }
@@ -206,7 +204,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
 }
 // Drop manually implemented due to conflict with Versionize macro
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
-pub enum PrivateSigKeyVersioned {
+pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
 }
 // TODO(#2781) should eventually be replaced or consolidated with the UnifiedPrivateSigningKey
@@ -214,7 +212,7 @@ pub enum PrivateSigKeyVersioned {
 // messages to one another
 #[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, Versionize)]
-#[versionize(PrivateSigKeyVersioned)]
+#[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
 }
@@ -261,28 +259,27 @@ impl HasSigningScheme for PrivateSigKey {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
 impl Zeroize for WrappedSigningKey {
-    // We want to allow unused assignments here as we are intentionally overwriting the key material
-    #[warn(unused_assignments)]
     fn zeroize(&mut self) {
-        let mut rng = AesRng::seed_from_u64(0);
-        // The simplest way is to overwrite the entire key with a random, static key, since we cannot directly zerorize the content of the key
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        // SAFETY: We're modifying a local copy of the key bytes, but this does not modify the actual key in memory.
-        // To securely zeroize the key, use the Zeroize trait on the underlying scalar or key type if available.
-        unsafe {
-            std::ptr::write(self, sk.sk);
+        // Swap in a known-valid dummy and let the original drop —
+        // `SigningKey<Secp256k1>: ZeroizeOnDrop` wipes its scalar.
+        // `[1u8; 32]` is `0x0101…01` ≪ secp256k1 order `n`, so the
+        // constructor is in practice infallible; `if let Ok` keeps the
+        // Drop path panic-free at the type level — future edits to the
+        // constant or to the underlying type can't introduce a panic
+        // surface inside `Drop` (this method is called from the
+        // `#[derive(ZeroizeOnDrop)]`-generated `Drop` impl).
+        if let Ok(dummy) = SigningKey::from_slice(&[1u8; 32]) {
+            let _wiped = std::mem::replace(&mut self.0, dummy);
         }
-    }
-}
-
-impl Drop for WrappedSigningKey {
-    fn drop(&mut self) {
-        self.zeroize();
+        // If construction ever failed (unreachable today), `self.0` would
+        // be untouched here — and Rust's drop glue still wipes the
+        // original via `SigningKey<Secp256k1>: ZeroizeOnDrop` when the
+        // generated `Drop` returns. No security loss.
     }
 }
 
@@ -483,10 +480,10 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     );
 
     let hash = data.eip712_signing_hash(domain);
-    tracing::info!("Public Data EIP-712 Message hash: {:?}", hash);
+    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
 
     let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("Reconstructed address: {}", addr);
+    tracing::debug!("Reconstructed address: {}", addr);
 
     Ok(addr)
 }

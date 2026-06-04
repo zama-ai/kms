@@ -143,7 +143,7 @@ impl BitGenOdd for RealBitGenOdd {
     }
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 mod tests {
     use crate::algebra::levels::LevelKsw;
     use algebra::{

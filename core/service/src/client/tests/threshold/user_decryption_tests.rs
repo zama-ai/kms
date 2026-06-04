@@ -2,9 +2,7 @@ use crate::client::client_wasm::{Client, ServerIdentities};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
 use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
@@ -13,8 +11,7 @@ use crate::cryptography::signatures::{PrivateSigKey, internal_sign};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
-#[cfg(feature = "wasm_tests")]
-use crate::util::file_handling::write_element;
+use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -241,7 +238,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(TestingPlaintext::Bool(true), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
@@ -272,7 +268,6 @@ async fn default_user_decryption_threshold(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
@@ -302,7 +297,6 @@ async fn default_user_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -352,20 +346,14 @@ pub(crate) async fn user_decryption_threshold(
     malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
 ) {
-    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
-
     assert!(parallelism > 0);
 
-    // Spec: pre-gen FHE keys for `key_id` plus signing + PRSS. Material
-    // type follows the DKG params.
-    let spec = {
-        let mut s = if dkg_params == TEST_PARAM {
-            TestMaterialSpec::threshold_basic(amount_parties)
-        } else {
-            TestMaterialSpec::threshold_default(amount_parties)
-        };
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
+    // Spec: pre-gen FHE keys for `key_id` plus signing. PRSS is bootstrapped
+    // at runtime via `.with_prss()`. Material type follows the DKG params.
+    let spec = if dkg_params == TEST_PARAM {
+        TestMaterialSpec::threshold_basic(amount_parties)
+    } else {
+        TestMaterialSpec::threshold_default(amount_parties)
     };
 
     let mut builder = ThresholdTestEnv::builder()
@@ -551,8 +539,8 @@ pub(crate) async fn user_decryption_threshold(
             } else {
                 crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
             };
-            let path = format!("{}.{}", path_prefix, msg.bits());
-            write_element(&path, &transcript).await.unwrap();
+            let path = format!("{}.{}.json", path_prefix, msg.bits());
+            transcript.write_stable_test_vector_json(&path).unwrap();
         }
     }
 

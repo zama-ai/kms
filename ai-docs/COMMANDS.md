@@ -2,7 +2,7 @@
 
 Commands that come up during ordinary work in this repo. All commands are expected to be run from the repository root unless noted otherwise.
 
-Toolchain is pinned to Rust `1.95.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
+Toolchain is pinned to Rust `1.94.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
 
 ## Build and lint
 
@@ -23,14 +23,22 @@ cargo clippy --all-targets --all-features -- -D warnings
 All-features clippy as a Makefile target:
 
 ```
-make linting-all
+make lint
 ```
 
 Lint a single crate:
 
 ```
-make linting-package PACKAGE=<crate-name>
+make lint-package PACKAGE=<crate-name>
 ```
+
+Installing and running dylint:
+
+```
+make install-dylint
+make lint-dylint
+```
+
 
 ## Testing
 
@@ -74,29 +82,39 @@ Run against locally regenerated vectors — does NOT pull LFS:
 make test-backward-compatibility-local
 ```
 
+Generate and compare `VersionsDispatch` snapshots between a base ref and the current checkout. This detects removed version variants and suspicious type-layout or upgrade-body changes:
+
+```
+make backward-snapshot-check BASE_REF=origin/main
+make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
+```
+
 Direct cargo invocation (what the make targets call under the hood):
 
 ```
 cargo test --test 'backward_compatibility_*' -- --include-ignored
 ```
 
-Regenerate vectors for all historical versions (cleans first, then runs each generator):
+Regenerate vectors. Versions are split into two lists in the `Makefile`:
+
+- `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
+- `DETERMINISTIC_BWC_VERSIONS` — `0.14.0` and future versions. Re-running produces byte-identical output.
+
+Regenerate all deterministic versions (cleans only deterministic data dirs first, then runs their generators; frozen versions are left untouched):
 
 ```
 make generate-backward-compatibility-all
 ```
 
-Regenerate for a single version. **Warning**: removes other versions' entries from the `.ron` files — do not commit the result:
+Regenerate for a single deterministic version:
 
 ```
-make generate-backward-compatibility-v0.11.0
-make generate-backward-compatibility-v0.11.1
-make generate-backward-compatibility-v0.13.0
-make generate-backward-compatibility-v0.13.10
-make generate-backward-compatibility-v0.13.20
+make generate-backward-compatibility-v0.14.0
 ```
 
-Clean all generated BC data:
+Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, and `v0.13.20` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.
+
+Remove generated BC data for deterministic versions only — frozen data dirs and all shared `.ron` files are preserved:
 
 ```
 make clean-backward-compatibility-data

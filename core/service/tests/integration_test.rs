@@ -169,12 +169,12 @@ mod kms_gen_keys_binary_test {
 
     #[test]
     #[integration_test]
-    fn threshold_wrong_num_parties() {
+    fn threshold_party_id_zero_rejected() {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
 
-        // the command below should fail because --num-parties should be
-        // greater or equal to 2
+        // party id 0 is invalid (parties are 1-indexed); the value parser
+        // rejects id 0 at parse time.
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--private-storage=file")
@@ -184,25 +184,24 @@ mod kms_gen_keys_binary_test {
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
             .arg("threshold")
-            .arg("--num-parties=1")
+            .arg("--signing-key-party-id=0")
             .output()
             .unwrap();
 
         assert!(!output.status.success());
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains("the number of parties should be larger or equal to 2")
+                .contains("invalid value '0' for '--signing-key-party-id")
         );
     }
 
     #[test]
     #[integration_test]
-    fn threshold_signing_key_wrong_party_id() {
+    fn threshold_party_id_required() {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
 
-        // the command below should fail because `--num-parties` default to 4
-        // but we're asking the CLI to generate a key for party 5
+        // --signing-key-party-id is a required flag now.
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--private-storage=file")
@@ -212,15 +211,11 @@ mod kms_gen_keys_binary_test {
             .arg("--public-file-path")
             .arg(temp_dir_pub.path())
             .arg("threshold")
-            .arg("--signing-key-party-id=5")
             .output()
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("party ID (5) cannot be greater than num_parties (4)")
-        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--signing-key-party-id"));
     }
 
     #[test]
@@ -230,7 +225,6 @@ mod kms_gen_keys_binary_test {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
 
-        // finally we run the command with the right args
         let output = kms_gen_keys_command()
             .arg("--private-storage=file")
             .arg("--private-file-path")
@@ -240,7 +234,6 @@ mod kms_gen_keys_binary_test {
             .arg(temp_dir_pub.path())
             .arg("threshold")
             .arg("--signing-key-party-id=5")
-            .arg("--num-parties=5")
             .output()
             .unwrap();
 
@@ -595,6 +588,7 @@ mod kms_custodian_binary_tests {
                 &mut rng,
                 &bc2wrap::serialize(&backup_ske).unwrap(),
                 backup_id,
+                *DEFAULT_MPC_CONTEXT,
             )
             .unwrap();
         let ct_map = signcrypt_result.ct_shares;
@@ -625,13 +619,8 @@ mod kms_custodian_binary_tests {
             let ct = ct_map.get(&custodian_role).unwrap();
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
-        let recovery_request = InternalRecoveryRequest::new(
-            ephemeral_pub_key.clone(),
-            ciphertexts,
-            backup_id,
-            verification_key.clone(),
-        )
-        .unwrap();
+        let recovery_request =
+            InternalRecoveryRequest::new(ephemeral_pub_key.clone(), ciphertexts).unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
             .await
             .unwrap();
@@ -670,13 +659,7 @@ mod kms_custodian_binary_tests {
             outputs.push(payload);
         }
         operator
-            .verify_and_recover(
-                &outputs,
-                recovery_material,
-                backup_id,
-                ephem_dec_key,
-                ephem_enc_key,
-            )
+            .verify_and_recover(&outputs, recovery_material, ephem_dec_key, ephem_enc_key)
             .unwrap()
     }
 }

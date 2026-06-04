@@ -2,6 +2,22 @@ name: wasm-testing
 
 on:
   workflow_call:
+    inputs:
+      skip-test-material:
+        # When true, skip test-material generation and the kms-custodian
+        # build. Useful for light unit-test-only jobs on crates that don't
+        # need integration test fixtures.
+        type: boolean
+        required: false
+        default: false
+      efs-test-material-path:
+        # Optional absolute path to pre-generated test material on EFS.
+        # Example: /mnt/efs/kms-test-material/<generator-hash>/insecure_4_10
+        # (the hash keys the generator inputs; the leaf dir names the material
+        # set). When provided, this workflow links ./test-material to that path.
+        type: string
+        required: false
+        default: ''
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -26,7 +42,7 @@ jobs:
     # Long-form runs-on label. The short form (e.g. `16cpu-linux-x64`) only
     # works as an *input* to common-testing.yml, but we cannot use it in this
     # job since we're doing non-standard testing.
-    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache+efs
 
     steps:
       - name: Setup Runs-on
@@ -35,7 +51,7 @@ jobs:
           metrics: cpu,network,memory,disk,io
 
       - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -52,29 +68,76 @@ jobs:
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # WASM handling
       - name: Install
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build wasm with tests
+      # Build the same artifact that gets published (no `wasm_tests`): the JS tests load a
+      # stable JSON vector and only exercise the stable public API, so the transcript helpers
+      # are not needed in the wasm package.
+      - name: Build wasm
         working-directory: ./core/service
-        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+        run: wasm-pack build --target nodejs . --no-default-features
 
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
-          node-version: 20
+          node-version: 24.16.0
 
-      # Required by `test_user_decryption_*_and_write_transcript`: the helpers
-      # they call (`user_decryption_threshold` / `user_decryption_centralized`)
-      # use `ThresholdTestEnv` / `CentralizedTestEnv`, which populate per-test
-      # tempdirs by copying from the workspace's `test-material/` directory.
-      - name: Generate test material
+      # Generate the insecure test material set for parties 4, 10.
+      - name: Generate Test Material
+        id: generate-test-material
+        env:
+          # Distinct leaf dir from the `insecure_secure_4_13` set used by
+          # parallel-testing.yml: the set name + hash prefix keep the two from
+          # colliding on a shared path or `ready` flag (see parallel-testing.yml).
+          MATERIAL_PROFILE: insecure
+          MATERIAL_PARTIES: 4,10
+          MATERIAL_SET_NAME: insecure_4_10
         run: |
-          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+          df -T
+          KEY="$(git rev-parse "HEAD:core" "HEAD:tools/generate-test-material" "HEAD:Cargo.lock" | sha256sum | cut -c1-16)"
+          BASE="/mnt/efs/kms-test-material/${KEY}"
+          EFS_ROOT="${BASE}/${MATERIAL_SET_NAME}"
+          READY_FILE="${EFS_ROOT}/ready"
+          mkdir -p "${BASE}"
+
+          if [ -f "${READY_FILE}" ]; then
+            echo "Reusing existing test material at ${EFS_ROOT}"
+          else
+            # Generate into a temp dir, then publish-if-absent via atomic
+            # `mv -T` (see parallel-testing.yml for the full rationale). We
+            # never overwrite an existing EFS_ROOT, so a concurrent first-time
+            # run only wastes work; it can't clobber a live directory.
+            TMP_DIR="$(mktemp -d "${BASE}/.tmp.XXXXXX")"
+            trap 'rm -rf "${TMP_DIR}"' EXIT
+            echo "EXECUTING: cargo run -p generate-test-material -- --output ${TMP_DIR} --verbose --profile ${MATERIAL_PROFILE} --parties ${MATERIAL_PARTIES}"
+            cargo run -p generate-test-material -- --output "${TMP_DIR}" --verbose --profile "${MATERIAL_PROFILE}" --parties "${MATERIAL_PARTIES}"
+            touch "${TMP_DIR}/ready"
+            if mv -T "${TMP_DIR}" "${EFS_ROOT}" 2>/dev/null; then
+              echo "Published test material to ${EFS_ROOT}"
+            else
+              echo "Another run already published ${EFS_ROOT}; keeping it and discarding our copy"
+            fi
+          fi
+
+          du -sh "${EFS_ROOT}" || true
+          echo "efs-test-material-path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
+
+      - name: Link pre-generated test material from EFS
+        env:
+          EFS_TEST_MATERIAL_PATH: ${{ steps.generate-test-material.outputs.efs-test-material-path }}
+        run: |
+          if [ ! -d "${EFS_TEST_MATERIAL_PATH}" ]; then
+            echo "::error::EFS test material path does not exist: ${EFS_TEST_MATERIAL_PATH}"
+            exit 1
+          fi
+
+          rm -rf ./test-material
+          ln -s "${EFS_TEST_MATERIAL_PATH}" ./test-material
+          echo "Linked ./test-material -> ${EFS_TEST_MATERIAL_PATH}"
+          du -shL ./test-material || true
 
       - name: Generate wasm test files
         working-directory: ./core/service
@@ -83,8 +146,11 @@ jobs:
           cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --lib
 
       - name: Test wasm
-        working-directory: ./core/service
-        run: node --test tests/js
+        # Run from inside the test dir so `node --test` searches cwd recursively.
+        # Newer Node (>= 23) treats a positional dir arg as a file to load rather
+        # than a directory to glob, so `node --test tests/js` fails there.
+        working-directory: ./core/service/tests/js
+        run: node --test
 
       # NPM package handling
       - name: Set NPM version tag to latest

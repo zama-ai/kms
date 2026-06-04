@@ -100,8 +100,18 @@ jobs:
       golden_tag: ${{ steps.compute.outputs.golden_tag }}
       cache_hit: ${{ steps.lookup.outputs.cache_hit }}
     steps:
+      # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: |
+          echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf
+          if lsmod | grep -q algif_aead; then
+            sudo rmmod algif_aead || echo "WARNING: rmmod failed - module may be in use"
+          elif modinfo algif_aead 2>/dev/null | grep -q builtin; then
+            echo "WARNING: algif_aead built-in - modprobe.d blacklist has no effect"
+          fi
+
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
       - name: Login to Chainguard Container Registry
@@ -173,7 +183,7 @@ jobs:
     if: |
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -229,6 +239,16 @@ jobs:
     permissions:
       packages: write # Required to update the latest tag in GHCR
     steps:
+      # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: |
+          echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf
+          if lsmod | grep -q algif_aead; then
+            sudo rmmod algif_aead || echo "WARNING: rmmod failed - module may be in use"
+          elif modinfo algif_aead 2>/dev/null | grep -q builtin; then
+            echo "WARNING: algif_aead built-in - modprobe.d blacklist has no effect"
+          fi
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
@@ -269,7 +289,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -278,6 +298,10 @@ jobs:
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     with:
+      # Release tags ship fat-LTO ('release'); all other builds (main/staging,
+      # :latest) use thin LTO for faster CI links. Performance-sensitive
+      # consumers of non-release tags are benchmarking a different binary.
+      lto-release: ${{ github.event_name == 'release' && 'release' || 'release-lto-thin' }}
       docker-file: './docker/core-client/Dockerfile'
       working-directory: './core-client'
       push_image: true
@@ -306,7 +330,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -315,6 +339,10 @@ jobs:
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     with:
+      # Release tags ship fat-LTO ('release'); all other builds (main/staging,
+      # :latest) use thin LTO for faster CI links. Performance-sensitive
+      # consumers of non-release tags are benchmarking a different binary.
+      lto-release: ${{ github.event_name == 'release' && 'release' || 'release-lto-thin' }}
       docker-file: './docker/core/service/Dockerfile'
       working-directory: './core/service'
       push_image: true

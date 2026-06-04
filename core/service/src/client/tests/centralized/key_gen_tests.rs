@@ -1,7 +1,6 @@
 use crate::client::client_wasm::Client;
-#[cfg(feature = "slow_tests")]
+use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
-use crate::client::tests::common::{OptKeySetConfigAccessor, TIME_TO_SLEEP_MS};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
@@ -38,6 +37,7 @@ async fn test_key_gen_centralized() -> anyhow::Result<()> {
     .await
 }
 
+#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_decompression_key_gen_centralized() -> anyhow::Result<()> {
     decompression_key_gen_centralized(
@@ -75,6 +75,7 @@ async fn default_decompression_key_gen_centralized() -> anyhow::Result<()> {
 
 /// Generate two keysets and a decompression-only keyset linking them, all inside a single
 /// isolated tempdir so the third `run_key_gen_centralized` call can read the first two.
+#[cfg(feature = "slow_tests")]
 async fn decompression_key_gen_centralized(
     params: FheParameter,
     test_name: &str,
@@ -94,8 +95,6 @@ async fn decompression_key_gen_centralized(
         keygen: 100,
         new_epoch: 1,
     };
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-
     let env = crate::testing::setup::CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()
@@ -214,7 +213,6 @@ pub(crate) async fn key_gen_centralized(
         keygen: 100,
         new_epoch: 1,
     };
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let env = crate::testing::setup::CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()
@@ -439,7 +437,6 @@ pub async fn run_key_gen_centralized(
     }
 }
 
-#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_compressed_key_gen_centralized() -> anyhow::Result<()> {
     let request_id = derive_request_id("test_compressed_key_gen_centralized").unwrap();

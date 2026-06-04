@@ -1,8 +1,11 @@
 [workspace.metadata.dylint]
 libraries = [
     { git = "https://github.com/trailofbits/dylint", rev = "2c20d164e06c446de2cecadff0c55e16a877c006", pattern = "examples/general/non_local_effect_before_error_return" },
+    # The nightly toolchain + components needed to build this library are read
+    # from `utils/tfhe-lints/rust-toolchain` in the tfhe-rs repo at the tag
+    # below, and auto-installed by rustup on first `cargo dylint --all` run.
+    { git = "https://github.com/zama-ai/tfhe-rs", tag = "tfhe-rs-1.6.2", pattern = "utils/tfhe-lints/lints" },
 ]
 
 [non_local_effect_before_error_return]
 work_limit = 100000000
-

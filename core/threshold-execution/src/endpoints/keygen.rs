@@ -737,10 +737,8 @@ where
         params_basics_handle.get_pksk_params(),
         params_basics_handle.get_rerand_ksk_params(),
     ) {
-        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
-            // If these are equal, we already have the KSK from the LWE sk of the PK
-            // and the glwe sk that's necessary for rerand
-            if pksk_params == cpk_re_randomization_ksk_params {
+        (Some(_pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            if params_basics_handle.rerand_ksk_reuses_pksk() {
                 Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
             } else {
                 Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(

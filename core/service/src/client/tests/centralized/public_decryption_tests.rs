@@ -1,8 +1,6 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::common::{TIME_TO_SLEEP_MS, assert_plaintext};
-#[cfg(feature = "slow_tests")]
+use crate::client::tests::common::assert_plaintext;
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
@@ -90,7 +88,6 @@ async fn test_decryption_central_precompute_sns() -> Result<()> {
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
 #[tokio::test(flavor = "multi_thread")]
@@ -113,7 +110,6 @@ async fn default_decryption_centralized(
     .await
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
 #[tokio::test(flavor = "multi_thread")]
@@ -147,7 +143,6 @@ pub(crate) async fn decryption_centralized(
     parallelism: usize,
 ) -> Result<()> {
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let spec = match material_type {
         MaterialType::Testing => TestMaterialSpec::centralized_basic(),
         MaterialType::Default => TestMaterialSpec::centralized_default(),

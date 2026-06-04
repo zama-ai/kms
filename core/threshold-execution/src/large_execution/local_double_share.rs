@@ -372,28 +372,29 @@ pub(crate) async fn verify_sharing<
 
 #[cfg(test)]
 pub(crate) mod tests {
-    #[cfg(feature = "slow_tests")]
     use crate::communication::broadcast::{Broadcast, SyncReliableBroadcast};
     #[cfg(feature = "slow_tests")]
+    use crate::large_execution::{coinflip::SecureCoinflip, vss::SecureVss};
     use crate::large_execution::{
-        coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+        coinflip::{Coinflip, RealCoinflip},
         local_double_share::RealLocalDoubleShare,
         share_dispute::RealShareDispute,
         share_dispute::ShareDispute,
-        vss::{RealVss, SecureVss, Vss},
+        vss::{RealVss, Vss},
     };
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::{
-        malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+        malicious_coinflip::DroppingCoinflipAfterVss,
         malicious_share_dispute::{
             DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
         },
-        malicious_vss::{
-            DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
-        },
+        malicious_vss::{DroppingVssAfterR1, DroppingVssFromStart},
+    };
+    use crate::malicious_execution::large_execution::{
+        malicious_coinflip::MaliciousCoinflipRecons,
+        malicious_vss::{DroppingVssAfterR2, MaliciousVssR1},
     };
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
-    #[cfg(feature = "slow_tests")]
     use crate::sharing::open::{RobustOpen, SecureRobustOpen};
 
     use crate::tests::helper::tests::{
@@ -605,7 +606,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     async fn test_ldl_malicious_subprotocols_not_caught<

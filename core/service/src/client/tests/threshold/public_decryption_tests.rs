@@ -3,16 +3,14 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
-#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -140,7 +138,6 @@ async fn default_decryption_threshold(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
@@ -167,7 +164,6 @@ async fn default_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -216,16 +212,12 @@ pub async fn decryption_threshold(
         new_epoch: 1,
     };
 
-    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus
-    // signing keys + PRSS. Material type follows the DKG params.
-    let spec = {
-        let mut s = if dkg_params == TEST_PARAM {
-            TestMaterialSpec::threshold_basic(amount_parties)
-        } else {
-            TestMaterialSpec::threshold_default(amount_parties)
-        };
-        s.required_keys.insert(KeyType::PrssSetup);
-        s
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. PRSS is bootstrapped at
+    // runtime via `.with_prss()` below.
+    let spec = if dkg_params == TEST_PARAM {
+        TestMaterialSpec::threshold_basic(amount_parties)
+    } else {
+        TestMaterialSpec::threshold_default(amount_parties)
     };
 
     let mut builder = ThresholdTestEnv::builder()

@@ -28,7 +28,7 @@ use tfhe::{
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tfhe_zk_pok::curve_api::{CurveGroupOps, bls12_446 as curve};
 use thread_handles::spawn_compute_bound;
-use threshold_types::session_id::SessionId;
+use threshold_types::{protocol::ProtocolDescription, session_id::SessionId};
 use tracing::instrument;
 
 use super::constants::{
@@ -821,7 +821,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter, sid: SessionId) -> an
 }
 
 #[async_trait]
-pub trait Ceremony: Send + Sync + Clone + Default {
+pub trait Ceremony: Send + Sync + Clone + Default + ProtocolDescription {
     async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -833,6 +833,13 @@ pub trait Ceremony: Send + Sync + Clone + Default {
 #[derive(Default, Clone)]
 pub struct RealCeremony<BCast: Broadcast + Default> {
     broadcast: BCast,
+}
+
+impl<B: Broadcast + Default> ProtocolDescription for RealCeremony<B> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{}-RealCeremony:\n{}", indent, B::protocol_desc(depth + 1))
+    }
 }
 
 #[async_trait]
@@ -929,10 +936,15 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                                     // where we receive the proof and update the public parameter if the proof is valid.
                                     match ver {
                                         // verification succeeded, we can update pp with the new value
-                                        Ok(new_pp) => pp = new_pp,
+                                        Ok(new_pp) => {
+                                            tracing::info!(
+                                                "proof verification succeeded in crs ceremony for {sender}'s contribution"
+                                            );
+                                            pp = new_pp
+                                        }
                                         Err(e) => {
                                             tracing::warn!(
-                                                "proof verification failed in crs ceremony with error {e}"
+                                                "proof verification failed in crs ceremony for {sender}'s contribution with error {e}"
                                             );
                                         }
                                     }
@@ -1109,6 +1121,17 @@ mod tests {
     #[derive(Clone, Default)]
     struct BadProofCeremony<BCast: Broadcast> {
         broadcast: BCast,
+    }
+
+    impl<B: Broadcast + Default> ProtocolDescription for BadProofCeremony<B> {
+        fn protocol_desc(depth: usize) -> String {
+            let indent = Self::INDENT_STRING.repeat(depth);
+            format!(
+                "{}-BadProofCeremony:\n{}",
+                indent,
+                B::protocol_desc(depth + 1)
+            )
+        }
     }
 
     #[async_trait]

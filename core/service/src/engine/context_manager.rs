@@ -976,6 +976,7 @@ async fn gen_recovery_validation(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,
+        mpc_context_id,
     )?;
     let ct_map = signcrypt_result.ct_shares;
     let commitments = signcrypt_result.commitments;
@@ -1799,8 +1800,6 @@ mod tests {
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
             recovery_material.payload.cts,
-            backup_id,
-            server_verf_key.clone(),
         )
         .unwrap();
         let custodian_id = custodian1.verification_key().verf_key_id();

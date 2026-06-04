@@ -15,7 +15,7 @@ use crate::{
     },
 };
 use algebra::{
-    bivariate::{BivariateEval, BivariatePoly},
+    bivariate::BivariatePoly,
     poly::Poly,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
@@ -102,8 +102,19 @@ pub(crate) struct DoublePoly<Z>
 where
     Poly<Z>: Eq,
 {
+    /// The share polynomial in variable X, F(X, \alpha)
     pub(crate) share_in_x: Poly<Z>,
+    /// The share polynomial in variable Y, F(\alpha, Y)
     pub(crate) share_in_y: Poly<Z>,
+}
+
+impl<Z: Ring> DoublePoly<Z> {
+    pub(crate) fn from_bivariate(poly: &BivariatePoly<Z>, point: Z) -> Self {
+        Self {
+            share_in_x: poly.partial_y_eval(point), // F(X, alpha)
+            share_in_y: poly.partial_x_eval(point), // F(alpha, Y)
+        }
+    }
 }
 
 /// Struct to hold data sent during round 1 of VSS, composed of
@@ -262,10 +273,10 @@ pub(crate) fn sample_secret_polys<Z: RingWithExceptionalSequence, S: BaseSession
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
     let degree = session.threshold() as usize;
     //Sample the bivariate polynomials Vec<F(X,Y)>
-    let bivariate_poly = secrets
+    let bivariate_poly: Vec<_> = secrets
         .iter()
         .map(|s| BivariatePoly::from_secret(session.rng(), *s, degree))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
     //Evaluate the bivariate poly in its first and second variables
     //to create a mapping role -> Vec<(F(X,alpha_role), F(alpha_role,Y))>
     let map_double_shares: MapRoleDoublePoly<Z> = session
@@ -275,12 +286,7 @@ pub(crate) fn sample_secret_polys<Z: RingWithExceptionalSequence, S: BaseSession
             let embedded_role = Z::embed_role_to_exceptional_sequence(r)?;
             let mut vec_map = Vec::with_capacity(bivariate_poly.len());
             for p in &bivariate_poly {
-                let share_in_x = p.partial_y_evaluation(embedded_role)?;
-                let share_in_y = p.partial_x_evaluation(embedded_role)?;
-                vec_map.push(DoublePoly {
-                    share_in_x,
-                    share_in_y,
-                });
+                vec_map.push(DoublePoly::from_bivariate(p, embedded_role));
             }
             Ok::<(Role, Vec<DoublePoly<Z>>), anyhow::Error>((*r, vec_map))
         })
@@ -906,8 +912,8 @@ where
                     (*own_role, *pi_role, *pj_role),
                     vss.my_poly
                         .iter()
-                        .map(|poly| poly.full_evaluation(point_x, point_y))
-                        .collect::<Result<Vec<_>, _>>()?,
+                        .map(|poly| poly.full_eval(point_x, point_y))
+                        .collect(),
                 );
             }
             //If im a Pi send Fi(alpha_j)
@@ -1030,8 +1036,8 @@ fn round_4_conflict_resolution<Z: RingWithExceptionalSequence>(
             true => ValueOrPoly::Poly(
                 vss.my_poly
                     .iter()
-                    .map(|poly| poly.partial_y_evaluation(point_pi))
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .map(|poly| poly.partial_y_eval(point_pi))
+                    .collect(),
             ),
             //As P_j external from the conflict, resolve conflict with P_i by sending F(alpha_j,alpha_i)
             false => ValueOrPoly::Value(
@@ -1163,9 +1169,9 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::malicious_execution::large_execution::malicious_vss::{
-        WrongDegreeSharingVss, WrongSecretLenVss,
-    };
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::large_execution::malicious_vss::WrongDegreeSharingVss;
+    use crate::malicious_execution::large_execution::malicious_vss::WrongSecretLenVss;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::large_session::LargeSession;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -1177,7 +1183,6 @@ pub(crate) mod tests {
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use algebra::{
-        bivariate::BivariateEval,
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
@@ -1332,7 +1337,7 @@ pub(crate) mod tests {
                 &result
                     .my_poly
                     .iter()
-                    .map(|p| p.full_evaluation(x_0, y_0).unwrap())
+                    .map(|p| p.full_eval(x_0, y_0))
                     .collect_vec(),
                 expected_secret,
             );
@@ -1344,12 +1349,12 @@ pub(crate) mod tests {
                     let expected_result_x = result
                         .my_poly
                         .iter()
-                        .map(|p| p.partial_y_evaluation(embedded_pn).unwrap())
+                        .map(|p| p.partial_y_eval(embedded_pn))
                         .collect_vec();
                     let expected_result_y = result
                         .my_poly
                         .iter()
-                        .map(|p| p.partial_x_evaluation(embedded_pn).unwrap())
+                        .map(|p| p.partial_x_eval(embedded_pn))
                         .collect_vec();
 
                     assert_eq!(
@@ -1614,6 +1619,7 @@ pub(crate) mod tests {
 
     // Test that when the sender sends a polynomial that has too
     // high degree it's caught
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[3],&[],&[],true,None), 4)]
@@ -1643,7 +1649,6 @@ pub(crate) mod tests {
     //Test behaviour if a party doesn't participate in the protocol
     //Expected behaviour is that we end up with trivial 0 sharing for this party
     //and all other vss are fine
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
@@ -1713,7 +1718,6 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
@@ -1745,7 +1749,6 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
-    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 1)]

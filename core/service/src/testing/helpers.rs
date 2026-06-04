@@ -2,13 +2,6 @@
 //!
 //! This module provides reusable helper functions for test setup and utilities.
 use super::material::TestMaterialManager;
-use crate::consts::{
-    DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
-};
-use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
-use crate::vault::storage::{delete_at_request_id, file::FileStorage};
-use anyhow::Result;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 
 /// Create test material manager with workspace test-material path
 ///
@@ -43,110 +36,13 @@ pub fn create_test_material_manager() -> TestMaterialManager {
         ),
         None => tracing::warn!(
             "Could not find test-material directory (searched from: {}). \
-             Tests requiring pre-generated material may fail. \
+             Tests requiring pre-generated material will fail at setup. \
              Run 'cargo run -p generate-test-material -- --output ./test-material --profile insecure --parties 4' from workspace root.",
             std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| "<unknown>".to_string())
         ),
     }
 
     TestMaterialManager::new(workspace_root.map(|p| p.join("test-material")))
-}
-
-/// Regenerate central server keys for tests
-///
-/// Deletes existing keys and regenerates all central server keys
-/// (both private and public) with correct, matching RequestIds.
-/// This ensures test material has consistent key pairs including:
-/// - Server signing keys (VerfKey, VerfAddress, SigningKey)
-/// - FHE keys (CompressedXofKeySet, FhePrivateKey)
-///
-/// # Arguments
-/// * `pub_storage` - Public storage for regenerated keys
-/// * `priv_storage` - Private storage for regenerated keys
-pub async fn regenerate_central_keys(
-    pub_storage: &mut FileStorage,
-    priv_storage: &mut FileStorage,
-) -> Result<()> {
-    tracing::info!(
-        "regenerate_central_keys: Ensuring signing keys exist in {} and {}",
-        pub_storage.root_dir().display(),
-        priv_storage.root_dir().display()
-    );
-
-    // Delete all signing-related directories to force complete regeneration
-    remove_dir_if_exists(priv_storage.root_dir().join("SigningKey")).await;
-    remove_dir_if_exists(pub_storage.root_dir().join("VerfKey")).await;
-    remove_dir_if_exists(pub_storage.root_dir().join("VerfAddress")).await;
-
-    // Regenerate signing keys (VerfKey, VerfAddress, SigningKey)
-    let generated = ensure_central_server_signing_keys_exist(
-        pub_storage,
-        priv_storage,
-        &SIGNING_KEY_ID,
-        true, // deterministic
-    )
-    .await;
-
-    if !generated {
-        return Err(anyhow::anyhow!(
-            "Failed to generate central server signing keys"
-        ));
-    }
-
-    // Delete any pre-existing FHE key artifacts to force clean regeneration.
-    // ensure_central_keys_exist short-circuits on existing PublicKey, so we
-    // remove PublicKey + ServerKey + CompressedXofKeySet + DecompressionKey
-    // (and the FhePrivateKey dir below) to avoid stale data from previous
-    // runs or from `test-material/` source fixtures (which include
-    // CompressedXofKeySet that would otherwise be inconsistent with freshly
-    // regenerated PublicKey/ServerKey, causing a "Server key digest
-    // mismatch" at server boot). `delete_at_request_id` is a no-op when the
-    // artifact isn't present, which is fine — we'll regenerate either way.
-    for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
-        for data_type in [
-            PubDataType::PublicKey,
-            PubDataType::ServerKey,
-            PubDataType::CompressedXofKeySet,
-            PubDataType::DecompressionKey,
-        ] {
-            delete_at_request_id(pub_storage, key_id, &data_type.to_string())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to delete {data_type:?} for {key_id}: {e}"))?;
-        }
-    }
-
-    remove_dir_if_exists(
-        priv_storage
-            .root_dir()
-            .join(PrivDataType::FhePrivateKey.to_string()),
-    )
-    .await;
-
-    // Regenerate FHE keys
-    if !ensure_central_keys_exist(
-        pub_storage,
-        priv_storage,
-        TEST_PARAM,
-        &TEST_CENTRAL_KEY_ID,
-        &OTHER_CENTRAL_TEST_ID,
-        &DEFAULT_EPOCH_ID,
-        true, // deterministic
-    )
-    .await
-    {
-        return Err(anyhow::anyhow!("Failed to generate central FHE keys"));
-    }
-
-    Ok(())
-}
-
-/// Remove a directory if it exists, logging the outcome.
-async fn remove_dir_if_exists(path: std::path::PathBuf) {
-    match tokio::fs::remove_dir_all(&path).await {
-        Ok(()) => tracing::info!("Removed directory: {}", path.display()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // nothing to remove
-        Err(e) => tracing::warn!("Failed to remove {}: {}", path.display(), e),
-    }
 }
 
 /// Convert Eip712Domain to Eip712DomainMsg for gRPC requests
