@@ -111,7 +111,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
       - name: Login to Chainguard Container Registry
@@ -183,7 +183,7 @@ jobs:
     if: |
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f3ad2e177a5247777349447608ba20f0977a824f # v1.0.7
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -289,7 +289,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f3ad2e177a5247777349447608ba20f0977a824f # v1.0.7
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -298,6 +298,10 @@ jobs:
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     with:
+      # Release tags ship fat-LTO ('release'); all other builds (main/staging,
+      # :latest) use thin LTO for faster CI links. Performance-sensitive
+      # consumers of non-release tags are benchmarking a different binary.
+      lto-release: ${{ github.event_name == 'release' && 'release' || 'release-lto-thin' }}
       docker-file: './docker/core-client/Dockerfile'
       working-directory: './core-client'
       push_image: true
@@ -326,7 +330,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f3ad2e177a5247777349447608ba20f0977a824f # v1.0.7
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -335,6 +339,10 @@ jobs:
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     with:
+      # Release tags ship fat-LTO ('release'); all other builds (main/staging,
+      # :latest) use thin LTO for faster CI links. Performance-sensitive
+      # consumers of non-release tags are benchmarking a different binary.
+      lto-release: ${{ github.event_name == 'release' && 'release' || 'release-lto-thin' }}
       docker-file: './docker/core/service/Dockerfile'
       working-directory: './core/service'
       push_image: true

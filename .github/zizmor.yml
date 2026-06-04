@@ -17,6 +17,8 @@ rules:
       - performance-testing.yml:211
       - kind-testing.yml:260
       - kind-testing.yml:261
+      - parallel-testing.yml:549
+      - parallel-testing.yml:563
       - performance-testing.yml:100
       - performance-testing.yml:149
       - performance-testing.yml:199

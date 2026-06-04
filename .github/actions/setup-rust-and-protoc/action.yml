@@ -22,7 +22,10 @@ inputs:
     description: Whether to install Protoc
     required: false
     default: "true"
-
+  setup-cargo-nextest:
+    description: Whether to install cargo-nextest
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -50,3 +53,8 @@ runs:
         mkdir -p "${HOME}/.local"
         unzip -o "${PROTOC_ARCHIVE}" -d "${HOME}/.local"
         protoc --version
+
+    - name: Install cargo-nextest
+      if: ${{ inputs.setup-cargo-nextest == 'true' }}
+      shell: bash
+      run: cargo install cargo-nextest@0.9.133 --locked --force

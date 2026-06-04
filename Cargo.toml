@@ -263,10 +263,16 @@ debug = "line-tables-only"
 lto = "fat"
 
 # profile for testing and CI
+[profile.release-lto-thin]
+# use release profile settings
+inherits = "release"
+# but set LTO to the default (thin instead of fat)
+lto = "thin"
+
 [profile.release-lto-off]
 # use release profile settings
 inherits = "release"
-# but set LTO to the default (off instead of fat)
+# but disable LTO entirely (off instead of fat) for the fastest link times
 lto = "off"
 
 [patch.crates-io]
