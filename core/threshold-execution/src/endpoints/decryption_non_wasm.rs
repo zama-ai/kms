@@ -280,10 +280,10 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 ///
 /// # Arguments
 /// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `server_key` - The server key, used together with `ck` for switch&squash
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -371,16 +371,14 @@ where
 /// This is the entry point of the User decryption protocol.
 ///
 /// # Arguments
-/// * `parameters` - The parameters object that contains the required session information
 /// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `server_key` - The server key, used together with `ck` for switch&squash
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
-/// * A tuple containing the results of the partial decryption and the time it took to execute
+/// * A tuple containing the results of the partial decryption, the packing factor of the ciphertext blocks, and the time it took to execute
 /// * The results of the partial decryption are a hashmap containing the session id and the partially decrypted ciphertexts
 /// * The time it took to execute the partial decryption
 ///
@@ -483,7 +481,6 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -546,8 +543,6 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the partial decryption and the time it took to execute
