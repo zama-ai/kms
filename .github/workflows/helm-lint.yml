@@ -1,8 +1,6 @@
 name: helm-lint
 
-# Triggered for any change under charts/** on PRs and pushes to main/release/*,
-# and unconditionally on the weekday nightly schedule (GitHub's schedule trigger
-# does not support path filters, and only fires from the default branch).
+# Triggered for any change under charts/** on PRs and pushes to main/release/*.
 on:
   pull_request:
     paths:

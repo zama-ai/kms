@@ -200,9 +200,9 @@ jobs:
         with:
           # Share cache across jobs/workflows that build the same dependency set.
           shared-key: kms-rust
-          # Temporary policy for cache validation:
-          # save on main and on internal PRs (not forks).
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Save on main and on internal (non-fork) PRs so PR branches get a
+          # warm cache; forks can't write to the cache anyway.
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event.pull_request.head.repo.fork == false }}
 
       - name: Install Protoc
         uses: ./.github/actions/setup-rust-and-protoc
@@ -374,7 +374,7 @@ jobs:
     if: |
       always() &&
       github.event_name != 'schedule' &&
-      (!contains(github.event.pull_request.labels.*.name, 'docker') || !contains(github.event.pull_request.labels.*.name, 'pr-preview'))
+      (!contains(github.event.pull_request.labels.*.name, 'docker') && !contains(github.event.pull_request.labels.*.name, 'pr-preview'))
     needs:
       - docker-build
       - kind-testing

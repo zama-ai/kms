@@ -272,7 +272,7 @@ lto = "thin"
 [profile.release-lto-off]
 # use release profile settings
 inherits = "release"
-# but set LTO to the default (thin instead of fat)
+# but disable LTO entirely (off instead of fat) for the fastest link times
 lto = "off"
 
 [patch.crates-io]

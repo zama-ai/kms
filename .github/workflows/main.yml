@@ -41,9 +41,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified.
-      # Only outputs consumed by jobs in *this* workflow are exported here;
-      # the per-package test matrix lives in `parallel-testing.yml`, which performs
-      # its own change filtering as needed.
+      # Only outputs consumed by jobs in *this* workflow are exported here.
+      # NOTE: the per-package test matrix in `parallel-testing.yml` does NOT
+      # consume these outputs - it currently runs unconditionally (no change
+      # filter) so every PR exercises and warms the shared rust cache. Wire a
+      # filter back in once the caching approach is validated.
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client-nightly-tests: ${{ steps.filter.outputs.core-client-nightly-tests }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
@@ -104,8 +106,9 @@ jobs:
 
   ############################################################################
   # Parallel testing pipeline
-  # Triggered by:
-  # - Changes to any of the components (filter: ci, core-client-nightly-tests, core-service, workspace-crates, docs)
+  # Runs UNCONDITIONALLY on every PR/push (no change filter, no `needs`): this
+  # is intentional while we validate the shared rust cache, so every run
+  # exercises and warms it. Tighten with a change filter once that's settled.
   ############################################################################
   parallel-testing:
     name: main/parallel-testing

@@ -76,6 +76,10 @@ jobs:
         with:
           report-path: '/tmp/junit/**/*.xml'
           title: 'Consolidated Tests Results ${{ env.TIMESTAMP }}'
+          # Kept false: two reporters (main + parallel-testing) post here, and
+          # overwrite-comment would make them clobber each other's comment. The
+          # trade-off is that comments accumulate across pushes on a PR; the
+          # timestamped title disambiguates the latest one.
           overwrite-comment: false
           summary-report: false
           github-report: true

@@ -42,8 +42,9 @@ on:
         default: false
       efs-test-material-path:
         # Optional absolute path to pre-generated test material on EFS.
-        # Example: /mnt/efs/kms-test-material/<run-id>/insecure_secure_4_13
-        # When provided, this workflow links ./test-material to that path.
+        # Example: /mnt/efs/kms-test-material/<generator-hash>/insecure_secure_4_13
+        # (the hash keys the generator inputs; the leaf dir names the material
+        # set). When provided, this workflow links ./test-material to that path.
         type: string
         required: false
         default: ''
@@ -147,9 +148,9 @@ jobs:
         with:
           # Share cache across jobs/workflows that build the same dependency set.
           shared-key: kms-rust
-          # Temporary policy for cache validation:
-          # save on main and on internal PRs (not forks).
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Save on main and on internal (non-fork) PRs so PR branches get a
+          # warm cache; forks can't write to the cache anyway.
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event.pull_request.head.repo.fork == false }}
 
       # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
       - name: Setup Redis
@@ -192,11 +193,20 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
-      # Generate the full insecure+secure test material set for parties 4, 13.
-      - name: EFS test material path not provided
+      # Fallback when no EFS path is supplied (e.g. the nightly caller in
+      # main.yml): the job still needs fixtures, so generate the full
+      # insecure+secure set for parties 4,13 locally into ./test-material
+      # rather than silently running material-dependent tests with none.
+      - name: Generate test material locally (no EFS path provided)
         if: ${{ ! inputs.skip-test-material && inputs.efs-test-material-path == '' }}
         run: |
-          echo "::warning::efs-test-material-path not provided; this job will not link test material from EFS."
+          echo "::warning::efs-test-material-path not provided; generating test material locally."
+          rm -rf ./test-material
+          # Build the generator in Cargo's built-in `test` profile so the test
+          # jobs can reuse more compiled artifacts from the rust cache.
+          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,13"
+          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,13
+          du -sh ./test-material || true
 
       - name: Link pre-generated test material from EFS
         if: ${{ ! inputs.skip-test-material && inputs.efs-test-material-path != '' }}

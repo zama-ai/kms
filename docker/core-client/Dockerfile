@@ -37,13 +37,9 @@ COPY tools ./tools
 #   - lets cargo parallelize all link steps across binaries,
 #   - shares a single sccache hit set with no race conditions.
 #
-# NOTE on features: `-F threshold-execution/testing` is enabled workspace-
-# wide here, so it also applies when compiling the `threshold-execution`
-# dep pulled in by `kms-custodian` and `kms-health-check`. Previously
-# those two binaries linked against `threshold-execution` *without*
-# `testing`. If that semantic difference matters, split this into two
-# `cargo build` calls (one with the feature, one without) sharing the
-# same workspace `target/` dir.
+# `-F threshold-execution/testing` is intentionally applied workspace-wide:
+# all three binaries build in one pass, so `kms-custodian` and
+# `kms-health-check` also link `threshold-execution` with `testing` enabled.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \

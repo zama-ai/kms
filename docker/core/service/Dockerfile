@@ -31,12 +31,9 @@ COPY docker ./docker
 
 RUN mkdir -p /app/kms/core/service/bin
 
+# `cargo fetch` only downloads dependencies; it does not compile, so it needs
+# neither sccache nor its AWS secrets.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=secret,id=sccache_aws_access_key_id \
-    --mount=type=secret,id=sccache_aws_secret_access_key \
-    set -eu && \
-    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
-    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
     cargo fetch --locked
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
