@@ -26,13 +26,13 @@ dev-kms-core-init-1 exited with code 0
 ### Interaction with the local KMS cores
 In a different terminal, we can now interact with the running cores from the previous step.
 
-1. First, build the `core-client` tool by running `cargo build -p kms-core-client` in the repository root. This should take about a minute or two, depending on your machine.
+1. First, build the `core-client` tool by running `cargo build -p kms-core-client --features insecure` in the repository root. This should take about a minute or two, depending on your machine.
 2. The `core-client` can be configured via a config file, where a good default is provided in [`core-client/config/client_local_threshold.toml`](../../core-client/config/client_local_threshold.toml). Optionally, if you're just interested in seeing quick results, you can switch to smaller (but insecure) testing paramters by setting
 ```fhe_params = "Test"```
 in the config file used in the next step.
 3. Then, generate a set of private and public FHE keys by running the following command, pointing to your desired config file after the `-f` flag:
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
+    $ cargo run --bin kms-core-client --features insecure -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
     ```
     The command will print plenty of logs and return the `key-id` that we require in the following step. The output looks like this, where `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` is the `key-id`:
     ```

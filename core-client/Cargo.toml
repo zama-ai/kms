@@ -48,10 +48,7 @@ threshold-execution = { workspace = true, features = ["non-wasm"] }
 hashing.workspace = true
 hex.workspace = true
 k256.workspace = true
-kms = { workspace = true, features = [
-    "default",
-    "insecure",
-] }
+kms = { workspace = true, features = ["default"] }
 kms-grpc.workspace = true
 observability.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
@@ -79,6 +76,7 @@ assert_cmd.workspace = true
 test-utils.workspace = true
 test-utils-cc = { path = "./test-utils-cc" }
 futures.workspace = true
+kms = { workspace = true, features = ["insecure", "testing"] }
 # Self-import for integration tests
 kms-core-client = { workspace = true, features = ["testing"] }
 test-context.workspace = true
@@ -91,6 +89,10 @@ tonic-prost-build.workspace = true
 ignored = ["kms", "strum"]
 
 [features]
+# Enable CLI commands that call the insecure keygen/CRS RPCs.
+insecure = ["kms-grpc/insecure"]
+# Bundle test helpers plus insecure-only CLI commands for e2e coverage.
+e2e = ["testing", "insecure"]
 # Enables threshold PRSS tests in `integration_test`.
 # These are the threshold tests that require PRSS infrastructure:
 #   preproc+keygen, MPC context init/switch, reshare, full-gen preproc.
@@ -108,5 +110,5 @@ ignored = ["kms", "strum"]
 # Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
 threshold_tests = ["testing"]
 # Enable tests that require a running Kind/Kubernetes cluster.
-kind_tests = ["testing"]
+kind_tests = ["e2e"]
 testing = ["threshold-execution/testing"]

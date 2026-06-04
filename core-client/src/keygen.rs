@@ -1,7 +1,9 @@
+#[cfg(feature = "insecure")]
+use crate::PartialKeyGenPreprocParameters;
 use crate::s3_operations::fetch_public_elements;
 use crate::{
-    CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
+    CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
+    dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -142,9 +144,16 @@ pub(crate) async fn do_keygen(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             if insecure {
-                cur_client
-                    .insecure_key_gen(tonic::Request::new(req_cloned))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    return cur_client
+                        .insecure_key_gen(tonic::Request::new(req_cloned))
+                        .await;
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!("insecure keygen requires the kms-core-client insecure feature");
+                }
             } else {
                 cur_client.key_gen(tonic::Request::new(req_cloned)).await
             }
@@ -357,9 +366,18 @@ pub(crate) async fn get_keygen_responses(
             .await;
 
             let mut response = if insecure {
-                cur_client
-                    .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    cur_client
+                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
+                        .await
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!(
+                        "insecure keygen polling requires the kms-core-client insecure feature"
+                    );
+                }
             } else {
                 cur_client
                     .get_key_gen_result(tonic::Request::new(request_id.into()))
@@ -382,9 +400,18 @@ pub(crate) async fn get_keygen_responses(
                 }
                 ctr += 1;
                 response = if insecure {
-                    cur_client
-                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                        .await
+                    #[cfg(feature = "insecure")]
+                    {
+                        cur_client
+                            .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
+                            .await
+                    }
+                    #[cfg(not(feature = "insecure"))]
+                    {
+                        unreachable!(
+                            "insecure keygen polling requires the kms-core-client insecure feature"
+                        );
+                    }
                 } else {
                     cur_client
                         .get_key_gen_result(tonic::Request::new(request_id.into()))
@@ -668,6 +695,7 @@ pub(crate) async fn do_preproc(
     Ok(req_id)
 }
 
+#[cfg(feature = "insecure")]
 pub(crate) async fn do_partial_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,

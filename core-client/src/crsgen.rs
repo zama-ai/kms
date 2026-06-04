@@ -69,9 +69,18 @@ pub(crate) async fn do_crsgen(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             if insecure {
-                cur_client
-                    .insecure_crs_gen(tonic::Request::new(req_cloned))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    return cur_client
+                        .insecure_crs_gen(tonic::Request::new(req_cloned))
+                        .await;
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!(
+                        "insecure CRS generation requires the kms-core-client insecure feature"
+                    );
+                }
             } else {
                 cur_client.crs_gen(tonic::Request::new(req_cloned)).await
             }
@@ -227,9 +236,18 @@ pub(crate) async fn get_crsgen_responses(
             tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
 
             let mut response = if insecure {
-                cur_client
-                    .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    cur_client
+                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
+                        .await
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!(
+                        "insecure CRS polling requires the kms-core-client insecure feature"
+                    );
+                }
             } else {
                 cur_client
                     .get_crs_gen_result(tonic::Request::new(request_id.into()))
@@ -250,9 +268,18 @@ pub(crate) async fn get_crsgen_responses(
                 }
                 ctr += 1;
                 response = if insecure {
-                    cur_client
-                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
-                        .await
+                    #[cfg(feature = "insecure")]
+                    {
+                        cur_client
+                            .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
+                            .await
+                    }
+                    #[cfg(not(feature = "insecure"))]
+                    {
+                        unreachable!(
+                            "insecure CRS polling requires the kms-core-client insecure feature"
+                        );
+                    }
                 } else {
                     cur_client
                         .get_crs_gen_result(tonic::Request::new(request_id.into()))

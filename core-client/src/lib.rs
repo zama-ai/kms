@@ -19,9 +19,11 @@ use crate::backup::{
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
+#[cfg(feature = "insecure")]
+use crate::keygen::do_partial_preproc;
 use crate::keygen::{
-    do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
-    get_keygen_responses, get_preproc_keygen_responses,
+    do_abort_key_gen, do_keygen, do_preproc, fetch_and_check_keygen, get_keygen_responses,
+    get_preproc_keygen_responses,
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
@@ -665,6 +667,8 @@ pub struct KeyGenParameters {
 }
 
 /// Parameters for insecure key generation (testing/development only).
+/// Available only when `kms-core-client` is built with the `insecure` feature.
+#[cfg(feature = "insecure")]
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
     #[command(flatten)]
@@ -871,6 +875,7 @@ pub struct KeyGenPreprocParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+#[cfg(feature = "insecure")]
 pub struct PartialKeyGenPreprocParameters {
     #[clap(long)]
     pub context_id: Option<ContextId>,
@@ -887,12 +892,15 @@ pub struct PartialKeyGenPreprocParameters {
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(KeyGenPreprocParameters),
+    #[cfg(feature = "insecure")]
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(KeyGenResultParameters),
     AbortKeyGen(AbortParameters),
+    #[cfg(feature = "insecure")]
     InsecureKeyGen(InsecureKeyGenParameters),
+    #[cfg(feature = "insecure")]
     InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
@@ -903,7 +911,9 @@ pub enum CCCommand {
     CrsGen(CrsParameters),
     CrsGenResult(ResultParameters),
     AbortCrsGen(AbortParameters),
+    #[cfg(feature = "insecure")]
     InsecureCrsGen(CrsParameters),
+    #[cfg(feature = "insecure")]
     InsecureCrsGenResult(ResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
@@ -1835,6 +1845,7 @@ pub async fn execute_cmd(
 
             vec![(Some(req_id), "keygen done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureKeyGen(InsecureKeyGenParameters { shared_args }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1897,6 +1908,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureCrsGen(CrsParameters {
             max_num_bits,
             epoch_id,
@@ -1969,6 +1981,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::PartialPreprocKeyGen(partial_params) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -2062,6 +2075,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureKeyGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2149,6 +2163,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "crs gen result queried".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureCrsGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
                 num_parties
