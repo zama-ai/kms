@@ -1,0 +1,81 @@
+# Lean, operator-only kube-prometheus-stack for Kind CI.
+#
+# Purpose: scrape the KMS ServiceMonitor and remote-write the resulting (already
+# `ci_`-prefixed) KMS metrics to Grafana Cloud. The `ci_` prefix is applied at
+# scrape time by the KMS ServiceMonitor (charts/kms-core, value
+# kmsCore.serviceMonitor.metricNamePrefix), NOT on the remote-write path.
+#
+# The remoteWrite URL and the `ci_run_id` external label are injected at install
+# time via `helm --set` (see ci/scripts/lib/infrastructure.sh).
+
+# Disable everything except the operator + a single Prometheus. We only care
+# about KMS metrics, so cluster-level exporters and the Grafana/Alertmanager
+# UIs are turned off to keep the Kind cluster light.
+grafana:
+  enabled: false
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubeStateMetrics:
+  enabled: false
+
+# Disable the bundled cluster scrape jobs / rules / dashboards: in CI we only
+# want the KMS ServiceMonitor to be scraped.
+kubeApiServer:
+  enabled: false
+kubelet:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+coreDns:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+defaultRules:
+  create: false
+
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    # Short local retention: data lives in Grafana Cloud, the local TSDB is
+    # only a buffer for remote-write.
+    retention: 1h
+
+    # Discover the KMS ServiceMonitor regardless of its labels/namespace.
+    # The kms-core chart's ServiceMonitor does not carry the chart's release
+    # label, so the default Helm-values selector would miss it.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+    # Remote-write to Grafana Cloud. `url` is injected via `helm --set` into
+    # this same list element. Metrics are already `ci_`-prefixed at scrape time,
+    # so no metric renaming happens here.
+    remoteWrite:
+      - basicAuth:
+          username:
+            name: grafana-cloud-prom-auth
+            key: username
+          password:
+            name: grafana-cloud-prom-auth
+            key: password
+        # Safety net: only ship series coming from the KMS namespaces, in case
+        # additional scrape targets are ever enabled.
+        writeRelabelConfigs:
+          - sourceLabels: [namespace]
+            regex: "kms-test-.*"
+            action: keep

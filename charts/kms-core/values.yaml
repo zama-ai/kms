@@ -214,6 +214,10 @@ kmsCore:
   workdir: /root
   serviceMonitor:
     enabled: false
+    # Optional prefix added to every scraped metric name via metricRelabelings
+    # (e.g. "ci_"). Empty means no renaming. Used to namespace CI metrics so a
+    # central Prometheus can keep them separate from production series.
+    metricNamePrefix: ""
   # Note: these requests/limits is only for non-enclave workloads, this will not be allocated to the kms-core process running in Nitro
   resources:
     requests: {}

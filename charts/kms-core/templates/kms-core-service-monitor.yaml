@@ -14,6 +14,15 @@ spec:
       headless: "false"
   endpoints:
   - port: metrics
+    {{- if .Values.kmsCore.serviceMonitor.metricNamePrefix }}
+    metricRelabelings:
+    # Prefix every metric name (e.g. ci_<name>) at scrape time so the series is
+    # already renamed before it is stored / remote-written.
+    - sourceLabels: [__name__]
+      targetLabel: __name__
+      replacement: "{{ .Values.kmsCore.serviceMonitor.metricNamePrefix }}$1"
+      action: replace
+    {{- end }}
     relabelings:
     - action: replace
       regex: .*:(.*)
