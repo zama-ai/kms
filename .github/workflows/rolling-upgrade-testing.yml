@@ -164,6 +164,9 @@ jobs:
       NAMESPACE: 'kms-ci'
       PATH_SUFFIX: 'kms-enclave-ci'
     steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+
       - name: Setup Home
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
