@@ -84,6 +84,32 @@ impl<
             .map_err(|e| e.into())
     }
 
+    // In the centralized case the insecure preprocessing is identical to the
+    // secure one as both are dummy and only store the preprocessing ID.
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn insecure_key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_REQUEST);
+        preprocessing_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn get_insecure_key_gen_preproc_result(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<KeyGenPreprocResult>, Status> {
+        METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_RESULT);
+        get_preprocessing_res_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
     #[cfg(feature = "insecure")]
     #[tracing::instrument(skip(self, request))]
     async fn insecure_key_gen(

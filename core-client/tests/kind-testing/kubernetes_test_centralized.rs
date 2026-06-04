@@ -115,6 +115,7 @@ impl K8sTestContext {
 
         let results = self
             .execute(CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+                preproc_id: None,
                 shared_args: SharedKeyGenParameters::default(),
             }))
             .await;

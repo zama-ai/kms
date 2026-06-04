@@ -346,12 +346,12 @@ These commands generate a set of private and public FHE keys. It will return a `
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen [--compressed] [--keyset-type <TYPE>]
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen [--preproc-id <REQUEST_ID>] [--uncompressed]
 ```
 
 Optional arguments:
- - `-c`/`--compressed`: Generate compressed keys using XOF-seeded compression (default: disabled).
- - `-t`/`--keyset-type <TYPE>`: Keyset type for key generation. Currently only `standard` is supported (default: `standard`).
+ - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing insecure (dummy) preprocessing to consume (see [below](#insecure-dummy-preprocessing)). When omitted, the server uses the well-known `INSECURE_PREPROCESSING_ID` as an implicit one-shot dummy preprocessing.
+ - `-u`/`--uncompressed`: Generate legacy uncompressed public key material (`PublicKey` + `ServerKey`). By default key generation stores compressed key material.
 
 This means that a single KMS core will generate a set of FHE keys in plain. In a threshold KMS, the contained private key material will then be secret shared between all KMS cores.
 
@@ -359,10 +359,31 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--compressed]
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed]
 ```
 
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
+
+#### Insecure (Dummy) Preprocessing
+
+Like the secure flow, an insecure key-generation consumes a preprocessing entry, but the insecure preprocessing is a dummy: no correlated randomness is generated and only the request ID is recorded, so the call completes almost instantly. It can be triggered explicitly via:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: the context ID to use for the preprocessing. Defaults to the default context if not specified.
+ - `--epoch-id <EPOCH_ID>`: the epoch ID to use for the preprocessing. Defaults to the default epoch if not specified.
+
+The resulting `REQUEST_ID` can then be passed to `insecure-key-gen` via `--preproc-id`. Each explicit entry is consumed by the key generation, so a fresh insecure preprocessing is needed for each insecure key-generation call that passes an explicit preprocessing ID. If `insecure-key-gen` is invoked without `--preproc-id`, this step is not needed: the server uses the well-known `INSECURE_PREPROCESSING_ID` as an implicit one-shot dummy preprocessing (which also means concurrent no-argument insecure key generations against the same cluster are not supported).
+
+Note that in the threshold setting an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`; in the centralized setting both preprocessing variants are identical dummies and are interchangeable.
+
+It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
+```
 
 #### Preprocessing for Secure Key-Generation
 

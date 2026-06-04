@@ -317,14 +317,13 @@ message KeyGenPreprocRequest {
 ### Output
 
 ```proto
-message KeyGenPreprocResult {}
+message Empty {}
 ```
 
 ### Description
 
-This RPC is only relevant in the __threshold__ case.
-
-It triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
+In the __threshold__ case it triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
+In the __centralized__ case no correlated randomness is needed, so this is a dummy that only records the `request_id`; the entry must nonetheless exist before calling `KeyGen`.
 
 This correlated randomness will then be consumed when calling `KeyGen` with the `preproc_id` set to the current `request_id`.
 
@@ -343,7 +342,14 @@ message RequestId { string request_id = 1; }
 
 ### Output
 
-There is no output. If the call is successful then it means preprocessing is completed.
+```proto
+message KeyGenPreprocResult {
+  RequestId preprocessing_id = 1;
+  bytes external_signature = 2;
+}
+```
+
+If the call is successful then it means preprocessing is completed.
 Otherwise, it may fail with the following `tonic::Code` error codes:
 
 - `NotFound`: There has not been a `KeyGenPreproc` call for the provided `request_id`.
@@ -355,15 +361,71 @@ Otherwise, it may fail with the following `tonic::Code` error codes:
 This RPC allows to check the status of the correlated randomness generation.
 
 Correlated randomness generation is a slow process (several hours), and we thus provide a way to query its status via its unique identifier `request_id`.
-This is because, to initiate a Distributed Key Generation, we must provide a `preproc_id` that is the `RequestId` of a `Finished` preprocessing.
+This is because, to initiate a Distributed Key Generation, we must provide a `preproc_id` that is the `RequestId` of a finished preprocessing.
 
-The meaning of the enum is as follows:
+</details>
 
-- `Missing`: There has not been a `KeyGenPreprocRequest` for the provided `request_id`.
-- `InProgess`: The core is still generating the correlated randomness for the specified `request_id`.
-- `Finished`: The core is done generating the correlated randomness, and we can thus now call `KeyGen` with `preproc_id` set to the current `request_id`.
-- `Error`: An irrecoverable internal server error has occurred during the correlated randomness generation.
+<details>
+    <summary> InsecureKeyGenPreproc </summary>
 
+___NOTE_: This is a temporary workaround and will only be available in testing/debugging setups. **NOT in production**__
+
+### Input
+
+```proto
+message KeyGenPreprocRequest {
+  FheParameter params = 1;
+  KeySetConfig keyset_config = 2;
+  RequestId request_id = 3;
+}
+```
+
+### Output
+
+```proto
+message Empty {}
+```
+
+### Description
+
+Insecure version of `KeyGenPreproc`, where _no_ correlated randomness is generated.
+Only the preprocessing ID (along with the parameters and the external signature) is recorded, so a subsequent `InsecureKeyGen` call with `preproc_id` set to the current `request_id` can validate and consume it.
+Because nothing is generated, this call completes (almost) instantly.
+
+As for the secure variant, an explicit preprocessing entry is consumed by _each_ insecure key generation call that references it. Calling this endpoint explicitly is optional however: when `InsecureKeyGen` is invoked without a `preproc_id` (or with the well-known `INSECURE_PREPROCESSING_ID` and no stored entry), the server uses the well-known ID as an implicit one-shot dummy preprocessing.
+In the __threshold__ setting the stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
+In the __centralized__ setting this endpoint is identical to `KeyGenPreproc` — both are dummies that only record the `request_id` — so the stored entry carries no mode and can be consumed by either `KeyGen` or `InsecureKeyGen`.
+Completion status can be validated using the `GetInsecureKeyGenPreprocResult` endpoint.
+</details>
+
+<details>
+    <summary> GetInsecureKeyGenPreprocResult </summary>
+
+### Input
+
+```proto
+message RequestId { string request_id = 1; }
+```
+
+### Output
+
+```proto
+message KeyGenPreprocResult {
+  RequestId preprocessing_id = 1;
+  bytes external_signature = 2;
+}
+```
+
+If the call is successful then it means preprocessing is completed.
+Otherwise, it may fail with the following `tonic::Code` error codes:
+
+- `NotFound`: There has not been an `InsecureKeyGenPreproc` call for the provided `request_id`.
+- `Internal`: The `InsecureKeyGenPreproc` for the queried `request_id` has failed due to an internal and unrecoverable server error.
+
+### Description
+
+This RPC allows to check the status of an insecure preprocessing request.
+Functionally this call is similar to `GetKeyGenPreprocResult`.
 </details>
 
 <details>
@@ -392,7 +454,7 @@ message Empty {}
 
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a `Finished` `KeyGenPreprocRequest` in the __threshold__ setting. In the __centralized__ setting, this can be ignored.
+The `preproc_id` must be the `request_id` of a `Finished` `KeyGenPreprocRequest`. This holds in both the __threshold__ and the __centralized__ setting; in the latter the preprocessing is a dummy that only records the `request_id`, but the entry must still exist.
 The `keyset_config` is the information about the keys to generate and _must_ match the similar argument used during preprocessing in `KeyGenPreprocRequest`.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.
 
@@ -465,7 +527,9 @@ message Empty {}
 Insecure version of `KeyGen`, where MPC is _not_ used for key generation.
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` or `GetInsecureKeyGenResult` endpoint.
 
-The `preproc_id` can be ignored.
+The `preproc_id` must be the `request_id` of a finished `InsecureKeyGenPreproc` request, mirroring the secure flow. The entry is consumed by this call, so each insecure key generation requires its own insecure preprocessing. In the __threshold__ setting a `preproc_id` produced by the secure `KeyGenPreproc` cannot be consumed by this endpoint (it fails with `FailedPrecondition`); in the __centralized__ setting both preprocessing endpoints are identical dummies, so their entries are interchangeable.
+
+Unlike the secure flow, the `preproc_id` may also be omitted: it then defaults to the well-known `INSECURE_PREPROCESSING_ID` (derived from that string), which the server treats as an implicit one-shot dummy preprocessing if no stored entry exists. The same happens when this well-known ID is passed explicitly. This means the insecure key generation can be called without any prior preprocessing call, but note that concurrent insecure key generations sharing the well-known ID are not supported.
 
 The `keyset_config` is the information about the keys to generate.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.

@@ -36,6 +36,7 @@ use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
+use kms_lib::engine::base::INSECURE_PREPROCESSING_ID;
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
@@ -667,6 +668,12 @@ pub struct KeyGenParameters {
 /// Parameters for insecure key generation (testing/development only).
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
+    /// ID of an existing insecure preprocessing (see `insecure-preproc-key-gen`)
+    /// to consume. When omitted, the well-known `INSECURE_PREPROCESSING_ID` is
+    /// used, for which the server synthesizes an insecure (dummy) preprocessing
+    /// entry on the fly.
+    #[clap(long, short = 'i')]
+    pub preproc_id: Option<RequestId>,
     #[command(flatten)]
     pub shared_args: SharedKeyGenParameters,
 }
@@ -870,6 +877,22 @@ pub struct KeyGenPreprocParameters {
     pub from_existing_shares: bool,
 }
 
+/// Parameters for insecure (dummy) key-generation preprocessing
+/// (testing/development only). No keyset configuration is taken because the
+/// insecure preprocessing generates no material; it only records the request
+/// ID so it can be consumed by a subsequent insecure key generation.
+#[derive(Debug, Parser, Clone, Default)]
+pub struct InsecureKeyGenPreprocParameters {
+    /// Optionally specify the context ID to use for the preprocessing.
+    /// Defaults to the default context if not specified.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Optionally specify the epoch ID to use for the preprocessing.
+    /// Defaults to the default epoch if not specified.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct PartialKeyGenPreprocParameters {
     #[clap(long)]
@@ -892,6 +915,8 @@ pub enum CCCommand {
     KeyGen(KeyGenParameters),
     KeyGenResult(KeyGenResultParameters),
     AbortKeyGen(AbortParameters),
+    InsecurePreprocKeyGen(InsecureKeyGenPreprocParameters),
+    InsecurePreprocKeyGenResult(ResultParameters),
     InsecureKeyGen(InsecureKeyGenParameters),
     InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
@@ -1836,13 +1861,20 @@ pub async fn execute_cmd(
 
             vec![(Some(req_id), "keygen done".to_string())]
         }
-        CCCommand::InsecureKeyGen(InsecureKeyGenParameters { shared_args }) => {
+        CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            preproc_id,
+            shared_args,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
                 fhe_params.as_str_name()
             );
-            let dummy_preproc_id = RequestId::new_random(&mut rng);
+            // The insecure keygen requires a preprocessing ID just like the
+            // secure one. If none is given, the well-known
+            // INSECURE_PREPROCESSING_ID is used, for which the server
+            // synthesizes an insecure (dummy) preprocessing entry on the fly.
+            let preproc_id = preproc_id.unwrap_or(*INSECURE_PREPROCESSING_ID);
             let req_id = do_keygen(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1852,7 +1884,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 fhe_params,
-                dummy_preproc_id,
+                preproc_id,
                 true,
                 shared_args,
                 destination_prefix,
@@ -1966,9 +1998,34 @@ pub async fn execute_cmd(
                 context_id.as_ref(),
                 epoch_id.as_ref(),
                 keyset_config,
+                false,
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
+        }
+        CCCommand::InsecurePreprocKeyGen(InsecureKeyGenPreprocParameters {
+            context_id,
+            epoch_id,
+        }) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Insecure (dummy) preprocessing with parameter {}.",
+                fhe_params.as_str_name()
+            );
+            let req_id = do_preproc(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                cmd_config,
+                num_parties,
+                fhe_params,
+                context_id.as_ref(),
+                epoch_id.as_ref(),
+                None,
+                true,
+            )
+            .await?;
+            vec![(Some(req_id), "insecure preproc done".to_string())]
         }
         CCCommand::PartialPreprocKeyGen(partial_params) => {
             let mut internal_client = internal_client.unwrap();
@@ -2027,8 +2084,15 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ = get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter).await?;
+            let _ =
+                get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, false).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
+        }
+        CCCommand::InsecurePreprocKeyGenResult(result_parameters) => {
+            let req_id: RequestId = result_parameters.request_id;
+            let _ =
+                get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, true).await?;
+            vec![(Some(req_id), "insecure preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {

@@ -1010,6 +1010,7 @@ async fn insecure_key_gen(
     let config = cmd_config(
         config_path,
         CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            preproc_id: None,
             shared_args: SharedKeyGenParameters {
                 uncompressed,
                 ..Default::default()
@@ -1019,6 +1020,38 @@ async fn insecure_key_gen(
     );
     let id = run_cmd(&config, test_path, "insecure key-gen").await?;
     Ok(id.to_string())
+}
+
+/// Helper to run the insecure (dummy) preprocessing and insecure key generation
+/// via CLI (isolated version), exercising the explicit `--preproc-id` flow.
+async fn insecure_preproc_and_keygen(
+    config_path: &Path,
+    test_path: &Path,
+    uncompressed: bool,
+) -> Result<String> {
+    let preproc_config = cmd_config(
+        config_path,
+        CCCommand::InsecurePreprocKeyGen(InsecureKeyGenPreprocParameters {
+            context_id: None,
+            epoch_id: None,
+        }),
+        200,
+    );
+    let preproc_id = run_cmd(&preproc_config, test_path, "insecure preprocessing").await?;
+
+    let keygen_config = cmd_config(
+        config_path,
+        CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            preproc_id: Some(preproc_id),
+            shared_args: SharedKeyGenParameters {
+                uncompressed,
+                ..Default::default()
+            },
+        }),
+        200,
+    );
+    let key_id = run_cmd(&keygen_config, test_path, "insecure key-gen").await?;
+    Ok(key_id.to_string())
 }
 
 // ============================================================================
@@ -2084,8 +2117,11 @@ async fn test_centralized_insecure_default_keygen() -> Result<()> {
     let (material_dir, _server, config_path) =
         setup_isolated_centralized_cli_test("centralized_insecure_default_keygen").await?;
 
+    // Use the explicit insecure-preproc flow here so both the explicit
+    // `--preproc-id` path and the automatic fallback (used by the other
+    // insecure keygen tests) are covered.
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
@@ -2418,8 +2454,11 @@ async fn test_threshold_insecure_default_keygen() -> Result<()> {
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss("threshold_insecure_default_keygen", 4).await?;
 
+    // Use the explicit insecure-preproc flow here so both the explicit
+    // `--preproc-id` path and the automatic fallback (used by the other
+    // insecure keygen tests) are covered.
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())

@@ -19,9 +19,9 @@ use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
-use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::common::threshold_secure_key_gen;
+use crate::client::tests::threshold::common::{run_insecure_preproc, threshold_insecure_key_gen};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 use crate::consts::MAX_TRIES;
@@ -242,6 +242,16 @@ pub(crate) async fn run_threshold_keygen(
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
+
+    // Insecure keygen either consumes an explicit dummy preprocessing entry or
+    // uses the well-known ID as an implicit dummy preprocessing.
+    let explicit_insecure_preproc = insecure && *preproc_req_id != *INSECURE_PREPROCESSING_ID;
+    if explicit_insecure_preproc {
+        run_insecure_preproc(kms_clients, preproc_req_id, parameter)
+            .await
+            .unwrap();
+    }
+
     let req_keygen = internal_client
         .key_gen_request(
             keygen_req_id,
@@ -267,6 +277,7 @@ pub(crate) async fn run_threshold_keygen(
         kms_clients,
         internal_client,
         insecure,
+        explicit_insecure_preproc,
         &keyset_config,
         extra_data,
         data_root_path,
@@ -310,6 +321,7 @@ async fn wait_for_keygen_result(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     insecure: bool,
+    explicit_insecure_preproc: bool,
     keyset_config: &Option<KeySetConfig>,
     extra_data: Vec<u8>,
     data_root_path: Option<&Path>,
@@ -410,12 +422,12 @@ async fn wait_for_keygen_result(
         (out, all_private_keys) = (Some(res.0), Some(res.1));
     }
 
-    if !insecure {
+    if !insecure || explicit_insecure_preproc {
         // Try to request another kg with the same preproc but another request id,
-        // we should see that it fails because the preproc material is consumed.
-        //
-        // We only test for the secure variant of the dkg because the insecure
-        // variant does not use preprocessing material.
+        // we should see that it fails because the preproc entry is consumed.
+        // This holds for secure preprocessing and explicit insecure dummy
+        // preprocessing. The well-known insecure preprocessing ID is implicit,
+        // so it intentionally remains reusable after a key generation.
         tracing::debug!("starting another dkg with a used preproc ID");
         let other_key_gen_id = derive_request_id("test_dkg other key id").unwrap();
         let keygen_req_data = internal_client
@@ -445,25 +457,17 @@ pub(crate) async fn run_threshold_decompression_keygen(
     parameter: FheParameter,
     insecure: bool,
 ) {
-    let preproc_id_1 = if insecure {
-        *INSECURE_PREPROCESSING_ID
-    } else {
-        derive_request_id(&format!(
-            "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
-        ))
-        .unwrap()
-    };
+    let preproc_id_1 = derive_request_id(&format!(
+        "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
+    ))
+    .unwrap();
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
 
-    let preproc_id_2 = if insecure {
-        *INSECURE_PREPROCESSING_ID
-    } else {
-        derive_request_id(&format!(
-            "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
-        ))
-        .unwrap()
-    };
+    let preproc_id_2 = derive_request_id(&format!(
+        "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
+    ))
+    .unwrap();
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
 
@@ -559,18 +563,21 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .0;
     let (client_key_2, _public_key_2, _server_key_2) = keys2.get_uncompressed();
 
-    // We always need to run preproc for the last keygen
-    run_preproc(
-        amount_parties,
-        parameter,
-        &kms_clients,
-        &internal_client,
-        &preproc_id_3,
-        None,
-        0,
-        None,
-    )
-    .await;
+    // For the insecure variant the (dummy) preprocessing
+    // is run by `run_threshold_keygen` itself
+    if !insecure {
+        run_preproc(
+            amount_parties,
+            parameter,
+            &kms_clients,
+            &internal_client,
+            &preproc_id_3,
+            None,
+            0,
+            None,
+        )
+        .await;
+    }
 
     // finally do the decompression keygen between the first and second keysets
     let (keyset_config, keyset_added_info) = decompression_keygen_config(&key_id_1, &key_id_2);
@@ -1368,7 +1375,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
     let key_id = derive_request_id("test_insecure_dkg")?;
 
     // Generate key using insecure mode
-    let responses =
+    let (preproc_id, responses) =
         threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test, None, None).await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
@@ -1377,7 +1384,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         responses,
         Some(env.material_dir.path()),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &key_id,
         &crate::dummy_domain(),
         make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
@@ -1426,7 +1433,7 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
     let key_id = derive_request_id("default_insecure_dkg")?;
 
     // Use FheParameter::Default to match MaterialType::Default
-    let responses =
+    let (preproc_id, responses) =
         threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Default, None, None)
             .await?;
 
@@ -1438,7 +1445,7 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         responses,
         Some(env.material_dir.path()),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &key_id,
         &crate::dummy_domain(),
         make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
@@ -2277,13 +2284,13 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Step 1: Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey
     let key_id_1 = derive_request_id("decom_dkg_key_1")?;
-    let responses_1 =
+    let (preproc_id_1, responses_1) =
         threshold_insecure_key_gen(&env.clients, &key_id_1, FheParameter::Test, None, None).await?;
     let (keys_1, _) = verify_keygen_responses(
         responses_1,
         Some(&material_path),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id_1,
         &key_id_1,
         &dummy_domain(),
         default_extra_data(),
@@ -2301,13 +2308,13 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
-    let responses_2 =
+    let (preproc_id_2, responses_2) =
         threshold_insecure_key_gen(&env.clients, &key_id_2, FheParameter::Test, None, None).await?;
     let (keys_2, _) = verify_keygen_responses(
         responses_2,
         Some(&material_path),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id_2,
         &key_id_2,
         &dummy_domain(),
         default_extra_data(),

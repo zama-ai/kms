@@ -152,23 +152,27 @@ pub(crate) async fn do_keygen(
     }
 
     let mut req_response_vec = Vec::new();
+    let mut req_errors = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
         match inner {
             Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
             Ok(Err(e)) => {
                 tracing::warn!("Keygen request to a core failed: {e}");
+                req_errors.push(format!("request failed: {e}"));
             }
             Err(e) => {
                 tracing::warn!("Keygen request task panicked: {e}");
+                req_errors.push(format!("task panicked: {e}"));
             }
         }
     }
     if req_response_vec.len() < num_expected_responses {
         anyhow::bail!(
-            "Only {}/{} keygen requests succeeded, need at least {}",
+            "Only {}/{} keygen requests succeeded, need at least {}. Errors: {}",
             req_response_vec.len(),
             num_parties,
-            num_expected_responses
+            num_expected_responses,
+            req_errors.join("; ")
         );
     }
 
@@ -604,6 +608,7 @@ pub(crate) async fn do_preproc(
     context_id: Option<&ContextId>,
     epoch_id: Option<&EpochId>,
     keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
+    insecure: bool,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -621,16 +626,22 @@ pub(crate) async fn do_preproc(
     )?;
     let extra_data = pp_req.extra_data.clone();
 
-    // make parallel requests by calling insecure keygen in a thread
+    // make parallel requests by calling preprocessing in a thread
     let mut req_tasks = JoinSet::new();
 
     for ce in core_endpoints.values() {
         let req_cloned = pp_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
-            cur_client
-                .key_gen_preproc(tonic::Request::new(req_cloned))
-                .await
+            if insecure {
+                cur_client
+                    .insecure_key_gen_preproc(tonic::Request::new(req_cloned))
+                    .await
+            } else {
+                cur_client
+                    .key_gen_preproc(tonic::Request::new(req_cloned))
+                    .await
+            }
         });
     }
 
@@ -654,7 +665,8 @@ pub(crate) async fn do_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses =
+        get_preproc_keygen_responses(core_endpoints, req_id, max_iter, insecure).await?;
     for response in responses {
         // this part also verifies the signature
         internal_client.process_preproc_response(
@@ -734,7 +746,7 @@ pub(crate) async fn do_partial_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter, false).await?;
     for response in responses {
         internal_client.process_preproc_response(
             &req_id,
@@ -751,7 +763,21 @@ pub(crate) async fn get_preproc_keygen_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
+    insecure: bool,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
+    async fn fetch_result(
+        client: &mut CoreServiceEndpointClient<Channel>,
+        request_id: RequestId,
+        insecure: bool,
+    ) -> Result<tonic::Response<KeyGenPreprocResult>, tonic::Status> {
+        let req = tonic::Request::new(request_id.into());
+        if insecure {
+            client.get_insecure_key_gen_preproc_result(req).await
+        } else {
+            client.get_key_gen_preproc_result(req).await
+        }
+    }
+
     let mut resp_tasks = JoinSet::new();
     for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
@@ -767,9 +793,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                 "Polling preproc result for request {} from party {}",
                 request_id, core_conf.party_id
             );
-            let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                .await;
+            let mut response = fetch_result(&mut client, request_id, insecure).await;
             let mut ctr = 0_usize;
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
@@ -790,9 +814,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                     "Preproc result not ready yet for request {} from party {} (retry {}/{})",
                     request_id, core_conf.party_id, ctr, max_iter
                 );
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                    .await;
+                response = fetch_result(&mut client, request_id, insecure).await;
             }
 
             let resp = response.map_err(|e| {
