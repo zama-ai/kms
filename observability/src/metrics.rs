@@ -17,8 +17,8 @@ const DURATION_LABEL_KEYS: &[&str] = &[
     TAG_USER_DECRYPTION_KIND,
 ];
 
-/// Buckets (ms) for `kms_operation_duration_ms`. KMS ops range from sub-ms to minutes; Prometheus'
-/// default buckets (max `10`) would collapse every slow op into `+Inf` and flatten its quantiles.
+/// Buckets (ms) for `kms_operation_duration_ms`. Durations are recorded in whole milliseconds,
+/// so sub-ms ops are observed as `0`; KMS ops can still range up to minutes. Prometheus'
 const DURATION_BUCKETS_MS: &[f64] = &[
     1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 30_000.0,
     60_000.0, 120_000.0, 300_000.0,
