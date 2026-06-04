@@ -16,7 +16,7 @@ impl Client {
     ///
     /// The key_id should be the request ID of the key generation
     /// request that generated the key which should be used for public decryption
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn public_decryption_request(
         &mut self,
         ciphertexts: Vec<TypedCiphertext>,

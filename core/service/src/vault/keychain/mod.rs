@@ -60,7 +60,7 @@ pub trait Keychain {
     fn root_key_measurements(&self) -> Arc<RootKeyMeasurements>;
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[enum_dispatch(Keychain)]
 pub enum KeychainProxy {
     AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm, AesRng>),

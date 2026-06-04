@@ -66,7 +66,7 @@ pub(crate) fn build_standard_keyset_config(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn do_keygen(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
@@ -509,7 +509,7 @@ pub(crate) async fn do_abort_key_gen(
 }
 
 /// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn check_uncompressed_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
@@ -551,7 +551,7 @@ pub(crate) fn check_uncompressed_keyset_ext_signature(
 }
 
 /// Check external signature for compressed keyset
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn check_compressed_keyset_ext_signature(
     compressed_keyset: &tfhe::xof_key_set::CompressedXofKeySet,
     public_key: &CompactPublicKey,
@@ -593,7 +593,7 @@ pub(crate) fn check_compressed_keyset_ext_signature(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn do_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,

@@ -27,7 +27,7 @@ const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public mater
 /// This allows resharing to work with both standard keys (ServerKey + PublicKey) and
 /// compressed keys (CompressedXofKeySet).
 // It's ok to have a big enum here since the way this type is used is only temporary.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum VerifiedPublicMaterial {
     /// Standard uncompressed keyset with server key and public key
     Uncompressed(FhePubKeySet),

@@ -297,7 +297,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 /// 3. The decryption is executed
 /// 4. The results are returned
 ///
-#[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(sid, my_role))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>(
     noiseflood_session: &mut P,
@@ -391,7 +390,7 @@ where
 ///
 /// There is no "online" phase for partial decryption because all computation is local,
 /// that's why there are no traits similar to [OnlineNoiseFloodDecryption].
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[instrument(skip_all, fields(sid, my_role))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     noiseflood_session: &mut P,
@@ -493,7 +492,6 @@ where
 /// 2. The decryption protocol is executed
 /// 3. The results are returned
 ///
-#[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
@@ -555,7 +553,7 @@ where
 /// 2. The partial interactive decryption is executed, without opening the result in the last step
 /// 4. The results are returned
 ///
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,

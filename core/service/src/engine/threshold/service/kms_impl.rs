@@ -454,7 +454,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealBackupOperator<PubS, PrivS>,
 >;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
     public_storage: PubS,

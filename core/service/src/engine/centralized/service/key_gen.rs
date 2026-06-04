@@ -233,7 +233,7 @@ pub async fn key_gen_impl<
 ///
 /// Extracted from `key_gen_impl` so the cancel arm can be exercised
 /// deterministically in tests with a pending future.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_keygen_with_cancel<
     Fut: Future<Output = ()>,
     PubS: Storage + Sync + Send + 'static,
@@ -395,7 +395,7 @@ pub async fn abort_key_gen_impl<
 }
 
 /// Background task for key generation
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,

@@ -51,7 +51,7 @@ impl<
     BO: Sync,
 > ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         epoch_manager: EP,
         user_decryptor: UD,
@@ -140,7 +140,6 @@ impl<
 }
 
 #[cfg(feature = "insecure")]
-#[allow(clippy::let_underscore_future)]
 impl<
     EP: Sync,
     UD: Sync,
@@ -164,7 +163,7 @@ impl<
 impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync>
     ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         epoch_manager: EP,
         user_decryptor: UD,
@@ -239,7 +238,7 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
 }
 
 #[cfg(not(feature = "insecure"))]
-#[allow(clippy::let_underscore_future)]
+#[expect(clippy::let_underscore_future)]
 impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Drop
     for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {

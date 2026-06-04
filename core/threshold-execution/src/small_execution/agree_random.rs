@@ -947,7 +947,6 @@ mod tests {
         )
     }
 
-    #[allow(clippy::type_complexity)]
     /// Validates the result of agree random,
     /// except for the roles in `ignore_roles`
     fn validate_result(

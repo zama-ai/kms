@@ -39,7 +39,7 @@ impl Client {
     /// `context_id` and `epoch_id` are optional: when the caller does not
     /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
     /// these will then be used in the `extra_data` the KMS will sign.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn key_gen_request(
         &self,
         request_id: &RequestId,
@@ -116,7 +116,7 @@ impl Client {
     }
 
     #[cfg(feature = "insecure")]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn partial_preproc_request(
         &self,
         request_id: &RequestId,
