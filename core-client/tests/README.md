@@ -5,7 +5,7 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features slow_tests -- threshold` |
+| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests -- threshold` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
 | **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
@@ -19,12 +19,17 @@
 - `testing`
   - Enables test helper code used by integration tests. Most threshold tests
     (preproc+keygen, reshare, MPC context init/switch) run under this feature.
+- `insecure`
+  - Enables the client-side `InsecureKeyGen*` and `InsecureCrsGen*` CLI commands.
+- `e2e`
+  - Implies `testing` and `insecure`.
+  - Enables the full native/K8s e2e surface, including insecure-only fast-path commands.
 - `slow_tests`
   - Implies `testing`.
   - Compiles&runs the threshold tests that are too slow to run locally.
   - **Does not** enable Kind/Kubernetes tests.
 - `kind_tests`
-  - Implies `testing`.
+  - Implies `e2e`.
   - Enables Kubernetes/Kind test binaries under `tests/kind-testing/`.
   - Requires a running Kind cluster.
 
@@ -51,6 +56,8 @@ CI uses `--skip` prefix matching to exclude certain test groups from regular run
 ### CLI commands (`CCCommand`)
 
 The client binary accepts these commands (passed as `CCCommand` in tests via `execute_cmd`). The `execute_cmd` helper automatically polls the corresponding `*Result` variant — test code only needs the initiating command.
+
+`InsecureKeyGen` and `InsecureCrsGen` are only available when `kms-core-client` is built with the `insecure` feature (or feature bundles such as `e2e`/`kind_tests`).
 
 | Command | Description | Requires epoch | Requires PRSS |
 |---------|-------------|----------------|---------------|
