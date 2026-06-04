@@ -7,7 +7,7 @@ use algebra_0_13_20::{
     galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     sharing::share::Share,
 };
-use kms_0_13_20::backup::custodian::Custodian;
+use kms_0_13_20::backup::custodian::{Custodian, InternalCustodianContext};
 use kms_0_13_20::backup::{custodian::InternalCustodianSetupMessage, BackupCiphertext};
 use kms_0_13_20::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
@@ -77,14 +77,15 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, HybridKemCtTest, KeyGenMetadataTest,
-    KeyGenMetadataWithExtraDataTest, KmsFheKeyHandlesTest, NodeInfoTest, PRSSSetupTest, PrfKeyTest,
-    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest,
-    SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    CrsGenMetadataWithExtraDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
+    KmsFheKeyHandlesTest, NodeInfoTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest,
+    PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicSigKeyTest,
+    ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
+    SoftwareVersionTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_13_20::cryptography::signcryption::SigncryptionPayload;
@@ -466,6 +467,22 @@ const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
     patch: 4,
     tag: Cow::Borrowed("super fun version"),
 };
+
+// KMS test
+const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
+    test_filename: Cow::Borrowed("internal_cus_context"),
+    internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
+    unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
+    state: 300,
+    custodian_count: 5,
+};
+
+// KMS test
+const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
+    InternalCustodianSetupMessageTest {
+        test_filename: Cow::Borrowed("internal_custodian_setup_message"),
+        state: 42,
+    };
 
 fn dummy_domain() -> alloy_sol_types_1_4_1::Eip712Domain {
     alloy_sol_types_1_4_1::eip712_domain!(
@@ -954,6 +971,54 @@ impl KmsV0_13_20 {
         store_versioned_test!(&software_version, dir, &SOFTWARE_VERSION_TEST.test_filename);
 
         TestMetadataKMS::SoftwareVersion(SOFTWARE_VERSION_TEST)
+    }
+
+    fn gen_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_CONTEXT_TEST.state);
+        let context_id: RequestId = RequestId::new_random(&mut rng);
+        let mut cus_nodes = BTreeMap::new();
+        for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
+            let cus_role = Role::indexed_from_one(role_j);
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_, cus_enc_key) = encryption.keygen().unwrap();
+            let mut rnd = [0_u8; 32];
+            rng.fill_bytes(&mut rnd);
+            let setup_msg = InternalCustodianSetupMessage {
+                header: "header".to_string(),
+                custodian_role: cus_role,
+                name: format!("role{role_j}"),
+                random_value: rnd,
+                timestamp: 42,
+                public_enc_key: cus_enc_key,
+                public_verf_key: custodian_verf_key,
+            };
+            cus_nodes.insert(cus_role, setup_msg);
+        }
+        // Generate the extra encryption key last since it will be loaded from file and
+        // thus we should avoid using the RNG for the things that it will be used to generate in the test
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_, cus_enc_key) = encryption.keygen().unwrap();
+        let internal_cus_context = InternalCustodianContext {
+            threshold: 1,
+            context_id,
+            custodian_nodes: cus_nodes,
+            backup_enc_key: cus_enc_key.clone(),
+        };
+        store_versioned_auxiliary!(
+            &cus_enc_key,
+            dir,
+            &INTERNAL_CUS_CONTEXT_TEST.test_filename,
+            &INTERNAL_CUS_CONTEXT_TEST.unified_enc_key_filename,
+        );
+
+        store_versioned_test!(
+            &internal_cus_context,
+            dir,
+            &INTERNAL_CUS_CONTEXT_TEST.test_filename
+        );
+
+        TestMetadataKMS::InternalCustodianContext(INTERNAL_CUS_CONTEXT_TEST)
     }
 
     fn gen_kms_fhe_key_handles(dir: &PathBuf) -> TestMetadataKMS {

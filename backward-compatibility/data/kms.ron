@@ -1221,6 +1221,25 @@
     (
         kms_core_version_min: "0.13.20",
         kms_core_module: "kms",
+        metadata: InternalCustodianContext((
+            test_filename: "internal_cus_context",
+            internal_cus_setup_filename: "internal_cus_setup_handle",
+            unified_enc_key_filename: "unified_enc_key_handle",
+            state: 300,
+            custodian_count: 5,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.20",
+        kms_core_module: "kms",
+        metadata: InternalCustodianSetupMessage((
+            test_filename: "internal_custodian_setup_message",
+            state: 42,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.20",
+        kms_core_module: "kms",
         metadata: KmsFheKeyHandles((
             test_filename: "kms_fhe_key_handles",
             client_key_filename: "client_key_handle",
@@ -1566,6 +1585,45 @@
     (
         kms_core_version_min: "0.14.0",
         kms_core_module: "kms",
+        metadata: RecoveryValidationMaterial((
+            test_filename: "recovery_material",
+            internal_cus_context_filename: "internal_cus_context_handle",
+            state: 300,
+            custodian_count: 5,
+            mpc_context_id: (7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7),
+        )),
+    ),
+    (
+        kms_core_version_min: "0.14.0",
+        kms_core_module: "kms",
+        metadata: InternalRecoveryRequest((
+            test_filename: "internal_recovery_request",
+            amount: 10,
+            state: 300,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.14.0",
+        kms_core_module: "kms",
+        metadata: InternalCustodianContext((
+            test_filename: "internal_cus_context",
+            internal_cus_setup_filename: "internal_cus_setup_handle",
+            unified_enc_key_filename: "unified_enc_key_handle",
+            state: 300,
+            custodian_count: 5,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.14.0",
+        kms_core_module: "kms",
+        metadata: InternalCustodianSetupMessage((
+            test_filename: "internal_custodian_setup_message",
+            state: 42,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.14.0",
+        kms_core_module: "kms",
         metadata: KmsFheKeyHandles((
             test_filename: "kms_fhe_key_handles",
             client_key_filename: "client_key_handle",
@@ -1675,6 +1733,15 @@
                     carry_modulus: 4,
                 ),
             ),
+        )),
+    ),
+    (
+        kms_core_version_min: "0.14.0",
+        kms_core_module: "kms",
+        metadata: InternalCustodianRecoveryOutput((
+            test_filename: "internal_custodian_recovery_output",
+            state: 43,
+            mpc_context_id: (7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7),
         )),
     ),
     (
