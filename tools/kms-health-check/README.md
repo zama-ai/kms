@@ -30,16 +30,16 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:50100
 # JSON output for monitoring
 kms-health-check --format json full --config /path/to/config.toml --endpoint localhost:50100
 
-# Optionally pass the KMS config for peer checks (threshold only)
-kms-health-check live --endpoint localhost:50100 --config /path/to/config.toml
-
 # Using environment variables for timeouts (note the double underscore separator)
 HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 kms-health-check live --endpoint localhost:50100
 ```
 
 ## Configuration
 
-The health check tool supports configurable timeouts through a dedicated configuration file and environment variables.
+The tool deals with two distinct kinds of configuration:
+
+- **KMS server config** — passed via `config --file <path>` or `full --config <path>`. The file is parsed and validated using the KMS server's own validation logic. The `live` subcommand also accepts a `--config` flag, but its value is currently unused: peer health is retrieved from the server via the `GetHealthStatus` RPC, so `live` only needs `--endpoint`.
+- **Tool config (timeouts)** — there is no CLI flag for this; it is configured through a configuration file at a fixed location or environment variables, as described below.
 
 ### Health Check Configuration File
 
