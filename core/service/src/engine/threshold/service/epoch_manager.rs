@@ -1395,13 +1395,31 @@ impl<
 
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
-        Self::destroy_epoch(
+        let res = Self::destroy_epoch(
             &epoch_id,
             &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
             &priv_storage,
             &self.session_maker,
         )
-        .await
+        .await;
+
+        // Reclaim the in-memory FHE key cache for this epoch. `destroy_epoch`
+        // only deletes the on-disk material; without this the (potentially
+        // tens-of-GiB) decompressed key material would stay resident until
+        // process restart. This is pure memory reclaim with no decryption-
+        // behaviour change: decryptions under a destroyed epoch are already
+        // rejected by epoch validation (the epoch is removed from the session
+        // maker above). Done unconditionally (the epoch is torn down regardless)
+        // and best-effort; it only touches the `fhe_keys` cache, the last lock
+        // in the documented order.
+        let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
+        if removed > 0 {
+            tracing::info!(
+                "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
+            );
+        }
+
+        res
     }
 
     async fn get_epoch_result(

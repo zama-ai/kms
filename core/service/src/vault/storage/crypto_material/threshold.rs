@@ -219,6 +219,29 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         storage_ok
     }
 
+    /// Purge **all** in-memory cached threshold FHE keys belonging to the given
+    /// epoch, returning the number of entries removed.
+    ///
+    /// This reclaims the (potentially tens-of-GiB) decompressed key material that
+    /// would otherwise stay resident until process restart once an epoch is
+    /// destroyed. It only touches the in-memory cache (`fhe_keys`, the last lock
+    /// in the documented lock order); the on-disk material is removed separately
+    /// by the caller (see `destroy_epoch`). Decryptions under a destroyed epoch
+    /// are already rejected by epoch validation, so the freed entries are
+    /// unreachable dead memory and removing them changes no decryption behaviour.
+    pub(crate) async fn purge_epoch_from_cache(&self, epoch_id: &EpochId) -> usize {
+        let mut guarded_fhe_keys = self.fhe_keys.write().await;
+        let before = guarded_fhe_keys.len();
+        guarded_fhe_keys.retain(|(_, cached_epoch_id), _| cached_epoch_id != epoch_id);
+        before.saturating_sub(guarded_fhe_keys.len())
+    }
+
+    /// Number of FHE key entries currently held in the in-memory cache.
+    /// Exposed for observability (see the `fhe_key_cache_size` metric).
+    pub(crate) async fn cached_fhe_key_count(&self) -> usize {
+        self.fhe_keys.read().await.len()
+    }
+
     /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the
     /// compressed keyset under `new_key_id`, this function copies it to `old_key_id`
     /// and replaces the `ThresholdFheKeys` at `(old_key_id, old_epoch_id)` with the

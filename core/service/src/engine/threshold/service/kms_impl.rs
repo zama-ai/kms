@@ -838,6 +838,7 @@ where
         immutable_session_maker.clone(),
         Arc::clone(&user_decrypt_meta_store),
         Arc::clone(&pub_dec_meta_store),
+        crypto_storage.clone(),
         telemetry_conf.refresh_interval(),
     );
 
@@ -867,18 +868,25 @@ where
     ))
 }
 
-fn update_threshold_kms_system_metrics(
+fn update_threshold_kms_system_metrics<PubS, PrivS>(
     rate_limiter: RateLimiter,
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     refresh_interval: std::time::Duration,
-) -> tokio::task::JoinHandle<()> {
+) -> tokio::task::JoinHandle<()>
+where
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+{
     tokio::spawn(async move {
         loop {
             metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             metrics::METRICS.record_active_sessions(session_maker.active_sessions().await);
             metrics::METRICS.record_inactive_sessions(session_maker.inactive_sessions().await);
+            metrics::METRICS
+                .record_fhe_key_cache_size(crypto_storage.cached_fhe_key_count().await as u64);
             {
                 let user_meta_store_guard = user_meta_store.read().await;
                 metrics::METRICS.record_meta_storage_user_decryptions(

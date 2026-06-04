@@ -689,6 +689,72 @@ async fn write_threshold_keys_meta_update() {
 }
 
 #[tokio::test]
+async fn purge_epoch_from_cache_removes_only_matching_epoch() {
+    // Two cached keys under two different epochs in the SAME storage.
+    let req_a = derive_request_id("purge_epoch_cache_a").unwrap();
+    let epoch_a: EpochId = derive_request_id("purge_epoch_cache_epoch_a")
+        .unwrap()
+        .into();
+    let req_b = derive_request_id("purge_epoch_cache_b").unwrap();
+    let epoch_b: EpochId = derive_request_id("purge_epoch_cache_epoch_b")
+        .unwrap()
+        .into();
+
+    let (crypto_storage, keys_a, pubset_a) = setup_threshold_store(&req_a);
+    // A second keyset; the throwaway storage is unused, only the key material is.
+    let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b);
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_a).unwrap();
+        guard.insert(&req_b).unwrap();
+    }
+
+    crypto_storage
+        .write_fhe_keys(
+            &req_a,
+            &epoch_a,
+            keys_a,
+            PublicKeySet::Uncompressed(Arc::new(pubset_a)),
+            meta_store.clone(),
+            "",
+        )
+        .await
+        .unwrap();
+    crypto_storage
+        .write_fhe_keys(
+            &req_b,
+            &epoch_b,
+            keys_b,
+            PublicKeySet::Uncompressed(Arc::new(pubset_b)),
+            meta_store.clone(),
+            "",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(crypto_storage.cached_fhe_key_count().await, 2);
+
+    // Purging epoch_a removes exactly its one entry; epoch_b is untouched.
+    let removed = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
+    assert_eq!(removed, 1);
+    assert_eq!(crypto_storage.cached_fhe_key_count().await, 1);
+    assert!(
+        crypto_storage
+            .read_guarded_fhe_keys(&req_b, &epoch_b)
+            .await
+            .is_ok(),
+        "the non-purged epoch's key must remain available"
+    );
+
+    // Purging an epoch with no cached entries is a harmless no-op.
+    let removed_none = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
+    assert_eq!(removed_none, 0);
+    assert_eq!(crypto_storage.cached_fhe_key_count().await, 1);
+}
+
+#[tokio::test]
 async fn write_threshold_keys_failed_storage() {
     let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
