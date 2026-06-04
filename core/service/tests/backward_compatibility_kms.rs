@@ -69,6 +69,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
     sync::Arc,
+    time::SystemTime,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_execution::{
@@ -946,7 +947,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: 42,
+            timestamp: SystemTime::now(),
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };
