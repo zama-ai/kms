@@ -31,10 +31,12 @@ COPY docker ./docker
 
 RUN mkdir -p /app/kms/core/service/bin
 
-# `cargo fetch` only downloads dependencies; it does not compile, so it needs
-# neither sccache nor its AWS secrets.
+# `cargo fetch` only downloads dependencies; it does not compile. The global
+# `RUSTC_WRAPPER=sccache` is still consulted for cargo's `rustc -vV` probe,
+# which would make sccache start up and hit S3 (and thus need AWS creds). Unset
+# the wrapper for this step so the fetch stays credential-free.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    cargo fetch --locked
+    RUSTC_WRAPPER= cargo fetch --locked
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
