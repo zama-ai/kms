@@ -56,7 +56,7 @@ We observe that while the standard deployment of the KMS system is in a threshol
 
 ### Prerequisites
 
-The project requires [Docker](https://docs.docker.com/engine/install/) to be installed and running, along with [Rust](https://www.rust-lang.org/tools/install) with version >= 1.86, the [protobuf compiler, `protoc`](https://protobuf.dev/installation/), [pkgconfig](https://github.com/pkgconf/pkgconf), and [openssl](https://openssl-library.org/).
+The project requires [Docker](https://docs.docker.com/engine/install/) to be installed and running, along with [Rust](https://www.rust-lang.org/tools/install) (the version pinned in [rust-toolchain.toml](rust-toolchain.toml) is picked up automatically by `rustup`), the [protobuf compiler, `protoc`](https://protobuf.dev/installation/), [pkgconfig](https://github.com/pkgconf/pkgconf), and [openssl](https://openssl-library.org/).
 Ensure that these are installed on your system.
 
 ### Building and testing
