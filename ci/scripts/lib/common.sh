@@ -48,6 +48,8 @@ Options:
   --collect-logs           Only collect logs from pods and exit
   --enable-tls             Explicitly enable TLS (default for threshold mode)
   --disable-tls            Explicitly disable TLS (overrides default for threshold mode)
+  --enable-metrics         Install kube-prometheus-stack and remote-write KMS metrics
+                           to Grafana Cloud (reads GRAFANA_CLOUD_PROM_* from env)
   --debug                  Enable debug logging (port-forward logs to ./logs/port-forward/)
   --help                   Show this help
 EOF
@@ -77,6 +79,7 @@ parse_args() {
             --collect-logs) COLLECT_LOGS="true"; shift ;;
             --enable-tls) ENABLE_TLS="true"; shift ;;
             --disable-tls) ENABLE_TLS="false"; shift ;;
+            --enable-metrics) ENABLE_METRICS="true"; shift ;;
             --debug) DEBUG="true"; shift ;;
             --help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
