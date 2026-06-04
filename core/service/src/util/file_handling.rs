@@ -46,15 +46,23 @@ pub async fn safe_write_element_versioned<
     // The temp name is dot-prefixed (hidden): if a crash leaves one behind, directory
     // listings skip it (e.g. `FileStorage::all_data_ids` ignores dot-files but parses
     // every other name as a `RequestId`, so a non-hidden leftover would break listing).
-    // Per-path writes are serialized by the storage-layer mutex, so the fixed name
-    // cannot collide with a concurrent write to the same path.
+    // The name also carries a per-writer suffix (process id + a process-local counter)
+    // so two concurrent writers to the same `file_path` cannot create, interleave, and
+    // rename the same temp file. A fixed name is not safe here: this function is also
+    // called outside the storage layer (e.g. `kms-custodian`), and the storage-layer
+    // mutex is per-instance, so it guards neither separate processes nor separate
+    // storage instances pointed at the same directory.
     let tmp_path = {
         let file_name = file_path
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?;
+        // Unique among all live writers: the pid distinguishes processes and the
+        // counter distinguishes concurrent writes within this process.
+        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut name = std::ffi::OsString::from(".");
         name.push(file_name);
-        name.push(".partial");
+        name.push(format!(".partial.{}.{seq}", std::process::id()));
         match file_path.parent() {
             Some(parent) => parent.join(name),
             None => PathBuf::from(name),
@@ -118,7 +126,11 @@ pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
-    use crate::util::file_handling::{read_element, write_bytes, write_element};
+    use crate::util::file_handling::{
+        read_element, safe_read_element_versioned, safe_write_element_versioned, write_bytes,
+        write_element,
+    };
+    use crate::vault::storage::tests::TestType;
     use tokio::fs::remove_file;
 
     #[tokio::test]
@@ -144,5 +156,123 @@ mod tests {
         let read_element: String = read_element(file_name.clone()).await.unwrap();
         assert_eq!(read_element, msg);
         remove_file(file_name).await.unwrap();
+    }
+
+    // Sunshine: a versioned element written with `safe_write_element_versioned`
+    // round-trips through `safe_read_element_versioned`.
+    #[tokio::test]
+    async fn safe_write_then_read_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("element");
+        let element = TestType { i: 7 };
+        safe_write_element_versioned(&path, &element).await.unwrap();
+        let read_back: TestType = safe_read_element_versioned(&path).await.unwrap();
+        assert_eq!(read_back, element);
+    }
+
+    // A successful write must leave only the final file behind: the dot-prefixed
+    // `.<name>.partial.*` temp file is renamed into place, not left as litter.
+    #[tokio::test]
+    async fn safe_write_leaves_no_partial_tempfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("element");
+        safe_write_element_versioned(&path, &TestType { i: 1 })
+            .await
+            .unwrap();
+        assert!(path.exists());
+        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".partial"))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+    }
+
+    // A path with no file name component is rejected before any file is touched.
+    #[tokio::test]
+    async fn safe_write_rejects_path_without_filename() {
+        let res = safe_write_element_versioned(std::path::Path::new("/"), &TestType { i: 0 }).await;
+        assert!(res.is_err());
+    }
+
+    // Concurrent writers targeting the same path must not collide on the temp file:
+    // every write succeeds and the destination is left as a complete, valid element
+    // (one writer's value), never a corrupted interleaving. Run on a multi-thread
+    // runtime so the inline blocking I/O of the writers actually overlaps.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_writes_to_same_path_are_not_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::sync::Arc::new(dir.path().join("element"));
+        let mut handles = Vec::new();
+        for i in 0..8u32 {
+            let path = std::sync::Arc::clone(&path);
+            handles.push(tokio::spawn(async move {
+                safe_write_element_versioned(path.as_path(), &TestType { i }).await
+            }));
+        }
+        for h in handles {
+            // No write may fail with a spurious collision error.
+            h.await.unwrap().unwrap();
+        }
+        // The destination deserializes to one of the written values, i.e. it is a
+        // complete element rather than a mix of several writers' bytes.
+        let read_back: TestType = safe_read_element_versioned(path.as_path()).await.unwrap();
+        assert!(read_back.i < 8, "unexpected value {}", read_back.i);
+        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".partial"))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+    }
+
+    // If the write fails before the rename (here: the sibling temp file cannot be
+    // created because the parent directory is read-only), a pre-existing destination
+    // must be left untouched rather than truncated or partially overwritten.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn safe_write_failure_keeps_existing_destination() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("element");
+
+        // Seed the destination with a known-good element.
+        let original = TestType { i: 111 };
+        safe_write_element_versioned(&path, &original)
+            .await
+            .unwrap();
+
+        // Make the parent read-only so the temp file cannot be created.
+        let saved = std::fs::metadata(dir.path()).unwrap().permissions();
+        let mut read_only = saved.clone();
+        read_only.set_mode(0o555);
+        std::fs::set_permissions(dir.path(), read_only).unwrap();
+
+        // Self-guard: if files can still be created here (e.g. running as root, which
+        // ignores directory permissions) the failure can't be induced, so skip the
+        // negative assertion rather than fail spuriously.
+        let probe = dir.path().join(".probe");
+        let perms_enforced = std::fs::File::create(&probe).is_err();
+        let _ = std::fs::remove_file(&probe);
+        let write_result = if perms_enforced {
+            Some(safe_write_element_versioned(&path, &TestType { i: 222 }).await)
+        } else {
+            None
+        };
+
+        // Always restore permissions so the tempdir can be cleaned up.
+        std::fs::set_permissions(dir.path(), saved).unwrap();
+
+        if let Some(res) = write_result {
+            assert!(
+                res.is_err(),
+                "write should fail when the temp can't be created"
+            );
+        }
+        // The destination still holds the original element, never a partial file.
+        let read_back: TestType = safe_read_element_versioned(&path).await.unwrap();
+        assert_eq!(read_back, original);
     }
 }
