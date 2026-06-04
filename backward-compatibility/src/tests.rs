@@ -56,7 +56,8 @@ pub fn run_all_tests<M: TestedModule>(base_dir: &Path, pkg_version: &str) -> Vec
         )
     }
 
-    let meta = load_tests_metadata(meta_file_path).unwrap();
+    let meta: Vec<Testcase<<M as TestedModule>::Metadata>> = load_tests_metadata(meta_file_path)
+        .expect("Could not deserialize RON backwards compat metadata.");
 
     let mut results = Vec::new();
 
