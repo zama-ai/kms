@@ -238,7 +238,6 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
 }
 
 #[cfg(not(feature = "insecure"))]
-#[expect(clippy::let_underscore_future)]
 impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Drop
     for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {
