@@ -97,8 +97,8 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-          # Full history so the backward-snapshot step can `git worktree add` the
-          # PR base SHA; a shallow clone would not contain that commit.
+          # 0 here means "full history" so the backward-snapshot step can `git worktree add` the
+          # PR base SHA; a shallow clone might not contain that commit.
           fetch-depth: 0
 
       - name: Get Rust version
