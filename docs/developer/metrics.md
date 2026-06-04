@@ -131,9 +131,10 @@ serialized element's **type name** (e.g. a key/keyset type), not an operation na
 from other paths whenever a payload size is worth tracking.
 
 Both histograms use **explicit buckets** tuned to KMS workloads: `kms_operation_duration_ms` spans
-1 ms → 5 min and `kms_payload_size_bytes` spans 1 KiB → 64 GiB. Prometheus' default buckets are
-second-scale (max `10`), so without these every KMS measurement would fall into the `+Inf` bucket and
-`histogram_quantile` (p50/p95) would be meaningless.
+1 ms → 5 min and `kms_payload_size_bytes` spans 1 KiB → 64 GiB. Prometheus' default histogram buckets
+max out at `10` (typically used for seconds); with our millisecond-valued metric this effectively means
+`<=10ms`, so most KMS measurements would fall into the `+Inf` bucket and `histogram_quantile` (p50/p95)
+would be meaningless.
 
 ### Gauges
 Track instantaneous values that can increase or decrease:
