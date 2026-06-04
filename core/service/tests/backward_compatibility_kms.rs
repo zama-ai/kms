@@ -929,7 +929,18 @@ fn test_internal_custodian_context(
     test: &InternalCustodianContextTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: InternalCustodianContext = load_and_unversionize(dir, test, format)?;
+    // TODO(dp): make this horror pretty.
+    let mut original_versionized: InternalCustodianContext =
+        load_and_unversionize(dir, test, format)?;
+    let orig_timestamp = original_versionized
+        .custodian_nodes
+        .first_key_value()
+        .unwrap()
+        .1
+        .timestamp;
+    for (_, cu_no) in original_versionized.custodian_nodes.iter_mut() {
+        cu_no.timestamp = orig_timestamp;
+    }
     let enc_key: UnifiedPublicEncKey =
         load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
@@ -947,7 +958,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: SystemTime::now(),
+            timestamp: orig_timestamp,
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };
@@ -961,6 +972,17 @@ fn test_internal_custodian_context(
     };
 
     if original_versionized != new_versionized {
+        // TODO(dp): remove this
+        let new_timestamps = new_versionized
+            .custodian_nodes
+            .values()
+            .into_iter()
+            .map(|c| c.timestamp)
+            .collect::<Vec<_>>();
+        eprintln!(
+            "MISMATCH.\n orig_timestamp: {:?}\n new_timestamp {:?}",
+            orig_timestamp, new_timestamps
+        );
         Err(test.failure(
             format!(
                 "Invalid InternalCustodianContext:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
