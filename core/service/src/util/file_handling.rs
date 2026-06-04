@@ -18,6 +18,37 @@ pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::
     Ok(())
 }
 
+/// Best-effort cleanup for the sibling temp file used by
+/// [`safe_write_element_versioned`]. On drop it removes the temp file unless it
+/// has been [`disarm`](TempFileGuard::disarm)ed (which only happens after a
+/// successful rename), so a failed write — at any of the create / serialize /
+/// flush / rename steps — never strands an orphaned `.<name>.partial.*` file.
+struct TempFileGuard {
+    path: Option<PathBuf>,
+}
+
+impl TempFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+
+    /// Disarm the guard once the temp file has been renamed into place, so the
+    /// now-persisted file is not removed.
+    fn disarm(mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            // Best-effort: the primary error (if any) has already propagated to
+            // the caller, so a failure to clean up here must not mask it.
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// This is a wrapper around safe_serialize versioned for the async use case.
 ///
 /// The serialization is streamed straight to disk (into a sibling temp file that
@@ -29,6 +60,11 @@ pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::
 /// moved into `spawn_blocking`, and `block_in_place` would panic on the
 /// current-thread runtimes used by the storage tests. Key writes happen once per
 /// keygen, so briefly blocking the worker thread here is acceptable.
+///
+/// On any write error (create / serialize / flush / rename) the temp file is
+/// removed before returning (see [`TempFileGuard`]); without this, repeated
+/// failures (e.g. disk full / permission issues) would accumulate hidden,
+/// uniquely-named partials and waste disk space.
 pub async fn safe_write_element_versioned<
     T: Serialize + Versionize + Named + Send,
     P: AsRef<Path>,
@@ -68,6 +104,9 @@ pub async fn safe_write_element_versioned<
             None => PathBuf::from(name),
         }
     };
+    // Remove the temp file on any early return below (a failed create / serialize /
+    // flush / rename); only a successful rename disarms it.
+    let cleanup = TempFileGuard::new(tmp_path.clone());
     {
         let file = std::fs::File::create(&tmp_path)
             .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", tmp_path.display()))?;
@@ -78,6 +117,8 @@ pub async fn safe_write_element_versioned<
             .map_err(|e| anyhow::anyhow!("failed to flush {}: {e}", tmp_path.display()))?;
     }
     tokio::fs::rename(&tmp_path, file_path).await?;
+    // The temp file has become `file_path`; keep it instead of removing it.
+    cleanup.disarm();
     Ok(())
 }
 
@@ -187,6 +228,32 @@ mod tests {
             .filter(|n| n.contains(".partial"))
             .collect();
         assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+    }
+
+    // A failed write must not strand a `.<name>.partial.*` temp file. Here the
+    // final rename fails because the destination is an existing directory; the
+    // cleanup guard must still remove the partial that was already written.
+    #[tokio::test]
+    async fn safe_write_cleans_up_partial_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        // Make the destination an existing directory so the final rename fails
+        // (a file cannot be renamed on top of a directory).
+        let path = dir.path().join("element");
+        std::fs::create_dir(&path).unwrap();
+
+        let res = safe_write_element_versioned(&path, &TestType { i: 3 }).await;
+        assert!(res.is_err(), "write onto an existing directory should fail");
+
+        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".partial"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "failed write left partial temp files: {leftovers:?}"
+        );
     }
 
     // A path with no file name component is rejected before any file is touched.
