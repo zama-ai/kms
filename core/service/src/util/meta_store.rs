@@ -302,15 +302,34 @@ impl<T> MetaStore<T> {
                     req_id: *request_id,
                 });
             } else {
-                let old_request_id = self.complete_queue.pop_front().ok_or_else(|| {
-                    let msg = format!(
-                        "complete_queue empty but len > min_cache while inserting {request_id}"
-                    );
+                // Evict the oldest completed entry that has no outstanding
+                // permit. A `Done` entry can be permit-held (via `reserve` /
+                // `lock_entry`); evicting it would pull storage out from under
+                // the holder, so we skip held entries (`strong_count > 1`).
+                let evict_pos = {
+                    let storage = &self.storage;
+                    self.complete_queue.iter().position(|id| {
+                        matches!(
+                            storage.get(id),
+                            Some(StoredEntry::Done(_, claim)) if Arc::strong_count(claim) == 1
+                        )
+                    })
+                };
+                let Some(pos) = evict_pos else {
+                    // Every completed entry is currently reserved, so there is
+                    // nothing safe to evict; treat the store as full.
+                    return Err(MetaStoreError::CapacityFull {
+                        req_id: *request_id,
+                    });
+                };
+                let old_request_id = self.complete_queue.remove(pos).ok_or_else(|| {
+                    let msg =
+                        format!("complete_queue index {pos} vanished while inserting {request_id}");
                     tracing::error!(msg);
                     MetaStoreError::Invariant(msg)
                 })?;
                 if self.storage.remove(&old_request_id).is_none() {
-                    self.complete_queue.push_front(old_request_id);
+                    self.complete_queue.insert(pos, old_request_id);
                     let msg = format!(
                         "failed to remove old element {old_request_id} from storage while inserting {request_id}"
                     );
@@ -526,7 +545,15 @@ impl<T> MetaStore<T> {
                         });
                     }
                 }
-                StoredEntry::Done(_, _) => { /* no permit possible on Done */ }
+                StoredEntry::Done(_, arc) => {
+                    // A `Done` entry can be permit-held (via `reserve` /
+                    // `lock_entry`); block a permit-less delete while it is.
+                    if Arc::strong_count(arc) > 1 {
+                        return Err(MetaStoreError::Locked {
+                            req_id: *request_id,
+                        });
+                    }
+                }
                 StoredEntry::Deleted => {
                     return Err(MetaStoreError::CannotUpdate {
                         req_id: *request_id,
@@ -1186,6 +1213,94 @@ mod tests {
         store.finalize(permit, "adopted".to_string()).unwrap();
         assert_done_ok(&store, &id, &"adopted".to_string());
         assert_eq!(store.get_completed_count(), 1);
+    }
+
+    #[test]
+    fn eviction_skips_reserved_entry_and_evicts_next() {
+        // capacity 2, min_cache 1: two completed entries, the oldest reserved.
+        // Inserting a third must evict the *younger* unreserved one, not the
+        // reserved oldest, so the reservation's finalize still works.
+        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let old = derive_request_id("evict-reserved-old").unwrap();
+        let young = derive_request_id("evict-reserved-young").unwrap();
+        insert_done_ok(&mut store, &old, "old");
+        insert_done_ok(&mut store, &young, "young");
+
+        // Reserve the oldest (locks the Done entry in place).
+        let permit = store.reserve(&old).unwrap();
+
+        // Insert a third: eviction skips `old` (held) and removes `young`.
+        let fresh = derive_request_id("evict-reserved-fresh").unwrap();
+        let fresh_permit = store.insert(&fresh).unwrap();
+        assert!(
+            store.retrieve(&old).is_some(),
+            "reserved oldest must survive"
+        );
+        assert!(store.retrieve(&young).is_none(), "younger entry evicted");
+
+        // The reservation still commits.
+        store.finalize(permit, "migrated".to_string()).unwrap();
+        assert_done_ok(&store, &old, &"migrated".to_string());
+        drop(fresh_permit);
+    }
+
+    #[test]
+    fn insert_capacity_full_when_all_completed_reserved() {
+        // capacity 2, min_cache 1. Two completed entries, both reserved, so the
+        // store is full (len > min_cache) yet nothing is safe to evict ->
+        // CapacityFull rather than corrupting a reserved entry.
+        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let a = derive_request_id("full-a").unwrap();
+        let b = derive_request_id("full-b").unwrap();
+        insert_done_ok(&mut store, &a, "a");
+        insert_done_ok(&mut store, &b, "b");
+        let held_a = store.reserve(&a).unwrap();
+        let _held_b = store.reserve(&b).unwrap();
+
+        let third = derive_request_id("full-third").unwrap();
+        assert!(matches!(
+            store.insert(&third),
+            Err(MetaStoreError::CapacityFull { .. })
+        ));
+        // Releasing one reservation makes that entry evictable again.
+        drop(held_a);
+        assert!(store.insert(&third).is_ok());
+        assert!(store.retrieve(&a).is_none(), "released entry was evicted");
+    }
+
+    #[test]
+    fn eviction_preserves_min_cache() {
+        // capacity 2, min_cache 2: never evict, even when full.
+        let mut store: MetaStore<String> = MetaStore::new(2, 2);
+        let a = derive_request_id("mincache-a").unwrap();
+        let b = derive_request_id("mincache-b").unwrap();
+        insert_done_ok(&mut store, &a, "a");
+        insert_done_ok(&mut store, &b, "b");
+        let c = derive_request_id("mincache-c").unwrap();
+        assert!(matches!(
+            store.insert(&c),
+            Err(MetaStoreError::CapacityFull { .. })
+        ));
+        assert!(store.retrieve(&a).is_some());
+        assert!(store.retrieve(&b).is_some());
+    }
+
+    #[test]
+    fn try_delete_blocked_on_reserved_done() {
+        // A permit held on a Done entry (via reserve) blocks a permit-less
+        // try_delete, just like it does for a Pending entry.
+        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let id = derive_request_id("try-del-reserved").unwrap();
+        insert_done_ok(&mut store, &id, "v");
+        let permit = store.reserve(&id).unwrap();
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        drop(permit);
+        // Released: try_delete succeeds and returns the prior Done value.
+        let prev = store.try_delete(&id).unwrap();
+        assert!(matches!(prev, EntryState::Done(Ok(_))));
     }
 
     #[test]
