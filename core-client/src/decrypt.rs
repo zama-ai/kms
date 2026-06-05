@@ -141,7 +141,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
         let extra_data = extra_data.clone();
 
         // start timing measurement for this request
-        timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
+        let request_start = tokio::time::Instant::now();
+        timings_start.insert(req_id, request_start); // start timing for this request
 
         join_set.spawn(async move {
             // DECRYPTION REQUEST
@@ -206,7 +207,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 num_expected_responses,
                 &*internal_client.read().await,
                 &kms_addrs,
-                start,
+                request_start,
             )
             .await?;
 
@@ -282,7 +283,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         let extra_data = extra_data.clone();
 
         // start timing measurement for this request
-        timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
+        let request_start = tokio::time::Instant::now();
+        timings_start.insert(req_id, request_start); // start timing for this request
 
         // USER_DECRYPTION REQUEST
         join_set.spawn(async move {
@@ -407,10 +409,10 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 );
             }
 
-            let time_to_get_responses = start.elapsed();
+            let time_to_get_responses = request_start.elapsed();
 
             tracing::info!(
-                "{:?} ###! Received {} user decrypt responses. Since start {:?}",
+                "{:?} ###! Received {} user decrypt responses. Since request start {:?}",
                 req_id.as_str(),
                 resp_response_vec.len(),
                 time_to_get_responses

@@ -62,9 +62,26 @@ spec:
       dag:
         tasks:
           ##########################################################################
+          # WARMUP Decrypt test (1 request)
+          ##########################################################################
+          - name: warmup-public-decrypt-euint64-req1
+            dependencies: ["crs-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "warmup-public-decrypt-euint64-req1"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                - name: fhe-params
+                  value: "Default"
+          ##########################################################################
           # Public decrypt tests — 1 request
           ##########################################################################
           - name: public-decrypt-euint64-req1
+            dependencies: ["warmup-public-decrypt-euint64-req1"]
             template: run-test
             continueOn:
               failed: true
