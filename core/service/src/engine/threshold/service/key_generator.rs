@@ -1438,6 +1438,7 @@ impl<
     }
 
     #[cfg(not(feature = "insecure"))]
+    #[allow(dead_code)]
     async fn run_insecure_dkg(
         _dkg_sessions: DkgSessions,
         _params: DKGParams,
