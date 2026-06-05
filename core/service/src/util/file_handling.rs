@@ -1,5 +1,7 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+#[cfg(any(test, feature = "testing"))]
+use std::fs::File;
 use std::path::Path;
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
@@ -50,8 +52,8 @@ pub async fn safe_read_element_versioned<
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Writing a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the safe and versioned writing method
-/// is used in production code.
+/// Write a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the
+/// versioned writing method is used in production code.
 #[cfg(any(test, feature = "testing"))]
 pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     file_path: P,
@@ -61,21 +63,17 @@ pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     if let Some(p) = file_path.as_ref().parent() {
         tokio::fs::create_dir_all(p).await?
     };
-    let serialized_data = bc2wrap::serialize(element)?;
-    tokio::fs::write(file_path, serialized_data.as_slice()).await?;
+    bc2wrap::serialize_into(element, &mut File::create(file_path)?)?;
     Ok(())
 }
 
-/// Reading a generic element to a file. This is hidden behind the testing flag to ensure only the safe and versioned reading method
-/// is used in production code.
+/// Read a generic element from a file. This is hidden behind the testing flag to ensure only the versioned reading
+/// method is used in production code.
 #[cfg(any(test, feature = "testing"))]
 pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
-    let read_element = tokio::fs::read(file_path).await?;
-    // This is gated behind a testing flag, so we can use the unsafe deserialization here
-    // (Might be useful to deserialize keys which may be huge)
-    Ok(bc2wrap::deserialize_unsafe(read_element.as_slice())?)
+    Ok(bc2wrap::deserialize_from(File::open(file_path)?)?)
 }
 
 #[cfg(test)]
