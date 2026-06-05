@@ -5,9 +5,7 @@
 //! Callers should prefer the **free helper functions** (`*_in_meta_store`) over
 //! the inherent [`MetaStore`] methods. Each helper takes `&RwLock<MetaStore<T>>`,
 //! acquires the lock internally for the shortest possible span, and releases it
-//! before returning — critical for [`retrieve_from_meta_store`], which polls for
-//! up to `DURATION_WAITING_ON_RESULT_SECONDS` and must never hold the guard
-//! across a sleep. A helper returns a [`MetricedError`] when the operation sits
+//! before returning. A helper returns a [`MetricedError`] when the operation sits
 //! on a gRPC request path (so the failure propagates to the client with metrics
 //! recorded), and the raw [`MetaStoreError`] when the caller owns the outcome
 //! (fire-and-forget completion paths, or internal `anyhow` flows).
@@ -43,13 +41,10 @@ use tracing;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
         use crate::engine::utils::MetricedError;
         use anyhow::anyhow;
         use std::fmt::{self};
-        use std::time::Duration;
         use tokio::sync::RwLock;
-        use tokio::time::Instant;
     }
 }
 
@@ -129,13 +124,6 @@ impl MetaStoreError {
         MetricedError::new(op_metric, req_id, self, code)
     }
 }
-
-/// Cadence at which `retrieve_from_meta_store` re-checks a pending entry while
-/// waiting for it to complete. Picked to keep worst-case lock acquisitions
-/// bounded (60s / 250ms = 240 reads) while keeping latency-after-completion
-/// well under half a second.
-#[cfg(feature = "non-wasm")]
-const META_STORE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Token proving the holder is the rightful updater of a single MetaStore entry.
 ///
@@ -855,71 +843,47 @@ where
 
 /// Helper for retrieving the result of a request from a meta store.
 ///
-/// Polls the meta store every [`META_STORE_POLL_INTERVAL`] until either the
-/// entry is `Done`, becomes unreachable, or the timeout expires.
+/// Performs a single, non-blocking read and returns immediately:
+/// - `Done(Ok)`  → `Arc<T>`.
+/// - `Pending`   → `Unavailable`; the result is not ready yet and the caller
+///   (client) is expected to retry later.
+/// - missing / `Deleted` → `NotFound`.
+/// - `Done(Err)` → `Internal`, or `Aborted` if the stored error mentions
+///   "abort".
 ///
-/// Returns `Arc<T>` on success; `Unavailable` if the entry is still pending at
-/// timeout; `NotFound` if missing or deleted; `Internal`/`Aborted` if the entry
-/// completed with an error.
-///
-/// Each poll iteration acquires the read lock briefly and releases it before
-/// sleeping, so other writers are not blocked.
+/// Acquires the read lock only for the duration of the snapshot, so writers are
+/// not blocked.
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn retrieve_from_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
     metric_scope: &'static str,
 ) -> Result<Arc<T>, MetricedError> {
-    let deadline = Instant::now() + Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS);
-    loop {
-        match poll_entry(meta_store, req_id, metric_scope).await {
-            PollOutcome::Done(res) => return res,
-            PollOutcome::Pending => {
-                if Instant::now() >= deadline {
-                    let msg = format!(
-                        "Result in scope {metric_scope} with request ID {req_id} not completed after {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
-                    );
-                    tracing::info!(msg);
-                    return Err(MetricedError::new(
-                        metric_scope,
-                        Some(*req_id),
-                        anyhow!(msg),
-                        tonic::Code::Unavailable,
-                    ));
-                }
-                tokio::time::sleep(META_STORE_POLL_INTERVAL).await;
-            }
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-enum PollOutcome<T> {
-    Done(Result<Arc<T>, MetricedError>),
-    Pending,
-}
-
-#[cfg(feature = "non-wasm")]
-async fn poll_entry<T>(
-    meta_store: &RwLock<MetaStore<T>>,
-    req_id: &RequestId,
-    metric_scope: &'static str,
-) -> PollOutcome<T> {
     let guard = meta_store.read().await;
     match guard.retrieve(req_id) {
         None | Some(EntryState::Deleted) => {
             let msg = format!(
                 "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
             );
-            PollOutcome::Done(Err(MetricedError::new(
+            Err(MetricedError::new(
                 metric_scope,
                 Some(*req_id),
                 anyhow!(msg),
                 tonic::Code::NotFound,
-            )))
+            ))
         }
-        Some(EntryState::Pending) => PollOutcome::Pending,
-        Some(EntryState::Done(Ok(arc))) => PollOutcome::Done(Ok(arc)),
+        Some(EntryState::Pending) => {
+            let msg =
+                format!("Result in scope {metric_scope} with request ID {req_id} is not ready yet");
+            tracing::info!(msg);
+            Err(MetricedError::new(
+                metric_scope,
+                Some(*req_id),
+                anyhow!(msg),
+                tonic::Code::Unavailable,
+            ))
+        }
+        Some(EntryState::Done(Ok(arc))) => Ok(arc),
         Some(EntryState::Done(Err(e))) => {
             let msg = format!(
                 "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
@@ -930,12 +894,12 @@ async fn poll_entry<T>(
             } else {
                 tonic::Code::Internal
             };
-            PollOutcome::Done(Err(MetricedError::new(
+            Err(MetricedError::new(
                 metric_scope,
                 Some(*req_id),
                 anyhow!(msg),
                 code,
-            )))
+            ))
         }
     }
 }

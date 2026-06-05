@@ -120,9 +120,12 @@ pub async fn run_server<
     let server = Server::builder()
         .http2_adaptive_window(Some(true))
         .layer(trace_request)
-        // Make sure we never abort because we spent too much time on the blocking part of the get result
-        // as we mean to do it. Use the preprocessing wait window (the largest) so the server
-        // does not time out before a slow preprocessing result is returned.
+        // Keep a generous per-request timeout so slow unary calls are never
+        // aborted prematurely. The `get_*` result endpoints no longer block
+        // server-side (they return `Unavailable` immediately when a result is
+        // not ready), so this window is now conservative slack rather than a
+        // hard requirement; the largest historical wait (preprocessing) is
+        // reused as the padding.
         .timeout(tokio::time::Duration::from_secs(
             config.timeout_secs + DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
         ))

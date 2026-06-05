@@ -680,8 +680,9 @@ mod tests {
             witness_dim: usize,
             max_num_bits: Option<u32>,
         ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            // We need to sleep for more than 60 seconds because
-            // the get response call blocks for 60 seconds if there is potentially a result
+            // Keep the ceremony running for a long time so the CRS entry stays
+            // `Pending` while the test issues a concurrent `get_result` / abort,
+            // letting those observe the in-flight state before completion.
             tokio::time::sleep(Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS + 10)).await;
             let ceremony = InsecureCeremony {};
             ceremony
