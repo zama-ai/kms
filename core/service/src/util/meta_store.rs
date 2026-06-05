@@ -224,6 +224,11 @@ pub struct MetaStore<T> {
     storage: HashMap<RequestId, StoredEntry<T>>,
     // Queue of all elements that have been completed
     complete_queue: VecDeque<RequestId>,
+    // Number of tombstoned (`Deleted`) entries still occupying `storage`.
+    // Tombstones are permanent (never removed from `storage` nor evicted), so this
+    // only ever grows. Tracked here so `get_processing_count` stays O(1) while
+    // excluding tombstones (which are neither processing nor completed).
+    deleted_count: usize,
 }
 
 impl<T> MetaStore<T> {
@@ -238,6 +243,7 @@ impl<T> MetaStore<T> {
             min_cache,
             storage: HashMap::with_capacity(capacity),
             complete_queue: VecDeque::with_capacity(min_cache),
+            deleted_count: 0,
         }
     }
 
@@ -248,6 +254,7 @@ impl<T> MetaStore<T> {
             min_cache: usize::MAX,
             storage: HashMap::new(),
             complete_queue: VecDeque::new(),
+            deleted_count: 0,
         }
     }
 
@@ -267,6 +274,7 @@ impl<T> MetaStore<T> {
             min_cache: usize::MAX,
             storage,
             complete_queue: completed_queue,
+            deleted_count: 0,
         }
     }
 
@@ -274,16 +282,18 @@ impl<T> MetaStore<T> {
         self.storage.contains_key(request_id)
     }
 
-    /// Verify the invariant that storage.len() >= complete_queue.len()
-    /// This is critical for preventing underflow in get_processing_count()
+    /// Verify the invariant that storage.len() >= complete_queue.len() + deleted_count
+    /// (i.e. the processing count is non-negative). This is critical for preventing
+    /// underflow in get_processing_count().
     /// Logs error if invariant is violated but does not panic
     fn verify_invariant(&self) -> bool {
-        let is_valid = self.storage.len() >= self.complete_queue.len();
+        let is_valid = self.storage.len() >= self.complete_queue.len() + self.deleted_count;
         if !is_valid {
             tracing::error!(
-                "INVARIANT VIOLATION: storage.len() ({}) < complete_queue.len() ({})",
+                "INVARIANT VIOLATION: storage.len() ({}) < complete_queue.len() ({}) + deleted_count ({})",
                 self.storage.len(),
-                self.complete_queue.len()
+                self.complete_queue.len(),
+                self.deleted_count
             );
         }
         is_valid
@@ -520,6 +530,9 @@ impl<T> MetaStore<T> {
         }
         // TODO don't use mem replace
         let old = std::mem::replace(cell, StoredEntry::Deleted);
+        // `old` is Pending or Done here (the Deleted case errored above), so this
+        // is always a fresh transition into a tombstone.
+        self.deleted_count += 1;
         if matches!(old, StoredEntry::Done(_, _),) {
             self.complete_queue.retain(|id| id != &req_id);
         }
@@ -572,6 +585,9 @@ impl<T> MetaStore<T> {
         let cell = self.storage.get_mut(request_id).unwrap();
         // TODO ensure we can just clone the old entry
         let old = std::mem::replace(cell, StoredEntry::Deleted);
+        // `old` is Pending or Done here (the Deleted case errored above), so this
+        // is always a fresh transition into a tombstone.
+        self.deleted_count += 1;
         if matches!(old, StoredEntry::Done(_, _)) {
             self.complete_queue.retain(|id| id != request_id);
         }
@@ -599,10 +615,17 @@ impl<T> MetaStore<T> {
         self.complete_queue.len()
     }
 
-    /// Get the number of items currently being processed
+    /// Get the number of items currently being processed (i.e. `Pending`).
+    ///
+    /// This excludes both completed entries and tombstoned (`Deleted`) entries;
+    /// tombstones remain in `storage` permanently but are neither processing nor
+    /// completed, so they are subtracted here to avoid an inflated count.
     pub(crate) fn get_processing_count(&self) -> usize {
         self.verify_invariant();
-        self.storage.len().saturating_sub(self.complete_queue.len())
+        self.storage
+            .len()
+            .saturating_sub(self.complete_queue.len())
+            .saturating_sub(self.deleted_count)
     }
 
     /// Get all request IDs in the store
@@ -1496,6 +1519,31 @@ mod tests {
         // The deleted entry leaves the completed queue; the survivor stays.
         let completed = store.get_completed_request_ids();
         assert_eq!(completed, vec![kept]);
+    }
+
+    #[test]
+    fn processing_count_excludes_deleted() {
+        let mut store: MetaStore<String> = MetaStore::new_unlimited();
+        let pending = derive_request_id("pc-pending").unwrap();
+        let permit = store.insert(&pending).unwrap();
+        let done = derive_request_id("pc-done").unwrap();
+        insert_done_ok(&mut store, &done, "v");
+        let gone = derive_request_id("pc-gone").unwrap();
+        insert_done_ok(&mut store, &gone, "v");
+        store.try_delete(&gone).unwrap();
+
+        // storage holds pending + done + tombstone = 3, but only the single
+        // Pending entry counts as processing (the tombstone is excluded).
+        assert_eq!(store.get_current_count(), 3);
+        assert_eq!(store.get_completed_count(), 1);
+        assert_eq!(store.get_processing_count(), 1);
+
+        // Deleting the remaining Pending entry drops processing to zero, while the
+        // tombstones stay resident in storage.
+        drop(permit);
+        store.try_delete(&pending).unwrap();
+        assert_eq!(store.get_processing_count(), 0);
+        assert_eq!(store.get_current_count(), 3);
     }
 
     #[cfg(feature = "non-wasm")]
