@@ -221,9 +221,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// split into validate-then-mutate phases: everything is read and checked
     /// before any backend is mutated, so a malformed migration input cannot
     /// leave pub and priv storage in inconsistent states. On any failure during
-    /// those phases the claim is rolled back without tombstoning, leaving
-    /// `old_key_id` recreatable by a retry; on success the entry is committed to
-    /// the re-signed metadata.
+    /// those phases the claim is rolled back, leaving the existing `old_key_id`
+    /// entry untouched; on success the entry is committed to the re-signed
+    /// metadata.
     ///
     /// The old `CompactPublicKey` and `ServerKey` files at `old_key_id` are
     /// preserved for compatibility. The migration keygen also stores the old
@@ -244,12 +244,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
         // Claim `old_key_id` exclusively for the whole migration via
-        // `with_overwriting_claim`: it locks the existing meta-store entry (or
-        // inserts a fresh one) *before* the work below runs, so a concurrent
+        // `with_overwriting_claim`: it locks the existing meta-store entry
+        // *before* the work below runs, so a concurrent
         // migration or insert of the same id bails with `Locked`/`AlreadyExists`
         // rather than racing our Phase B storage writes. On success it commits
-        // the re-signed metadata; on any failure it rolls the claim back without
-        // tombstoning, leaving `old_key_id` recreatable by a retry. The closure
+        // the re-signed metadata; on any failure it rolls the claim back,
+        // leaving the existing entry untouched. The closure
         // returns `(metadata, fhe_keys)`: the metadata is committed to the
         // meta-store, the keys are handed back for the in-memory cache below.
         let updated_fhe_keys =

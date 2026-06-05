@@ -16,9 +16,9 @@
 //! the caller is assumed to already hold the appropriate `RwLock` guard, and they
 //! do no metric bookkeeping. Reach for them directly only where the helper layer
 //! does not fit — notably the key-migration path in
-//! `copy_compressed_key_to_original`, which holds a single permit across a
-//! get-or-create claim ([`lock_entry`](MetaStore::lock_entry) /
-//! [`insert`](MetaStore::insert)) → [`finalize`](MetaStore::finalize) /
+//! `copy_compressed_key_to_original`, which holds a single permit across a claim
+//! on an existing entry ([`lock_entry`](MetaStore::lock_entry)) →
+//! [`finalize`](MetaStore::finalize) /
 //! [`abort_reservation`](MetaStore::abort_reservation) and is an `anyhow` flow.
 //!
 //! # Entry lifecycle
@@ -27,10 +27,11 @@
 //! both consuming the permit. A dropped permit leaves the entry `Pending`;
 //! [`try_delete`](MetaStore::try_delete) reclaims it.
 //! [`lock_entry`](MetaStore::lock_entry) mints a permit for an existing entry
-//! (used as a cross-lock sync point); pairing it (or [`insert`](MetaStore::insert)
-//! for an absent id) with [`finalize`](MetaStore::finalize) /
-//! [`abort_reservation`](MetaStore::abort_reservation) supports get-or-create
-//! rewrites for key migration.
+//! (used as a cross-lock sync point); pairing it with
+//! [`finalize`](MetaStore::finalize) / [`abort_reservation`](MetaStore::abort_reservation)
+//! supports in-place rewrites of an existing entry for key migration.
+//!
+//! Any meta store that is NOT used for decryption (user or public) should be unlimited and MUST ensure that all data elements are present.
 
 use kms_grpc::RequestId;
 use std::{
@@ -451,15 +452,15 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Complete a get-or-create claim by setting the entry to `Done(Ok(value))`,
-    /// consuming the permit. The held permit is the proof of ownership, so no
-    /// strong-count check is performed.
+    /// Complete a claim by setting the entry to `Done(Ok(value))`, consuming the
+    /// permit. The held permit is the proof of ownership, so no strong-count
+    /// check is performed.
     ///
-    /// A freshly created (`Pending`) entry is recorded in the completion queue;
-    /// an existing `Done` entry locked in place is overwritten while keeping its
-    /// queue slot. Errors with [`MetaStoreError::NotFound`] if the entry was
-    /// evicted while claimed, or [`MetaStoreError::CannotUpdate`] if it was
-    /// concurrently tombstoned.
+    /// An existing `Done` entry is overwritten in place while keeping its queue
+    /// slot; a `Pending` entry (e.g. an orphaned claim adopted via
+    /// [`lock_entry`](MetaStore::lock_entry)) is recorded in the completion
+    /// queue. Errors with [`MetaStoreError::NotFound`] if the entry is gone, or
+    /// [`MetaStoreError::CannotUpdate`] if it was concurrently tombstoned.
     ///
     /// Deliberately **private**: overwriting an already-`Done` value is not a
     /// flow we want to expose. The sole sanctioned caller is
@@ -487,22 +488,21 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Roll back a get-or-create claim (see [`finalize`](MetaStore::finalize))
-    /// without completing it, consuming the permit.
+    /// Roll back a claim (see [`finalize`](MetaStore::finalize)) without
+    /// completing it, consuming the permit.
     ///
-    /// If the claimed entry is still `Pending` (a fresh [`insert`](MetaStore::insert),
-    /// or an adopted orphan from an earlier aborted attempt) it is **removed
-    /// outright** — not tombstoned — so `request_id` stays reusable and a later
-    /// claim can recreate it. An existing `Done` entry that was merely locked in
-    /// place via [`lock_entry`](MetaStore::lock_entry) is left untouched; only
-    /// the permit's claim is released.
+    /// An existing `Done` entry that was merely locked in place via
+    /// [`lock_entry`](MetaStore::lock_entry) is left untouched; only the permit's
+    /// claim is released. If the claimed entry is instead `Pending` (an orphaned
+    /// claim adopted via `lock_entry`) it is **removed outright** — not
+    /// tombstoned — so `request_id` stays reusable.
     ///
     /// Deliberately **private**, like [`finalize`](MetaStore::finalize): reached
     /// only through [`with_overwriting_claim`], the migration-only entry point.
     fn abort_reservation(&mut self, permit: MetaStorePermit) {
         let req_id = permit.req_id;
         if matches!(self.storage.get(&req_id), Some(StoredEntry::Pending(_))) {
-            // Fresh/adopted reservation: drop it entirely. A `Pending` entry is
+            // Orphaned `Pending` claim: drop it entirely. A `Pending` entry is
             // never in the completion queue, so no queue cleanup is needed.
             self.storage.remove(&req_id);
         }
@@ -790,11 +790,10 @@ pub(crate) async fn try_delete_in_meta_store<T>(
     meta_store.write().await.try_delete(req_id)
 }
 
-/// Run `work` while holding an exclusive **get-or-create** claim on `req_id`,
-/// then commit its produced value into the store — overwriting an existing
-/// `Done` entry in place, or completing a freshly created one. If `work` fails,
-/// the claim is rolled back without tombstoning, leaving `req_id` recreatable by
-/// a retry.
+/// Run `work` while holding an exclusive claim on an **existing** `req_id`, then
+/// commit its produced value into the store, overwriting the entry in place. If
+/// `work` fails, the claim is rolled back without tombstoning, leaving the entry
+/// untouched.
 ///
 /// This is the **only** sanctioned path that overwrites an already-completed
 /// entry: the underlying [`MetaStore::finalize`] / [`MetaStore::abort_reservation`]
@@ -804,6 +803,11 @@ pub(crate) async fn try_delete_in_meta_store<T>(
 /// rewritten and must be atomic w.r.t. a concurrent migration or insert of the
 /// same id — those bail with `Locked`/`AlreadyExists` against the held claim
 /// before any of `work`'s side effects run.
+///
+/// The entry is required to exist: callers migrate a key whose data is already
+/// present, so [`lock_entry`](MetaStore::lock_entry) is used rather than a
+/// get-or-create (see the claim site below). A missing entry fails with
+/// `NotFound`.
 ///
 /// `work` returns `(value, payload)`: `value` is committed under `req_id`;
 /// `payload` is returned to the caller (e.g. to update an out-of-store cache
@@ -818,16 +822,20 @@ pub(crate) async fn with_overwriting_claim<T, R, F>(
 where
     F: AsyncFnOnce() -> anyhow::Result<(T, R)>,
 {
-    // Get-or-create claim under one guard: lock the existing entry, else insert.
-    let permit = {
-        let mut guard = meta_store.write().await;
-        if guard.exists(req_id) {
-            guard.lock_entry(req_id)
-        } else {
-            guard.insert(req_id)
-        }
-    }
-    .map_err(|e| anyhow!("could not claim meta-store entry {req_id}: {e}"))?;
+    // Claim the existing entry. We can assume it is always present: the sole
+    // caller, `copy_compressed_key_to_original`, only migrates an `old_key_id`
+    // whose `FheKeyInfo` lives in private storage, and the keygen meta store is
+    // seeded at startup from exactly that set of keys (see `public_key_info` in
+    // `kms_impl.rs`) and is unbounded (`new_from_map`, capacity `usize::MAX`), so
+    // it never evicts. Any key that can be migrated therefore always has a `Done`
+    // entry here; a missing entry means the migration target does not exist, and
+    // failing with `NotFound` is the correct outcome (there is nothing to claim
+    // or create).
+    let permit = meta_store
+        .write()
+        .await
+        .lock_entry(req_id)
+        .map_err(|e| anyhow!("could not claim meta-store entry {req_id}: {e}"))?;
 
     match work().await {
         Ok((value, payload)) => {
@@ -1537,11 +1545,16 @@ mod tests {
 
     #[cfg(feature = "non-wasm")]
     #[tokio::test]
-    async fn with_overwriting_claim_creates_then_overwrites() {
-        let store = RwLock::new(MetaStore::<String>::new(2, 1));
+    async fn with_overwriting_claim_overwrites_existing() {
+        let mut ms = MetaStore::<String>::new(2, 1);
         let id = derive_request_id("woc-commit").unwrap();
+        // The claim requires a pre-existing entry; seed one as the migration
+        // target would already be present in the store.
+        insert_done_ok(&mut ms, &id, "v0");
+        let store = RwLock::new(ms);
+        assert_eq!(store.read().await.get_completed_count(), 1);
 
-        // Absent -> fresh create; payload is returned to the caller.
+        // Existing Done -> overwrite in place, keep the single completion slot.
         let payload = with_overwriting_claim(&store, &id, async || Ok(("v1".to_string(), 42u8)))
             .await
             .unwrap();
@@ -1549,7 +1562,7 @@ mod tests {
         assert_done_ok(&*store.read().await, &id, &"v1".to_string());
         assert_eq!(store.read().await.get_completed_count(), 1);
 
-        // Existing Done -> overwrite in place, keep the single completion slot.
+        // A second overwrite still keeps the single completion slot.
         let payload = with_overwriting_claim(&store, &id, async || Ok(("v2".to_string(), 7u8)))
             .await
             .unwrap();
@@ -1560,24 +1573,20 @@ mod tests {
 
     #[cfg(feature = "non-wasm")]
     #[tokio::test]
-    async fn with_overwriting_claim_rolls_back_fresh_claim_on_failure() {
+    async fn with_overwriting_claim_absent_entry_errors_without_creating() {
         let store = RwLock::new(MetaStore::<String>::new(2, 1));
-        let id = derive_request_id("woc-rollback").unwrap();
+        let id = derive_request_id("woc-absent").unwrap();
 
-        // A fresh claim whose work fails must be removed (not tombstoned).
+        // No entry exists: the claim fails with NotFound and `work` never runs,
+        // so nothing is created. (The migration target is always pre-seeded; an
+        // absent entry means it genuinely does not exist.)
         let res: anyhow::Result<()> =
-            with_overwriting_claim(&store, &id, async || anyhow::bail!("boom")).await;
+            with_overwriting_claim(&store, &id, async || Ok(("never".to_string(), ()))).await;
         assert!(res.is_err());
         assert!(
             store.read().await.retrieve(&id).is_none(),
-            "fresh claim must be removed on failure, leaving the id recreatable"
+            "claiming an absent id must not create an entry"
         );
-
-        // A retry can recreate and commit.
-        with_overwriting_claim(&store, &id, async || Ok(("recovered".to_string(), ())))
-            .await
-            .unwrap();
-        assert_done_ok(&*store.read().await, &id, &"recovered".to_string());
     }
 
     #[cfg(feature = "non-wasm")]
