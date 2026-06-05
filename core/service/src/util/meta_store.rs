@@ -289,7 +289,8 @@ impl<T> MetaStore<T> {
     ) -> Result<MetaStorePermit, MetaStoreError> {
         // `Deleted` is a permanent tombstone: a request id, once deleted, may
         // not be reused for a fresh insert. Callers that need to overwrite an
-        // existing entry should use [`replace_done`] instead.
+        // existing entry should use [`reserve`](MetaStore::reserve) +
+        // [`finalize`](MetaStore::finalize) instead.
         if self.storage.contains_key(request_id) {
             return Err(MetaStoreError::AlreadyExists {
                 req_id: *request_id,
@@ -393,47 +394,85 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Set the entry at `request_id` directly to `Done(Ok(value))`, either by
-    /// overwriting an existing `Done` entry or by inserting a fresh one if no
-    /// entry exists. Returns an error if the entry is currently `Pending`
-    /// (a live operation is in progress) or `Deleted` (tombstone).
+    /// Reserve `request_id` for an exclusive get-or-create write, returning a
+    /// [`MetaStorePermit`] held for the duration of the caller's work.
     ///
-    /// Intended for migration / admin flows that rewrite the metadata of an
-    /// already-completed entry — or seed a fresh one — without going through
-    /// the standard `insert → update` lifecycle. Takes a `RequestId` rather
-    /// than a [`MetaStorePermit`] on purpose: the target may not exist yet (so
-    /// no permit could be held for it), and a live permit held by *another*
-    /// caller on an existing `Done` entry is still rejected via the claim's
-    /// strong count.
-    pub(crate) fn replace_done(
+    /// - Absent: a fresh `Pending` entry is inserted and its permit returned.
+    /// - Existing `Pending`/`Done` with no live permit: locked in place (its
+    ///   value, if any, is preserved) and a permit returned.
+    /// - Already held by another permit: returns a [`MetaStoreError::Locked`] error.
+    /// - `Deleted` tombstone: returns a [`MetaStoreError::CannotUpdate`] error.
+    ///
+    /// Complete the reservation with [`MetaStore::finalize`] or roll it back
+    /// with [`MetaStore::abort_reservation`]; both consume the permit.
+    ///
+    /// Note: This method is not intended for general-purpose use; it is designed to support the specific edge-case when upgrading existing keys.
+    pub(crate) fn reserve(
         &mut self,
         request_id: &RequestId,
+    ) -> Result<MetaStorePermit, MetaStoreError> {
+        match self.storage.get(request_id) {
+            None => self.insert(request_id),
+            Some(_) => self.lock_entry(request_id),
+        }
+    }
+
+    /// Complete a reservation from [`MetaStore::reserve`] by setting the entry
+    /// to `Done(Ok(value))`, consuming the permit. The held permit is the proof
+    /// of ownership, so unlike [`reserve`](MetaStore::reserve) no strong-count
+    /// check is performed.
+    ///
+    /// A freshly created (`Pending`) entry is recorded in the completion queue;
+    /// an existing `Done` entry locked in place is overwritten while keeping its
+    /// queue slot. Errors with [`MetaStoreError::NotFound`] if the entry was
+    /// evicted while reserved, or [`MetaStoreError::CannotUpdate`] if it was
+    /// concurrently tombstoned.
+    pub(crate) fn finalize(
+        &mut self,
+        permit: MetaStorePermit,
         value: T,
     ) -> Result<(), MetaStoreError> {
-        let request_id = *request_id;
-        match self.storage.get(&request_id) {
-            Some(StoredEntry::Pending(_)) => {
-                return Err(MetaStoreError::Locked { req_id: request_id });
+        let req_id = permit.req_id;
+        let cell = self
+            .storage
+            .get_mut(&req_id)
+            .ok_or(MetaStoreError::NotFound { req_id })?;
+        match cell {
+            StoredEntry::Deleted => return Err(MetaStoreError::CannotUpdate { req_id }),
+            StoredEntry::Pending(_) => {
+                // First completion of this entry — record it as completed.
+                *cell = StoredEntry::done(Ok(Arc::new(value)));
+                self.complete_queue.push_back(req_id);
             }
-            Some(StoredEntry::Deleted) => {
-                return Err(MetaStoreError::CannotUpdate { req_id: request_id });
-            }
-            Some(StoredEntry::Done(_, claim)) => {
-                if Arc::strong_count(claim) > 1 {
-                    return Err(MetaStoreError::Locked { req_id: request_id });
-                }
-                // Existing Done entry — overwrite in place, keep complete_queue slot.
-                self.storage
-                    .insert(request_id, StoredEntry::done(Ok(Arc::new(value))));
-            }
-            None => {
-                // Fresh insert — record completion.
-                self.storage
-                    .insert(request_id, StoredEntry::done(Ok(Arc::new(value))));
-                self.complete_queue.push_back(request_id);
+            StoredEntry::Done(_, _) => {
+                // Existing Done locked in place — overwrite, keep the queue slot.
+                *cell = StoredEntry::done(Ok(Arc::new(value)));
             }
         }
+        // `permit` (and its claim) dropped at end of scope.
         Ok(())
+    }
+
+    /// Roll back a reservation from [`MetaStore::reserve`] without completing
+    /// it, consuming the permit.
+    ///
+    /// If the reserved entry is still `Pending` (a fresh create, or an adopted
+    /// orphan from an earlier aborted attempt) it is **removed outright** — not
+    /// tombstoned — so `request_id` stays reusable and a later
+    /// [`reserve`](MetaStore::reserve) can recreate it. An existing `Done` entry
+    /// that was merely locked in place is left untouched; only the permit's
+    /// claim is released.
+    ///
+    /// Note: This is not the typical and desired usage, but is only added to support the tedious edge case of migrating existing keys.
+    pub(crate) fn abort_reservation(&mut self, permit: MetaStorePermit) {
+        let req_id = permit.req_id;
+        if matches!(self.storage.get(&req_id), Some(StoredEntry::Pending(_))) {
+            // Fresh/adopted reservation: drop it entirely. A `Pending` entry is
+            // never in the completion queue, so no queue cleanup is needed.
+            self.storage.remove(&req_id);
+        }
+        // `Done` (locked existing) or already gone: nothing to undo.
+        // `permit` (and its claim) dropped at end of scope.
     }
 
     /// Retrieve the state of an element and return None if it does not exist.
@@ -1045,59 +1084,108 @@ mod tests {
     }
 
     #[test]
-    fn replace_done_rejects_pending_entry() {
+    fn reserve_creates_fresh_then_finalize_completes() {
+        // No entry yet: reserve creates a Pending placeholder (not yet queued),
+        // and finalize drives it to Done and records it as completed.
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
-        let id = derive_request_id("replace-pending").unwrap();
-        let _permit = store.insert(&id).unwrap();
-        assert!(matches!(
-            store.replace_done(&id, "x".to_string()),
-            Err(MetaStoreError::Locked { .. })
-        ));
+        let id = derive_request_id("reserve-fresh").unwrap();
+        let permit = store.reserve(&id).unwrap();
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
+        assert_eq!(store.get_completed_count(), 0);
+        store.finalize(permit, "v1".to_string()).unwrap();
+        assert_done_ok(&store, &id, &"v1".to_string());
+        assert_eq!(store.get_completed_count(), 1);
     }
 
     #[test]
-    fn replace_done_seeds_fresh_then_overwrites() {
-        // No entry yet: replace_done seeds a fresh Done and queues it.
+    fn reserve_locks_existing_done_then_finalize_overwrites() {
+        // Existing Done: reserve locks it in place (value preserved), finalize
+        // overwrites it while keeping the single completion-queue slot.
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
-        let id = derive_request_id("replace-fresh").unwrap();
-        store.replace_done(&id, "v1".to_string()).unwrap();
+        let id = derive_request_id("reserve-existing").unwrap();
+        insert_done_ok(&mut store, &id, "v1");
+        let permit = store.reserve(&id).unwrap();
+        // Still Done with the old value while reserved.
         assert_done_ok(&store, &id, &"v1".to_string());
-        assert_eq!(store.get_completed_count(), 1);
-
-        // Existing Done: overwrite in place, keep the single completion slot.
-        store.replace_done(&id, "v2".to_string()).unwrap();
+        store.finalize(permit, "v2".to_string()).unwrap();
         assert_done_ok(&store, &id, &"v2".to_string());
         assert_eq!(store.get_completed_count(), 1);
     }
 
     #[test]
-    fn replace_done_rejects_done_held_by_other_permit() {
-        // A permit held by another caller on a Done entry blocks replace_done.
+    fn reserve_rejects_entry_held_by_other_permit() {
+        // While one caller holds a permit (here from a prior reserve), a second
+        // reserve is rejected — this is the cross-step mutual exclusion that
+        // prevents two concurrent migrations from racing on the same id.
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
-        let id = derive_request_id("replace-locked-done").unwrap();
+        let id = derive_request_id("reserve-locked").unwrap();
         insert_done_ok(&mut store, &id, "v");
-        let permit = store.lock_entry(&id).unwrap();
+        let permit = store.reserve(&id).unwrap();
         assert!(matches!(
-            store.replace_done(&id, "v2".to_string()),
+            store.reserve(&id),
             Err(MetaStoreError::Locked { .. })
         ));
         drop(permit);
-        // Once released, the overwrite succeeds.
-        store.replace_done(&id, "v2".to_string()).unwrap();
-        assert_done_ok(&store, &id, &"v2".to_string());
+        // Once released, a fresh reserve succeeds again.
+        assert!(store.reserve(&id).is_ok());
     }
 
     #[test]
-    fn replace_done_rejects_deleted_entry() {
+    fn reserve_rejects_deleted_entry() {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
-        let id = derive_request_id("replace-deleted").unwrap();
+        let id = derive_request_id("reserve-deleted").unwrap();
         insert_done_ok(&mut store, &id, "v");
         store.try_delete(&id).unwrap();
         assert!(matches!(
-            store.replace_done(&id, "v2".to_string()),
+            store.reserve(&id),
             Err(MetaStoreError::CannotUpdate { .. })
         ));
+    }
+
+    #[test]
+    fn abort_reservation_removes_fresh_entry_without_tombstoning() {
+        // Aborting a freshly created reservation must remove the entry outright
+        // (NOT tombstone it), so a retry can recreate it. This is the failure
+        // path of copy_compressed_key_to_original.
+        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let id = derive_request_id("abort-fresh").unwrap();
+        let permit = store.reserve(&id).unwrap();
+        store.abort_reservation(permit);
+        // Gone entirely, not Deleted — so it is reservable/insertable again.
+        assert!(store.retrieve(&id).is_none());
+        let permit2 = store.reserve(&id).unwrap();
+        store.finalize(permit2, "recovered".to_string()).unwrap();
+        assert_done_ok(&store, &id, &"recovered".to_string());
+    }
+
+    #[test]
+    fn abort_reservation_preserves_existing_done() {
+        // Aborting a reservation that locked an existing Done leaves the prior
+        // value and its completion-queue slot intact.
+        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let id = derive_request_id("abort-existing").unwrap();
+        insert_done_ok(&mut store, &id, "original");
+        let permit = store.reserve(&id).unwrap();
+        store.abort_reservation(permit);
+        assert_done_ok(&store, &id, &"original".to_string());
+        assert_eq!(store.get_completed_count(), 1);
+        // Released: it can be reserved again afterwards.
+        assert!(store.reserve(&id).is_ok());
+    }
+
+    #[test]
+    fn reserve_after_failed_attempt_adopts_orphan_pending() {
+        // Mirrors recovery when a prior migration created a Pending reservation
+        // but its permit was dropped without finalize/abort (e.g. a task panic):
+        // the orphan has no live permit, so a retry's reserve adopts it.
+        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let id = derive_request_id("reserve-orphan").unwrap();
+        drop(store.reserve(&id).unwrap()); // permit dropped, entry left Pending
+        assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
+        let permit = store.reserve(&id).unwrap(); // adopts the orphan
+        store.finalize(permit, "adopted".to_string()).unwrap();
+        assert_done_ok(&store, &id, &"adopted".to_string());
+        assert_eq!(store.get_completed_count(), 1);
     }
 
     #[test]
