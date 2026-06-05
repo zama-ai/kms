@@ -32,6 +32,7 @@ use tokio::{task::JoinSet, time::timeout_at};
 
 use crate::network_value::NetworkValue;
 use crate::random::secret_rng_from_seed;
+use crate::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::{
     runtime::sessions::{
         base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
@@ -73,7 +74,7 @@ pub struct KeySet {
 /// A light borrowing wrapper around a [`tfhe::ClientKey`] that exposes the raw secret-key
 /// containers. Extraction only needs the client key, so this lets callers that hold only a
 /// `ClientKey` (e.g. reconstructed keys) reuse the same logic without materializing a full
-/// `KeySet` (and its expensive `ServerKey`). The `KeySet` getters below delegate here.
+/// `KeySet` (and its expensive `ServerKey`).
 pub struct ClientKeyView<'a> {
     ck: &'a tfhe::ClientKey,
 }
@@ -845,7 +846,6 @@ where
     S: BaseSessionHandles,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    use crate::sharing::open::{RobustOpen, SecureRobustOpen};
     let degree = session.threshold() as usize;
     let values = shares.iter().map(|x| x.value()).collect_vec();
     let opened = SecureRobustOpen::default()
@@ -859,7 +859,9 @@ where
                 let scalar = v.to_scalar()?;
                 // The secret-key entries must be bits; mirror `reconstruct_bit_vec`'s check.
                 if scalar * (Z::ONE - scalar) != Z::ZERO {
-                    anyhow::bail!("reconstruction failed: expected a bit but found {scalar}");
+                    anyhow::bail!(
+                        "reconstruction failed in insecure_open_bits: expected a bit but found {scalar}"
+                    );
                 }
                 bits.push(if scalar == Z::ZERO { 0_u64 } else { 1_u64 });
             }
@@ -1416,7 +1418,7 @@ where
 /// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
 /// passed as input.
 // TODO(dp): is this slow?
-pub fn keygen_all_party_shares_from_keyset<R, const EXTENSION_DEGREE: usize>(
+pub fn keygen_all_party_shares_from_client_key<R, const EXTENSION_DEGREE: usize>(
     client_key: &tfhe::ClientKey,
     parameters: ClassicPBSParameters,
     rng: &mut R,

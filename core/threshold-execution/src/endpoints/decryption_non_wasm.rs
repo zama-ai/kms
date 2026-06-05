@@ -1311,7 +1311,7 @@ mod tests {
     use crate::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
     use crate::tfhe_internals::test_feature::{
-        ClientKeyView, KeySet, keygen_all_party_shares_from_keyset,
+        ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
     };
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
@@ -1342,7 +1342,7 @@ mod tests {
         let parties = 5;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let shares = keygen_all_party_shares_from_keyset::<_, 4>(
+        let shares = keygen_all_party_shares_from_client_key::<_, 4>(
             &keyset.client_key,
             params,
             &mut AesRng::seed_from_u64(0),
@@ -1420,7 +1420,7 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,
@@ -1512,7 +1512,7 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,
@@ -1599,7 +1599,7 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,
@@ -1702,7 +1702,7 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,

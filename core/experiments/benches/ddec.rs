@@ -15,7 +15,7 @@ use threshold_execution::{
     runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     tests::ensure_real_keys_setup,
     tfhe_internals::{
-        test_feature::{KeySet, keygen_all_party_shares_from_keyset},
+        test_feature::{KeySet, keygen_all_party_shares_from_client_key},
         utils::expanded_encrypt,
     },
 };
@@ -65,7 +65,7 @@ fn ddec_nsmall(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,
@@ -127,7 +127,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,
@@ -182,7 +182,7 @@ fn ddec_nlarge(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,
@@ -247,7 +247,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares_from_keyset(
+        let key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params,
             &mut rng,

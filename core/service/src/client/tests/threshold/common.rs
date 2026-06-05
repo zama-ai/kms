@@ -115,7 +115,7 @@ pub async fn threshold_insecure_key_gen(
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
 #[allow(clippy::too_many_arguments)]
-pub async fn threshold_key_gen_secure(
+pub async fn threshold_secure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,
@@ -141,7 +141,7 @@ pub async fn threshold_key_gen_secure(
     // extra_data via `make_extra_data` so the signed bytes stay consistent.
     assert!(
         context_id.is_none() && epoch_id.is_none(),
-        "threshold_key_gen_secure_isolated only supports default context/epoch ids"
+        "threshold_secure_key_gen_isolated only supports default context/epoch ids"
     );
     let domain_msg = domain_to_msg(&dummy_domain());
     let extra_data = default_isolated_extra_data();

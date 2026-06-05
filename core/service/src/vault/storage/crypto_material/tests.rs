@@ -38,7 +38,7 @@ use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
-    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_keyset},
+    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
 };
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, RwLock};
@@ -968,7 +968,7 @@ fn setup_threshold_store(
     // TODO(dp): should probably switch over to compressed keys here (and below).
     let keyset = gen_uncompressed_key_set(TEST_PARAM, req_id.into(), &mut rng);
     let key_shares =
-        keygen_all_party_shares_from_keyset(&keyset.client_key, pbs_params, &mut rng, 4, 1)
+        keygen_all_party_shares_from_client_key(&keyset.client_key, pbs_params, &mut rng, 4, 1)
             .unwrap();
 
     let fhe_key_set = keyset.public_keys.clone();

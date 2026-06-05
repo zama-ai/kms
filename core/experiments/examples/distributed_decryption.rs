@@ -17,7 +17,7 @@ use threshold_execution::{
     runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     tfhe_internals::{
         parameters::BC_PARAMS_SNS,
-        test_feature::{KeySet, gen_uncompressed_key_set, keygen_all_party_shares_from_keyset},
+        test_feature::{KeySet, gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
         utils::expanded_encrypt,
     },
 };
@@ -34,7 +34,7 @@ async fn main() {
     set_server_key(keyset.public_keys.server_key.clone());
 
     let params = keyset.get_cpu_params().unwrap();
-    let key_shares = keygen_all_party_shares_from_keyset(
+    let key_shares = keygen_all_party_shares_from_client_key(
         &keyset.client_key,
         params,
         &mut rng,

@@ -773,7 +773,7 @@ mod tests {
     };
     use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
     use crate::tfhe_internals::test_feature::{
-        ClientKeyView, KeySet, keygen_all_party_shares_from_keyset,
+        ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
     };
     use crate::{
         constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
@@ -1555,7 +1555,7 @@ mod tests {
     {
         // generate the key shares
         let mut rng = AesRng::seed_from_u64(4242);
-        let mut key_shares = keygen_all_party_shares_from_keyset(
+        let mut key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
             params
                 .get_params_basics_handle()

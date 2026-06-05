@@ -23,7 +23,7 @@ cfg_if::cfg_if! {
         use threshold_execution::keyset_config::StandardKeySetConfig;
         use threshold_execution::tfhe_internals::parameters::DKGParams;
         use threshold_execution::tfhe_internals::test_feature::gen_key_set;
-        use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
+        use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_client_key;
         use threshold_execution::zk::ceremony::{max_num_bits_from_crs, public_parameters_by_trusted_setup};
         use threshold_types::session_id::SessionId;
     }
@@ -1067,7 +1067,7 @@ where
     };
 
     // Generate key shares with error handling
-    let key_shares = match keygen_all_party_shares_from_keyset(
+    let key_shares = match keygen_all_party_shares_from_client_key(
         &keyset.client_key,
         dkg_params
             .get_params_basics_handle()

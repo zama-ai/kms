@@ -21,7 +21,7 @@ use crate::client::tests::common::keygen_config;
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::threshold::common::threshold_key_gen_secure;
+use crate::client::tests::threshold::common::threshold_secure_key_gen;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 use crate::consts::MAX_TRIES;
@@ -1482,7 +1482,7 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
     let keygen_id = derive_request_id("secure_threshold_keygen")?;
 
     // Run secure key generation with preprocessing
-    let responses = threshold_key_gen_secure(
+    let responses = threshold_secure_key_gen(
         &env.clients,
         &preproc_id,
         &keygen_id,
@@ -1756,12 +1756,21 @@ async fn secure_threshold_compressed_keygen_from_existing_adds_missing_oprf() ->
 
 /// Same migration flow as the secure variants above, but driven through the insecure keygen
 /// endpoint (party 1 reconstructs the existing secret key and re-shares it; no preprocessing).
-/// Gated on both `slow_tests` (for the shared `threshold_key_gen_secure`/ddec machinery the
+/// Gated on both `slow_tests` (for the shared `threshold_secure_key_gen`/ddec machinery the
 /// generalized helper references) and `insecure` (the server must expose the insecure endpoint).
 #[tokio::test]
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 async fn insecure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()> {
     run_threshold_compressed_keygen_from_existing(true, false).await
+}
+
+/// Same insecure migration flow as above, but starting from legacy existing secret shares
+/// that do not include the dedicated OPRF private-key share.
+#[tokio::test]
+#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+async fn insecure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
+{
+    run_threshold_compressed_keygen_from_existing(true, true).await
 }
 
 /// Run threshold compressed key generation from existing secret shares, over either the secure
@@ -1770,8 +1779,7 @@ async fn insecure_threshold_compressed_keygen_from_existing() -> anyhow::Result<
 /// Generates an uncompressed keyset first, then performs compressed key generation
 /// reusing the existing secret key shares from the first keygen. When `remove_oprf`
 /// is true, the first keyset is rewritten to mimic legacy material with no
-/// dedicated OPRF share before the servers are restarted (only meaningful for the secure
-/// path, which can regenerate the OPRF share from preprocessing).
+/// dedicated OPRF share before the servers are restarted.
 ///
 /// **Workflow:**
 /// 1. Uncompressed keygen to produce the first keyset
@@ -1809,7 +1817,7 @@ async fn run_threshold_compressed_keygen_from_existing(
         )
         .await?;
     } else {
-        threshold_key_gen_secure(
+        threshold_secure_key_gen(
             &env.clients,
             &preproc_id_1,
             &keygen_id_1,
@@ -1871,7 +1879,7 @@ async fn run_threshold_compressed_keygen_from_existing(
         )
         .await?;
     } else {
-        threshold_key_gen_secure(
+        threshold_secure_key_gen(
             &clients,
             &preproc_id_2,
             &keygen_id_2,
