@@ -109,11 +109,12 @@ impl CoreMetrics {
     /// Build metrics with `config`, registering every metric in `registry`. Production uses the
     /// process-global default registry via [`CoreMetrics::with_config`]; tests pass a fresh registry
     /// so a single instance can be inspected in isolation without colliding with that shared state.
-    fn with_config_in_registry(config: MetricsConfig, registry: &prometheus::Registry) -> Self {
+    fn with_config_in_registry(mut config: MetricsConfig, registry: &prometheus::Registry) -> Self {
         let prefix = &config.prefix;
 
         // Apply the configured labels as const-labels to every metric, so the registration sites
         // below need no change. See `MetricsConfig::from_env`.
+        filter_metrics_labels(&mut config.labels);
         let const_labels: HashMap<String, String> = config.labels.clone().into_iter().collect();
         let opts = |name: String, help: &'static str| {
             Opts::new(name, help).const_labels(const_labels.clone())
@@ -750,20 +751,34 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
             continue;
         };
         let (key, value) = (key.trim(), value.trim());
-        if !is_valid_label_name(key) {
-            warn!(key, "ignoring metrics label with invalid label name");
-            continue;
-        }
-        if is_reserved_label_name(key) {
-            warn!(
-                key,
-                "ignoring metrics label that collides with a built-in metric label name"
-            );
+        if !is_acceptable_label_key(key) {
             continue;
         }
         labels.insert(key.to_string(), value.to_string());
     }
     labels
+}
+
+/// Drop invalid or reserved keys from `labels` in place (warns on each rejection).
+fn filter_metrics_labels(labels: &mut BTreeMap<String, String>) {
+    labels.retain(|key, _| is_acceptable_label_key(key));
+}
+
+/// Returns whether `key` may be used as a configured const-label. Invalid or reserved names are
+/// logged and rejected so metric registration cannot panic.
+fn is_acceptable_label_key(key: &str) -> bool {
+    if !is_valid_label_name(key) {
+        warn!(key, "ignoring metrics label with invalid label name");
+        return false;
+    }
+    if is_reserved_label_name(key) {
+        warn!(
+            key,
+            "ignoring metrics label that collides with a built-in metric label name"
+        );
+        return false;
+    }
+    true
 }
 
 /// Returns whether `name` is a valid, non-reserved Prometheus label name. Valid names match
@@ -987,6 +1002,34 @@ mod tests {
         let config = MetricsConfig::from_env();
         assert_eq!(config.prefix, "kms");
         assert_eq!(config.labels, expected);
+    }
+
+    #[test]
+    fn with_config_filters_invalid_and_reserved_labels() {
+        let mut config = MetricsConfig::default();
+        config
+            .labels
+            .insert("deployment_profile".to_string(), "kind-ci".to_string());
+        config.labels.insert("le".to_string(), "bucket".to_string());
+        config
+            .labels
+            .insert("operation".to_string(), "x".to_string());
+        config
+            .labels
+            .insert("__reserved".to_string(), "1".to_string());
+        config.labels.insert("1bad".to_string(), "x".to_string());
+
+        let registry = prometheus::Registry::new();
+        let metrics = CoreMetrics::with_config_in_registry(config, &registry);
+
+        assert_eq!(metrics.labels().len(), 1);
+        assert_eq!(
+            metrics
+                .labels()
+                .get("deployment_profile")
+                .map(String::as_str),
+            Some("kind-ci")
+        );
     }
 
     #[test]
