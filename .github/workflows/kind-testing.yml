@@ -257,9 +257,9 @@ jobs:
           # Opt-in metrics: install kube-prometheus-stack and remote-write KMS
           # metrics to Grafana Cloud only when the PR carries the `kind-metrics` label.
           ENABLE_KIND_METRICS: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') }}
-          GRAFANA_CLOUD_PROM_URL: ${{ secrets.GRAFANA_CLOUD_PROM_URL }}
-          GRAFANA_CLOUD_PROM_USERNAME: ${{ secrets.GRAFANA_CLOUD_PROM_USERNAME }}
-          GRAFANA_CLOUD_PROM_PASSWORD: ${{ secrets.GRAFANA_CLOUD_PROM_PASSWORD }}
+          GRAFANA_CLOUD_PROM_URL: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') && secrets.GRAFANA_CLOUD_PROM_URL || '' }}
+          GRAFANA_CLOUD_PROM_USERNAME: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') && secrets.GRAFANA_CLOUD_PROM_USERNAME || '' }}
+          GRAFANA_CLOUD_PROM_PASSWORD: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') && secrets.GRAFANA_CLOUD_PROM_PASSWORD || '' }}
         run: |
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
