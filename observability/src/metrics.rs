@@ -1,5 +1,5 @@
 use crate::metrics_names::{
-    TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    TAG_OPERATION, TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     TAG_USER_DECRYPTION_KIND,
 };
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
@@ -8,8 +8,12 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// Label keys for the duration histogram (must match all tag keys used by callers)
+/// Label keys for the duration histogram (must match all tag keys used by callers).
+/// The first key (`operation`) holds the primary operation name (e.g. OP_KEYGEN_REQUEST),
+/// matching the label key used by the `*_operations_total` counters and the payload size
+/// histogram. The second key (`operation_type`) is for subtypes such as OP_TYPE_TOTAL.
 const DURATION_LABEL_KEYS: &[&str] = &[
+    TAG_OPERATION,
     TAG_OPERATION_TYPE,
     TAG_PARTY_ID,
     TAG_TFHE_TYPE,
@@ -883,9 +887,11 @@ mod tests {
             "_test_cardinality",
             Duration::from_millis(1),
             &[
+                (TAG_OPERATION_TYPE, "total".to_string()), // exercise the subtype label (now at its own key)
                 (TAG_PARTY_ID, "1".to_string()),
                 (TAG_TFHE_TYPE, "fhe_uint8".to_string()),
                 (TAG_PUBLIC_DECRYPTION_KIND, "test".to_string()),
+                (TAG_USER_DECRYPTION_KIND, "test".to_string()),
             ],
         );
 
@@ -898,7 +904,10 @@ mod tests {
             .iter()
             .find(|metric| {
                 metric.get_label().iter().any(|label| {
-                    label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
+                    // Locate the specific seeded sample by its primary operation name.
+                    // The primary op lives under the `operation` label (to match counters + docs
+                    // and to leave `operation_type` free for subtypes like "total").
+                    label.name() == TAG_OPERATION && label.value() == "_test_cardinality"
                 })
             })
             .expect("seeded duration sample should be present");

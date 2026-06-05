@@ -123,12 +123,14 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 #### Metric Name: `kms_operation_duration_ms`
 - **Type**: Histogram
-- **Description**: Duration of KMS operations in milliseconds.
+- **Description**: Duration of KMS operations in milliseconds. Uses explicit buckets (1 ms → 5 min) because Prometheus defaults are tuned for seconds and would put most KMS measurements in `+Inf` (making p50/p95 meaningless).
+- **Tags**: Primary `operation` (e.g. an `OP_*` constant), optional `operation_type` (e.g. `total`, `load_crs_pk`), plus low-cardinality tags like `party_id`, `tfhe_type`, etc. High-cardinality tags (e.g. `key_id`, `request_id`) are intentionally not attached to this series.
 - **Alarm**: If P95 latency exceeds acceptable thresholds for critical operations.
 
 #### Metric Name: `kms_payload_size_bytes`
 - **Type**: Histogram
-- **Description**: Size of KMS operation payloads in bytes.
+- **Description**: Size of KMS operation payloads in bytes. Uses explicit buckets (1 KiB → 64 GiB) to cover large FHE key/keyset payloads.
+- **Tags / NOTE**: On RPC paths the `operation` label is the operation name. On versioned storage write paths (`safe_write_element_versioned` for file-backed vault and S3 `store_data_at_key`) the `operation` label carries the element's type name (via the `Named` trait, e.g. a key or keyset type) so sizes of different persisted objects are distinguishable. Call `observe_size` from other paths when useful.
 - **Alarm**: If payload sizes exceed expected ranges, indicating potential issues.
 
 ### System Resource Metrics
@@ -152,15 +154,22 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 **Common Metric Tag Keys**: All metrics include contextual tags for filtering and aggregation:
 
-- `operation` - The specific operation being performed (see operation types above)
+- `operation` - The specific operation being performed (see operation types above; primary label for duration histogram and counters)
 - `error` - The error type for error metrics (see error types above)
-- `key_id` - Identifier for the key being operated on
-- `algorithm` - Cryptographic algorithm being used
 - `operation_type` - Sub-type of operation (e.g., `total`, `load_crs_pk`, `proof_verification`, `ct_proof`)
 - `party_id` - ID of the party performing the operation
-- `request_id` - Unique identifier for the request
 - `tfhe_type` - Type of TFHE operation being performed
 - `public_decryption_mode` - Mode for public decryption operations
+- `user_decryption_mode` - Mode for user decryption operations
+
+High-cardinality tags such as `key_id` or `request_id` are possible on some series but should be used with care (they are excluded from the duration histogram to control cardinality; see the developer metrics guide for the low-cardinality guard and best practices).
+
+**Static / Deployment Labels (const-labels)**: In addition to the variable tags above, every metric can carry static labels configured once at startup via the `KMS_METRICS_LABELS` environment variable (comma-separated `key=value` list). These are attached as Prometheus const-labels to *all* metrics for the process. This is the supported way to distinguish deployments (e.g. `deployment_profile=kind-ci,deployment_type=threshold` for CI test runs so they are separable from production series in a shared Prometheus/Grafana).
+
+- Malformed entries, empty keys, names starting with `__`, or names that collide with built-in labels (`operation`, `error`, `version`, `le`, the duration label keys, etc.) are skipped with a warning at startup. A bad configuration cannot crash metric registration.
+- In Helm: set `kmsCore.metricsLabels` (e.g. `deployment_profile=kind-ci`); the chart renders it into the `KMS_METRICS_LABELS` env on the kms-server container.
+- The `ci_` metric name prefix (for separating CI series) is applied via ServiceMonitor `metricRelabelings` when enabled.
+- See the [developer metrics guide](../developer/metrics.md#distinguishing-deployments-kind-ci-vs-production) for the full mechanism, examples, and the `labels()` accessor for runtime inspection.
 
 **Operation Type Values**:
 - `total` - Total operations across all sub-types

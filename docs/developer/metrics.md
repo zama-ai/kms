@@ -376,7 +376,7 @@ pub const OP_MY_OPERATION: &str = "my_operation";
 let _timer = METRICS
     .time_operation(OP_MY_OPERATION)
     .tag(TAG_PARTY_ID, my_role.to_string())
-    .start();                          // kms_operation_duration_ms{operation_type="my_operation",...}
+    .start();                          // kms_operation_duration_ms{operation="my_operation",operation_type=...}
 ```
 
 This reuses the existing `kms_operation_duration_ms` / `kms_operations_total` /
