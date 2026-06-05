@@ -928,18 +928,23 @@ fn test_internal_custodian_context(
     test: &InternalCustodianContextTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    // TODO(dp): make this horror pretty.
     let mut original_versionized: InternalCustodianContext =
         load_and_unversionize(dir, test, format)?;
+
+    // Grab a copy of the on-disk fixture timestamp.
     let orig_timestamp = original_versionized
         .custodian_nodes
         .first_key_value()
-        .unwrap()
+        .expect("at least one entry in the on-disk fixture")
         .1
         .timestamp;
-    for cu_no in original_versionized.custodian_nodes.values_mut() {
-        cu_no.timestamp = orig_timestamp;
-    }
+    // Use the on-disk timestamp from the first entry for all `InternalCustodianSetupMessage`s
+    // so we can compare "expected" to "new" below.
+    original_versionized
+        .custodian_nodes
+        .values_mut()
+        .for_each(|node| node.timestamp = orig_timestamp);
+
     let enc_key: UnifiedPublicEncKey =
         load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
@@ -957,7 +962,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: orig_timestamp,
+            timestamp: orig_timestamp, // Use the timestamp from the fixture
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };
@@ -971,16 +976,6 @@ fn test_internal_custodian_context(
     };
 
     if original_versionized != new_versionized {
-        // TODO(dp): remove this
-        let new_timestamps = new_versionized
-            .custodian_nodes
-            .values()
-            .map(|c| c.timestamp)
-            .collect::<Vec<_>>();
-        eprintln!(
-            "MISMATCH.\n orig_timestamp: {:?}\n new_timestamp {:?}",
-            orig_timestamp, new_timestamps
-        );
         Err(test.failure(
             format!(
                 "Invalid InternalCustodianContext:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
