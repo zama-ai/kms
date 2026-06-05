@@ -31,19 +31,24 @@ graph
 
 <!-- TODO: Have this graph be automatically generated from the docker compose. -->
 
+The compose files at the repo root are layered: `docker-compose-core-base.yml`
+provides the S3 mock, and is combined with either
+`docker-compose-core-centralized.yml` (a single `dev-kms-core`),
+`docker-compose-core-threshold.yml` (4 parties), or
+`docker-compose-core-threshold-6.yml` (6 parties).
+`docker-compose-telemetry.yml` adds Prometheus and Jaeger sidecars.
+
 ```mermaid
 graph
   subgraph Threshold Docker Compose dependencies
     direction LR
-    dkbv[dev-kms-blockchain-validator]
-    dkbad[dev-kms-blockchain-asc-deploy]
-    dks[dev-kv-store]
     dsm[dev-s3-mock]
     dsms[dev-s3-mock-setup]
-    dkbv --> dkbad
     dsm --> dsms
 
-    dkcc[dev-kms-core-certs]
+    dkcc[dev-kms-core-gen-signing-keys-ca-certs]
+    dsms --> dkcc
+
     dkc1[dev-kms-core-1]
     dkc2[dev-kms-core-2]
     dkc3[dev-kms-core-3]
@@ -64,30 +69,5 @@ graph
     dkc2 --> dkci
     dkc3 --> dkci
     dkc4 --> dkci
-
-    dkcon1[dev-kms-connector-1]
-    dkcon2[dev-kms-connector-2]
-    dkcon3[dev-kms-connector-3]
-    dkcon4[dev-kms-connector-4]
-
-    dkbad --> dkcon1
-    dkbad --> dkcon2
-    dkbad --> dkcon3
-    dkbad --> dkcon4
-
-    dkci --> dkcon1
-    dkci --> dkcon2
-    dkci --> dkcon3
-    dkci --> dkcon4
-
-    dksk[dev-kms-simulator-keygen]
-
-    dkcon1 --> dksk
-    dkcon2 --> dksk
-    dkcon3 --> dksk
-    dkcon4 --> dksk
-
-    dkg[dev-kms-gateway]
-    dksk --> dkg
   end
 ```

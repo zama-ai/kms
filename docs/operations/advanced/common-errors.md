@@ -379,19 +379,14 @@ If you have an issue with this host it’s safe to reboot it and nothing has to 
 
 ## Build local core docker images
 
-It’s a 2 step process, since CI and DEV share the same base docker image.
-
 ```bash
-docker compose -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build kms-core-base-build
-docker compose -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build dev-kms-core
+docker compose -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build dev-kms-core
 ```
 
 If you were using the docker files directly it would be:
 
 ```bash
-docker build core/service/operations/docker/ci.dockerfile -t ghcr.io/zama-ai/kms-service:latest
-docker build core/service/operations/docker/dev.dockerfile -t ghcr.io/zama-ai/kms-service-dev:latest
-
+docker build -f docker/core/service/Dockerfile --target dev -t ghcr.io/zama-ai/kms/core-service:latest-dev .
 ```
 
 ## “MODE is  which is neither 'threshold' nor 'centralized’”

@@ -635,7 +635,7 @@ mod kms_custodian_binary_tests {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,

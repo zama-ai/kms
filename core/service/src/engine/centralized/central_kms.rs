@@ -78,7 +78,7 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum CentralizedKeyGenResult {
     Uncompressed(FhePubKeySet, KmsFheKeyHandles),
     Compressed(
@@ -89,7 +89,7 @@ pub(crate) enum CentralizedKeyGenResult {
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -223,7 +223,7 @@ pub(crate) async fn async_generate_crs(
     recv.await?
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -296,7 +296,7 @@ pub(crate) fn generate_fhe_keys(
     Ok((compressed_keyset, public_key, handles))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn generate_uncompressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -508,7 +508,7 @@ pub fn central_public_decrypt<
 }
 
 /// Perform asynchronous user decryption and serialize the result
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn async_user_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -1071,7 +1071,6 @@ impl<
     }
 }
 
-#[allow(clippy::let_underscore_future)]
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
