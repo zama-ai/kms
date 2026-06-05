@@ -131,8 +131,7 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(config: &T) -> Result<(), anyh
     // Use the global METRICS instance also as a sanity check that metrics are working
     METRICS.increment_request_counter("system_startup");
 
-    // Log the static labels actually applied to `METRICS` (initialized just above) so operators can
-    // confirm how this deployment's metrics are tagged — without re-reading/re-parsing the env.
+    // Log the static labels applied to `METRICS` so operators can confirm how this deployment is tagged.
     let metric_labels = METRICS.labels();
     if metric_labels.is_empty() {
         info!(

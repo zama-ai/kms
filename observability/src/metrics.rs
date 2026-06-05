@@ -483,6 +483,10 @@ impl CoreMetrics {
         self.record_duration_with_tags(operation, duration, tags)
     }
 
+    /// Record a serialized payload size (bytes) into `kms_payload_size_bytes`, keyed by the
+    /// `operation` label. Storage write paths pass the element's type name (`<T as Named>::NAME`),
+    /// so sizes of distinct persisted objects (keys, keysets, …) stay distinguishable. `size == 0`
+    /// is ignored.
     pub fn observe_size(&self, operation: impl AsRef<str>, size: f64) {
         if size == 0.0 {
             return;
@@ -800,14 +804,12 @@ fn is_valid_label_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Label names already used by built-in metrics, as variable labels (`operation`/`error`, the
-/// duration tags in [`DURATION_LABEL_KEYS`]) or const-labels (`version` on the version gauge), plus
-/// `le` — the bucket-boundary label Prometheus attaches to histogram series. A configured
-/// const-label colliding with one of these makes Prometheus reject the metric at registration —
-/// which would panic the process — so such entries are skipped instead. (`le` specifically is
-/// rejected by the `prometheus` crate when building either histogram, panicking the `.expect(...)`.)
+/// Label names already reserved by built-in metrics: `error`, the duration tags in
+/// [`DURATION_LABEL_KEYS`] (which include `operation`), the `version` const-label, and the `le`
+/// histogram bucket-boundary label. A configured const-label colliding with any of these would make
+/// Prometheus reject the metric at registration (panicking the `.expect`), so it is skipped instead.
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version", "le"];
+    const EXTRA_RESERVED: &[&str] = &["error", "version", "le"];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 

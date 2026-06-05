@@ -700,7 +700,7 @@ where
     }
 
     for (storage_index, subject) in parties.into_iter().enumerate() {
-        ensure_threshold_server_signing_key_for_party(
+        ensure_threshold_server_signing_key_exists(
             &mut pub_storages[storage_index],
             &mut priv_storages[storage_index],
             request_id,
@@ -734,35 +734,6 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    ensure_threshold_server_signing_key_for_party(
-        pub_storage,
-        priv_storage,
-        request_id,
-        deterministic,
-        party_id,
-        subject,
-        tls_wildcard,
-    )
-    .await
-}
-
-async fn ensure_threshold_server_signing_key_for_party<PubS, PrivS>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    request_id: &RequestId,
-    deterministic: bool,
-    party_id: usize,
-    subject: String,
-    tls_wildcard: bool,
-) -> anyhow::Result<()>
-where
-    PubS: Storage,
-    PrivS: Storage,
-{
-    if party_id == 0 {
-        anyhow::bail!("party ID cannot be 0 in the threshold setting")
-    }
-
     let mut rng = get_rng(deterministic, Some(party_id as u64));
 
     // Check if keys already exist with error handling
