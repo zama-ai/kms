@@ -15,7 +15,18 @@ build_container() {
     log_info "========================================="
 
     # Use RUST_IMAGE_VERSION from environment or default
-    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.94}"
+    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.95}"
+    local KMS_BINARIES_IMAGE="hub.zama.org/ghcr/zama-ai/kms/kms-binaries:latest-dev"
+
+    #-------------------------------------------------------------------------
+    # Build shared kms-binaries once so service/client can reuse it
+    #-------------------------------------------------------------------------
+    log_info "Building shared kms-binaries image..."
+    docker buildx build -t "${KMS_BINARIES_IMAGE}" \
+        -f "${REPO_ROOT}/docker/kms-binaries/Dockerfile" \
+        --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        "${REPO_ROOT}/" \
+        --load
 
     #-------------------------------------------------------------------------
     # Build and load core-service
@@ -24,6 +35,7 @@ build_container() {
     docker buildx build -t "hub.zama.org/ghcr/zama-ai/kms/core-service:latest-dev" \
         -f "${REPO_ROOT}/docker/core/service/Dockerfile" \
         --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        --build-arg KMS_BINARIES_IMAGE="${KMS_BINARIES_IMAGE}" \
         "${REPO_ROOT}/" \
         --load
 
@@ -39,6 +51,7 @@ build_container() {
     docker buildx build -t "hub.zama.org/ghcr/zama-ai/kms/core-client:latest-dev" \
         -f "${REPO_ROOT}/docker/core-client/Dockerfile" \
         --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        --build-arg KMS_BINARIES_IMAGE="${KMS_BINARIES_IMAGE}" \
         "${REPO_ROOT}/" \
         --load
 

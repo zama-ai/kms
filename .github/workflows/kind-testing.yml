@@ -430,6 +430,7 @@ jobs:
             delete_package_versions_by_tag "kms/core-service-enclave" "${IMAGE_TAG}"
             delete_package_versions_by_tag "kms/core-service" "${IMAGE_TAG}"
             delete_package_versions_by_tag "kms/core-client" "${IMAGE_TAG}"
+            delete_package_versions_by_tag "kms/kms-binaries" "${IMAGE_TAG}"
           fi
 
   # Test reporting job that runs after all tests complete

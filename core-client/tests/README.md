@@ -4,8 +4,9 @@
 
 | Test Type | Command |
 |-----------|---------|
-| **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (threshold preprocessing tests)** | `cargo nextest run --test integration_test --features threshold_tests` |
+| **Native (secure subset)** | `cargo test --test integration_test --features testing` |
+| **Native (full e2e, includes insecure CLI commands)** | `cargo test --test integration_test --features e2e` |
+| **Native (threshold preprocessing + insecure e2e tests)** | `cargo nextest run --test integration_test --features e2e,threshold_tests` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
 | **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
@@ -18,6 +19,11 @@
 
 - `testing`
   - Enables test helper code used by integration tests.
+- `insecure`
+  - Enables the client-side `InsecureKeyGen*` and `InsecureCrsGen*` CLI commands.
+- `e2e`
+  - Implies `testing` and `insecure`.
+  - Enables the full native/K8s e2e surface, including insecure-only fast-path commands.
 - `threshold_tests`
   - Implies `testing`.
   - Enables threshold preprocessing and keygen tests in `tests/integration/integration_test.rs`.
@@ -28,7 +34,7 @@
   - Only gates code/tests; it does **not** generate test material by itself.
   - **Does not** enable Kind/Kubernetes tests.
 - `kind_tests`
-  - Implies `testing`.
+  - Implies `e2e`.
   - Enables Kubernetes/Kind test binaries under `tests/kind-testing/`.
   - Requires a running Kind cluster.
 
@@ -57,6 +63,8 @@ CI uses `--skip` prefix matching to exclude certain test groups from regular run
 ### CLI commands (`CCCommand`)
 
 The client binary accepts these commands (passed as `CCCommand` in tests via `execute_cmd`). The `execute_cmd` helper automatically polls the corresponding `*Result` variant — test code only needs the initiating command.
+
+`InsecureKeyGen` and `InsecureCrsGen` are only available when `kms-core-client` is built with the `insecure` feature (or feature bundles such as `e2e`/`kind_tests`).
 
 | Command | Description | Requires epoch | Requires PRSS |
 |---------|-------------|----------------|---------------|
@@ -158,7 +166,7 @@ async fn k8s_test_keygen_and_crs() {
 | Method | Description |
 |--------|-------------|
 | `new(name)` | Create context, print test header |
-| `insecure_keygen()` | Run `InsecureKeyGen`, return key ID |
+| `insecure_keygen()` | Run `InsecureKeyGen`, return key ID (requires `insecure`) |
 | `crs_gen()` | Run `CrsGen`, return CRS ID |
 | `encrypt(key_id, plaintext, FheType)` | Fetch public FHE key from cluster, encrypt locally, write ciphertext to workspace; returns `EncryptionResult` (path + original plaintext + type) |
 | `public_decrypt_from_file(enc)` | Send ciphertext from `EncryptionResult` to threshold parties, verify result matches original — panics on mismatch; returns `DecryptionResult` (party response count) |

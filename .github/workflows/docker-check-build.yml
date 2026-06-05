@@ -18,10 +18,32 @@ jobs:
       max-parallel: 1
       fail-fast: false
       matrix:
-        dockerfile:
-          - 'docker/base/Dockerfile'
-          - 'docker/core/service/Dockerfile'
-          - 'docker/core-client/Dockerfile'
+        include:
+          - name: base
+            dockerfile: 'docker/base/Dockerfile'
+            image_ref: 'base:latest'
+            build_args: |
+              TARGETARCH=amd64
+          - name: kms-binaries
+            dockerfile: 'docker/kms-binaries/Dockerfile'
+            image_ref: 'kms-binaries:latest'
+            build_args: |
+              TARGETARCH=amd64
+              APP_CACHE_DIR=kms-binaries
+          - name: core-service
+            dockerfile: 'docker/core/service/Dockerfile'
+            image_ref: 'core-service:latest'
+            prebuild_kms_binaries: true
+            build_args: |
+              TARGETARCH=amd64
+              KMS_BINARIES_IMAGE=kms-binaries:latest
+          - name: core-client
+            dockerfile: 'docker/core-client/Dockerfile'
+            image_ref: 'core-client:latest'
+            prebuild_kms_binaries: true
+            build_args: |
+              TARGETARCH=amd64
+              KMS_BINARIES_IMAGE=kms-binaries:latest
 
     steps:
       # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
@@ -68,6 +90,7 @@ jobs:
           password: ${{ secrets.CGR_PASSWORD }}
 
       - name: Docker Build and Push with Platform Tag
+        if: matrix.prebuild_kms_binaries != true
         id: build
         uses: ./.github/actions/docker-build-push
         env:
@@ -81,6 +104,7 @@ jobs:
             SCCACHE_BUCKET=${{ env.RUNS_ON_S3_BUCKET_CACHE }}
             SCCACHE_REGION=${{ env.RUNS_ON_AWS_REGION }}
             SCCACHE_S3_PREFIX=sccache/${{ github.repository }}/docker-check-build/amd64
+            ${{ matrix.build_args }}
           context: '.'
           # Secret IDs MUST match what the Dockerfiles `--mount=type=secret,id=…`
           # expects (lowercase). Mismatched names = silently missing files in
@@ -100,12 +124,60 @@ jobs:
           sbom: false
           target: prod
           tags: |
-            base:latest
+            ${{ matrix.image_ref }}
+
+      - name: Build local kms-binaries dependency
+        if: matrix.prebuild_kms_binaries == true
+        uses: ./.github/actions/docker-build-push
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
+        with:
+          build-args: |
+            RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
+            TARGETARCH=amd64
+            APP_CACHE_DIR=kms-binaries
+          context: '.'
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: docker/kms-binaries/Dockerfile
+          platforms: linux/amd64
+          push: false
+          pull: false
+          load: true
+          provenance: false
+          sbom: false
+          target: prod
+          tags: |
+            kms-binaries:latest
+
+      - name: Build image using local kms-binaries dependency
+        if: matrix.prebuild_kms_binaries == true
+        id: build-with-kms-binaries
+        uses: ./.github/actions/docker-build-push
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
+        with:
+          build-args: |
+            RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
+            ${{ matrix.build_args }}
+          context: '.'
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          pull: false
+          load: true
+          provenance: false
+          sbom: false
+          target: prod
+          tags: |
+            ${{ matrix.image_ref }}
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: base:latest
+          image-ref: ${{ matrix.image_ref }}
           format: 'table'
           severity: 'CRITICAL,HIGH'
           output: trivy-result.txt

@@ -77,10 +77,11 @@ docker run -v ./core-client/config:/config \
   ghcr.io/zama-ai/kms/core-client:latest \
   kms-core-client -f /config/client_local_threshold.toml <command>
 
-# Example: Generate insecure keys
+# Example: Generate insecure keys from a custom image built with the
+# `kms-core-client` `insecure` feature.
 docker run -v ./core-client/config:/config \
   --network host \
-  ghcr.io/zama-ai/kms/core-client:latest \
+  <your-insecure-core-client-image> \
   kms-core-client -f /config/client_local_threshold.toml insecure-key-gen
 ```
 
@@ -343,10 +344,12 @@ These commands generate a set of private and public FHE keys. It will return a `
 
 #### Insecure Key-Generation
 
+These commands are only compiled when `kms-core-client` is built with the `insecure` feature.
+
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen [--compressed] [--keyset-type <TYPE>]
+$ cargo run --features insecure -- -f <path-to-toml-config-file> insecure-key-gen [--compressed] [--keyset-type <TYPE>]
 ```
 
 Optional arguments:
@@ -359,7 +362,7 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--compressed]
+$ cargo run --features insecure -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--compressed]
 ```
 
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
@@ -387,12 +390,15 @@ $ cargo run -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
 
 #### Partial (Insecure) Preprocessing
+
+This command is only compiled when `kms-core-client` is built with the `insecure` feature.
+
 Due to how long the preprocessing phase can take, we also provide a way to perform only partially the preprocessing phase.
 One can thus specify the percentage of the offline phase that should run, as well as whether at the end of this partial preprocessing we want to store a _dummy_ (__insecure__) preprocessing to be able to run the Key-Generaiton phase nonetheless.
 Partial preprocessing can be triggered via the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --features insecure -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -442,17 +448,19 @@ These commands compute a CRS that is used in proving and verifying ZK proofs. It
 
 #### Insecure CRS-generation
 
+These commands are only compiled when `kms-core-client` is built with the `insecure` feature.
+
 A CRS can _insecurely_ be created using the following command, where `<max-num-bits>` is the number of bits that one can prove with the CRS:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
+$ cargo run --features insecure -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
 ```
 
 Note that this operation does *NOT* run a secure distributed CRS generation protocol, and therefore must *NOT* be used in production, as the security of the CRS cannot be guaranteed. This function is intended only for testing and debugging, to quickly generate a CRS, as the full distributed version is more expensive and time-consuming.
 
 It is also possible to fetch the result of an insecure CRS generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID>
+$ cargo run --features insecure -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID>
 ```
 
 Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
@@ -671,7 +679,7 @@ This prints the public key for each configured core.
 
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
+    $ cargo run --bin kms-core-client --features insecure -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
     ```
 - Generate an encryption of `0x2342` of type `euint16` and ask for a user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once it has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
     ```{bash}

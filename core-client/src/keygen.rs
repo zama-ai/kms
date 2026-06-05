@@ -1,7 +1,9 @@
+#[cfg(feature = "insecure")]
+use crate::PartialKeyGenPreprocParameters;
 use crate::s3_operations::fetch_public_elements;
 use crate::{
-    CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
+    CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters,
+    dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -11,12 +13,12 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
-use kms_lib::client::client_wasm::Client;
+use kms_lib::client::{
+    client_wasm::Client,
+    local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
+};
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
-use kms_lib::util::key_setup::test_tools::{
-    load_material_from_pub_storage, load_pk_from_pub_storage,
-};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::{CompactPublicKey, ServerKey};
@@ -142,9 +144,16 @@ pub(crate) async fn do_keygen(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             if insecure {
-                cur_client
-                    .insecure_key_gen(tonic::Request::new(req_cloned))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    return cur_client
+                        .insecure_key_gen(tonic::Request::new(req_cloned))
+                        .await;
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!("insecure keygen requires the kms-core-client insecure feature");
+                }
             } else {
                 cur_client.key_gen(tonic::Request::new(req_cloned)).await
             }
@@ -357,9 +366,18 @@ pub(crate) async fn get_keygen_responses(
             .await;
 
             let mut response = if insecure {
-                cur_client
-                    .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                    .await
+                #[cfg(feature = "insecure")]
+                {
+                    cur_client
+                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
+                        .await
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    unreachable!(
+                        "insecure keygen polling requires the kms-core-client insecure feature"
+                    );
+                }
             } else {
                 cur_client
                     .get_key_gen_result(tonic::Request::new(request_id.into()))
@@ -382,9 +400,18 @@ pub(crate) async fn get_keygen_responses(
                 }
                 ctr += 1;
                 response = if insecure {
-                    cur_client
-                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                        .await
+                    #[cfg(feature = "insecure")]
+                    {
+                        cur_client
+                            .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
+                            .await
+                    }
+                    #[cfg(not(feature = "insecure"))]
+                    {
+                        unreachable!(
+                            "insecure keygen polling requires the kms-core-client insecure feature"
+                        );
+                    }
                 } else {
                     cur_client
                         .get_key_gen_result(tonic::Request::new(request_id.into()))
@@ -668,6 +695,7 @@ pub(crate) async fn do_preproc(
     Ok(req_id)
 }
 
+#[cfg(feature = "insecure")]
 pub(crate) async fn do_partial_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,

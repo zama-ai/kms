@@ -1,92 +1,37 @@
 # syntax=docker/dockerfile:1
 
-################################################################
-## Second stage builds the kms-core binaries
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
-
-# By default, cargo build --release.
-# But you can provide --build-arg LTO_RELEASE="release-lto-thin" locally to build locally
-ARG LTO_RELEASE=release-lto-thin
-ARG SCCACHE_BUCKET
-ARG SCCACHE_REGION=eu-west-3
-ARG SCCACHE_S3_PREFIX
-ENV RUSTC_WRAPPER=sccache
-ENV SCCACHE_IDLE_TIMEOUT=0
-ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
-ENV SCCACHE_REGION=${SCCACHE_REGION}
-ENV SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_PREFIX}
-ENV AWS_REGION=${SCCACHE_REGION}
-
-# Fetch dependencies and build binaries
-WORKDIR /app/kms
-# Copy only what is needed to build kms binaries
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY backward-compatibility ./backward-compatibility
-COPY bc2wrap ./bc2wrap
-COPY core ./core
-COPY core-client ./core-client
-COPY observability ./observability
-COPY tools ./tools
-COPY docker ./docker
-
-RUN mkdir -p /app/kms/core/service/bin
-
-# `cargo fetch` only downloads dependencies; it does not compile. The global
-# `RUSTC_WRAPPER=sccache` is still consulted for cargo's `rustc -vV` probe,
-# which would make sccache start up and hit S3 (and thus need AWS creds). Unset
-# the wrapper for this step so the fetch stays credential-free.
-RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    RUSTC_WRAPPER= cargo fetch --locked
-RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=secret,id=sccache_aws_access_key_id \
-    --mount=type=secret,id=sccache_aws_secret_access_key \
-    set -eu && \
-    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
-    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms \
-      --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
-      --bin kms-custodian --bin kms-gen-keys \
-      -F insecure -F threshold-execution/testing && \
-    sccache --show-stats && \
-    cp /app/kms/target/${LTO_RELEASE}/kms-server \
-       /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
-       /app/kms/target/${LTO_RELEASE}/kms-init \
-       /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
-       /app/kms/target/${LTO_RELEASE}/kms-custodian \
-    ./core/service/bin
-
-
-ARG YQ_VERSION=v4.53.2
-# Overridable arg to allow building for different architectures
-ARG TARGETARCH=amd64
-RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
-    chmod +x /usr/bin/yq
+ARG KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest
 
 ################################################################
-## Third stage: Copy the binaries from preceding stages
-# This stage will be the final image
+## Resolve the prebuilt shared binaries image
+##
+## CI retags the workflow-built `kms-binaries` image as `:latest` before the
+## package jobs run. Local flows normally pass `KMS_BINARIES_IMAGE` explicitly.
+FROM --platform=$BUILDPLATFORM ${KMS_BINARIES_IMAGE} AS kms-binaries-source
+
+
+################################################################
+## Final runtime image
 FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 USER root
-# Install required runtime dependencies
+# Install required runtime dependencies.
+# `yq` is used by the startup scripts to query TOML config at runtime.
 RUN apk update && apk add --no-cache \
     libssl3 \
     socat \
     net-tools \
+    yq \
     libgcc \
     libstdc++
 
 WORKDIR /app/kms/core/service
 
-COPY --from=kms-core /usr/bin/yq /usr/bin/yq
-RUN chmod +x /usr/bin/yq
-
 COPY ./core/service/config/ /app/kms/core/service/config
 
-# Set the path to include the binaries and not just the default /usr/local/bin
+# Set the path to include the packaged binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
-# Copy the binaries from the kms-core and go-runtime stages
-COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
+COPY --from=kms-binaries-source /out/core-service/bin/ ./bin/
 
 # Copy parent-side and enclave-side init scripts
 COPY ./docker/core/service/start_parent_proxies.sh ./bin/
@@ -95,7 +40,7 @@ COPY ./docker/core/service/init_enclave.sh ./bin/
 # Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \
     adduser -D -s /bin/sh --uid 10003 -G kms kms
-# pre-create mount points for rights
+# Pre-create mount points and hand ownership to the non-root runtime user
 RUN mkdir -p /app/kms/core/service/certs /app/kms/core/service/config
 RUN chown -R kms:kms /app/kms
 USER kms
@@ -120,7 +65,7 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 
 
 ################################################################
-## Fourth stage: Build and install grpc_health_probe -- For development only with extra tools
+## Development image with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
 
 USER root
