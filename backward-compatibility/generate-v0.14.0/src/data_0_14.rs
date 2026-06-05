@@ -69,7 +69,7 @@ use tfhe_1_6_2::{
     },
     ServerKey, Tag,
 };
-use tfhe_versionable_0_7::Upgrade;
+use tfhe_versionable_0_8::Upgrade;
 use threshold_execution_0_14_0::small_execution::prf::PrfKey;
 use threshold_execution_0_14_0::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution_0_14_0::{

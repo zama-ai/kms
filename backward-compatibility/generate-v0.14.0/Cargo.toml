@@ -29,7 +29,7 @@ threshold_types_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package =
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
 cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
-tfhe_versionable_0_7 = { package = "tfhe-versionable", version = "=0.8.0" }
+tfhe_versionable_0_8 = { package = "tfhe-versionable", version = "=0.8.0" }
 tfhe_1_6_2 = { package = "tfhe", version = "=1.6.2", features = [
     "shortint",
 ] }
