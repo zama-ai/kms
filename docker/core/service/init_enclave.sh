@@ -69,6 +69,8 @@ cd /app/kms/core/service |& logger  || fail "cannot set working directory"
 # this trick requires a loopback interface
 ifconfig lo 127.0.0.1 |& logger || fail "cannot setup loopback interface"
 route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loopback route"
+ip route change 127.0.0.0/8 dev lo quickack 1 |& logger || fail "cannot set quickack"
+
 
 # receive kms-server configuration from the parent
 log "requesting kms-server config"

@@ -2,6 +2,16 @@ kmsPeers:
   # Number of replicas managed by each statefulset
   count: 1
 
+podSecurityContext:
+  # To set when the image will support non root user
+  runAsNonRoot: false
+containerSecurityContext:
+  allowPrivilegeEscalation: true
+  capabilities:
+    add:
+      - NET_ADMIN
+  privileged: false
+
 kmsCore:
   thresholdMode:
     enabled: true

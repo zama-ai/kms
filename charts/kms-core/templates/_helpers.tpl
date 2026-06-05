@@ -46,8 +46,18 @@ name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
 imagePullPolicy: {{ .image.pullPolicy }}
 restartPolicy: Always
+securityContext:
+  runAsUser: 0
+  capabilities:
+    add:
+      - NET_ADMIN
 command:
-  - socat
+  - /bin/sh
+  - -c
+  - |
+    ip route show | while IFS= read -r route; do ip route change $route quickack 1; done
+    exec socat "$@"
+  - --
 args:
   - -d0
 {{- if and (eq .name "grpc-peer-proxy") .timeout }}
