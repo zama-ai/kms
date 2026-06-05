@@ -27,16 +27,13 @@ where
     bincode::serde::encode_into_std_write(value, w, bincode::config::legacy())
 }
 
-/// wrapper around bincode::serde::decode_from_slice that discards the length info and uses the legacy config
-/// (using bincode v2 underneath).
-/// This is unsafe as it does not limit the size of the deserialized object and thus may lead to OOM errors.
-pub fn deserialize_unsafe<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
-    bincode::serde::decode_from_slice(bytes, bincode::config::legacy()).map(|t| t.0)
-}
-
-/// wrapper around bincode::serde::decode_from_slice that uses the legacy config
-/// and a size limit of [`BINCODE_SMALL_DESER_SIZE_LIMIT`] bytes for safer deserialization (avoid exhausting memory errors)
-pub fn deserialize_safe<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
+/// Deserialize a value from a byte slice, capped at [`BINCODE_SMALL_DESER_SIZE_LIMIT`] bytes
+/// (legacy config, bincode v2 underneath; the length info is discarded).
+///
+/// Use this when the bytes are already in memory (e.g. a network message or a value fetched
+/// from a store). To read from an I/O source without buffering it all first, use
+/// [`deserialize_from`].
+pub fn deserialize_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
     bincode::serde::decode_from_slice(
         bytes,
         bincode::config::legacy().with_limit::<BINCODE_SMALL_DESER_SIZE_LIMIT>(),
@@ -44,11 +41,17 @@ pub fn deserialize_safe<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeEr
     .map(|t| t.0)
 }
 
-pub fn deserialize_from<T, R>(mut reader: R) -> Result<T, DecodeError>
+/// Deserialize a value directly from a [`Read`] source, capped at
+/// [`BINCODE_SMALL_DESER_SIZE_LIMIT`] bytes.
+///
+/// The [`std::io::Read`] is internally wrapped in a [`std::io::BufReader`], so
+/// callers can pass an unbuffered source such as a [`std::fs::File`] directly.
+pub fn deserialize_from<T, R>(reader: R) -> Result<T, DecodeError>
 where
     T: DeserializeOwned,
     R: Read,
 {
+    let mut reader = std::io::BufReader::new(reader);
     bincode::serde::decode_from_std_read(
         &mut reader,
         bincode::config::legacy().with_limit::<BINCODE_SMALL_DESER_SIZE_LIMIT>(),
