@@ -11,8 +11,8 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
 use crate::util::meta_store::{
-    EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-    try_delete_in_meta_store, update_err_req_in_meta_store,
+    EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store, ensure_not_in_meta_store,
+    retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
 use crate::vault::storage::{Storage, StorageExt};
@@ -92,9 +92,11 @@ pub async fn key_gen_impl<
 
     // Check for existence of request preprocessing ID
     // also check that the request ID is not used yet
-    // If all is ok write the request ID to the meta store
-    // All validation must be done before inserting the request ID
-    let (params, permit, meta_permit) = {
+    // If all is ok we claim the request ID in the meta store. The claim itself
+    // is made later (just before spawning the background task) so that the
+    // fallible setup below cannot leave an orphaned `Pending` entry; here we only
+    // do a fail-fast existence check and gather the parameters.
+    let (params, permit) = {
         // If we're in insecure mode, we skip removing preprocessed material since it may not exist
         let params = if !insecure {
             let preproc =
@@ -133,10 +135,12 @@ pub async fn key_gen_impl<
             ));
         }
 
-        // Check that the request ID is not used yet and insert it.
-        let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
+        // Fail fast: reject before the remaining setup if this request id is
+        // already known to the meta store (in-flight, completed, or tombstoned).
+        // The authoritative, race-closing claim is made just before the spawn.
+        ensure_not_in_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
 
-        (params, rate_limiter_permit, meta_permit)
+        (params, rate_limiter_permit)
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
@@ -152,6 +156,16 @@ pub async fn key_gen_impl<
         )
     })?;
 
+    // Claim the meta-store entry now: after the fallible setup above (so a setup
+    // failure cannot leave an orphaned `Pending` entry) and before any storage
+    // modification, which only happens in the background task spawned below.
+    // Everything between here and the spawn is infallible, so the permit cannot
+    // be dropped without being threaded into the task. This `insert` is also the
+    // authoritative existence check behind the earlier fail-fast read, and (since
+    // the central path has no serial lock) preserves the precise gRPC code
+    // (e.g. `AlreadyExists`) when two requests race on the same id.
+    let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
+
     let token = CancellationToken::new();
     {
         service
@@ -164,6 +178,7 @@ pub async fn key_gen_impl<
     let crypto_storage = service.crypto_storage.clone();
 
     let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
+
     service.tracker.spawn(
         async move {
             let _timer = timer;

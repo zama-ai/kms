@@ -13,7 +13,8 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
 use crate::util::meta_store::{
-    MetaStorePermit, add_req_to_meta_store, delete_in_meta_store, lock_entry_in_meta_store,
+    add_req_to_meta_store, delete_in_meta_store, ensure_not_in_meta_store,
+    lock_entry_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
@@ -184,7 +185,11 @@ where
             }
         }
 
-        let meta_permit = add_req_to_meta_store(
+        // Fail fast: reject before the (expensive) key generation and backup
+        // re-encryption if this context id is already known to the meta store.
+        // The authoritative, race-closing claim is made inside
+        // `inner_new_custodian_context` just before it first modifies storage.
+        ensure_not_in_meta_store(
             &self.custodian_meta_store,
             &custodian_context_id,
             OP_NEW_CUSTODIAN_CONTEXT,
@@ -197,7 +202,7 @@ where
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
-        self.inner_new_custodian_context(custodian_context, mpc_context_id, meta_permit)
+        self.inner_new_custodian_context(custodian_context, mpc_context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
@@ -277,7 +282,6 @@ where
         &self,
         context: CustodianContext,
         mpc_context_id: ContextId,
-        meta_permit: MetaStorePermit,
     ) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
@@ -298,47 +302,82 @@ where
         )
         .await?;
 
+        // Claim the meta-store entry now: after the fallible key generation and
+        // recovery-validation setup above (so a failure there cannot leave an
+        // orphaned `Pending` entry) and before the first storage modification
+        // below. This `insert` is also the authoritative existence check behind
+        // the fail-fast read in `new_custodian_context`.
+        let meta_permit = add_req_to_meta_store(
+            &self.custodian_meta_store,
+            &inner_context.context_id,
+            OP_NEW_CUSTODIAN_CONTEXT,
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to claim meta-store entry for custodian context {}: {e}",
+                inner_context.context_id
+            )
+        })?;
+
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        let lock_start = std::time::Instant::now();
-        let mut guarded_backup_vault = backup_vault.lock().await;
-        // First update the backup vault's context ID
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
-            guarded_backup_vault.keychain.as_mut()
-        {
-            if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
-                && cur_backup_id == inner_context.context_id
+        // This block modifies storage (the backup vault) under the held claim and
+        // is fallible; on any failure we must record the error on the permit
+        // rather than let it drop, which would orphan the `Pending` entry.
+        let prep: anyhow::Result<()> = async {
+            let lock_start = std::time::Instant::now();
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            // First update the backup vault's context ID
+            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+                guarded_backup_vault.keychain.as_mut()
             {
-                anyhow::bail!(
-                    "A custodian context with the same context ID already exists in the backup vault!"
-                );
+                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
+                    && cur_backup_id == inner_context.context_id
+                {
+                    anyhow::bail!(
+                        "A custodian context with the same context ID already exists in the backup vault!"
+                    );
+                }
+                secret_share_keychain
+                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
+            } else {
+                return Err(anyhow_error_and_log(
+                    "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
+                ));
+            };
+            // Ensure we free the lock on backup vault before performing the new backup!
+            drop(guarded_backup_vault);
+            // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
+            // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
+            // Hence we do a complete failure of the method if this fails
+            if !self
+                .crypto_storage
+                .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
+                .await
+            {
+                return Err(anyhow_error_and_log("Failed to update backup vault"));
             }
-            secret_share_keychain
-                .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
-        } else {
-            return Err(anyhow_error_and_log(
-                "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
-            ));
-        };
-        // Ensure we free the lock on backup vault before performing the new backup!
-        drop(guarded_backup_vault);
-        // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
-        // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
-        // Hence we do a complete failure of the method if this fails
-        if !self
-            .crypto_storage
-            .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
-            .await
-        {
-            return Err(anyhow_error_and_log("Failed to update backup vault"));
+            let total_lock_time = lock_start.elapsed();
+            tracing::info!(
+                "New context storage - context_id={}, total_lock_held={:?}",
+                inner_context.context_id,
+                total_lock_time
+            );
+            Ok(())
         }
-        let total_lock_time = lock_start.elapsed();
-        tracing::info!(
-            "New context storage - context_id={}, total_lock_held={:?}",
-            inner_context.context_id,
-            total_lock_time
-        );
-        // Then store the results
+        .await;
+        if let Err(e) = prep {
+            update_err_req_in_meta_store(
+                &self.custodian_meta_store,
+                meta_permit,
+                format!("{e:#}"),
+                OP_NEW_CUSTODIAN_CONTEXT,
+            )
+            .await;
+            return Err(e);
+        }
+        // Then store the results (consumes the permit, recording success or error).
         self.crypto_storage
             .write_backup_keys(
                 recovery_validation,

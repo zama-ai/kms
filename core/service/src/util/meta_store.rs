@@ -270,7 +270,6 @@ impl<T> MetaStore<T> {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn exists(&self, request_id: &RequestId) -> bool {
         self.storage.contains_key(request_id)
     }
@@ -665,6 +664,28 @@ pub(crate) async fn add_req_to_meta_store<T>(
         .await
         .insert(req_id)
         .map_err(|e| e.into_metriced(request_metric))
+}
+
+/// Fail-fast, read-only existence check that mirrors [`MetaStore::insert`]'s
+/// duplicate rejection: returns an `AlreadyExists` [`MetricedError`] if an entry
+/// (pending, completed, or tombstoned) already occupies `req_id`.
+///
+/// Intended to be called *before* expensive setup/computation so a request for
+/// an already-known id is rejected early, without claiming a permit. It only
+/// takes the read lock and is advisory: the authoritative, race-closing claim is
+/// still made later by [`add_req_to_meta_store`], whose `insert` re-checks under
+/// the write lock. A caller therefore must not rely on this check alone for
+/// mutual exclusion — it only avoids wasted work in the common case.
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn ensure_not_in_meta_store<T>(
+    meta_store: &RwLock<MetaStore<T>>,
+    req_id: &RequestId,
+    request_metric: &'static str,
+) -> Result<(), MetricedError> {
+    if meta_store.read().await.exists(req_id) {
+        return Err(MetaStoreError::AlreadyExists { req_id: *req_id }.into_metriced(request_metric));
+    }
+    Ok(())
 }
 
 /// Acquire a permit for an *existing* entry, acquiring & releasing the write
@@ -1567,5 +1588,34 @@ mod tests {
         // The pre-existing Done value is untouched by the aborted claim.
         assert_done_ok(&*store.read().await, &id, &"original".to_string());
         assert_eq!(store.read().await.get_completed_count(), 1);
+    }
+
+    #[cfg(feature = "non-wasm")]
+    #[tokio::test]
+    async fn ensure_not_in_meta_store_rejects_known_ids() {
+        let store = RwLock::new(MetaStore::<String>::new(4, 1));
+        let id = derive_request_id("ensure-known").unwrap();
+
+        // Absent id: the fail-fast check passes.
+        ensure_not_in_meta_store(&store, &id, "test").await.unwrap();
+
+        // Pending (claimed) id: rejected, mirroring `insert`'s AlreadyExists.
+        let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
+        let err = ensure_not_in_meta_store(&store, &id, "test")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
+
+        // Completed id: still rejected.
+        store
+            .write()
+            .await
+            .update(Ok("v".to_string()), permit)
+            .unwrap();
+        assert!(ensure_not_in_meta_store(&store, &id, "test").await.is_err());
+
+        // Tombstoned id: still rejected (the tombstone is permanent).
+        store.write().await.try_delete(&id).unwrap();
+        assert!(ensure_not_in_meta_store(&store, &id, "test").await.is_err());
     }
 }

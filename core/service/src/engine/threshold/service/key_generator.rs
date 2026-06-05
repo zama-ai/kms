@@ -73,7 +73,8 @@ use crate::{
     util::{
         meta_store::{
             EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store,
-            retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
+            ensure_not_in_meta_store, retrieve_from_meta_store, try_delete_in_meta_store,
+            update_err_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -276,7 +277,6 @@ impl<
         context_id: ContextId,
         epoch_id: EpochId,
         permit: OwnedSemaphorePermit,
-        meta_permit: MetaStorePermit,
     ) -> anyhow::Result<()> {
         //Retrieve the right metric tag
         let op_tag = match (
@@ -383,6 +383,20 @@ impl<
         // UseExisting paths are loaded lazily inside `key_gen_background` so
         // their failures surface via the meta store, mirroring how DKG
         // failures are handled. This also matches the centralized analogue.
+
+        // Claim the meta-store entry as the final step before spawning the
+        // background task, which performs the only storage modifications for this
+        // request. Acquiring the permit here — rather than before the fallible
+        // setup above — guarantees that a setup failure returns early without ever
+        // creating an entry, so no orphaned `Pending` entry can be left behind.
+        // This `insert` is also the authoritative existence check behind the
+        // fail-fast read in `inner_key_gen`; under the `serial_lock` held by that
+        // caller it cannot observe a concurrent insert, and the store is unbounded
+        // (never `CapacityFull`), so in practice it only fails if the fail-fast
+        // check was racily bypassed — handled defensively here rather than panicked.
+        let meta_permit = add_req_to_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to claim meta-store entry for {req_id}: {e}"))?;
 
         let token_for_bg = token.clone();
         self.tracker.spawn(
@@ -555,10 +569,12 @@ impl<
             ));
         }
 
-        // The meta-store permit is threaded into the spawned background so the
-        // strong invariant ("only the rightful holder updates") holds end-to-end.
-        let meta_permit =
-            add_req_to_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag).await?; // TODO should have specific error we can react to and then disc should be checked later. I think that is also how it is in centralized
+        // Fail fast: reject before the expensive DKG session setup / run if this
+        // request id is already known to the meta store (in-flight, completed, or
+        // tombstoned). This avoids wasting work on a doomed id; the authoritative,
+        // race-closing claim is the `add_req_to_meta_store` made inside
+        // `launch_dkg` just before the background task is spawned.
+        ensure_not_in_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag).await?;
 
         tracing::info!(
             "Keygen starting with request_id={:?}, insecure={}",
@@ -576,7 +592,6 @@ impl<
             context_id,
             epoch_id,
             permit,
-            meta_permit,
         )
         .await
         .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal))?;
