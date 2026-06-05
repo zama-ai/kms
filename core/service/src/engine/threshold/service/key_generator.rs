@@ -73,7 +73,7 @@ use crate::{
     util::{
         meta_store::{
             EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store,
-            retrieve_from_meta_store, update_err_req_in_meta_store,
+            retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -395,10 +395,8 @@ impl<
                         tracing::info!(
                             "Deleting preprocessed material with ID {preproc_id} from meta store"
                         );
-                        let delete_res = {
-                            let mut meta_store_guard = preproc_bucket.write().await;
-                            meta_store_guard.try_delete(preproc_id)
-                        };
+                        let delete_res =
+                            try_delete_in_meta_store(&preproc_bucket, preproc_id).await;
                         match delete_res {
                             Ok(EntryState::Done(Ok(_))) => {
                                 tracing::info!(

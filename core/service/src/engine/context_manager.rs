@@ -12,7 +12,9 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
-use crate::util::meta_store::{MetaStorePermit, add_req_to_meta_store, delete_in_meta_store};
+use crate::util::meta_store::{
+    MetaStorePermit, add_req_to_meta_store, delete_in_meta_store, lock_entry_in_meta_store,
+};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
@@ -226,12 +228,12 @@ where
 
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
-        let permit = {
-            let mut cus_meta_store = self.custodian_meta_store.write().await;
-            cus_meta_store
-                .lock_entry(&context_id)
-                .map_err(|e| e.into_metriced(OP_DESTROY_CUSTODIAN_CONTEXT))?
-        };
+        let permit = lock_entry_in_meta_store(
+            &self.custodian_meta_store,
+            &context_id,
+            OP_DESTROY_CUSTODIAN_CONTEXT,
+        )
+        .await?;
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {

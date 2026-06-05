@@ -1,3 +1,34 @@
+//! Status store for in-flight and completed requests.
+//!
+//! # Two API layers
+//!
+//! Callers should prefer the **free helper functions** (`*_in_meta_store`) over
+//! the inherent [`MetaStore`] methods. Each helper takes `&RwLock<MetaStore<T>>`,
+//! acquires the lock internally for the shortest possible span, and releases it
+//! before returning — critical for [`retrieve_from_meta_store`], which polls for
+//! up to `DURATION_WAITING_ON_RESULT_SECONDS` and must never hold the guard
+//! across a sleep. A helper returns a [`MetricedError`] when the operation sits
+//! on a gRPC request path (so the failure propagates to the client with metrics
+//! recorded), and the raw [`MetaStoreError`] when the caller owns the outcome
+//! (fire-and-forget completion paths, or internal `anyhow` flows).
+//!
+//! The **inherent `MetaStore` methods** are `pub(crate)` guard-level primitives:
+//! the caller is assumed to already hold the appropriate `RwLock` guard, and they
+//! do no metric bookkeeping. Reach for them directly only where the helper layer
+//! does not fit — notably the key-migration path in
+//! `copy_compressed_key_to_original`, which holds a single permit across
+//! [`reserve`](MetaStore::reserve) → [`finalize`](MetaStore::finalize) /
+//! [`abort_reservation`](MetaStore::abort_reservation) and is an `anyhow` flow.
+//!
+//! # Entry lifecycle
+//!
+//! `insert` → [`MetaStorePermit`] → (`update` to finish | `delete` to tombstone),
+//! both consuming the permit. A dropped permit leaves the entry `Pending`;
+//! [`try_delete`](MetaStore::try_delete) reclaims it.
+//! [`lock_entry`](MetaStore::lock_entry) mints a permit for an existing entry
+//! (used as a cross-lock sync point); the `reserve` / `finalize` /
+//! `abort_reservation` trio supports get-or-create rewrites for key migration.
+
 use kms_grpc::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
@@ -63,7 +94,7 @@ pub(crate) enum MetaStoreError {
 #[cfg(feature = "non-wasm")]
 impl MetaStoreError {
     /// gRPC code that best describes the failure to a remote caller.
-    pub fn code(&self) -> tonic::Code {
+    pub(crate) fn code(&self) -> tonic::Code {
         use MetaStoreError::*;
         match self {
             AlreadyExists { .. } => tonic::Code::AlreadyExists,
@@ -75,7 +106,7 @@ impl MetaStoreError {
     }
 
     /// Request id this error is about, if it is request-scoped.
-    pub fn req_id(&self) -> Option<RequestId> {
+    pub(crate) fn req_id(&self) -> Option<RequestId> {
         use MetaStoreError::*;
         match self {
             AlreadyExists { req_id }
@@ -88,7 +119,7 @@ impl MetaStoreError {
     }
 
     /// Convert into a [`MetricedError`] using the caller's operation metric.
-    pub fn into_metriced(self, op_metric: &'static str) -> MetricedError {
+    pub(crate) fn into_metriced(self, op_metric: &'static str) -> MetricedError {
         let code = self.code();
         let req_id = self.req_id();
         MetricedError::new(op_metric, req_id, self, code)
@@ -119,7 +150,7 @@ pub struct MetaStorePermit {
 }
 
 impl MetaStorePermit {
-    pub fn req_id(&self) -> &RequestId {
+    pub(crate) fn req_id(&self) -> &RequestId {
         &self.req_id
     }
 }
@@ -209,7 +240,7 @@ impl<T> MetaStore<T> {
     /// of which we can be sure that at least [min_cache] elements are kept in the cache after completion
     /// (assuming that at least [min_cache] have been completed).
     /// The cache may be larger than [min_cache], but the total capacity will be limited to [capacity]
-    pub fn new(capacity: usize, min_cache: usize) -> Self {
+    pub(crate) fn new(capacity: usize, min_cache: usize) -> Self {
         Self {
             capacity,
             min_cache,
@@ -219,7 +250,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Creates a new MetaStore with unlimited capacity and cache size.
-    pub fn new_unlimited() -> Self {
+    pub(crate) fn new_unlimited() -> Self {
         Self {
             capacity: usize::MAX,
             min_cache: usize::MAX,
@@ -229,7 +260,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
-    pub fn new_from_map(map: HashMap<RequestId, T>) -> Self {
+    pub(crate) fn new_from_map(map: HashMap<RequestId, T>) -> Self {
         let mut completed_queue = VecDeque::new();
         let storage = map
             .into_iter()
@@ -353,6 +384,10 @@ impl<T> MetaStore<T> {
     /// This is intended for callers that need to update or delete an existing entry but do not hold its original insert permit.
     ///
     /// Note that acquiring a permit on an existing entry does not change its state: the entry remains `Pending` or `Done` as it was before.
+    ///
+    /// Lock: assumes the caller already holds the write guard. gRPC callers
+    /// should instead use [`lock_entry_in_meta_store`], which locks internally
+    /// and maps the error for propagation.
     pub(crate) fn lock_entry(
         &mut self,
         request_id: &RequestId,
@@ -426,6 +461,13 @@ impl<T> MetaStore<T> {
     /// with [`MetaStore::abort_reservation`]; both consume the permit.
     ///
     /// Note: This method is not intended for general-purpose use; it is designed to support the specific edge-case when upgrading existing keys.
+    ///
+    /// Lock: this trio (`reserve` / [`finalize`](MetaStore::finalize) /
+    /// [`abort_reservation`](MetaStore::abort_reservation)) is called directly on
+    /// a write guard by the key-migration `anyhow` flow, which holds the permit
+    /// across the work and takes the guard only briefly at each step. There is
+    /// deliberately no `*_in_meta_store` wrapper, so the lock/permit lifetimes
+    /// stay visible at the call site.
     pub(crate) fn reserve(
         &mut self,
         request_id: &RequestId,
@@ -526,6 +568,10 @@ impl<T> MetaStore<T> {
     /// Like [`delete`], but for callers that do not hold a permit. Succeeds
     /// for any non-Deleted state when no live permit is outstanding. Returns
     /// the previous state.
+    ///
+    /// Lock: assumes the caller already holds the write guard. Most callers
+    /// should use [`try_delete_in_meta_store`], which locks internally and lets
+    /// the caller inspect the returned [`EntryState`].
     pub(crate) fn try_delete(
         &mut self,
         request_id: &RequestId,
@@ -659,6 +705,22 @@ pub(crate) async fn add_req_to_meta_store<T>(
         .map_err(|e| e.into_metriced(request_metric))
 }
 
+/// Acquire a permit for an *existing* entry, acquiring & releasing the write
+/// lock internally and mapping the failure to a [`MetricedError`] for gRPC
+/// propagation. The lock-an-existing-entry analogue of [`add_req_to_meta_store`].
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn lock_entry_in_meta_store<T>(
+    meta_store: &RwLock<MetaStore<T>>,
+    req_id: &RequestId,
+    request_metric: &'static str,
+) -> Result<MetaStorePermit, MetricedError> {
+    meta_store
+        .write()
+        .await
+        .lock_entry(req_id)
+        .map_err(|e| e.into_metriced(request_metric))
+}
+
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn update_req_in_meta_store<
     T,
@@ -738,6 +800,20 @@ pub(crate) async fn delete_in_meta_store<T>(
             false
         }
     }
+}
+
+/// Permit-free delete that acquires & releases the write lock internally and
+/// returns the previous [`EntryState`]. Unlike [`delete_in_meta_store`], the
+/// caller inspects the outcome itself (e.g. to log per prior state), so the raw
+/// [`MetaStoreError`] is returned rather than being recorded here — letting
+/// fire-and-forget callers map it through `handle_unreturnable_error` with their
+/// own `ERR_ASYNC` semantics.
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn try_delete_in_meta_store<T>(
+    meta_store: &RwLock<MetaStore<T>>,
+    req_id: &RequestId,
+) -> Result<EntryState<T>, MetaStoreError> {
+    meta_store.write().await.try_delete(req_id)
 }
 
 /// Helper for retrieving the result of a request from a meta store.

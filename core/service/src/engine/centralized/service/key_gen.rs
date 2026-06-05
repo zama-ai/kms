@@ -12,7 +12,7 @@ use crate::engine::validation::{
 };
 use crate::util::meta_store::{
     EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-    update_err_req_in_meta_store,
+    try_delete_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
 use crate::vault::storage::{Storage, StorageExt};
@@ -170,10 +170,7 @@ pub async fn key_gen_impl<
             let _permit = permit;
             // "Remove" the preprocessing material by deleting its entry from the meta store
             tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-            let delete_res = {
-                let mut meta_store_guard = preproc_meta_store.write().await;
-                meta_store_guard.try_delete(&preproc_id)
-            };
+            let delete_res = try_delete_in_meta_store(&preproc_meta_store, &preproc_id).await;
             match delete_res {
                 Ok(EntryState::Done(Ok(_))) => {
                     tracing::info!(
