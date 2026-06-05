@@ -783,11 +783,13 @@ fn is_valid_label_name(name: &str) -> bool {
 }
 
 /// Label names already used by built-in metrics, as variable labels (`operation`/`error`, the
-/// duration tags in [`DURATION_LABEL_KEYS`]) or const-labels (`version` on the version gauge). A
-/// configured const-label colliding with one of these makes Prometheus reject the metric at
-/// registration — which would panic the process — so such entries are skipped instead.
+/// duration tags in [`DURATION_LABEL_KEYS`]) or const-labels (`version` on the version gauge), plus
+/// `le` — the bucket-boundary label Prometheus attaches to histogram series. A configured
+/// const-label colliding with one of these makes Prometheus reject the metric at registration —
+/// which would panic the process — so such entries are skipped instead. (`le` specifically is
+/// rejected by the `prometheus` crate when building either histogram, panicking the `.expect(...)`.)
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version"];
+    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version", "le"];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
@@ -970,6 +972,8 @@ mod tests {
         assert!(is_reserved_label_name("operation"));
         assert!(is_reserved_label_name("error"));
         assert!(is_reserved_label_name("version"));
+        // `le` is the histogram bucket label; a const-label `le` makes histogram creation panic.
+        assert!(is_reserved_label_name("le"));
         assert!(is_reserved_label_name(TAG_OPERATION_TYPE));
         assert!(!is_reserved_label_name("deployment_profile"));
     }
@@ -979,7 +983,7 @@ mod tests {
         // Names that collide with built-in metric labels (which would panic at registration) and
         // `__`-reserved names are dropped; a valid custom label still survives.
         let labels = parse_metrics_labels(Some(
-            "operation=x,error=y,version=z,operation_type=w,__r=1,deployment_profile=kind-ci",
+            "operation=x,error=y,version=z,le=bucket,operation_type=w,__r=1,deployment_profile=kind-ci",
         ));
         assert_eq!(
             labels.get("deployment_profile").map(String::as_str),
