@@ -164,21 +164,22 @@ Track instantaneous values that can increase or decrease:
 
 ```rust
 // Record operation counter
-METRICS.increment_request_counter(OP_KEYGEN_REQUEST)?;  // kms_operations_total{operation="keygen_request"}
+METRICS.increment_request_counter(OP_KEYGEN_REQUEST);  // kms_operations_total{operation="keygen_request"}
 
 // Record error with context
-METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND)?;  // kms_operation_errors_total{operation="public_decrypt_request",error="not_found"}
+METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND);  // kms_operation_errors_total{operation="public_decrypt_request",error="not_found"}
 
 // Record duration with tags
-let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)?
-    .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)?
+let _timer = METRICS
+    .time_operation(OP_KEYGEN_REQUEST)
+    .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
     .start();  // kms_operation_duration_ms{operation="keygen_request",operation_type="total"}
 
-// Record payload size
-METRICS.observe_size(OP_PUBLIC_DECRYPT_REQUEST, input.len() as f64)?;  // kms_payload_size_bytes{operation="public_decrypt_request"}
+// Record payload size (operation name on RPC paths; element type name on storage writes — see NOTE above)
+METRICS.observe_size(OP_PUBLIC_DECRYPT_REQUEST, input.len() as f64);  // kms_payload_size_bytes{operation="public_decrypt_request"}
 
 // Record current system state
-METRICS.gauge("worker_count", num_workers)?;  // kms_gauge{operation="worker_count"}
+METRICS.gauge("worker_count", num_workers);  // kms_gauge{operation="worker_count"}
 ```
 
 ### Using Custom Prefix

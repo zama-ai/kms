@@ -372,9 +372,7 @@ deploy_centralized_mode() {
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
 
-    # Enable the ServiceMonitor (scraped by kube-prometheus-stack) and prefix
-    # metric names with ci_ so the central Prometheus can separate CI metrics
-    # from production series.
+    # Same ServiceMonitor / ci_ metric-prefix enablement as threshold mode.
     if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
         HELM_ARGS+=(
             --set kmsCore.serviceMonitor.enabled=true

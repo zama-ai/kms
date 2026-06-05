@@ -770,7 +770,6 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
 /// `[a-zA-Z_][a-zA-Z0-9_]*`; names beginning with `__` are reserved by Prometheus for internal use
 /// and are rejected so a configured label can never shadow them.
 fn is_valid_label_name(name: &str) -> bool {
-    // `__`-prefixed names are reserved by Prometheus.
     if name.starts_with("__") {
         return false;
     }
@@ -912,9 +911,6 @@ mod tests {
             );
         }
 
-        // No unexpected dynamic keys: every exported key must be a declared duration label or one of
-        // the process-constant const-labels. Replaces the old hard `<= 5` cap, which the (variable
-        // number of) configured const-labels would otherwise trip.
         let configured: BTreeSet<&str> = METRICS.labels().keys().map(String::as_str).collect();
         for &key in &actual_labels {
             assert!(
@@ -942,13 +938,10 @@ mod tests {
 
     #[test]
     fn parse_metrics_labels_skips_malformed_and_empty() {
-        // Unset / empty / whitespace-only yields no labels.
         assert!(parse_metrics_labels(None).is_empty());
         assert!(parse_metrics_labels(Some("")).is_empty());
         assert!(parse_metrics_labels(Some("   ")).is_empty());
 
-        // `noequals` (no '='), `=novalue` (empty key), `1bad=x` (invalid name) and empty items are
-        // all skipped; only `good=ok` survives.
         let labels = parse_metrics_labels(Some("noequals,=novalue,1bad=x,good=ok,,"));
         assert_eq!(labels.get("good").map(String::as_str), Some("ok"));
         assert_eq!(labels.len(), 1);
@@ -963,7 +956,6 @@ mod tests {
         assert!(!is_valid_label_name("1leading_digit"));
         assert!(!is_valid_label_name("has-dash"));
         assert!(!is_valid_label_name("has.dot"));
-        // `__`-prefixed names are reserved by Prometheus.
         assert!(!is_valid_label_name("__reserved"));
     }
 
@@ -972,7 +964,6 @@ mod tests {
         assert!(is_reserved_label_name("operation"));
         assert!(is_reserved_label_name("error"));
         assert!(is_reserved_label_name("version"));
-        // `le` is the histogram bucket label; a const-label `le` makes histogram creation panic.
         assert!(is_reserved_label_name("le"));
         assert!(is_reserved_label_name(TAG_OPERATION_TYPE));
         assert!(!is_reserved_label_name("deployment_profile"));
@@ -980,8 +971,6 @@ mod tests {
 
     #[test]
     fn parse_metrics_labels_skips_reserved_and_colliding_names() {
-        // Names that collide with built-in metric labels (which would panic at registration) and
-        // `__`-reserved names are dropped; a valid custom label still survives.
         let labels = parse_metrics_labels(Some(
             "operation=x,error=y,version=z,le=bucket,operation_type=w,__r=1,deployment_profile=kind-ci",
         ));
@@ -994,8 +983,6 @@ mod tests {
 
     #[test]
     fn from_env_uses_default_prefix_and_parses_labels_from_env() {
-        // Hermetic: assert `from_env` delegates to `parse_metrics_labels` on the current env, so the
-        // test holds whether or not `KMS_METRICS_LABELS` happens to be set in the test process.
         let expected = parse_metrics_labels(std::env::var(METRICS_LABELS_ENV).ok().as_deref());
         let config = MetricsConfig::from_env();
         assert_eq!(config.prefix, "kms");
@@ -1004,9 +991,6 @@ mod tests {
 
     #[test]
     fn config_labels_are_attached_to_every_metric() {
-        // Build a full `CoreMetrics` in an isolated registry — not the global default one the other
-        // tests assert against — and confirm the configured const-label flows through `with_config`
-        // onto a real metric.
         let mut config = MetricsConfig::default();
         config
             .labels
@@ -1014,7 +998,6 @@ mod tests {
         let registry = prometheus::Registry::new();
         let metrics = CoreMetrics::with_config_in_registry(config, &registry);
 
-        // The accessor exposes exactly what was configured.
         assert_eq!(
             metrics
                 .labels()
@@ -1023,7 +1006,6 @@ mod tests {
             Some("kind-ci")
         );
 
-        // ... and the label is actually exported (`kms_version` is always registered and set).
         let families = registry.gather();
         let version = families
             .iter()
