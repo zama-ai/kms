@@ -20,6 +20,7 @@ spec:
     # already renamed before it is stored / remote-written.
     - sourceLabels: [__name__]
       targetLabel: __name__
+      regex: (.*)
       replacement: "{{ .Values.kmsCore.serviceMonitor.metricNamePrefix }}$1"
       action: replace
     {{- end }}
