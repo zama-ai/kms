@@ -163,7 +163,7 @@ impl AugmentedCiphertextParameters for ClassicPBSParameters {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
 pub enum DKGParams {
     WithoutSnS(DKGParamsRegular),

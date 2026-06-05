@@ -1369,7 +1369,7 @@ mod tests {
         .await;
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn test_reshare_two_sets<
         Z: BaseRing + Zeroize,
     // Restrict the strateies to meaningful inputs

@@ -129,7 +129,6 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
 /// instead of using the wrapper from tonic::transport because we need to
 /// provide our own certificate verifier that can validate bundled attestation
 /// documents and that can receive new trust roots on the context change.
-#[allow(clippy::too_many_arguments)]
 async fn build_tls_config(
     peers: &Option<Vec<PeerConf>>,
     tls_config: &TlsConf,

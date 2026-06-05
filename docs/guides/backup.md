@@ -4,7 +4,7 @@ The tool allows to make custodian keys using a BIP39 seed phrase and help operat
 
 ## Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install). Ensure you have a recent version of Rust installed on your system. We require `v1.86` or newer.
+- [Rust](https://www.rust-lang.org/tools/install). The version pinned in [rust-toolchain.toml](../../rust-toolchain.toml) is picked up automatically by `rustup` when building inside the repository.
 
 ## Usage
 

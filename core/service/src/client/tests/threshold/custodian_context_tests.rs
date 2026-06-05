@@ -128,7 +128,6 @@ async fn new_custodian_context(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_new_cus_context(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,

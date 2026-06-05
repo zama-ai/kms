@@ -89,7 +89,7 @@ kmsCore:
   nameOverride: kms-threshold-staging
   addressOverride:
   image:
-    name: ghcr.io/zama-ai/kms-service
+    name: ghcr.io/zama-ai/kms/core-service
     tag: latest
   thresholdMode:
     enabled: true
@@ -255,7 +255,7 @@ kmsCore:
   nameOverride: kms-threshold-staging
   addressOverride:
   image:
-    name: ghcr.io/zama-ai/kms-service
+    name: ghcr.io/zama-ai/kms/core-service
     tag: latest
   thresholdMode:
     enabled: true
@@ -349,7 +349,7 @@ For production deployments with heavy workloads, monitor resource usage and adju
 To upgrade the KMS service:
 
 ```bash
-helm upgrade kms-service ./charts/kms-service -f my-values.yaml -n <namespace>
+helm upgrade kms-service ./charts/kms-core -f my-values.yaml -n <namespace>
 ```
 
 ### Uninstalling

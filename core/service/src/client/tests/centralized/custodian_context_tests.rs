@@ -101,7 +101,6 @@ pub(crate) async fn new_custodian_context(
     assert!(reboot_sig_keys == second_sig_keys);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_new_cus_context(
     kms_client: &mut CoreServiceEndpointClient<Channel>,
     internal_client: &mut Client,

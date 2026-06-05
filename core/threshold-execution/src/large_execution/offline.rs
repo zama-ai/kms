@@ -269,7 +269,7 @@ pub(crate) async fn next_random_batch<Z: Ring, S: SingleSharing<Z>, L: LargeSess
 }
 
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 mod tests {
     use super::SecureLargePreprocessing;
     use crate::config::BatchParams;
