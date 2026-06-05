@@ -654,7 +654,8 @@ mod tests {
 
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
-        MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
+        CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
+        TlsExtensionGetter,
     };
     use crate::sending_service::NetworkSession;
     use std::collections::HashMap;
@@ -1244,5 +1245,136 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    /// Build a [`CoreToCoreNetworkConfig`] identical to the defaults, except for a configurable
+    /// `max_waiting_time_for_message_queue` so that tests don't have to wait the default 60s.
+    fn test_config(max_waiting_time_secs: u64) -> CoreToCoreNetworkConfig {
+        CoreToCoreNetworkConfig {
+            message_limit: 70,
+            multiplier: 1.1,
+            max_interval: 60,
+            max_elapsed_time: Some(60),
+            initial_interval_ms: Some(100),
+            network_timeout: 120,
+            network_timeout_bk: 300,
+            network_timeout_bk_sns: 1200,
+            max_en_decode_message_size: 2 * 1024 * 1024 * 1024,
+            session_update_interval_secs: Some(60),
+            session_cleanup_interval_secs: Some(86400),
+            discard_inactive_sessions_interval: Some(15 * 60),
+            max_waiting_time_for_message_queue: Some(max_waiting_time_secs),
+            max_opened_inactive_sessions_per_party: Some(2000),
+        }
+    }
+
+    /// Regression test for the bug fixed in PR #624.
+    ///
+    /// Scenario (2 parties, role 1 is receiver, role 2 is sender):
+    /// 1. Role 2 is marked as a `completed_parties`.
+    /// 2. Role 1 calls `receive` for role 2. No message is in the queue yet, so the `tick_interval`
+    ///    fires and we enter the "grace period".
+    /// 3. While we are inside that grace-period, Role 2 sends a message
+    ///
+    /// Before the fix, that message was received from the channel but the branch evaluated to
+    /// `None`, so the packet was silently discarded and the loop kept spinning until the
+    /// session was aborted. After the fix, the in-flight message is
+    /// returned.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_message_not_dropped_during_completed_grace_period() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity::new(format!("{ip_addr}"), port_1, None);
+        let role_2 = Role::indexed_from_one(2);
+        let id_2 = Identity::new(format!("{ip_addr}"), port_2, None);
+
+        let role_assignment = {
+            let mut role_assignment = RoleAssignment::default();
+            role_assignment.insert(role_1, id_1.clone());
+            role_assignment.insert(role_2, id_2.clone());
+            role_assignment
+        };
+
+        let channel_size_limit = 1000;
+        let dummy_session_tracker = Arc::new(DashMap::new());
+        let message_store = {
+            let channel_maps = DashMap::new();
+            let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
+            let tx = Arc::new(tx);
+            channel_maps.insert(
+                id_2.mpc_identity(),
+                (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+            );
+            let mut out = MessageQueueStore::new_uninitialized(channel_maps);
+
+            let mut others = role_assignment.clone();
+            others.remove(&role_1);
+            out.init(
+                channel_size_limit,
+                &others,
+                Arc::clone(&dummy_session_tracker),
+            );
+            out
+        };
+
+        // Get handle on the mpsc Sender channel to send the message on behalf of Role 2
+        // (don't go through the gRPC API for simplicity)
+        let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
+
+        // Mark role 2 as a completed party: this is the precondition that activates the buggy
+        // grace-period branch in `receive`.
+        let completed_parties = Arc::new(DashSet::new());
+        completed_parties.insert(role_2.get_role_kind());
+
+        // Use a 1s waiting time.
+        let wait = Duration::from_secs(1);
+        let session = NetworkSession {
+            owner: id_1,
+            session_id: SessionId::from(0),
+            sending_channels: HashMap::new(),
+            receiving_channels: message_store,
+            completed_parties,
+            round_counter: tokio::sync::RwLock::new(0),
+            num_byte_sent: RwLock::new(0),
+            network_mode: NetworkMode::Async,
+            conf: OptionConfigWrapper {
+                conf: Some(test_config(1)),
+            },
+            init_time: OnceLock::new(),
+            last_rec_activity_time: RwLock::new(Instant::now().into()),
+            current_network_timeout: RwLock::new(wait),
+            next_network_timeout: RwLock::new(wait),
+            max_elapsed_time: RwLock::new(Duration::from_secs(0)),
+        };
+
+        let expected = vec![42u8; 8];
+        let expected_clone = expected.clone();
+        // Send the message *after* the first tick has fired (1s) but before the grace-period
+        // sleep (another 1s) elapses,
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            tx_2.send(NetworkRoundValue {
+                round_counter: 0,
+                value: expected_clone,
+            })
+            .await
+            .unwrap();
+        });
+
+        // Bound the whole receive so a regression times out.
+        let actual = tokio::time::timeout(Duration::from_secs(10), session.receive(&role_2))
+            .await
+            .expect("receive should not time out; a timeout means the message was dropped")
+            .expect("receive should return the in-flight message, not an abort error");
+
+        assert_eq!(
+            actual, expected,
+            "the message that arrived during the completed-party grace period must be delivered"
+        );
     }
 }
