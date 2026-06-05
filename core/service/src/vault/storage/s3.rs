@@ -152,9 +152,10 @@ impl S3Storage {
         // Record the serialized payload size before storing, labeled by the element's type name, so
         // versioned write sizes (keys, keysets, …) are observable in telemetry as
         // kms_payload_size_bytes{operation="<type name>"}.
-        observability::metrics::METRICS.observe_size(<T as Named>::NAME, buf.len() as f64);
+        let size = buf.len() as f64;
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
 
-        s3_put_blob(&self.s3_client, &self.bucket, key, buf.clone()).await?;
+        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
 
         Ok(())
     }

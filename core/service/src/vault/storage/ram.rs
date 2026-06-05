@@ -202,6 +202,10 @@ impl Storage for RamStorage {
         }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
+        // Record the serialized payload size before storing, labeled by the element's type name, so
+        // versioned write sizes (keys, keysets, …) are observable in telemetry as
+        // kms_payload_size_bytes{operation="<type name>"}.
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, serialized.len() as f64);
         self.internal_storage
             .insert(((*data_id, None), data_type.to_string()), serialized);
         Ok(StoreWriteOutcome::Created)
@@ -259,6 +263,10 @@ impl StorageExt for RamStorage {
         }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
+        // Record the serialized payload size before storing, labeled by the element's type name, so
+        // versioned write sizes (keys, keysets, …) are observable in telemetry as
+        // kms_payload_size_bytes{operation="<type name>"}.
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, serialized.len() as f64);
         self.internal_storage.insert(
             ((*data_id, Some(*epoch_id)), data_type.to_string()),
             serialized,
