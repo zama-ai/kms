@@ -108,6 +108,10 @@ deploy_kube_prometheus_stack() {
     if [[ -z "${GRAFANA_CLOUD_PROM_URL:-}" || -z "${GRAFANA_CLOUD_PROM_USERNAME:-}" || -z "${GRAFANA_CLOUD_PROM_PASSWORD:-}" ]]; then
         log_warn "GRAFANA_CLOUD_PROM_URL/USERNAME/PASSWORD not all set; skipping kube-prometheus-stack install."
         log_warn "Metrics will not be remote-written. Set all GRAFANA_CLOUD_PROM_* secrets to enable."
+        # Force metrics off for the rest of the deploy so deploy_kms (same shell, runs after)
+        # does not enable the kms-core ServiceMonitor — its CRD ships with the
+        # kube-prometheus-stack we just skipped, so the Helm deploy would fail without it.
+        export ENABLE_METRICS="false"
         return 0
     fi
 
