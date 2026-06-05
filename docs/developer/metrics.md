@@ -123,7 +123,7 @@ Track the distribution of values:
   ```
 - `{prefix}_payload_size_bytes` - Size of operation payloads in bytes
   ```rust
-  metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64)?;  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
+  metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64);  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
   ```
 NOTE: `{prefix}_payload_size_bytes` is emitted from the versioned-storage write paths
 (`safe_write_element_versioned` and the S3 vault `store`); there its `operation` label carries the
