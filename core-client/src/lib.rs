@@ -2367,9 +2367,19 @@ struct DurationStat {
 }
 
 fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationStat {
+    if durations.is_empty() {
+        return DurationStat {
+            avg: tokio::time::Duration::ZERO,
+            median: tokio::time::Duration::ZERO,
+            min: tokio::time::Duration::ZERO,
+            max: tokio::time::Duration::ZERO,
+        };
+    }
+
     let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
     let mut sorted_durations = durations.to_vec();
-    sorted_durations.sort();
+    sorted_durations.sort_unstable();
+
     let median = if sorted_durations.len().is_multiple_of(2) {
         (sorted_durations[sorted_durations.len() / 2 - 1]
             + sorted_durations[sorted_durations.len() / 2])
@@ -2377,8 +2387,9 @@ fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationSta
     } else {
         sorted_durations[sorted_durations.len() / 2]
     };
-    let min = sorted_durations[0];
-    let max = sorted_durations[sorted_durations.len() - 1];
+
+    let min = *sorted_durations.first().expect("durations is not empty");
+    let max = *sorted_durations.last().expect("durations is not empty");
     DurationStat {
         avg,
         median,
