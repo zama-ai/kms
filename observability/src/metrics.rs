@@ -454,11 +454,9 @@ impl CoreMetrics {
         self.rate_limiter_gauge.set(count as i64);
     }
 
-    /// Record the current number of FHE key entries held in the in-memory
-    /// crypto-material cache. 0 is a valid value (empty cache), so the gauge is
-    /// set unconditionally.
     pub fn record_fhe_key_cache_size(&self, count: u64) {
-        self.fhe_key_cache_size_gauge.set(count as i64);
+        let value = i64::try_from(count).unwrap_or(i64::MAX);
+        self.fhe_key_cache_size_gauge.set(value);
     }
 
     /// Record the sum of active sessions done with other parties into the gauge
