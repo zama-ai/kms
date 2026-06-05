@@ -16,8 +16,9 @@
 //! the caller is assumed to already hold the appropriate `RwLock` guard, and they
 //! do no metric bookkeeping. Reach for them directly only where the helper layer
 //! does not fit — notably the key-migration path in
-//! `copy_compressed_key_to_original`, which holds a single permit across
-//! [`reserve`](MetaStore::reserve) → [`finalize`](MetaStore::finalize) /
+//! `copy_compressed_key_to_original`, which holds a single permit across a
+//! get-or-create claim ([`lock_entry`](MetaStore::lock_entry) /
+//! [`insert`](MetaStore::insert)) → [`finalize`](MetaStore::finalize) /
 //! [`abort_reservation`](MetaStore::abort_reservation) and is an `anyhow` flow.
 //!
 //! # Entry lifecycle
@@ -26,8 +27,10 @@
 //! both consuming the permit. A dropped permit leaves the entry `Pending`;
 //! [`try_delete`](MetaStore::try_delete) reclaims it.
 //! [`lock_entry`](MetaStore::lock_entry) mints a permit for an existing entry
-//! (used as a cross-lock sync point); the `reserve` / `finalize` /
-//! `abort_reservation` trio supports get-or-create rewrites for key migration.
+//! (used as a cross-lock sync point); pairing it (or [`insert`](MetaStore::insert)
+//! for an absent id) with [`finalize`](MetaStore::finalize) /
+//! [`abort_reservation`](MetaStore::abort_reservation) supports get-or-create
+//! rewrites for key migration.
 
 use kms_grpc::RequestId;
 use std::{
@@ -320,7 +323,7 @@ impl<T> MetaStore<T> {
     ) -> Result<MetaStorePermit, MetaStoreError> {
         // `Deleted` is a permanent tombstone: a request id, once deleted, may
         // not be reused for a fresh insert. Callers that need to overwrite an
-        // existing entry should use [`reserve`](MetaStore::reserve) +
+        // existing entry should use [`lock_entry`](MetaStore::lock_entry) +
         // [`finalize`](MetaStore::finalize) instead.
         if self.storage.contains_key(request_id) {
             return Err(MetaStoreError::AlreadyExists {
@@ -448,51 +451,21 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Reserve `request_id` for an exclusive get-or-create write, returning a
-    /// [`MetaStorePermit`] held for the duration of the caller's work.
-    ///
-    /// - Absent: a fresh `Pending` entry is inserted and its permit returned.
-    /// - Existing `Pending`/`Done` with no live permit: locked in place (its
-    ///   value, if any, is preserved) and a permit returned.
-    /// - Already held by another permit: returns a [`MetaStoreError::Locked`] error.
-    /// - `Deleted` tombstone: returns a [`MetaStoreError::CannotUpdate`] error.
-    ///
-    /// Complete the reservation with [`MetaStore::finalize`] or roll it back
-    /// with [`MetaStore::abort_reservation`]; both consume the permit.
-    ///
-    /// Note: This method is not intended for general-purpose use; it is designed to support the specific edge-case when upgrading existing keys.
-    ///
-    /// Lock: this trio (`reserve` / [`finalize`](MetaStore::finalize) /
-    /// [`abort_reservation`](MetaStore::abort_reservation)) is called directly on
-    /// a write guard by the key-migration `anyhow` flow, which holds the permit
-    /// across the work and takes the guard only briefly at each step. There is
-    /// deliberately no `*_in_meta_store` wrapper, so the lock/permit lifetimes
-    /// stay visible at the call site.
-    pub(crate) fn reserve(
-        &mut self,
-        request_id: &RequestId,
-    ) -> Result<MetaStorePermit, MetaStoreError> {
-        match self.storage.get(request_id) {
-            None => self.insert(request_id),
-            Some(_) => self.lock_entry(request_id),
-        }
-    }
-
-    /// Complete a reservation from [`MetaStore::reserve`] by setting the entry
-    /// to `Done(Ok(value))`, consuming the permit. The held permit is the proof
-    /// of ownership, so unlike [`reserve`](MetaStore::reserve) no strong-count
-    /// check is performed.
+    /// Complete a get-or-create claim by setting the entry to `Done(Ok(value))`,
+    /// consuming the permit. The held permit is the proof of ownership, so no
+    /// strong-count check is performed.
     ///
     /// A freshly created (`Pending`) entry is recorded in the completion queue;
     /// an existing `Done` entry locked in place is overwritten while keeping its
     /// queue slot. Errors with [`MetaStoreError::NotFound`] if the entry was
-    /// evicted while reserved, or [`MetaStoreError::CannotUpdate`] if it was
+    /// evicted while claimed, or [`MetaStoreError::CannotUpdate`] if it was
     /// concurrently tombstoned.
-    pub(crate) fn finalize(
-        &mut self,
-        permit: MetaStorePermit,
-        value: T,
-    ) -> Result<(), MetaStoreError> {
+    ///
+    /// Deliberately **private**: overwriting an already-`Done` value is not a
+    /// flow we want to expose. The sole sanctioned caller is
+    /// [`with_overwriting_claim`], which pairs it with the claim and the
+    /// matching rollback ([`abort_reservation`](MetaStore::abort_reservation)).
+    fn finalize(&mut self, permit: MetaStorePermit, value: T) -> Result<(), MetaStoreError> {
         let req_id = permit.req_id;
         let cell = self
             .storage
@@ -514,18 +487,19 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Roll back a reservation from [`MetaStore::reserve`] without completing
-    /// it, consuming the permit.
+    /// Roll back a get-or-create claim (see [`finalize`](MetaStore::finalize))
+    /// without completing it, consuming the permit.
     ///
-    /// If the reserved entry is still `Pending` (a fresh create, or an adopted
-    /// orphan from an earlier aborted attempt) it is **removed outright** — not
-    /// tombstoned — so `request_id` stays reusable and a later
-    /// [`reserve`](MetaStore::reserve) can recreate it. An existing `Done` entry
-    /// that was merely locked in place is left untouched; only the permit's
-    /// claim is released.
+    /// If the claimed entry is still `Pending` (a fresh [`insert`](MetaStore::insert),
+    /// or an adopted orphan from an earlier aborted attempt) it is **removed
+    /// outright** — not tombstoned — so `request_id` stays reusable and a later
+    /// claim can recreate it. An existing `Done` entry that was merely locked in
+    /// place via [`lock_entry`](MetaStore::lock_entry) is left untouched; only
+    /// the permit's claim is released.
     ///
-    /// Note: This is not the typical and desired usage, but is only added to support the tedious edge case of migrating existing keys.
-    pub(crate) fn abort_reservation(&mut self, permit: MetaStorePermit) {
+    /// Deliberately **private**, like [`finalize`](MetaStore::finalize): reached
+    /// only through [`with_overwriting_claim`], the migration-only entry point.
+    fn abort_reservation(&mut self, permit: MetaStorePermit) {
         let req_id = permit.req_id;
         if matches!(self.storage.get(&req_id), Some(StoredEntry::Pending(_))) {
             // Fresh/adopted reservation: drop it entirely. A `Pending` entry is
@@ -816,6 +790,61 @@ pub(crate) async fn try_delete_in_meta_store<T>(
     meta_store.write().await.try_delete(req_id)
 }
 
+/// Run `work` while holding an exclusive **get-or-create** claim on `req_id`,
+/// then commit its produced value into the store — overwriting an existing
+/// `Done` entry in place, or completing a freshly created one. If `work` fails,
+/// the claim is rolled back without tombstoning, leaving `req_id` recreatable by
+/// a retry.
+///
+/// This is the **only** sanctioned path that overwrites an already-completed
+/// entry: the underlying [`MetaStore::finalize`] / [`MetaStore::abort_reservation`]
+/// are private, so a completed value can never be silently replaced through the
+/// normal `insert → update` flow. It exists for the key-migration edge case
+/// (`copy_compressed_key_to_original`), where storage keyed by `req_id` is
+/// rewritten and must be atomic w.r.t. a concurrent migration or insert of the
+/// same id — those bail with `Locked`/`AlreadyExists` against the held claim
+/// before any of `work`'s side effects run.
+///
+/// `work` returns `(value, payload)`: `value` is committed under `req_id`;
+/// `payload` is returned to the caller (e.g. to update an out-of-store cache
+/// only after the commit succeeds). The claim is acquired before `work` runs and
+/// the lock is *not* held while `work` is in flight — only the per-entry permit.
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn with_overwriting_claim<T, R, F>(
+    meta_store: &RwLock<MetaStore<T>>,
+    req_id: &RequestId,
+    work: F,
+) -> anyhow::Result<R>
+where
+    F: AsyncFnOnce() -> anyhow::Result<(T, R)>,
+{
+    // Get-or-create claim under one guard: lock the existing entry, else insert.
+    let permit = {
+        let mut guard = meta_store.write().await;
+        if guard.exists(req_id) {
+            guard.lock_entry(req_id)
+        } else {
+            guard.insert(req_id)
+        }
+    }
+    .map_err(|e| anyhow!("could not claim meta-store entry {req_id}: {e}"))?;
+
+    match work().await {
+        Ok((value, payload)) => {
+            meta_store
+                .write()
+                .await
+                .finalize(permit, value)
+                .map_err(|e| anyhow!("could not commit meta-store entry {req_id}: {e}"))?;
+            Ok(payload)
+        }
+        Err(e) => {
+            meta_store.write().await.abort_reservation(permit);
+            Err(e)
+        }
+    }
+}
+
 /// Helper for retrieving the result of a request from a meta store.
 ///
 /// Polls the meta store every [`META_STORE_POLL_INTERVAL`] until either the
@@ -921,6 +950,20 @@ mod tests {
     fn insert_done_err(store: &mut MetaStore<String>, id: &RequestId, err: &str) {
         let permit = store.insert(id).unwrap();
         store.update(Err(err.to_string()), permit).unwrap();
+    }
+
+    /// Get-or-create claim used by `finalize`/`abort_reservation` callers,
+    /// mirroring the inline pattern in `copy_compressed_key_to_original`: lock
+    /// the existing entry if present, otherwise insert a fresh one.
+    fn reserve(
+        store: &mut MetaStore<String>,
+        id: &RequestId,
+    ) -> Result<MetaStorePermit, MetaStoreError> {
+        if store.exists(id) {
+            store.lock_entry(id)
+        } else {
+            store.insert(id)
+        }
     }
 
     fn assert_done_ok<T: PartialEq + std::fmt::Debug>(
@@ -1192,7 +1235,7 @@ mod tests {
         // and finalize drives it to Done and records it as completed.
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("reserve-fresh").unwrap();
-        let permit = store.reserve(&id).unwrap();
+        let permit = reserve(&mut store, &id).unwrap();
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
         assert_eq!(store.get_completed_count(), 0);
         store.finalize(permit, "v1".to_string()).unwrap();
@@ -1207,7 +1250,7 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("reserve-existing").unwrap();
         insert_done_ok(&mut store, &id, "v1");
-        let permit = store.reserve(&id).unwrap();
+        let permit = reserve(&mut store, &id).unwrap();
         // Still Done with the old value while reserved.
         assert_done_ok(&store, &id, &"v1".to_string());
         store.finalize(permit, "v2".to_string()).unwrap();
@@ -1223,14 +1266,14 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("reserve-locked").unwrap();
         insert_done_ok(&mut store, &id, "v");
-        let permit = store.reserve(&id).unwrap();
+        let permit = reserve(&mut store, &id).unwrap();
         assert!(matches!(
-            store.reserve(&id),
+            reserve(&mut store, &id),
             Err(MetaStoreError::Locked { .. })
         ));
         drop(permit);
         // Once released, a fresh reserve succeeds again.
-        assert!(store.reserve(&id).is_ok());
+        assert!(reserve(&mut store, &id).is_ok());
     }
 
     #[test]
@@ -1240,7 +1283,7 @@ mod tests {
         insert_done_ok(&mut store, &id, "v");
         store.try_delete(&id).unwrap();
         assert!(matches!(
-            store.reserve(&id),
+            reserve(&mut store, &id),
             Err(MetaStoreError::CannotUpdate { .. })
         ));
     }
@@ -1252,11 +1295,11 @@ mod tests {
         // path of copy_compressed_key_to_original.
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("abort-fresh").unwrap();
-        let permit = store.reserve(&id).unwrap();
+        let permit = reserve(&mut store, &id).unwrap();
         store.abort_reservation(permit);
         // Gone entirely, not Deleted — so it is reservable/insertable again.
         assert!(store.retrieve(&id).is_none());
-        let permit2 = store.reserve(&id).unwrap();
+        let permit2 = reserve(&mut store, &id).unwrap();
         store.finalize(permit2, "recovered".to_string()).unwrap();
         assert_done_ok(&store, &id, &"recovered".to_string());
     }
@@ -1268,12 +1311,12 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("abort-existing").unwrap();
         insert_done_ok(&mut store, &id, "original");
-        let permit = store.reserve(&id).unwrap();
+        let permit = reserve(&mut store, &id).unwrap();
         store.abort_reservation(permit);
         assert_done_ok(&store, &id, &"original".to_string());
         assert_eq!(store.get_completed_count(), 1);
         // Released: it can be reserved again afterwards.
-        assert!(store.reserve(&id).is_ok());
+        assert!(reserve(&mut store, &id).is_ok());
     }
 
     #[test]
@@ -1283,9 +1326,9 @@ mod tests {
         // the orphan has no live permit, so a retry's reserve adopts it.
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("reserve-orphan").unwrap();
-        drop(store.reserve(&id).unwrap()); // permit dropped, entry left Pending
+        drop(reserve(&mut store, &id).unwrap()); // permit dropped, entry left Pending
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
-        let permit = store.reserve(&id).unwrap(); // adopts the orphan
+        let permit = reserve(&mut store, &id).unwrap(); // adopts the orphan
         store.finalize(permit, "adopted".to_string()).unwrap();
         assert_done_ok(&store, &id, &"adopted".to_string());
         assert_eq!(store.get_completed_count(), 1);
@@ -1303,7 +1346,7 @@ mod tests {
         insert_done_ok(&mut store, &young, "young");
 
         // Reserve the oldest (locks the Done entry in place).
-        let permit = store.reserve(&old).unwrap();
+        let permit = reserve(&mut store, &old).unwrap();
 
         // Insert a third: eviction skips `old` (held) and removes `young`.
         let fresh = derive_request_id("evict-reserved-fresh").unwrap();
@@ -1330,8 +1373,8 @@ mod tests {
         let b = derive_request_id("full-b").unwrap();
         insert_done_ok(&mut store, &a, "a");
         insert_done_ok(&mut store, &b, "b");
-        let held_a = store.reserve(&a).unwrap();
-        let _held_b = store.reserve(&b).unwrap();
+        let held_a = reserve(&mut store, &a).unwrap();
+        let _held_b = reserve(&mut store, &b).unwrap();
 
         let third = derive_request_id("full-third").unwrap();
         assert!(matches!(
@@ -1368,7 +1411,7 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
         let id = derive_request_id("try-del-reserved").unwrap();
         insert_done_ok(&mut store, &id, "v");
-        let permit = store.reserve(&id).unwrap();
+        let permit = reserve(&mut store, &id).unwrap();
         assert!(matches!(
             store.try_delete(&id),
             Err(MetaStoreError::Locked { .. })
@@ -1490,5 +1533,66 @@ mod tests {
             MetaStoreError::Invariant("x".into()).code(),
             tonic::Code::Internal
         );
+    }
+
+    #[cfg(feature = "non-wasm")]
+    #[tokio::test]
+    async fn with_overwriting_claim_creates_then_overwrites() {
+        let store = RwLock::new(MetaStore::<String>::new(2, 1));
+        let id = derive_request_id("woc-commit").unwrap();
+
+        // Absent -> fresh create; payload is returned to the caller.
+        let payload = with_overwriting_claim(&store, &id, async || Ok(("v1".to_string(), 42u8)))
+            .await
+            .unwrap();
+        assert_eq!(payload, 42);
+        assert_done_ok(&*store.read().await, &id, &"v1".to_string());
+        assert_eq!(store.read().await.get_completed_count(), 1);
+
+        // Existing Done -> overwrite in place, keep the single completion slot.
+        let payload = with_overwriting_claim(&store, &id, async || Ok(("v2".to_string(), 7u8)))
+            .await
+            .unwrap();
+        assert_eq!(payload, 7);
+        assert_done_ok(&*store.read().await, &id, &"v2".to_string());
+        assert_eq!(store.read().await.get_completed_count(), 1);
+    }
+
+    #[cfg(feature = "non-wasm")]
+    #[tokio::test]
+    async fn with_overwriting_claim_rolls_back_fresh_claim_on_failure() {
+        let store = RwLock::new(MetaStore::<String>::new(2, 1));
+        let id = derive_request_id("woc-rollback").unwrap();
+
+        // A fresh claim whose work fails must be removed (not tombstoned).
+        let res: anyhow::Result<()> =
+            with_overwriting_claim(&store, &id, async || anyhow::bail!("boom")).await;
+        assert!(res.is_err());
+        assert!(
+            store.read().await.retrieve(&id).is_none(),
+            "fresh claim must be removed on failure, leaving the id recreatable"
+        );
+
+        // A retry can recreate and commit.
+        with_overwriting_claim(&store, &id, async || Ok(("recovered".to_string(), ())))
+            .await
+            .unwrap();
+        assert_done_ok(&*store.read().await, &id, &"recovered".to_string());
+    }
+
+    #[cfg(feature = "non-wasm")]
+    #[tokio::test]
+    async fn with_overwriting_claim_preserves_existing_on_failure() {
+        let mut ms = MetaStore::<String>::new(2, 1);
+        let id = derive_request_id("woc-preserve").unwrap();
+        insert_done_ok(&mut ms, &id, "original");
+        let store = RwLock::new(ms);
+
+        let res: anyhow::Result<()> =
+            with_overwriting_claim(&store, &id, async || anyhow::bail!("boom")).await;
+        assert!(res.is_err());
+        // The pre-existing Done value is untouched by the aborted claim.
+        assert_done_ok(&*store.read().await, &id, &"original".to_string());
+        assert_eq!(store.read().await.get_completed_count(), 1);
     }
 }
