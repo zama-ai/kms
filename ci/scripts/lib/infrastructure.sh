@@ -119,12 +119,15 @@ deploy_kube_prometheus_stack() {
     kubectl create namespace monitoring \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    # Basic-auth secret referenced by Prometheus remoteWrite[].basicAuth.
-    kubectl create secret generic grafana-cloud-prom-auth \
-        --namespace monitoring \
-        --from-literal=username="${GRAFANA_CLOUD_PROM_USERNAME:-}" \
-        --from-literal=password="${GRAFANA_CLOUD_PROM_PASSWORD:-}" \
-        --dry-run=client -o yaml | kubectl apply -f -
+    # Basic-auth secret referenced by Prometheus remoteWrite[].basicAuth. Feed the
+    # credentials via stdin (env-file) instead of --from-literal so they never appear
+    # in argv (/proc/<pid>/cmdline is world-readable and shows up in `ps`).
+    printf 'username=%s\npassword=%s\n' \
+        "${GRAFANA_CLOUD_PROM_USERNAME:-}" "${GRAFANA_CLOUD_PROM_PASSWORD:-}" |
+        kubectl create secret generic grafana-cloud-prom-auth \
+            --namespace monitoring \
+            --from-env-file=/dev/stdin \
+            --dry-run=client -o yaml | kubectl apply -f -
 
     helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
     helm repo update prometheus-community
