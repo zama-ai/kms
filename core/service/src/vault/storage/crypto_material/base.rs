@@ -291,7 +291,7 @@ where
     /// WARNING: this method is not safe to call concurrently with the _same_ arguments.
     /// However, this should never happen, since since any `req_id` should have been added
     /// to the meta store as pending before this call, which can only be done for a fresh `req_id`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn handle_persistent_and_meta_storage<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -638,7 +638,7 @@ where
     /// Helper function to write the FHE keys to storage, along with updating the cache if the storage operation was successful.
     ///
     /// Note that backup errors are not treated as fatal since the keys are safely stored.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::vault::storage::crypto_material) async fn handle_fhe_keys<
         PrivKeyData: Serialize + Versionize + Named + Send + Sync,
     >(

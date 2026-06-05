@@ -170,7 +170,7 @@ impl GrpcSendingService {
                     domain_name
                 );
 
-                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
                 let endpoint = Channel::builder(endpoint)
@@ -190,7 +190,7 @@ impl GrpcSendingService {
             }
             None => {
                 tracing::warn!("Building channel to {:?} without TLS", endpoint);
-                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
                 Channel::builder(endpoint)

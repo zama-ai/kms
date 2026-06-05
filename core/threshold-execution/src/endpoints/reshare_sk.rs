@@ -1538,7 +1538,7 @@ mod tests {
         (glwe_sns_sk128, lwe_sk64, glwe_sk64)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn generate_key_with_error_in_s1<const EXTENSION_DEGREE: usize>(
         keyset: KeySet,
         params: DKGParams,

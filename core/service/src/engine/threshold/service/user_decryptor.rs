@@ -176,7 +176,7 @@ impl<
     /// The same information is in `signcryption_key.receiver_enc_key` but in there it is
     /// already serialized, that's why the original bytes representation is still needed
     /// for signing later on.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn inner_user_decrypt(
         req_id: &RequestId,
         session_maker: ImmutableSessionMaker,

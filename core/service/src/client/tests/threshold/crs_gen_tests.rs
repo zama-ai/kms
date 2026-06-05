@@ -231,7 +231,6 @@ pub(crate) async fn crs_gen(
         }
     }
 }
-#[allow(clippy::too_many_arguments)]
 pub async fn run_crs(
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,

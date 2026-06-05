@@ -533,7 +533,6 @@ where
 /// - `seed`: the random seed
 ///
 /// Returns a [`RawCompressedPubKeySet`] containing all generated compressed public keys.
-#[allow(clippy::too_many_arguments)]
 async fn generate_all_compressed_public_keys<
     Z: BaseRing,
     S: BaseSessionHandles,

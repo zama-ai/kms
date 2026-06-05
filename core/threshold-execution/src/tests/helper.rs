@@ -615,7 +615,6 @@ pub mod tests {
     /// interactive computation.
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
-    #[allow(clippy::too_many_arguments)]
     pub async fn execute_protocol_small_w_malicious<
         TaskOutputT,
         OutputT,
@@ -725,7 +724,7 @@ pub mod tests {
     /// interactive computation.
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn execute_protocol_large_w_disputes_and_malicious<
         TaskOutputT,
         OutputT,
@@ -825,7 +824,7 @@ pub mod tests {
 
     /// For each intersection party, remove the P_i from Set1 and P_{i+1} from Set2 roles
     /// and add the corresponding dual role
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn execute_protocol_two_sets_w_malicious<
         TaskOutputT,
         OutputT,

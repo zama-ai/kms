@@ -452,7 +452,6 @@ where
 /// - If key generation fails
 /// - If storage operations fail
 #[cfg(any(test, feature = "testing"))]
-#[allow(clippy::too_many_arguments)]
 pub async fn ensure_central_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,

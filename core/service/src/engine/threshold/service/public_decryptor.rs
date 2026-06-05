@@ -155,7 +155,7 @@ impl<
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn inner_decrypt<T>(
         session_id: SessionId,
         context_id: ContextId,

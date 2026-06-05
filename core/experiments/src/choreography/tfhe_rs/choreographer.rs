@@ -37,7 +37,7 @@ pub struct GrpcOutputs {
     pub elapsed_times: Option<HashMap<Role, Vec<Duration>>>,
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Clone)]
 pub enum KeySetMaybeCompressed {
     Compressed(CompressedXofKeySet),
@@ -318,7 +318,7 @@ impl ChoreoRuntime {
     }
 
     #[instrument(name = "DDec Request", skip(self, session_id, ctxts), fields(num_ctxts = ?ctxts.len(), ctxt_type=?tfhe_type, sid = ?session_id))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn initiate_threshold_decrypt(
         &self,
         session_id: SessionId,

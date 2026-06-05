@@ -228,7 +228,7 @@ async fn secure_threshold_compressed_keygen_test() {
     .await;
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_threshold_keygen(
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -303,7 +303,7 @@ async fn launch_dkg(
     }
     responses_gen
 }
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn wait_for_keygen_result(
     req_get_keygen: RequestId,
     req_preproc: RequestId,
@@ -603,7 +603,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
 }
 
 #[cfg(feature = "slow_tests")]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 /// __NOTE__: Parties that are crashed during preproc will also be crashed during keygen
 pub(crate) async fn preproc_and_keygen(
     amount_parties: usize,
@@ -901,7 +901,7 @@ pub(crate) async fn preproc_and_keygen(
 // *** Incorrect guard value: 0
 // issue: https://github.com/zama-ai/kms-core/issues/663
 #[cfg(feature = "slow_tests")]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_preproc(
     amount_parties: usize,
     parameter: FheParameter,
@@ -1198,7 +1198,7 @@ fn try_reconstruct_shares(
 
 /// Enum to hold either uncompressed or compressed public keys during verification
 // allow large enum variant for testing
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum RetrievedKeysForVerification {
     Uncompressed(tfhe::ServerKey, tfhe::CompactPublicKey),
     Compressed(
@@ -1222,7 +1222,7 @@ impl RetrievedKeysForVerification {
         }
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn verify_keygen_responses(
     finished: Vec<(u32, Result<Response<KeyGenResult>, Status>)>,
     data_root_path: Option<&Path>,

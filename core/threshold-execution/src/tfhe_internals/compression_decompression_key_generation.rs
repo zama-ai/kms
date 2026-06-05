@@ -165,7 +165,6 @@ where
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 #[instrument(name="Gen compressed Compression and Decompression Key", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_compression_decompression_keys<
     Z: BaseRing,
