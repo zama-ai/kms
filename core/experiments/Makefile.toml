@@ -156,6 +156,11 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="drop_all", EXPERIMENT_NAME="tfhe-bench-run-4p-malicious-drop"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
+# Runs a cluster of 4 parties with the tfhe protocol, with a threshold of 1, and the "drop_all" strategy (malicious behavior where the malicious party does nothing)
+[tasks.tfhe-bench-run-4p-malicious-drop-mem]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="drop_all", EXPERIMENT_NAME="tfhe-bench-run-4p-malicious-drop-mem", MEASURE_MEMORY="--measure-memory"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
 # Runs a cluster of 4 parties with the tfhe protocol, with a threshold of 1, and the "secure" strategy (no malicious behavior)
 [tasks.tfhe-bench-run-4p-mem]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run-4p-mem", MEASURE_MEMORY="--measure-memory"}
@@ -168,6 +173,11 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 
 # Runs a cluster of 4 parties with the tfhe protocol, with a threshold of 1, and the "malicious_broadcast" strategy (MaliciousBroadcastSenderEcho strategy)
 [tasks.tfhe-bench-run-4p-malicious-bcast]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="malicious_broadcast", EXPERIMENT_NAME="tfhe-bench-run-4p-malicious-bcast"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
+# Runs a cluster of 4 parties with the tfhe protocol, with a threshold of 1, and the "malicious_broadcast" strategy (MaliciousBroadcastSenderEcho strategy)
+[tasks.tfhe-bench-run-4p-malicious-bcast-mem]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="malicious_broadcast", EXPERIMENT_NAME="tfhe-bench-run-4p-malicious-bcast"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 

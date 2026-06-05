@@ -274,6 +274,26 @@ the NIST flow:
   - `tfhe_reproducible_small_session_malicious.sh` (4 parties, t = 1, with a
     `malicious_broadcast` party 1, otherwise identical to the small session).
   - `bgv_reproducible.sh` (4 parties, t = 1, real BGV parameters).
+  - `crs_reproducible_common.sh` + `crs_reproducible_{small,large,small_malicious}_session.sh`
+    — standalone CRS-generation sweep, mirroring the `tfhe_reproducible_*`
+    common-plus-wrappers pattern. Each wrapper hardcodes the parameter
+    sets to sweep (`CRS_PARAMS_LIST`) and the matching expected SHA-256
+    hashes (`EXPECTED_CRS_HASHES`); edit both together when extending the
+    sweep. The wrappers differ by cluster topology and malicious flag:
+    `small` = 4 parties / honest, `large` = 5 parties / honest,
+    `small_malicious` = 4 parties / party 1 misbehaves. Hashes are
+    independent per wrapper because the topology can change the CRS-gen
+    protocol path. The common body iterates `mobygo crs-gen` over every
+    entry in one cluster lifecycle, bumping SID + seed by one per
+    iteration — so the hash for a given params depends on its position
+    in `CRS_PARAMS_LIST`. No PRSS init, no DKG, no Reshare, no DDEC —
+    the run produces one labeled `CRS_GEN_<PARAMS_UPPER>` line per
+    parameter set, which `session-stats-parser.py` turns into one row
+    per param in `CRS_<suffix>.csv` (each row carrying its own `params`
+    value in the metadata trailer). The `tfhe_reproducible_*` scripts no
+    longer generate a CRS themselves — run the matching
+    `crs_reproducible_*_session.sh` wrapper to collect CRS metrics for
+    that topology.
 
 Large and small here identifies the underlying protocols used for performing the various pre-processing phases.
 When the number of parties is *small* (i.e. less than $20$ parties) we can rely on PRSS-based protocols and
@@ -304,7 +324,7 @@ results:
   2. builds the `tfhe-core-degree-3` image,
   3. runs the small / large / small-malicious TFHE reproducible scripts
      (using `tfhe-bench-run-4p`, `tfhe-bench-run-5p` and
-     `tfhe-bench-run-4p-malicious-bcast` respectively), routing each run's
+     `tfhe-bench-run-4p-malicious-drop` respectively), routing each run's
      `BENCH_PARAMS.txt` + `session_stats_<i>.txt` into a per-run subfolder
      under the campaign folder via the `RUN_DEST` env var,
   4. builds the `bgv-core` image and runs the BGV reproducible script via
@@ -335,49 +355,117 @@ if every participating party's `session_stats_<i>.txt` carries exactly the
 right number of metric lines for the run's declared schedule. Anything off
 — a wrong count, a missing party file — and the run is skipped (with a
 warning under `--warn`). The schedule is built from `BENCH_PARAMS.txt`'s
-`PROTOCOL` + `SESSION_TYPE` + `HAS_PRSS_INIT` / `HAS_CRS` / `HAS_RESHARE`
-flags + the modes listed in `DDEC_MODES`, in the order the test scripts
-call `mobygo` / `stairwayctl`.
+`PROTOCOL` + `SESSION_TYPE` + `HAS_PRSS_INIT` / `HAS_DKG` / `HAS_CRS` /
+`HAS_RESHARE` flags + the modes listed in `DDEC_MODES`, in the order the
+test scripts call `mobygo` / `stairwayctl`. `HAS_DKG` defaults to `1` for
+backward compatibility — only the standalone `crs_reproducible.sh` script
+sets it to `0`.
 
 For TFHE runs (`PROTOCOL=tfhe`):
 
 1. `PRSS_INIT_Z64` — only if `HAS_PRSS_INIT=1` (small sessions only)
 2. `PRSS_INIT_Z128` — only if `HAS_PRSS_INIT=1` (small sessions only)
-3. `DKG_PREPROC`
-4. `DKG`
-5. `CRS_GEN` — only if `HAS_CRS=1`
+3. `DKG_PREPROC` — only if `HAS_DKG=1`
+4. `DKG` — only if `HAS_DKG=1`
+5. CRS gen — only if `HAS_CRS=1`. One line per entry of `CRS_PARAMS`
+   labeled `CRS_GEN_<PARAMS_UPPER>` (used by the sweep script). If
+   `CRS_PARAMS` is empty, a single plain `CRS_GEN` line instead (kept
+   for backward compatibility with archives from before the CRS gen
+   was extracted out of `tfhe_reproducible_*`).
 6. `RESHARE_PREPROC` — only if `HAS_RESHARE=1`
 7. `RESHARE` — only if `HAS_RESHARE=1`
 8. Then, for each mode in `DDEC_MODES` (typically `noise-flood-X` then
-   `bit-dec-X`), for each TFHE type in `bool, u4, u8, u16, u32, u64`:
+   `bit-dec-X`), for each TFHE type in the run's `CTXT_TYPES` list
+   (e.g. `bool u4 u8 u16 u32 u64`):
    - `<MODE>_<TYPE>_PREPROC`
    - `<MODE>_<TYPE>_DDEC`
 
-That gives **31 lines** for a small-session run (2 PRSS + 2 DKG + 1 CRS + 2
-reshare + 2×6×2 DDEC sweep) and **29 lines** for a large-session run (no
-PRSS init).
+That gives **30 lines** for a small-session `tfhe_reproducible_*` run
+with the default 6-entry `CTXT_TYPES` (2 PRSS + 2 DKG + 2 reshare +
+2×6×2 DDEC sweep — no CRS, which moved out), **28 lines** for the
+large-session variant (no PRSS init), and **N lines** for a
+`crs_reproducible.sh` sweep run with `CRS_PARAMS` listing N parameter
+sets (no PRSS, no DKG, no Reshare, no DDEC). `CTXT_TYPES` is the
+single source of truth: editing the bench script's `CTXT_TYPES_LIST`
+bash array changes both the DDEC loop and the parser's expected
+schedule (via the `CTXT_TYPES=` line written into `BENCH_PARAMS.txt`),
+so the two stay in lock-step automatically. The parser raises if any
+entry isn't a known TFHE type. Older `BENCH_PARAMS.txt` files without
+a `CTXT_TYPES` line fall back to the default 6-entry sweep.
 
 For BGV runs (`PROTOCOL=bgv`):
 
 1. `PRSS_INIT_LEVEL_ONE` — only if `HAS_PRSS_INIT=1`
 2. `PRSS_INIT_LEVEL_KSW` — only if `HAS_PRSS_INIT=1`
-3. `DKG_PREPROC`
-4. `DKG`
-5. `DDEC_PARALLEL_1`
-6. `DDEC_PARALLEL_2`
-7. `DDEC_PARALLEL_4`
-8. `DDEC_PARALLEL_8`
-9. `DDEC_PARALLEL_16`
-10. `DDEC_PARALLEL_32`
+3. `DKG_PREPROC` — only if `HAS_DKG=1`
+4. `DKG` — only if `HAS_DKG=1`
+5. One `DDEC_PARALLEL_<N>` line per entry of `BGV_DDEC_PARALLEL` (the
+   field is a space-separated list of positive ints, e.g. `1 2 4 8 16
+   32`). Required for `PROTOCOL=bgv`. Each entry becomes one row in
+   `BGV_TDec_*.csv`.
 
-That gives **10 lines** for any BGV run that does PRSS init (both kms
-reproducible and bench_nist do).
+That gives **10 lines** for a default BGV run (2 PRSS + 2 DKG + 6
+parallelism factors) when both kms reproducible and bench_nist set
+`BGV_DDEC_PARALLEL=1 2 4 8 16 32`. Editing the bash script's
+`BGV_DDEC_PARALLEL_LIST` array changes both the BGV DDEC loop and the
+parser's expected schedule.
 
 Malicious runs (`MALICIOUS=1`, currently only
-`tfhe-bench-run-4p-malicious-bcast`): the parser drops the party with the
+`tfhe-bench-run-4p-malicious-drop`): the parser drops the party with the
 fewest metric lines (the malicious party truncates early) and averages
 over the remaining `NUM_PARTIES - 1` files, which must each carry the
 full expected schedule.
+
+#### Output-column semantics
+
+The CSV columns are not raw cross-party averages — the parser applies a few
+transformations driven by the per-run `BENCH_PARAMS.txt`. Reading the CSVs
+without knowing these will yield wrong-looking numbers.
+
+1. **DKG offline cells are scaled by `100 / PERCENTAGE_OFFLINE`.** When the
+   DKG preproc was run on a fraction of the offline material to keep
+   wall-clock manageable, `session_stats` only reflects that fraction. The
+   four offline metric cells of every `DKG_PREPROC` row in
+   `TFHE_KeyGen_*.csv` / `BGV_KeyGen_*.csv`
+   (`offline_avg_latency_ms`, `offline_rounds`,
+   `offline_avg_bytes_sent_per_party`,
+   `offline_avg_bytes_received_per_party`) are therefore multiplied by
+   `100 / PERCENTAGE_OFFLINE` to project to a full offline phase. Memory
+   cells are NOT scaled (peak allocator usage doesn't grow with the offline
+   workload count). Scaling only fires for `DKG_PREPROC` — `RESHARE_PREPROC`
+   and the DDEC preproc labels always run at 100% offline.
+
+2. **TDec throughput is in LWE-ciphertexts per second.**
+   `offline_throughput_per_sec` and `online_throughput_per_sec` in
+   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` are computed as
+   `num_blocks * 1000 / per_radix_latency_ms`, where `num_blocks` is the
+   number of LWE ciphertexts a single radix message decomposes into. That
+   number is parameter-set dependent (see the parser's
+   `PARAMS_TO_BITS_PER_BLOCK` table — mirrors
+   `core/threshold-execution/src/tfhe_internals/parameters.rs::to_param`):
+   - 1 bit per block (`MessageModulus = 2`): the `nist-params-p8-*` family
+     (4 variants). A u64 message is 64 LWE blocks.
+   - 2 bits per block (`MessageModulus = 4`): everything else
+     (`nist-params-p32-*`, `bc-params-*`, `bc-params-nigel-*`,
+     `params-test-bk-sns`). A u64 message is 32 LWE blocks.
+   - `bool` is always exactly 1 LWE block regardless of params.
+
+   Unknown `PARAMS` values cause the parser to raise `ValueError` rather
+   than guess — add the new parameter set to `PARAMS_TO_BITS_PER_BLOCK` and
+   store `log2(message_modulus)` for it.
+
+3. **`ptxt_type` + `num_ctxt` together identify each TDec row.**
+   `TFHE_TDecOne_*.csv` / `TFHE_TDecTwo_*.csv` carry a `ptxt_type` column
+   (e.g. `bool`, `u4`, `u8`, …) sourced from the run's `CTXT_TYPES` line
+   in `BENCH_PARAMS.txt`. The adjacent `num_ctxt` column holds the LWE
+   ciphertext count derived from `(bit_width, PARAMS)` — not the message
+   bit-width. Combined with item 2 above, `throughput == num_ctxt * 1000
+   / avg_latency_ms` is a built-in self-check.
+
+4. **BGV metadata trailers are non-empty.** BGV runs write
+   `SESSION_TYPE=small` and `PARAMS=default` into `BENCH_PARAMS.txt` so the
+   trailing metadata columns (`session_type`, `params`) on `BGV_KeyGen` and
+   `BGV_TDec` rows are populated. BGV has no radix decomposition so there's nothing to scale.
 
 **NOTE**: The docker container also runs telemetry tools, therefore when
 running experiments, all telemetry data are exported to
