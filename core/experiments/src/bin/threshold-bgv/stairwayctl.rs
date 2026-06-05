@@ -1,6 +1,6 @@
 //! CLI tool for interacting with a group of stairways
-//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
-//! as this is meant for testing and benchmarking, and definitely not for production use.
+//! This is meant for testing and benchmarking, and definitely not for production use.
+use std::fs::File;
 use tokio::time::{self, Duration};
 
 use aes_prng::AesRng;

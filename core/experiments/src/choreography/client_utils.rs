@@ -82,7 +82,7 @@ impl ChoreoRuntime {
 
             while let Some(response) = join_set.join_next().await {
                 let (role, response) = response?;
-                let status: Status = bc2wrap::deserialize_safe(&response?.into_inner().status)?;
+                let status: Status = bc2wrap::deserialize_slice(&response?.into_inner().status)?;
                 result.push((role, status));
             }
 

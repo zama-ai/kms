@@ -1,5 +1,6 @@
 //! CLI tool for interacting with a group of mobys
 use clap::{Args, Parser, Subcommand};
+use std::fs::File;
 use experiments::{
     choreography::{
         client_utils::ChoreoRuntime,

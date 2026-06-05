@@ -13,8 +13,8 @@ pub fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     if let Some(p) = file_path.as_ref().parent() {
         std::fs::create_dir_all(p)?
     };
-    let serialized_data = bc2wrap::serialize(element)?;
-    std::fs::write(file_path, serialized_data.as_slice())?;
+    // Serialize straight into the file to avoid buffering the whole serialized element in memory.
+    bc2wrap::serialize_into(element, &mut File::create(file_path)?)?;
     Ok(())
 }
 
