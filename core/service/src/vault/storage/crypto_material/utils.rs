@@ -44,7 +44,7 @@ use threshold_execution::zk::ceremony::max_num_messages;
 /// ```
 pub fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
     if deterministic {
-        AesRng::seed_from_u64(seed.map_or(42, |seed| seed))
+        AesRng::seed_from_u64(seed.unwrap_or(42))
     } else {
         AesRng::from_entropy()
     }
