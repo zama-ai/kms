@@ -597,7 +597,6 @@ impl fmt::Display for StorageType {
 /// Represents all storage types as variants of one concrete type. This is
 /// required to enable multiple dispatch on non-dyn compatible Storage* traits.
 #[cfg(feature = "non-wasm")]
-#[allow(clippy::large_enum_variant)]
 #[enum_dispatch(StorageReader, Storage, StorageReaderExt, StorageExt)]
 #[derive(Debug, Clone)]
 pub enum StorageProxy {

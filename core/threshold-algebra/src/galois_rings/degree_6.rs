@@ -26,7 +26,7 @@ use super::{
     utils::karatsuba_6,
 };
 
-/// This defines a degree 4 extension based on the irreducible polynomial
+/// This defines a degree 6 extension based on the irreducible polynomial
 /// F = X^6 + X + 1
 pub type ResiduePolyF6<Z> = ResiduePoly<Z, 6>;
 pub type ResiduePolyF6Z128 = ResiduePolyF6<Z128>;

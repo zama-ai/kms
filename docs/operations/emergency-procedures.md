@@ -23,7 +23,6 @@ kubectl get events -n <NAMESPACE> --sort-by='.lastTimestamp' | tail -10
 ### Common Issues Quick Reference
 - **OOMKilled**: Increase memory limits to 32Gi minimum
 - **PRSS Missing**: Enable PRSS initialization in Helm values, verify with `kms-health-check`
-- **enable_sys_metrics Error**: Remove deprecated field from configuration
 - **Connection Refused**: Check service status and restart if needed
 - **Key Material Issues**: Use `kms-health-check live` to verify key availability and storage
 

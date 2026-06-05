@@ -149,7 +149,7 @@ async fn decompression_key_gen_centralized(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn preproc_centralized(
     preproc_id: &RequestId,
     params: FheParameter,
@@ -236,7 +236,7 @@ pub(crate) async fn key_gen_centralized(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn run_key_gen_centralized(
     kms_client: &mut CoreServiceEndpointClient<Channel>,
     internal_client: &Client,

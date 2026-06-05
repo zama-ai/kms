@@ -132,7 +132,7 @@ impl KmsFheKeyHandles {
     ///
     /// # Security Note
     /// Signatures are computed over versionized keys to ensure consistency.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
@@ -169,7 +169,7 @@ impl KmsFheKeyHandles {
     /// - Only use with freshly generated compressed keys
     /// - Not suitable for existing keys due to versioning constraints
     /// - Version upgrades will invalidate signatures
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new_compressed(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,

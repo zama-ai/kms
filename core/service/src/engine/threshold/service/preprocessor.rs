@@ -70,7 +70,7 @@ pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<R
 }
 
 impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn launch_dkg_preproc(
         &self,
         dkg_params: DKGParams,
@@ -177,7 +177,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn preprocessing_background(
         sk: Arc<PrivateSigKey>,
         req_id: &RequestId,
@@ -428,7 +428,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         ).await.map_err(|e|
             MetricedError::new(OP_KEYGEN_PREPROC_REQUEST,
                 Some(request_id),
-                anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"), 
+                anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"),
                 tonic::Code::Internal)
             )?;
         Ok(Response::new(Empty {}))

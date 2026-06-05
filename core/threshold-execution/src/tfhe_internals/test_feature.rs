@@ -959,7 +959,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn to_hl_client_key(
     params: &DKGParams,
     tag: tfhe::Tag,
@@ -1070,7 +1070,6 @@ pub fn to_hl_client_key(
 }
 
 /// Helper function to generate secret key shares
-#[allow(clippy::type_complexity)]
 fn secret_share_key_shares<
     R: Rng + CryptoRng,
     const EXTENSION_DEGREE: usize,
@@ -1141,7 +1140,7 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
     lwe_secret_key: LweSecretKey<Vec<u64>>,
     lwe_encryption_secret_key: LweSecretKey<Vec<u64>>,

@@ -21,14 +21,14 @@ use kms_lib::vault::storage::{StorageReader, StorageType};
 use kms_lib::{consts::SIGNING_KEY_ID, cryptography::signatures::PublicSigKey};
 
 /// Fetch all remote elements and store them locally for the core client
-/// Return the server IDs of all servers that were successfully contacted
+/// Return the configurations of all cores that were successfully contacted
 /// or an error if no server could be contacted
 /// element_id: the id of the element to fetch (key id or crs id)
 /// element_types: the types of elements to fetch (e.g. public key, server key, CRS)
 /// sim_conf: the core client configuration
 /// destination_prefix: the local folder to store the fetched elements
 /// download_all: whether to download from all cores or just the first one
-/// returns: the party IDs of the cores that were successfully contacted, unsorted
+/// returns: the `CoreConf`s of the cores that were successfully contacted, unsorted
 pub async fn fetch_public_elements(
     element_id: &str,
     element_types: &[PubDataType],

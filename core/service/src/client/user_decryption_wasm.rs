@@ -439,7 +439,7 @@ impl Client {
         }
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
@@ -636,7 +636,7 @@ impl Client {
 
     /// Decrypts the user decryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
         agg_resp: &[UserDecryptionResponsePayload],

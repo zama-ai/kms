@@ -34,7 +34,7 @@ pub trait Kms: BaseKms {
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext>;
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
