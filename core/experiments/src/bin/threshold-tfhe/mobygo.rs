@@ -518,9 +518,8 @@ async fn preproc_decrypt_command(
     choreo_conf: ChoreoConf,
     params: PreprocDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, _): (SessionId, KeySetMaybeCompressed) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
     let session_id = params.session_id.unwrap_or_else(random);
     let num_ctxts = params.num_ctxts;
     let ctxt_type = params.tfhe_type;
@@ -622,9 +621,8 @@ fn encrypt_messages(
 }
 
 async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (_key_sid, pk): (SessionId, KeySetMaybeCompressed) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
     let (compact_key, server_key) = match pk {
         KeySetMaybeCompressed::Compressed(comp_pk) => {
@@ -657,13 +655,11 @@ async fn threshold_decrypt_from_file_command(
     choreo_conf: ChoreoConf,
     params: ThresholdDecryptFromFileArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, _pk): (SessionId, KeySetMaybeCompressed) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
-    let ctxt_serialized = tokio::fs::read(params.input_file).await?;
     let (tfhe_type, ctxt): (TfheType, RadixOrBoolCiphertext) =
-        bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.input_file)?)?;
 
     let session_id = params.session_id.unwrap_or_else(random);
     let session_id = runtime
@@ -697,9 +693,8 @@ async fn threshold_decrypt_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tfhe_type = params.tfhe_type;
     let num_messages = params.num_ctxts;
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, pk): (SessionId, KeySetMaybeCompressed) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
     let (compact_key, server_key) = match pk {
         KeySetMaybeCompressed::Compressed(comp_pk) => {

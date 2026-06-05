@@ -322,9 +322,8 @@ async fn threshold_keygen_result_command(
 }
 
 async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (_key_sid, pk): (u128, PublicKey<LevelEll, LevelKsw, N65536>) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
     let mut rng = AesRng::from_entropy();
 
@@ -348,12 +347,10 @@ async fn threshold_decrypt_from_file_command(
     choreo_conf: ChoreoConf,
     params: ThresholdDecryptFromFileArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, _pk): (u128, PublicKey<LevelEll, LevelKsw, N65536>) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
-    let ctxt_serialized = std::fs::read(params.input_file)?;
-    let ctxt: LevelEllCiphertext = bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
+    let ctxt: LevelEllCiphertext = bc2wrap::deserialize_from(File::open(params.input_file)?)?;
 
     let session_id = params.session_id.unwrap_or_else(random);
     let session_id = runtime
@@ -386,9 +383,8 @@ async fn threshold_decrypt_command(
     //whilst avoiding http max size issue)
     let num_ctxt_per_session = params.num_ctxt_per_session;
     let num_sessions = params.num_parallel_sessions;
-    let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, pk): (SessionId, PublicKey<LevelEll, LevelKsw, N65536>) =
-        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+        bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
     let mut rng = AesRng::from_entropy();
     let ms = (0..num_sessions)
