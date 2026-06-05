@@ -1067,7 +1067,7 @@ async fn shutdown_servers(kms_servers: HashMap<u32, ServerHandle>) {
         kms_server.assert_shutdown().await;
     }
 }
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 async fn run_full_custodian_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     operator_verf_keys: &HashMap<u32, PublicSigKey>,

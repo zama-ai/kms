@@ -556,7 +556,7 @@ pub(crate) struct InitializedMessageQueueStore {
     rx: DashMap<RoleKind, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[derive(Debug, Clone)]
 pub(crate) enum MessageQueueStore {
     Uninitialized(
@@ -572,7 +572,7 @@ pub(crate) enum MessageQueueStore {
 }
 
 impl MessageQueueStore {
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     pub(crate) fn new_uninitialized(
         channel_maps: DashMap<
             MpcIdentity,
@@ -668,7 +668,7 @@ impl MessageQueueStore {
     }
 
     // this must be performed on the uninitialized message queue
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     pub(crate) fn entry(
         &self,
         mpc_identity: MpcIdentity,
@@ -767,7 +767,6 @@ pub struct NetworkingImpl {
 }
 
 impl NetworkingImpl {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         session_store: Arc<SessionStore>,
         opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
@@ -789,9 +788,6 @@ impl NetworkingImpl {
         }
     }
 
-    // Did not find a better soluton yet.
-    // See https://github.com/hyperium/tonic/issues/2253
-    #[allow(clippy::result_large_err)]
     /// Fetches the channel for the given session and tag.
     /// - If the session is inactive, it creates a new channel for the sender (assuming the sender hasn't opened too many channels for inactive sessions yet).
     /// - If the session is active, it returns the existing channel (assuming the sender is part of the session).

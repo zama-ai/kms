@@ -768,7 +768,7 @@ impl KmsV0_14_0 {
         TestMetadataKMS::CrsGenMetadataWithExtraData(CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST)
     }
 
-    #[allow(clippy::ptr_arg)]
+    #[expect(clippy::ptr_arg)]
     fn gen_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
         let test = signcryption_payload_test();
 

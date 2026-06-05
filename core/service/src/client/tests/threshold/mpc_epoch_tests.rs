@@ -343,7 +343,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_new_epoch(
     amount_parties: usize,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,

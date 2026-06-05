@@ -288,8 +288,8 @@ where
 ///
 /// # Arguments
 /// * `priv_storage` - Private storage instance to query FHE and CRS keys from
-/// * `storage_type_info` - String describing the KMS type (e.g. "Centralized KMS" or "Threshold KMS")
-/// * `preprocessing_ids` - Optional vector of preprocessing IDs (for threshold KMS with metastore)
+/// * `kms_type` - The KMS type (centralized or threshold)
+/// * `preprocessing_ids` - Vector of preprocessing IDs, may be empty (used for threshold KMS with metastore)
 pub async fn query_key_material_availability<S>(
     priv_storage: &S,
     kms_type: KMSType,

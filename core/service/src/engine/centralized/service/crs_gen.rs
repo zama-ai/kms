@@ -260,7 +260,7 @@ pub async fn abort_crs_gen_impl<
 }
 
 /// Background task for CRS generation
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,

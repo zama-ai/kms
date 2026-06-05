@@ -494,7 +494,6 @@ impl TestMaterialManager {
     }
 
     /// Copy entire directory contents. A missing source directory is a hard error.
-    #[allow(clippy::only_used_in_recursion)]
     fn copy_directory_contents<'a>(
         &'a self,
         source: &'a Path,

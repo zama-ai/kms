@@ -1683,7 +1683,6 @@ async fn real_preproc_and_keygen_with_context(
 
 /// Helper to run reshare operation via CLI (isolated version)
 #[cfg(feature = "threshold_tests")]
-#[allow(clippy::too_many_arguments)]
 async fn reshare(
     config_path: &Path,
     test_path: &Path,

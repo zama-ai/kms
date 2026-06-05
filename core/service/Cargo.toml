@@ -190,4 +190,5 @@ insecure = [
     "kms-grpc/insecure",
     "threshold-networking/testing",
     "dep:nsm-nitro-enclave-utils",
+    "threshold-execution/testing",
 ]

@@ -362,7 +362,6 @@ where
     }
 }
 
-#[allow(clippy::suspicious_arithmetic_impl)]
 impl Div<&IntQ> for &RingElement<IntQ> {
     type Output = RingElement<IntQ>;
     fn div(self, rhs: &IntQ) -> Self::Output {

@@ -162,7 +162,7 @@ impl<'r> Mul<&'r IntQ> for &IntQ {
 
 impl Sub for IntQ {
     type Output = IntQ;
-    #[allow(clippy::suspicious_arithmetic_impl)]
+    #[expect(clippy::suspicious_arithmetic_impl)]
     fn sub(self, rhs: Self) -> Self::Output {
         self + rhs.neg()
     }
@@ -170,7 +170,7 @@ impl Sub for IntQ {
 
 impl<'r> Sub<&'r IntQ> for &IntQ {
     type Output = IntQ;
-    #[allow(clippy::suspicious_arithmetic_impl)]
+    #[expect(clippy::suspicious_arithmetic_impl)]
     fn sub(self, rhs: &'r IntQ) -> Self::Output {
         self + &rhs.neg()
     }

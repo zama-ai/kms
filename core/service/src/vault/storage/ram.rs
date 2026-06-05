@@ -15,7 +15,7 @@ use tfhe::{
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RamStorage {
     // Store data_id, data_type to serialized data
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     internal_storage: HashMap<((RequestId, Option<EpochId>), String), Vec<u8>>,
 }
 
