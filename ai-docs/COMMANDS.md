@@ -82,6 +82,13 @@ Run against locally regenerated vectors — does NOT pull LFS:
 make test-backward-compatibility-local
 ```
 
+Generate and compare `VersionsDispatch` snapshots between a base ref and the current checkout. This detects removed version variants and suspicious type-layout or upgrade-body changes:
+
+```
+make backward-snapshot-check BASE_REF=origin/main
+make backward-snapshot-report BASE_REF=origin/main OUTPUT_FILE=/tmp/kms-backward-snapshot-report.md
+```
+
 Direct cargo invocation (what the make targets call under the hood):
 
 ```

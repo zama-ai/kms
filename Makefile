@@ -66,6 +66,12 @@ generate-backward-compatibility-v0.14.0:
 generate-backward-compatibility-all: clean-backward-compatibility-data $(addprefix generate-backward-compatibility-v,$(DETERMINISTIC_BWC_VERSIONS))
 	@echo "Generated backward compatibility data for deterministic versions: $(DETERMINISTIC_BWC_VERSIONS)"
 
+backward-snapshot-check:
+	./ci/scripts/backward_snapshot.sh check --base-ref "$(BASE_REF)"
+
+backward-snapshot-report:
+	./ci/scripts/backward_snapshot.sh report --base-ref "$(BASE_REF)" --output "$(OUTPUT_FILE)"
+
 # Test material generation targets
 generate-test-material-all:
 	cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4
