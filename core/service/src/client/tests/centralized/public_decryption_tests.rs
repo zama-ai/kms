@@ -132,7 +132,6 @@ async fn default_decryption_centralized_precompute_sns(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn decryption_centralized(
     dkg_params: &DKGParams,
     key_id: &RequestId,
@@ -170,7 +169,7 @@ pub(crate) async fn decryption_centralized(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_decryption_centralized(
     kms_client: &CoreServiceEndpointClient<Channel>,
     internal_client: &mut Client,

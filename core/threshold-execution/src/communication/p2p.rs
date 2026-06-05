@@ -235,7 +235,7 @@ where
 /// from the inside enum.
 ///
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
     E,
     V,

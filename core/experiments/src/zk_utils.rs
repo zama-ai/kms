@@ -312,7 +312,7 @@ pub fn nist_gen_proof(
 
 /// Verify `proof` using the two-step pairing mode.
 /// The result_unit_err is inherited from tfhe-zk-pok
-#[allow(clippy::result_unit_err)]
+#[expect(clippy::result_unit_err)]
 pub fn nist_verify_two_steps(
     proof: &ProofV2<Bls12_446>,
     crs: &PublicParams<Bls12_446>,
@@ -329,7 +329,7 @@ pub fn nist_verify_two_steps(
 
 /// Verify `proof` using the batched pairing mode.
 /// The result_unit_err is inherited from tfhe-zk-pok
-#[allow(clippy::result_unit_err)]
+#[expect(clippy::result_unit_err)]
 pub fn nist_verify_batched(
     proof: &ProofV2<Bls12_446>,
     crs: &PublicParams<Bls12_446>,

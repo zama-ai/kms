@@ -8,8 +8,8 @@
 #   - stop:  Gracefully stop setup and cleanup resources
 #
 # Usage:
-#   ./manage_kind_setup.sh start
-#   ./manage_kind_setup.sh stop <SETUP_PID> <TAIL_PID> [DEPLOYMENT_TYPE] [NUM_PARTIES]
+#   ./manage_lifecycle.sh start
+#   ./manage_lifecycle.sh stop <SETUP_PID> <TAIL_PID> [DEPLOYMENT_TYPE] [NUM_PARTIES]
 #
 #=============================================================================
 

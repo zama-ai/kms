@@ -329,7 +329,7 @@ macro_rules! impl_field_level {
             impl_ring_level!($name, $uint_type, $modulus_size_type, $q_type, $monty_form, $max_val);
             impl Div for $name {
                 type Output = Self;
-                #[allow(clippy::suspicious_arithmetic_impl)]
+                #[expect(clippy::suspicious_arithmetic_impl)]
                 fn div(self, rhs: Self) -> Self::Output {
                     // we always have an inverse here
                     let inv = Self {

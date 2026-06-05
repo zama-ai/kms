@@ -332,7 +332,7 @@ async fn default_user_decryption_threshold_with_crash(
     .await;
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_threshold(
     dkg_params: DKGParams,
     key_id: &RequestId,
@@ -560,7 +560,7 @@ pub(crate) async fn user_decryption_threshold(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn process_batch_threshold_user_decryption(
     internal_client: &mut Client,
     msg: TestingPlaintext,
