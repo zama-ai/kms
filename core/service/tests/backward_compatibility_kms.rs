@@ -69,7 +69,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
     sync::Arc,
-    time::SystemTime,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_execution::{
@@ -938,7 +937,7 @@ fn test_internal_custodian_context(
         .unwrap()
         .1
         .timestamp;
-    for (_, cu_no) in original_versionized.custodian_nodes.iter_mut() {
+    for cu_no in original_versionized.custodian_nodes.values_mut() {
         cu_no.timestamp = orig_timestamp;
     }
     let enc_key: UnifiedPublicEncKey =
@@ -976,7 +975,6 @@ fn test_internal_custodian_context(
         let new_timestamps = new_versionized
             .custodian_nodes
             .values()
-            .into_iter()
             .map(|c| c.timestamp)
             .collect::<Vec<_>>();
         eprintln!(
