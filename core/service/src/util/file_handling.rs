@@ -1,7 +1,5 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-#[cfg(any(test, feature = "testing"))]
-use std::fs::File;
 use std::path::Path;
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
@@ -54,26 +52,25 @@ pub async fn safe_read_element_versioned<
 
 /// Write a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the
 /// versioned writing method is used in production code.
+///
+/// Thin async wrapper around [`test_utils::write_element`] (blocking IO, fine under the testing flag).
 #[cfg(any(test, feature = "testing"))]
 pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     file_path: P,
     element: &T,
 ) -> anyhow::Result<()> {
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.as_ref().parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
-    bc2wrap::serialize_into(element, &mut File::create(file_path)?)?;
-    Ok(())
+    test_utils::write_element(file_path, element)
 }
 
 /// Read a generic element from a file. This is hidden behind the testing flag to ensure only the versioned reading
 /// method is used in production code.
+///
+/// Thin async wrapper around [`test_utils::read_element`] (blocking IO, fine under the testing flag).
 #[cfg(any(test, feature = "testing"))]
 pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
-    Ok(bc2wrap::deserialize_from(File::open(file_path)?)?)
+    test_utils::read_element(file_path)
 }
 
 #[cfg(test)]
