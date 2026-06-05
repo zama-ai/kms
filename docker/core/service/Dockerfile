@@ -5,9 +5,17 @@
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
 
 # By default, cargo build --release.
-# But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
-ARG LTO_RELEASE=release
-ARG APP_CACHE_DIR=kms
+# But you can provide --build-arg LTO_RELEASE="release-lto-thin" locally to build locally
+ARG LTO_RELEASE=release-lto-thin
+ARG SCCACHE_BUCKET
+ARG SCCACHE_REGION=eu-west-3
+ARG SCCACHE_S3_PREFIX
+ENV RUSTC_WRAPPER=sccache
+ENV SCCACHE_IDLE_TIMEOUT=0
+ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
+ENV SCCACHE_REGION=${SCCACHE_REGION}
+ENV SCCACHE_S3_KEY_PREFIX=${SCCACHE_S3_PREFIX}
+ENV AWS_REGION=${SCCACHE_REGION}
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
@@ -23,12 +31,23 @@ COPY docker ./docker
 
 RUN mkdir -p /app/kms/core/service/bin
 
+# `cargo fetch` only downloads dependencies; it does not compile. The global
+# `RUSTC_WRAPPER=sccache` is still consulted for cargo's `rustc -vV` probe,
+# which would make sccache start up and hit S3 (and thus need AWS creds). Unset
+# the wrapper for this step so the fetch stays credential-free.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
-    cargo fetch --locked
+    RUSTC_WRAPPER= cargo fetch --locked
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init --bin kms-custodian --bin kms-gen-keys -F insecure -F threshold-execution/testing && \
+    --mount=type=secret,id=sccache_aws_access_key_id \
+    --mount=type=secret,id=sccache_aws_secret_access_key \
+    set -eu && \
+    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
+    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms \
+      --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
+      --bin kms-custodian --bin kms-gen-keys \
+      -F insecure -F threshold-execution/testing && \
+    sccache --show-stats && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
        /app/kms/target/${LTO_RELEASE}/kms-init \

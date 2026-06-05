@@ -1,29 +1,29 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use futures_util::future::OptionFuture;
-use itertools::Itertools;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::{
-    conf::{
-        AwsKmsKeySpec, AwsKmsKeychain, FileStorage, Keychain, S3Storage, Storage as StorageConf,
-    },
+    conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain},
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        ThresholdSigningKeyConfig, ensure_central_server_signing_keys_exist,
-        ensure_threshold_server_signing_keys_exist,
+        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
-        storage::{Storage, StorageType, delete_at_request_id, make_storage, s3::build_s3_client},
+        storage::{
+            Storage, StorageProxy, StorageType, delete_at_request_id,
+            file::FileStorage,
+            s3::{S3Storage, build_s3_client},
+        },
     },
 };
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
-use std::{path::PathBuf, sync::Arc};
+use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 use strum::EnumIs;
 use url::Url;
 
@@ -32,8 +32,8 @@ use url::Url;
 #[clap(
     about = "A CLI tool for generating server signing keys and TLS certificates. \
     In centralized mode it produces a single signing key plus its verification material. \
-    In threshold mode it produces per-party signing keys and the self-signed CA certificates \
-    used for mTLS between parties. \
+    In threshold mode it produces the signing key and self-signed CA certificate for one party; \
+    run it once per party in a multi-party deployment. \
     Multiple options are supported which can be explored with \
     kms-gen-keys --help"
 )]
@@ -70,24 +70,58 @@ struct Args {
     mock_enclave: bool,
     #[clap(long, default_value_t = StorageCommand::File, value_enum)]
     private_storage: StorageCommand,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        conflicts_with_all = ["private_s3_bucket", "private_s3_prefix"],
+    )]
     private_file_path: Option<PathBuf>,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        conflicts_with_all = ["private_s3_bucket", "private_s3_prefix"],
+    )]
     private_file_prefix: Option<String>,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        required_if_eq("private_storage", "s3"),
+        conflicts_with_all = ["private_file_path", "private_file_prefix"],
+    )]
     private_s3_bucket: Option<String>,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        conflicts_with_all = ["private_file_path", "private_file_prefix"],
+    )]
     private_s3_prefix: Option<String>,
 
     #[clap(long, default_value_t = StorageCommand::File, value_enum)]
     public_storage: StorageCommand,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        conflicts_with_all = ["public_s3_bucket", "public_s3_prefix"],
+    )]
     public_file_path: Option<PathBuf>,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        conflicts_with_all = ["public_s3_bucket", "public_s3_prefix"],
+    )]
     public_file_prefix: Option<String>,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        required_if_eq("public_storage", "s3"),
+        conflicts_with_all = ["public_file_path", "public_file_prefix"],
+    )]
     public_s3_bucket: Option<String>,
-    #[clap(long, default_value = None)]
+    #[clap(
+        long,
+        default_value = None,
+        conflicts_with_all = ["public_file_path", "public_file_prefix"],
+    )]
     public_s3_prefix: Option<String>,
     /// Whether to generate keys deterministically,
     /// only use this option for testing.
@@ -114,25 +148,19 @@ enum Mode {
     /// Generate the centralized server signing key.
     Centralized,
 
-    /// Generate per-party signing keys and self-signed CA certificates for a threshold deployment.
+    /// Generate the signing key and self-signed CA certificate for one
+    /// threshold party.
+    ///
+    /// One invocation generates the material for exactly one party; callers
+    /// that operate multiple parties (docker-compose loops, Helm per-pod jobs,
+    /// the enclave bootstrap script) invoke `kms-gen-keys threshold` once per
+    /// party.
     Threshold {
-        /// Generate the signing key for a specific party only.
-        /// If unset, signing keys are generated for all parties.
-        ///
-        /// If set, the party ID cannot be higher than `num_parties`.
-        #[clap(long, default_value = None)]
-        signing_key_party_id: Option<usize>,
+        /// Index of the party to generate keys for (1-based).
+        #[clap(long)]
+        signing_key_party_id: NonZeroUsize,
 
-        /// Set the total number of parties.
-        ///
-        /// This configuration is required even when `signing_key_party_id``
-        /// is given.
-        #[clap(long, default_value_t = 4)]
-        num_parties: usize,
-
-        /// Set the subject in the issued TLS certificate, if
-        /// --signing-key-party-id is set, or the prefix for the subject in
-        /// certificates for all parties if not.
+        /// Subject used in the issued TLS certificate.
         #[clap(long, default_value = "kms-party")]
         tls_subject: String,
 
@@ -151,66 +179,21 @@ struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
 }
 
 struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
-    pub_storages: &'a mut [PubS],
-    priv_storages: &'a mut [PrivS],
+    pub_storage: &'a mut PubS,
+    priv_storage: &'a mut PrivS,
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
-    signing_key_party_id: Option<usize>,
-    num_parties: usize,
+    signing_key_party_id: NonZeroUsize,
     tls_subject: String,
     tls_wildcard: bool,
-}
-
-impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        pub_storages: &'a mut [PubS],
-        priv_storages: &'a mut [PrivS],
-        deterministic: bool,
-        overwrite: bool,
-        show_existing: bool,
-        signing_key_party_id: Option<usize>,
-        num_parties: usize,
-        tls_subject: String,
-        tls_wildcard: bool,
-    ) -> anyhow::Result<Self> {
-        if num_parties < 2 {
-            anyhow::bail!("the number of parties should be larger or equal to 2");
-        }
-        if let Some(id) = signing_key_party_id
-            && id > num_parties
-        {
-            anyhow::bail!(
-                "party ID ({}) cannot be greater than num_parties ({})",
-                id,
-                num_parties
-            );
-        }
-        if let Some(id) = signing_key_party_id
-            && id == 0
-        {
-            anyhow::bail!("party ID cannot be 0",);
-        }
-        Ok(Self {
-            pub_storages,
-            priv_storages,
-            deterministic,
-            overwrite,
-            show_existing,
-            signing_key_party_id,
-            num_parties,
-            tls_subject,
-            tls_wildcard,
-        })
-    }
 }
 
 /// Generate the server signing keys and TLS material for a KMS deployment.
 ///
 /// Two modes are supported:
 /// - `centralized` produces a single signing key.
-/// - `threshold` produces per-party signing keys and self-signed CA certificates for mTLS.
+/// - `threshold` produces one party's signing key and self-signed CA certificate for mTLS.
 ///
 /// Examples:
 /// ```
@@ -257,95 +240,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // create storages
-    let amount_storages = match args.mode {
-        Mode::Centralized => 1,
-        Mode::Threshold {
-            signing_key_party_id: _,
-            num_parties: n,
-            tls_subject: _,
-            tls_wildcard: _,
-        } => n,
-    };
-    let mut pub_storages = Vec::with_capacity(amount_storages);
-    let mut priv_vaults = Vec::with_capacity(amount_storages);
-    for _i in 1..=amount_storages {
-        let pub_proxy_storage = make_storage(
-            match args.public_storage {
-                StorageCommand::File => args.public_file_path.as_ref().map(|path| {
-                    StorageConf::File(FileStorage {
-                        path: path.to_path_buf(),
-                        prefix: args.public_file_prefix.clone(),
-                    })
-                }),
-                StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                    bucket: args
-                        .public_s3_bucket
-                        .as_ref()
-                        .expect("S3 bucket must be set for public storage")
-                        .clone(),
-                    prefix: args.public_s3_prefix.clone(),
-                })),
-            },
+    // create storages (one pub + one priv per invocation; multi-party
+    // deployments invoke this binary once per party)
+    let mut pub_storage = match args.public_storage {
+        StorageCommand::File => StorageProxy::from(FileStorage::new(
+            args.public_file_path.as_deref(),
             StorageType::PUB,
-            s3_client.clone(),
-        )
-        .unwrap();
-        let private_keychain = OptionFuture::from(
-            args.root_key_id
-                .as_ref()
-                .zip(args.root_key_spec.as_ref())
-                .map(|(root_key_id, root_key_spec)| {
-                    Keychain::AwsKms(AwsKmsKeychain {
-                        root_key_id: root_key_id.clone(),
-                        root_key_spec: root_key_spec.clone(),
-                    })
+            args.public_file_prefix.as_deref(),
+        )?),
+        StorageCommand::S3 => StorageProxy::from(S3Storage::new(
+            // `need_s3_client` covers public_storage == s3, so the client is built above
+            s3_client
+                .clone()
+                .expect("S3 client is built when public_storage == s3"),
+            // clap's `required_if_eq` on `public_s3_bucket` guarantees this
+            // is `Some` whenever public_storage == s3.
+            args.public_s3_bucket
+                .clone()
+                .expect("clap-required: public_s3_bucket"),
+            StorageType::PUB,
+            args.public_s3_prefix.as_deref(),
+        )?),
+    };
+    let private_keychain = OptionFuture::from(
+        args.root_key_id
+            .as_ref()
+            .zip(args.root_key_spec.as_ref())
+            .map(|(root_key_id, root_key_spec)| {
+                Keychain::AwsKms(AwsKmsKeychain {
+                    root_key_id: root_key_id.clone(),
+                    root_key_spec: root_key_spec.clone(),
                 })
-                .as_ref()
-                .map(|k| {
-                    make_keychain_proxy(
-                        k,
-                        awskms_client.clone(),
-                        security_module.as_ref().map(Arc::clone),
-                        Some(&pub_proxy_storage),
-                        false,
-                    )
-                }),
-        )
-        .await
-        .transpose()?;
-        pub_storages.push(pub_proxy_storage);
-        priv_vaults.push(Vault {
-            storage: make_storage(
-                match args.private_storage {
-                    StorageCommand::File => args.private_file_path.as_ref().map(|path| {
-                        StorageConf::File(FileStorage {
-                            path: path.to_path_buf(),
-                            prefix: args.private_file_prefix.clone(),
-                        })
-                    }),
-                    StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                        bucket: args
-                            .private_s3_bucket
-                            .as_ref()
-                            .expect("S3 bucket must be set for private storage")
-                            .clone(),
-                        prefix: args.private_s3_prefix.clone(),
-                    })),
-                },
+            })
+            .as_ref()
+            .map(|k| {
+                make_keychain_proxy(
+                    k,
+                    awskms_client.clone(),
+                    security_module.as_ref().map(Arc::clone),
+                    Some(&pub_storage),
+                    false,
+                )
+            }),
+    )
+    .await
+    .transpose()?;
+    let mut priv_vault = Vault {
+        storage: match args.private_storage {
+            StorageCommand::File => StorageProxy::from(FileStorage::new(
+                args.private_file_path.as_deref(),
                 StorageType::PRIV,
-                s3_client.clone(),
-            )
-            .unwrap(),
-            keychain: private_keychain,
-        });
-    }
+                args.private_file_prefix.as_deref(),
+            )?),
+            StorageCommand::S3 => StorageProxy::from(S3Storage::new(
+                // `need_s3_client` covers private_storage == s3, so the client is built above
+                s3_client
+                    .clone()
+                    .expect("S3 client is built when private_storage == s3"),
+                // clap's `required_if_eq` on `private_s3_bucket` guarantees
+                // this is `Some` whenever private_storage == s3.
+                args.private_s3_bucket
+                    .clone()
+                    .expect("clap-required: private_s3_bucket"),
+                StorageType::PRIV,
+                args.private_s3_prefix.as_deref(),
+            )?),
+        },
+        keychain: private_keychain,
+    };
+
     // generate keys
     match args.mode {
         Mode::Centralized => {
             let mut cmdargs = CentralCmdArgs {
-                pub_storage: &mut pub_storages[0],
-                priv_storage: &mut priv_vaults[0],
+                pub_storage: &mut pub_storage,
+                priv_storage: &mut priv_vault,
                 deterministic: args.deterministic,
                 overwrite: args.overwrite,
                 show_existing: args.show_existing,
@@ -354,21 +323,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Mode::Threshold {
             signing_key_party_id,
-            num_parties,
             tls_subject,
             tls_wildcard,
         } => {
-            let mut cmdargs = ThresholdCmdArgs::new(
-                &mut pub_storages,
-                &mut priv_vaults,
-                args.deterministic,
-                args.overwrite,
-                args.show_existing,
+            let mut cmdargs = ThresholdCmdArgs {
+                pub_storage: &mut pub_storage,
+                priv_storage: &mut priv_vault,
+                deterministic: args.deterministic,
+                overwrite: args.overwrite,
+                show_existing: args.show_existing,
                 signing_key_party_id,
-                num_parties,
                 tls_subject,
                 tls_wildcard,
-            )?;
+            };
             handle_threshold_cmd(&mut cmdargs).await;
         }
     }
@@ -402,41 +369,25 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
 async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
 ) {
-    // Will panic if the number of public and private storages is not equal
-    for (pub_storage, priv_storage) in args
-        .pub_storages
-        .iter_mut()
-        .zip_eq(args.priv_storages.iter_mut())
-    {
-        process_signing_key_cmds(
-            pub_storage,
-            priv_storage,
-            &SIGNING_KEY_ID,
-            args.show_existing,
-            args.overwrite,
-        )
-        .await;
-    }
-    if !ensure_threshold_server_signing_keys_exist(
-        args.pub_storages,
-        args.priv_storages,
+    process_signing_key_cmds(
+        args.pub_storage,
+        args.priv_storage,
+        &SIGNING_KEY_ID,
+        args.show_existing,
+        args.overwrite,
+    )
+    .await;
+    ensure_threshold_server_signing_key_exists(
+        args.pub_storage,
+        args.priv_storage,
         &SIGNING_KEY_ID,
         args.deterministic,
-        match args.signing_key_party_id {
-            Some(i) => ThresholdSigningKeyConfig::OneParty(i, args.tls_subject.clone()),
-            None => ThresholdSigningKeyConfig::AllParties(
-                (1..=args.num_parties)
-                    .map(|i| format!("{}-{}", args.tls_subject, i))
-                    .collect(),
-            ),
-        },
+        args.signing_key_party_id.get(),
+        args.tls_subject.clone(),
         args.tls_wildcard,
     )
     .await
-    .expect("Could not access storage")
-    {
-        tracing::warn!("Threshold signing keys already exist, skipping generation");
-    }
+    .expect("Could not access storage");
 }
 
 async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
