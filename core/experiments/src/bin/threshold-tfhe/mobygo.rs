@@ -1,6 +1,5 @@
 //! CLI tool for interacting with a group of mobys
 use clap::{Args, Parser, Subcommand};
-use std::fs::File;
 use experiments::{
     choreography::{
         client_utils::ChoreoRuntime,
@@ -18,6 +17,7 @@ use observability::{
     telemetry::init_tracing,
 };
 use rand::{Rng, distributions::Uniform, random};
+use std::fs::File;
 use tfhe::{
     CompactPublicKey, FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128,
     FheUint160, FheUint256, FheUint2048, integer::BooleanBlock, set_server_key,
