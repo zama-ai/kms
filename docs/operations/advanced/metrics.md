@@ -28,13 +28,13 @@
 
 KMS exposes metrics via Prometheus format on the configured metrics endpoint (default: `:<METRICS_PORT>/metrics` where `<METRICS_PORT>` defaults to `9646`). This document lists and describes metrics supported by KMS services to help operators monitor these services, configure alarms based on the metrics, and act on those in case of issues.
 
-**Metric Naming**: All metrics use the configurable prefix (default: `kms`) followed by the metric type. The actual metric names will be `{prefix}_{metric_type}` (e.g., `kms_operations`, `kms_operation_errors`).
+**Metric Naming**: All metrics use the configurable prefix (default: `kms`) followed by the metric type. The actual metric names will be `{prefix}_{metric_type}` (e.g., `kms_operations_total`, `kms_operation_errors_total`).
 
 ## kms-core
 
 ### Core Service Operations
 
-#### Metric Name: `kms_operations` 
+#### Metric Name: `kms_operations_total` 
 - **Type**: Counter
 - **Description**: Total number of operations processed by the KMS core service.
 - **Alarm**: If the counter is a flat line over a period of time for critical operations.
@@ -46,7 +46,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `keygen_result` - Key generation result retrievals
 - `keygen_preproc_request` - Key generation preprocessing requests
 - `keygen_preproc_result` - Key generation preprocessing results
-- `keygen` - Direct key generation operations
+- `standard_keygen` - Standard (uncompressed) key generation
 - `decompression_keygen` - Decompression key generation
 
 *Decryption Operations*:
@@ -62,7 +62,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `crs_gen_result` - CRS generation result retrievals
 
 *System Operations*:
-- `init` - PRSS initialization operations
+- `boot` - Service boot / PRSS initialization
 - `new_mpc_context` - MPC context creation
 - `destroy_mpc_context` - MPC context destruction
 
@@ -73,48 +73,41 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `custodian_recovery_init` - Recovery initialization
 - `restore_from_backup` - Backup restoration operations
 
-*Resharing Operations*:
-- `initiate_resharing` - Resharing initiation operations
-- `get_initiate_resharing_result` - Resharing result retrievals
+*Epoch Operations*:
+- `new_mpc_epoch` - MPC epoch creation
+- `destroy_mpc_epoch` - MPC epoch destruction
+- `get_mpc_epoch_result` - MPC epoch result retrievals
 
 *Other Operations*:
 - `fetch_pk` - Public key fetching operations
 
-#### Metric Name: `kms_operation_errors`
+#### Metric Name: `kms_operation_errors_total`
 - **Type**: Counter
 - **Description**: Total number of operation errors encountered by the KMS core service.
 - **Alarm**: If the counter increases over a period of time.
 
-**Common Error Types**:
-- `rate_limit_exceeded` - Rate limiting triggered
-- `key_already_exists` - Key already exists error
-- `key_not_found` - Requested key not available
-- `public_decryption_failed` - Public decryption operation failed
-- `user_decryption_failed` - User decryption operation failed
-- `preproc_failed` - Preprocessing operation failed (user preprocessing)
-- `preproc_not_found` - Preprocessing material not found
-- `keygen_failed` - Key generation operation failed
-- `verification_failed` - Verification operation failed
-- `crs_gen_failed` - CRS generation failed
-- `meta_storage_error` - Metadata storage error (with meta storage)
-- `invalid_request` - Malformed or invalid request
-- `cancelled` - Operation cancelled
-- `invalid_argument` - Invalid argument provided (mapped from tonic::Code::InvalidArgument)
-- `aborted` - Operation aborted (mapped from tonic::Code::Aborted)
-- `already_exists` - Resource already exists (mapped from tonic::Code::AlreadyExists)
-- `not_found` - Resource not found (mapped from tonic::Code::NotFound)
-- `internal_error` - Internal service error (mapped from tonic::Code::Internal)
-- `unavailable` - Service temporarily unavailable (mapped from tonic::Code::Unavailable)
-- `other` - Other unspecified errors (default mapping for unmapped tonic codes)
+**Common Error Types** (the `error` label; gRPC status codes are mapped to these via `map_tonic_code_to_metric_err_tag`):
+- `failed_precondition` - Precondition not met (tonic `FailedPrecondition`)
+- `resource_exhausted` - Resource limit hit, e.g. rate limiting (tonic `ResourceExhausted`)
+- `cancelled` - Operation cancelled (tonic `Cancelled`)
+- `invalid_argument` - Invalid argument provided (tonic `InvalidArgument`)
+- `aborted` - Operation aborted (tonic `Aborted`)
+- `already_exists` - Resource already exists (tonic `AlreadyExists`)
+- `not_found` - Resource not found (tonic `NotFound`)
+- `internal_error` - Internal service error (tonic `Internal`)
+- `unavailable` - Service temporarily unavailable (tonic `Unavailable`)
+- `other` - Any other / unmapped gRPC status code
+- `async_call_error` - Failure in an async worker thread, after the gRPC call already returned
+- `backup_error` - Backup operation failure (recorded on the separate `kms_backup_errors_total` counter)
 
 ### Network Metrics
 
-#### Metric Name: `kms_network_rx_bytes`
+#### Metric Name: `kms_network_rx_bytes_total`
 - **Type**: Counter
 - **Description**: Total number of bytes received over the network by KMS.
 - **Alarm**: If the counter stops increasing during expected traffic periods.
 
-#### Metric Name: `kms_network_tx_bytes`
+#### Metric Name: `kms_network_tx_bytes_total`
 - **Type**: Counter
 - **Description**: Total number of bytes sent over the network by KMS.
 - **Alarm**: If the counter stops increasing during expected traffic periods.
@@ -145,10 +138,10 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - **Description**: Memory used by KMS in bytes.
 - **Alarm**: If memory usage exceeds 85% of available memory.
 
-#### Metric Name: `kms_gauge`
+#### Other Gauges
 - **Type**: Gauge
-- **Description**: General-purpose gauge for tracking active operations and other values.
-- **Alarm**: If active operations exceed capacity thresholds.
+- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_rate_limiter_usage`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
+- **Alarm**: e.g. alert if `kms_rate_limiter_usage` saturates or `kms_active_sessions` looks abnormal.
 
 ### Metric Tags
 
@@ -179,7 +172,7 @@ High-cardinality tags such as `key_id` or `request_id` are possible on some seri
 
 ### Insecure Operations (Development Only)
 
-#### Metric Name: `kms_operations` (Insecure Mode)
+#### Metric Name: `kms_operations_total` (Insecure Mode)
 - **Type**: Counter
 - **Description**: Operations available only in insecure/development mode.
 - **Insecure Operation Types**:
@@ -255,7 +248,7 @@ KMS exposes Prometheus-compatible metrics on the configured endpoint (default: `
 
 KMS metrics support comprehensive alerting for operational monitoring. Key alert categories include:
 
-- **Error Rate Monitoring**: Track `kms_operation_errors` vs `kms_operations` ratios
+- **Error Rate Monitoring**: Track `kms_operation_errors_total` vs `kms_operations_total` ratios
 - **Performance Alerts**: Monitor latency percentiles from `kms_operation_duration_ms`
 - **Resource Alerts**: CPU and memory usage from `kms_cpu_load` and `kms_memory_usage`
 - **Network Health**: Peer connectivity and network traffic patterns
@@ -273,11 +266,11 @@ KMS metrics support comprehensive alerting for operational monitoring. Key alert
 
 KMS metrics can be visualized using Grafana dashboards. Key dashboard components should include:
 
-- **Operation Rates**: Monitor `kms_operations` metrics by operation type
-- **Error Tracking**: Visualize `kms_operation_errors` with operation and error breakdowns  
+- **Operation Rates**: Monitor `kms_operations_total` metrics by operation type
+- **Error Tracking**: Visualize `kms_operation_errors_total` with operation and error breakdowns  
 - **Performance Metrics**: Display latency percentiles from `kms_operation_duration_ms` histograms
 - **System Resources**: Track `kms_cpu_load` and `kms_memory_usage` gauges
-- **Network Traffic**: Monitor `kms_network_rx_bytes` and `kms_network_tx_bytes` rates
+- **Network Traffic**: Monitor `kms_network_rx_bytes_total` and `kms_network_tx_bytes_total` rates
 
 ### Dashboard References
 
