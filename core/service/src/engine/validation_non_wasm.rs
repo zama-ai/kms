@@ -209,6 +209,17 @@ fn solana_user_decrypt_client_id(solana_pubkey: &[u8; 32]) -> alloy_primitives::
     alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_pubkey)[12..])
 }
 
+/// Placeholder EIP-712 domain for the Solana user-decryption response payload. On the Solana
+/// path the response binding is the keccak `link` (see `compute_link_solana`), which is passed
+/// opaquely into signcryption; the domain is response metadata only (no EVM verifying contract
+/// exists). Constructed inline rather than reusing the test-only `dummy_domain`.
+fn solana_user_decrypt_response_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "SolanaUserDecryption",
+        version: "1",
+    )
+}
+
 pub(crate) fn validate_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
@@ -320,7 +331,7 @@ fn unpack_user_decrypt_req(
             key_id,
             context_id,
             epoch_id,
-            crate::dummy_domain(),
+            solana_user_decrypt_response_domain(),
             req.extra_data.clone(),
         ));
     }
