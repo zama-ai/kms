@@ -197,7 +197,7 @@ metrics.increment_request_counter(OP_KEYGEN_REQUEST);  // app_operations_total{o
 ### Duration Measurement with Tags
 
 The preferred way to measure operation duration is an RAII guard that records on drop. Only the keys in
-`DURATION_LABEL_KEYS` (`operation_type`, `party_id`, `tfhe_type`, `public_decryption_mode`,
+`DURATION_LABEL_KEYS` (`operation` plus `operation_type`, `party_id`, `tfhe_type`, `public_decryption_mode`,
 `user_decryption_mode`) are recorded on this histogram — unknown keys are ignored with a warning, and
 high-cardinality keys (e.g. `key_id`) must not be used.
 
