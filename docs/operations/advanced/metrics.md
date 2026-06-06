@@ -162,7 +162,7 @@ High-cardinality tags such as `key_id` or `request_id` are possible on some seri
 - Malformed entries, empty keys, names starting with `__`, or names that collide with built-in labels (`operation`, `error`, `version`, `le`, the duration label keys, etc.) are skipped with a warning at startup. A bad configuration cannot crash metric registration.
 - In Helm: set `kmsCore.metricsLabels` (e.g. `deployment_profile=kind-ci`); the chart renders it into the `KMS_METRICS_LABELS` env on the kms-server container.
 - The `ci_` metric name prefix (for separating CI series) is applied via ServiceMonitor `metricRelabelings` when enabled.
-- See the [developer metrics guide](../developer/metrics.md#distinguishing-deployments-kind-ci-vs-production) for the full mechanism, examples, and the `labels()` accessor for runtime inspection.
+- See the [developer metrics guide](../../developer/metrics.md#distinguishing-deployments-kind-ci-vs-production) for the full mechanism, examples, and the `labels()` accessor for runtime inspection.
 
 **Operation Type Values**:
 - `total` - Total operations across all sub-types
