@@ -186,29 +186,7 @@ impl<Z: Ring> NetworkValue<Z> {
     // benchmark show serialization is fast
     // and sending to rayon implies a clone which makes it significantly slower
     pub fn to_network(&self) -> Vec<u8> {
-        let bytes = bc2wrap::serialize(self).unwrap();
-        {
-            // TEMP instrumentation: log each unique (message label, byte size) once.
-            use std::collections::HashSet;
-            use std::sync::{Mutex, OnceLock};
-            static SEEN: OnceLock<Mutex<HashSet<(String, usize)>>> = OnceLock::new();
-            let label = match self {
-                NetworkValue::Send(b) => format!("Send::{}", b.type_name()),
-                NetworkValue::EchoBatch(m) => match m.values().next() {
-                    Some(b) => format!("EchoBatch::{}", b.type_name()),
-                    None => "EchoBatch::<empty>".to_string(),
-                },
-                other => other.network_type_name().to_string(),
-            };
-            let mut seen = SEEN
-                .get_or_init(|| Mutex::new(HashSet::new()))
-                .lock()
-                .unwrap();
-            if seen.insert((label.clone(), bytes.len())) {
-                eprintln!("NVSIZE\t{label}\t{}", bytes.len());
-            }
-        }
-        bytes
+        bc2wrap::serialize(self).unwrap()
     }
 
     pub async fn from_network(
