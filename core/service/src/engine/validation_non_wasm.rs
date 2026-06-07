@@ -420,7 +420,7 @@ fn validate_public_decrypt_meta_data(
     };
 
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
+    let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
@@ -558,7 +558,7 @@ fn validate_public_decrypt_responses(
             continue;
         }
         // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&cur_payload.verification_key)?;
         let mut found_new_verf_key = false;
         // Validate the verf key
         for (cur_id, key_to_check_against) in trusted_ctx.server_pks {

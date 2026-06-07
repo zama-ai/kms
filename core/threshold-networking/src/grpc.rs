@@ -1001,7 +1001,7 @@ impl Gnetworking for NetworkingImpl {
         .transpose()
         .map_err(|boxed| *boxed)?;
         let request = request.into_inner();
-        let health_tag = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
+        let health_tag = bc2wrap::deserialize_slice::<HealthTag>(&request.tag).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("failed to parse value: {} as a HealthTag", e),
@@ -1045,7 +1045,7 @@ impl Gnetworking for NetworkingImpl {
         .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
-        let tag = bc2wrap::deserialize_safe::<Tag>(&request.tag).map_err(|e| {
+        let tag = bc2wrap::deserialize_slice::<Tag>(&request.tag).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("failed to parse value: {}", e),

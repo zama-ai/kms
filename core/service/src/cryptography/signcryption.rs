@@ -559,7 +559,7 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
         let signcrypted_msg: SigncryptionPayload =
-            bc2wrap::deserialize_safe(&decrypted_signcryption)
+            bc2wrap::deserialize_slice(&decrypted_signcryption)
                 .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         if link != signcrypted_msg.link {
             return Err(CryptographyError::VerificationError(
@@ -594,7 +594,7 @@ fn inner_unsigncrypt(
         ));
     }
     // LEGACY Code: should be using safe_deserialization from tfhe-rs
-    let deserialized_payload: HybridKemCt = bc2wrap::deserialize_safe(&cipher.payload)
+    let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &unsign_key.decryption_key {
         UnifiedPrivateEncKey::MlKem512(dec_key) => {
@@ -691,7 +691,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     dec_key: &UnifiedPrivateEncKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
     // LEGACY should be using safe_deserialization from tfhe-rs
-    let cipher: HybridKemCt = bc2wrap::deserialize_safe(cipher)
+    let cipher: HybridKemCt = bc2wrap::deserialize_slice(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match dec_key {
         UnifiedPrivateEncKey::MlKem512(dk) => {
@@ -706,7 +706,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
     // LEGACY should be using safe_deserialization from tfhe-rs
-    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_safe(msg)
+    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_slice(msg)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
 
     Ok(signcrypted_msg.plaintext)
@@ -802,13 +802,13 @@ mod tests {
             .unwrap();
         let serialized_cipher = bc2wrap::serialize(&cipher).unwrap();
         let deserialized_cipher: UnifiedSigncryption =
-            bc2wrap::deserialize_unsafe(&serialized_cipher).unwrap();
+            bc2wrap::deserialize_slice(&serialized_cipher).unwrap();
 
         let serialized_server_verf_key =
             bc2wrap::serialize(&client_signcryption_keys.unsigncryption_key.sender_verf_key)
                 .unwrap();
         let deserialized_server_verf_key: PublicSigKey =
-            bc2wrap::deserialize_unsafe(&serialized_server_verf_key).unwrap();
+            bc2wrap::deserialize_slice(&serialized_server_verf_key).unwrap();
         let client_id = client_signcryption_keys
             .unsigncryption_key
             .receiver_id

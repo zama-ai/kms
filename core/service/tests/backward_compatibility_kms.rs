@@ -67,6 +67,7 @@ use rand::RngCore;
 use rand::SeedableRng;
 use std::{
     collections::{BTreeMap, HashMap},
+    fs::File,
     path::Path,
     sync::Arc,
 };
@@ -119,13 +120,13 @@ fn test_typed_plaintext(
     let original: TypedPlaintext = match format {
         DataFormat::Bincode => {
             let path = dir.join(format!("{}.bincode", test.test_filename()));
-            let bytes = std::fs::read(&path).map_err(|e| {
+            let file = File::open(&path).map_err(|e| {
                 test.failure(
                     format!("Failed to read file {}: {}", path.display(), e),
                     format,
                 )
             })?;
-            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
+            bc2wrap::deserialize_from(file).map_err(|e| {
                 test.failure(
                     format!("Failed to deserialize TypedPlaintext: {}", e),
                     format,
@@ -459,13 +460,13 @@ fn test_signcryption_payload(
     let original: SigncryptionPayload = match format {
         DataFormat::Bincode => {
             let path = dir.join(format!("{}.bincode", test.test_filename()));
-            let bytes = std::fs::read(&path).map_err(|e| {
+            let file = File::open(&path).map_err(|e| {
                 test.failure(
                     format!("Failed to read file {}: {}", path.display(), e),
                     format,
                 )
             })?;
-            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
+            bc2wrap::deserialize_from(file).map_err(|e| {
                 test.failure(
                     format!("Failed to deserialize SigncryptionPayload: {}", e),
                     format,
