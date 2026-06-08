@@ -350,34 +350,13 @@ When adding new metrics:
 
 This ensures consistency and maintainability of the metrics system across the codebase.
 
-### New operations vs new metric families
+### New operation vs new metric family
 
-Adding a **new operation** to an existing metric family is the common, cheap case — just add a
-constant and instrument the code path:
-
-```rust
-// metrics_names.rs
-pub const OP_MY_OPERATION: &str = "my_operation";
-
-// in the server path the operation runs on (RAII guard records on drop)
-let _timer = METRICS
-    .time_operation(OP_MY_OPERATION)
-    .tag(TAG_PARTY_ID, my_role.to_string())
-    .start();                          // kms_operation_duration_ms{operation="my_operation",party_id="..."}
-```
-
-This reuses the existing `kms_operation_duration_ms` / `kms_operations_total` /
-`kms_payload_size_bytes` families, so the low-cardinality guard and the
-`metric_families_match_allowlist` test need **no changes**. Adding a **brand-new metric family** (a
-new metric name) additionally requires registering it in `CoreMetrics` and extending the
-`metric_families_match_allowlist` allowlist.
-
-**For kind integration tests:** the metrics come from the long-lived KMS server pods (scraped by the
-in-cluster kube-prometheus-stack), *driven* by the operations a test triggers. To add a custom metric
-for a future kind test, instrument the server path it exercises as above; the
-`deployment_profile=kind-ci` label (see "Distinguishing Deployments") is applied automatically by the
-kind deployment, so the new metric is immediately distinguishable as a kind-test metric with no extra
-code in the test itself.
+A **new operation** is cheap — define an `OP_*` constant and instrument the path. It's only a new
+value of the `operation` label on the existing families, so the low-cardinality guard and the
+`metric_families_match_allowlist` test need no changes. A **new metric family** (a new metric name)
+additionally requires registering it in `CoreMetrics` and adding it to the
+`metric_families_match_allowlist` allowlist (otherwise that test fails).
 
 ## Testing
 
