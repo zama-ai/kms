@@ -136,6 +136,9 @@ zeroize.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
+bs58.workspace = true
+ed25519-dalek.workspace = true
+reqwest.workspace = true
 threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
