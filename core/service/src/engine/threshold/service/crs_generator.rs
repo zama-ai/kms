@@ -184,7 +184,7 @@ impl<
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         rate_limiter_permit: OwnedSemaphorePermit,
-        meta_permit: MetaStorePermit,
+        meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
         context_id: ContextId,
         sk: Arc<PrivateSigKey>,
@@ -334,7 +334,7 @@ impl<
 
     #[allow(clippy::too_many_arguments)]
     async fn crs_gen_background(
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<CrsGenMetadata>,
         cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,

@@ -168,7 +168,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<KeyGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         let meta_res = threshold_fhe_keys.meta_data.clone();

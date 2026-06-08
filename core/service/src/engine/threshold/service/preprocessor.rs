@@ -84,7 +84,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
         rate_limiting_permit: OwnedSemaphorePermit,
-        meta_permit: MetaStorePermit,
+        meta_permit: MetaStorePermit<BucketMetaStore>,
         #[cfg(feature = "insecure")] percentage_offline: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
@@ -169,7 +169,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         extra_data: Vec<u8>,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         rate_limiting_permit: OwnedSemaphorePermit,
-        meta_permit: MetaStorePermit,
+        meta_permit: MetaStorePermit<BucketMetaStore>,
         cancel_token: CancellationToken,
         #[cfg(feature = "insecure")] partial_params: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,

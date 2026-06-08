@@ -34,6 +34,7 @@
 use kms_grpc::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
+    marker::PhantomData,
     sync::Arc,
 };
 use thiserror::Error;
@@ -136,23 +137,16 @@ impl MetaStoreError {
 /// while the permit exists, `Arc::strong_count` of the entry's claim arc is
 /// at least 2 (one held by the entry, one by the permit). `try_*` paths
 /// check `strong_count == 1` to determine that no permit is outstanding.
-pub struct MetaStorePermit {
+pub struct MetaStorePermit<T> {
     req_id: RequestId,
     _claim: Arc<()>,
+    /// Needed to prevent permits of same `req_id` to be used across meta-stores.
+    _phantom: PhantomData<T>,
 }
 
-impl MetaStorePermit {
+impl<T> MetaStorePermit<T> {
     pub(crate) fn req_id(&self) -> &RequestId {
         &self.req_id
-    }
-}
-
-impl Drop for MetaStorePermit {
-    fn drop(&mut self) {
-        tracing::debug!(
-            "MetaStorePermit for request ID {} dropped; claim released",
-            self.req_id
-        );
     }
 }
 
@@ -318,7 +312,7 @@ impl<T> MetaStore<T> {
     pub(crate) fn insert(
         &mut self,
         request_id: &RequestId,
-    ) -> Result<MetaStorePermit, MetaStoreError> {
+    ) -> Result<MetaStorePermit<T>, MetaStoreError> {
         // `Deleted` is a permanent tombstone: a request id, once deleted, may
         // not be reused for a fresh insert. Callers that need to overwrite an
         // existing entry should use [`lock_entry`](MetaStore::lock_entry) +
@@ -374,6 +368,7 @@ impl<T> MetaStore<T> {
         let permit = MetaStorePermit {
             req_id: *request_id,
             _claim: Arc::clone(&claim),
+            _phantom: PhantomData,
         };
         self.storage
             .insert(*request_id, StoredEntry::Pending(claim));
@@ -392,7 +387,7 @@ impl<T> MetaStore<T> {
     pub(crate) fn lock_entry(
         &mut self,
         request_id: &RequestId,
-    ) -> Result<MetaStorePermit, MetaStoreError> {
+    ) -> Result<MetaStorePermit<T>, MetaStoreError> {
         let claim = {
             let entry = self
                 .storage
@@ -419,6 +414,7 @@ impl<T> MetaStore<T> {
         Ok(MetaStorePermit {
             req_id: *request_id,
             _claim: claim,
+            _phantom: PhantomData,
         })
     }
 
@@ -433,7 +429,7 @@ impl<T> MetaStore<T> {
     fn update(
         &mut self,
         update: Result<T, String>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<T>,
     ) -> Result<(), MetaStoreError> {
         let req_id = permit.req_id;
         let cell = self
@@ -463,7 +459,7 @@ impl<T> MetaStore<T> {
     /// flow we want to expose. The sole sanctioned caller is
     /// [`with_overwriting_claim`], which pairs it with the claim and the
     /// matching rollback ([`abort_reservation`](MetaStore::abort_reservation)).
-    fn finalize(&mut self, permit: MetaStorePermit, value: T) -> Result<(), MetaStoreError> {
+    fn finalize(&mut self, permit: MetaStorePermit<T>, value: T) -> Result<(), MetaStoreError> {
         let req_id = permit.req_id;
         let cell = self
             .storage
@@ -496,7 +492,7 @@ impl<T> MetaStore<T> {
     ///
     /// Deliberately **private**, like [`finalize`](MetaStore::finalize): reached
     /// only through [`with_overwriting_claim`], the migration-only entry point.
-    fn abort_reservation(&mut self, permit: MetaStorePermit) {
+    fn abort_reservation(&mut self, permit: MetaStorePermit<T>) {
         let req_id = permit.req_id;
         if matches!(self.storage.get(&req_id), Some(StoredEntry::Pending(_))) {
             // Orphaned `Pending` claim: drop it entirely. A `Pending` entry is
@@ -519,7 +515,7 @@ impl<T> MetaStore<T> {
     /// Mark an existing entry as deleted, regardless of whether it was Pending
     /// or Done. Consumes the permit. Returns the previous state. If the previous
     /// state was `Done`, the entry is also removed from the completion queue.
-    fn delete(&mut self, permit: MetaStorePermit) -> Result<EntryState<T>, MetaStoreError> {
+    fn delete(&mut self, permit: MetaStorePermit<T>) -> Result<EntryState<T>, MetaStoreError> {
         let req_id = permit.req_id;
         let cell = self
             .storage
@@ -681,7 +677,7 @@ pub(crate) async fn add_req_to_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
-) -> Result<MetaStorePermit, MetricedError> {
+) -> Result<MetaStorePermit<T>, MetricedError> {
     meta_store
         .write()
         .await
@@ -719,7 +715,7 @@ pub(crate) async fn lock_entry_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
-) -> Result<MetaStorePermit, MetricedError> {
+) -> Result<MetaStorePermit<T>, MetricedError> {
     meta_store
         .write()
         .await
@@ -733,7 +729,7 @@ pub(crate) async fn update_req_in_meta_store<
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
 >(
     meta_store: &RwLock<MetaStore<T>>,
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<T>,
     result: Result<T, E>,
     request_metric: &'static str,
 ) -> bool {
@@ -748,7 +744,7 @@ pub(crate) async fn update_req_in_meta_store<
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn update_ok_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<T>,
     result: T,
     request_metric: &'static str,
 ) -> bool {
@@ -771,7 +767,7 @@ pub(crate) async fn update_ok_req_in_meta_store<T>(
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn update_err_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<T>,
     error: String,
     request_metric: &'static str,
 ) -> bool {
@@ -791,7 +787,7 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn delete_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<T>,
     error: String,
     request_metric: &'static str,
 ) -> bool {

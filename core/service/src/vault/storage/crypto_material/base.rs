@@ -307,7 +307,7 @@ where
         priv_data: Option<(&'a PrivData, PrivDataType)>,
         meta_data: MetaT,
         meta_store: Arc<RwLock<MetaStore<MetaT>>>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<MetaT>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError>
     where
@@ -737,7 +737,7 @@ where
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<CrsGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         self.handle_persistent_and_meta_storage(
@@ -759,7 +759,7 @@ where
         meta_data: KeyGenMetadata,
         decompression_key: DecompressionKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<KeyGenMetadata>,
     ) -> Result<(), StorageError> {
         let res = self
             .write_all::<DecompressionKey, DecompressionKey>(
@@ -795,7 +795,7 @@ where
         &self,
         recovery_material: RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<RecoveryValidationMaterial>,
     ) -> Result<(), StorageError> {
         let req_id = recovery_material.custodian_context().context_id;
         // Ensure we have a backup vault before starting
@@ -1066,7 +1066,7 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
     storage_res: Result<(), StorageError>,
     meta_data: MetaT,
     meta_store: &RwLock<MetaStore<MetaT>>,
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<MetaT>,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
     let req_id = *permit.req_id();

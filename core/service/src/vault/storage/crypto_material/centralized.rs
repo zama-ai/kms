@@ -77,7 +77,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         central_fhe_keys: KmsFheKeyHandles,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-        permit: MetaStorePermit,
+        permit: MetaStorePermit<KeyGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         let meta_res = central_fhe_keys.public_key_info.clone();

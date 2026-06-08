@@ -354,7 +354,7 @@ pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 >(
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<KeyGenMetadata>,
     cancel_token: CancellationToken,
     req_id: &RequestId,
     preproc_id: &RequestId,

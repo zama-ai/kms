@@ -248,7 +248,7 @@ pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 >(
-    permit: MetaStorePermit,
+    permit: MetaStorePermit<CrsGenMetadata>,
     cancel_token: CancellationToken,
     req_id: &RequestId,
     epoch_id: &EpochId,

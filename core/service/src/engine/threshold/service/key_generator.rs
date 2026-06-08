@@ -991,7 +991,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub async fn decompression_key_gen_background(
-        meta_permit: MetaStorePermit,
+        meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,
@@ -1234,7 +1234,7 @@ impl<
 
     #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
-        meta_permit: MetaStorePermit,
+        meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,
