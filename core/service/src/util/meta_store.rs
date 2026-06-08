@@ -1095,7 +1095,7 @@ mod tests {
         // Cannot delete twice.
         assert!(meta_store.try_delete(&id).is_err());
     }
-    
+
     #[test]
     fn error_variants() {
         let mut store: MetaStore<String> = MetaStore::new(1, 1);

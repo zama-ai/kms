@@ -286,6 +286,16 @@ async fn setup_pre_migration_uncompressed(
     (old_fhe_keys, compact_pk)
 }
 
+/// Build the keygen meta store seeded with `old_key_id` as a completed entry.
+fn seeded_meta_store(
+    old_key_id: &RequestId,
+    old_meta: &KeyGenMetadata,
+) -> Arc<RwLock<MetaStore<KeyGenMetadata>>> {
+    Arc::new(RwLock::new(MetaStore::new_from_map(
+        std::iter::once((*old_key_id, old_meta.clone())).collect(),
+    )))
+}
+
 #[tokio::test]
 async fn test_copy_compressed_key_to_original_success() {
     let old_key_id = derive_request_id("copy_compressed_old_key").unwrap();
@@ -330,7 +340,7 @@ async fn test_copy_compressed_key_to_original_success() {
     )
     .await;
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = seeded_meta_store(&old_key_id, &old_fhe_keys.meta_data);
 
     let result = crypto_storage
         .copy_compressed_key_to_original(
@@ -442,7 +452,7 @@ async fn test_copy_compressed_key_overwrite() {
     )
     .await;
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = seeded_meta_store(&old_key_id, &old_fhe_keys.meta_data);
 
     crypto_storage
         .copy_compressed_key_to_original(
@@ -530,12 +540,23 @@ async fn test_copy_compressed_key_overwrite() {
 async fn test_copy_compressed_key_missing_source() {
     let old_key_id = derive_request_id("copy_missing_old").unwrap();
     let new_key_id = derive_request_id("copy_missing_new").unwrap();
+    let prep_id = derive_request_id("copy_missing_prep").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_missing_epoch").unwrap().into();
 
-    let (sk, domain, _, _, _) = generate_compressed_keys(&new_key_id, &new_key_id, 400);
+    let (sk, domain, _, _, _) = generate_compressed_keys(&new_key_id, &prep_id, 400);
     let crypto_storage = ram_threshold_storage(None);
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    // Seed the old key (storage + meta store) as the production invariant requires
+    let (old_fhe_keys, _compact_pk) = setup_pre_migration_uncompressed(
+        &crypto_storage,
+        &old_key_id,
+        &epoch_id,
+        &sk,
+        &prep_id,
+        &domain,
+    )
+    .await;
+    let meta_store = seeded_meta_store(&old_key_id, &old_fhe_keys.meta_data);
 
     // No CompressedXofKeySet at new_key_id — should fail.
     let result = crypto_storage
@@ -594,7 +615,7 @@ async fn test_copy_compressed_key_legacy_metadata_fails() {
     )
     .await;
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = seeded_meta_store(&old_key_id, &old_fhe_keys.meta_data);
 
     let result = crypto_storage
         .copy_compressed_key_to_original(
@@ -660,7 +681,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     )
     .await;
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = seeded_meta_store(&old_key_id, &original_old_meta);
     let result = crypto_storage
         .copy_compressed_key_to_original(
             &new_key_id,
@@ -727,13 +748,26 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
         );
     }
 
-    // meta_store must be untouched on validation failure (no entry for old_key_id).
+    // meta_store must be unchanged on validation failure: the pre-existing entry
+    // is claimed via lock_entry and rolled back by abort_reservation, leaving the
+    // original (uncompressed) metadata in place — Done(Ok), not removed.
     {
         let guard = meta_store.read().await;
+        let state = guard.retrieve(&old_key_id).unwrap();
         assert!(
-            guard.retrieve(&old_key_id).is_none(),
-            "meta_store must not be mutated for old_key_id={old_key_id} on validation failure while copying from new_key_id={new_key_id}"
+            matches!(state, crate::util::meta_store::EntryState::Done(Ok(_))),
+            "meta_store entry for old_key_id={old_key_id} should still be Done(Ok) on validation failure"
         );
+        match state {
+            crate::util::meta_store::EntryState::Done(Ok(meta)) => assert_eq!(
+                meta.external_signature(),
+                original_old_meta.external_signature(),
+                "meta_store entry for old_key_id={old_key_id} must be unchanged on validation failure while copying from new_key_id={new_key_id}"
+            ),
+            other => panic!(
+                "meta_store should still hold the original Done(Ok) metadata for old_key_id={old_key_id} on validation failure, got {other}"
+            ),
+        }
     }
 }
 
@@ -787,7 +821,7 @@ async fn test_copy_compressed_key_updates_backup_vault() {
     )
     .await;
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = seeded_meta_store(&old_key_id, &old_fhe_keys.meta_data);
     crypto_storage
         .copy_compressed_key_to_original(
             &new_key_id,
