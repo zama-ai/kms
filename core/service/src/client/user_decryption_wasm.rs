@@ -276,21 +276,32 @@ impl Client {
             None => return Err(anyhow_error_and_log("missing server address at ID 1")),
         }
 
+        // Authenticity: the relayer/gateway path carries only the KMS external (EIP-712) signature,
+        // already verified on-chain by gateway consensus, with the internal ECDSA `signature` empty;
+        // the direct-gRPC path carries the internal ECDSA signature. Verify the internal signature
+        // when present; otherwise rely on the gateway-verified external signature plus the link/AEAD
+        // binding below (the opaque `link` must equal payload.digest, and unsigncryption is an AEAD
+        // keyed to the server verf key + receiver id, so a forged response cannot be unsigncrypted).
         if resp.signature.is_empty() {
-            return Err(anyhow_error_and_log(
-                "empty server signature on solana user-decrypt response",
-            ));
+            if resp.external_signature.is_empty() {
+                return Err(anyhow_error_and_log(
+                    "solana user-decrypt response has neither internal nor external signature",
+                ));
+            }
+        } else {
+            let sig = Signature {
+                sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
+            };
+            internal_verify_sig(
+                &DSEP_USER_DECRYPTION,
+                &bc2wrap::serialize(&payload)?,
+                &sig,
+                &cur_verf_key,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("solana user-decrypt response signature invalid ({e})")
+            })?;
         }
-        let sig = Signature {
-            sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
-        };
-        internal_verify_sig(
-            &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&payload)?,
-            &sig,
-            &cur_verf_key,
-        )
-        .inspect_err(|e| tracing::warn!("solana user-decrypt response signature invalid ({e})"))?;
 
         // receiver_id mirrors the server's `solana_user_decrypt_client_id`: keccak256(pubkey)[12..].
         let receiver_id = alloy_primitives::keccak256(solana_user_pubkey)[12..].to_vec();
