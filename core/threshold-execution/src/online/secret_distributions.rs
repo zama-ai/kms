@@ -1,4 +1,4 @@
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use tracing::instrument;
 
 use super::preprocessing::BitPreprocessing;
@@ -68,6 +68,8 @@ impl SecretDistributions for RealSecretDistributions {
         // windows are traversed in reverse to emulate popping bits (historical implementation)
         let res = (0..n)
             .into_par_iter()
+            // Per-sample work is tiny (~bound+2 ring ops); see the constant's doc.
+            .with_min_len(crate::constants::TUNIFORM_GEN_PAR_MIN_CHUNK)
             .map(|e| {
                 let top = required_bits - 1 - e * (bound + 2);
                 //Start with next_random_bit() - 2^bound
