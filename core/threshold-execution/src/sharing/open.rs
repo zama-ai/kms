@@ -15,7 +15,7 @@ use crate::{
             generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
             send_to_all,
         },
-        online::preprocessing::constants::BATCH_SIZE_BITS,
+        constants::ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
         runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     },
 };
@@ -546,7 +546,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 let result: Option<Vec<_>> = if let Some(hints) = &hints {
                     locked_sharings
                         .par_iter()
-                        .with_min_len(2 * BATCH_SIZE_BITS)
+                        .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
                         .map(|sharing| {
                             reconstruct_fn_with_hints(
                                 num_parties,
@@ -562,7 +562,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 } else {
                     locked_sharings
                         .par_iter()
-                        .with_min_len(2 * BATCH_SIZE_BITS)
+                        .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
                         .map(|sharing| {
                             reconstruct_fn(
                                 num_parties,

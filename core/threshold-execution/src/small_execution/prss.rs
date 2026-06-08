@@ -632,7 +632,7 @@ where
         // assembled in parallel. Element `idx` uses `ctr = mask_ctr + idx` (and
         // `ctr + 1`).
         let res = spawn_compute_bound(move || {
-        (0..amount).into_par_iter().with_min_len(crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
         let ctr = mask_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
@@ -679,7 +679,7 @@ where
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = prss_ctr + idx`.
         let res = spawn_compute_bound(move ||{
-            (0..amount).into_par_iter().with_min_len(crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
         let ctr = prss_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
@@ -729,7 +729,7 @@ where
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = przs_ctr + idx`.
         let res = spawn_compute_bound(move ||{
-            (0..amount).into_par_iter().with_min_len(crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
         let ctr = przs_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {

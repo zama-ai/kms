@@ -302,7 +302,7 @@ where
         (0..amount)
             .into_par_iter()
             // Each item is a full (heavy) Shamir reconstruction; see the constant's doc.
-            .with_min_len(crate::constants::D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK)
+            .with_min_len(*crate::constants::D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK)
             .map(|i| {
                 let shares = party_vectors
                     .iter()
