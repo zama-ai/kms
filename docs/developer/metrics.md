@@ -261,8 +261,8 @@ comma-separated `key=value` list — and applied as Prometheus *const-labels* to
 metric call site changes; the distinction is purely a deployment concern.
 
 ```bash
-# Mark all metrics from a kind-CI threshold test deployment
-KMS_METRICS_LABELS="deployment_profile=kind-ci,deployment_type=threshold"
+# The kind overlay sets one const-label (comma-separate more if you need them):
+KMS_METRICS_LABELS="deployment_profile=kind-ci"
 ```
 
 ```promql
@@ -271,16 +271,20 @@ histogram_quantile(0.95, sum by (le) (rate(kms_operation_duration_ms_bucket{depl
 ```
 
 Conventions:
-- `deployment_profile=kind-ci` — marks metrics produced by the kind-cluster integration tests.
-- `deployment_type=threshold|centralized` — separates the two kind test matrices.
-- Keep these **low-cardinality**. A per-run id (`ci_run_id`) is acceptable for ephemeral kind
-  clusters but should not be used in long-lived production deployments.
+- `deployment_profile=kind-ci` — the only const-label the kind overlay applies, marking every metric
+  from the kind-cluster integration tests.
+- The threshold and centralized matrices deploy to separate namespaces (`kms-test-threshold` /
+  `kms-test-centralized`, from the CI `DEPLOYMENT_TYPE`), so their metrics are already told apart by
+  Prometheus' `namespace` label — there is no `deployment_type` const-label. You could add one via
+  `metricsLabels`, but keep any added labels **low-cardinality**.
 
 In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
 env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`
-sets `deployment_profile=kind-ci`. Malformed, invalidly-named, `__`-reserved, or colliding entries
-(names already used by a built-in metric label) are skipped with a warning, so a typo never takes the
-server down. Unset/empty means no extra labels — the default for production.
+sets only `deployment_profile=kind-ci`. (A per-run `ci_run_id` is also attached in kind — but as a
+Prometheus *external label* from `GITHUB_RUN_ID`, not a KMS const-label.) Malformed, invalidly-named,
+`__`-reserved, or colliding entries (names already used by a built-in metric label) are skipped with a
+warning, so a typo never takes the server down. Unset/empty means no extra labels — the default for
+production.
 
 ## Best Practices
 
@@ -368,12 +372,12 @@ This reuses the existing `kms_operation_duration_ms` / `kms_operations_total` /
 new metric name) additionally requires registering it in `CoreMetrics` and extending the
 `metric_families_match_allowlist` allowlist.
 
-**For kind integration tests:** metrics are produced by the long-lived KMS server (which Prometheus
-scrapes), *driven* by the operations a test triggers — not by the ephemeral test client, which cannot
-be scraped. To add a custom metric for a future kind test, instrument the server path it exercises as
-above; the `deployment_profile=kind-ci` label (see "Distinguishing Deployments") is applied
-automatically by the kind deployment, so the new metric is immediately distinguishable as a kind-test
-metric with no extra code in the test itself.
+**For kind integration tests:** the metrics come from the long-lived KMS server pods (scraped by the
+in-cluster kube-prometheus-stack), *driven* by the operations a test triggers. To add a custom metric
+for a future kind test, instrument the server path it exercises as above; the
+`deployment_profile=kind-ci` label (see "Distinguishing Deployments") is applied automatically by the
+kind deployment, so the new metric is immediately distinguishable as a kind-test metric with no extra
+code in the test itself.
 
 ## Testing
 
