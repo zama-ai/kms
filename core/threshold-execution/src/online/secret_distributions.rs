@@ -1,3 +1,4 @@
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use tracing::instrument;
 
 use super::preprocessing::BitPreprocessing;
@@ -59,24 +60,27 @@ impl SecretDistributions for RealSecretDistributions {
         let bound = bound.0;
         let required_bits = n * (bound + 2);
 
-        let mut b = preproc.next_bit_vec(required_bits)?;
+        let b = preproc.next_bit_vec(required_bits)?;
 
-        let mut res = Vec::with_capacity(n);
+        // Each of the `n` samples consumes a disjoint window of `bound + 2` bits,
+        // so the samples can be assembled in parallel.
+        // Note: the ith window is taken from bits [i*(bound+2), (i+1)*(bound+2)), so the top bit of the window is at index (i+1)*(bound+2) - 1 = required_bits - 1 - i*(bound+2)
+        // windows are traversed in reverse to emulate popping bits (historical implementation)
+        let res = (0..n)
+            .into_par_iter()
+            .map(|e| {
+                let top = required_bits - 1 - e * (bound + 2);
+                //Start with next_random_bit() - 2^bound
+                let mut ei = b[top] - Z::from_u128(1 << bound);
 
-        //No need to compute indexes, simply pop the shared bits
-        for _ in 1..=n {
-            //Start with next_random_bit() - 2^bound
-            let first_bit = b.pop().expect("validated sufficient bits");
-            let mut ei = first_bit - Z::from_u128(1 << bound);
-
-            //for j in [1,bound+1], add next_random_bit() << (j-1)
-            //(could do j in [0,bound], but we keep it closer to NIST doc notation)
-            for j in 1..=bound + 1 {
-                let next_bit = b.pop().expect("validated sufficient bits");
-                ei += next_bit * (1 << (j - 1));
-            }
-            res.push(ei);
-        }
+                //for j in [1,bound+1], add next_random_bit() << (j-1)
+                //(could do j in [0,bound], but we keep it closer to NIST doc notation)
+                for j in 1..=bound + 1 {
+                    ei += b[top - j] * (1 << (j - 1));
+                }
+                ei
+            })
+            .collect();
 
         Ok(res)
     }
