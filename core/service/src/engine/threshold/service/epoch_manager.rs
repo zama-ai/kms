@@ -784,9 +784,6 @@ impl<
             .inner
             .update_backup_vault(false, OP_NEW_EPOCH)
             .await;
-        // The caller (the resharing task) propagates this EpochOutput back up
-        // to the outer spawn, which consumes the meta-store permit to record
-        // the terminal-state transition.
         Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
     }
 

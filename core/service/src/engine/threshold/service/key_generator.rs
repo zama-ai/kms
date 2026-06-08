@@ -113,10 +113,7 @@ enum ThresholdKeyGenResult {
     ),
 }
 
-/// Post-DKG, pre-storage bundle produced by `prepare_threshold_keys`. The
-/// `migration_copy_target` is set only on the compressed UseExisting path,
-/// which triggers a post-write copy of the new compressed keyset to the
-/// original key id.
+/// Helper struct for holding key information post-DKG.
 struct PreparedThresholdKeys {
     threshold_fhe_keys: ThresholdFheKeys,
     pub_key_set: PublicKeySet,
@@ -378,22 +375,6 @@ impl<
 
         // we must validate the parameter before passing it into the background process
         internal_keyset_config.validate()?;
-
-        // Existing-keyset reads (tag + compact public key) used by the
-        // UseExisting paths are loaded lazily inside `key_gen_background` so
-        // their failures surface via the meta store, mirroring how DKG
-        // failures are handled. This also matches the centralized analogue.
-
-        // Claim the meta-store entry as the final step before spawning the
-        // background task, which performs the only storage modifications for this
-        // request. Acquiring the permit here — rather than before the fallible
-        // setup above — guarantees that a setup failure returns early without ever
-        // creating an entry, so no orphaned `Pending` entry can be left behind.
-        // This `insert` is also the authoritative existence check behind the
-        // fail-fast read in `inner_key_gen`; under the `serial_lock` held by that
-        // caller it cannot observe a concurrent insert, and the store is unbounded
-        // (never `CapacityFull`), so in practice it only fails if the fail-fast
-        // check was racily bypassed — handled defensively here rather than panicked.
         let meta_permit = add_req_to_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag)
             .await
             .map_err(|e| anyhow::anyhow!("failed to claim meta-store entry for {req_id}: {e}"))?;
@@ -484,7 +465,6 @@ impl<
                             eip712_domain_copy,
                             extra_data,
                             permit,
-                            op_tag,
                         )
                         .await;
                     }
@@ -570,10 +550,7 @@ impl<
         }
 
         // Fail fast: reject before the expensive DKG session setup / run if this
-        // request id is already known to the meta store (in-flight, completed, or
-        // tombstoned). This avoids wasting work on a doomed id; the authoritative,
-        // race-closing claim is the `add_req_to_meta_store` made inside
-        // `launch_dkg` just before the background task is spawned.
+        // request id is already known to the meta store.
         ensure_not_in_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag).await?;
 
         tracing::info!(
@@ -1005,14 +982,9 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
-        op_tag: &'static str,
     ) {
         let _permit = permit;
-        let _ = op_tag; // reserved for future metric tagging consistency
         let start = Instant::now();
-        // Run the cancellable DKG phase. Neither arm of this select! owns the
-        // meta-store permit; it lives in this function scope and is consumed
-        // by one of the terminal arms below.
         let crypto_storage_for_dkg = crypto_storage.clone();
         let dkg_outcome: Result<(RequestId, _), String> = tokio::select! {
             biased;
@@ -1112,7 +1084,6 @@ impl<
             }
         };
 
-        // write_decompression_key consumes the permit via update_meta_store internally.
         if let Err(e) = crypto_storage
             .inner
             .write_decompression_key(req_id, info, decompression_key, meta_store, meta_permit)
@@ -1251,7 +1222,7 @@ impl<
         rate_limiter_permit: OwnedSemaphorePermit,
         op_tag: &'static str,
     ) {
-        let _rate_limiter_permit = rate_limiter_permit;
+        let _rate_limiter_permit = rate_limiter_permit; // keep the permit alive for the duration of the keygen
         let start = Instant::now();
 
         let outcome: Result<(RequestId, ThresholdKeyGenResult), String> = tokio::select! {

@@ -75,8 +75,6 @@ pub async fn crs_gen_impl<
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID.
-    // The meta-store permit is threaded into crs_gen_background and consumed
-    // by one of: the abort arm, the generation-error arm, or write_crs.
     let meta_permit =
         add_req_to_meta_store(&service.crs_meta_map, &verified.req_id, op_tag).await?;
 
@@ -128,9 +126,6 @@ pub async fn crs_gen_impl<
                 op_tag,
             )
             .await;
-            // Cleanup runs on every termination (normal completion, generation
-            // error, or abort) — the cancellation handling now lives inside
-            // `crs_gen_background`.
             ongoing.lock().await.remove(&req_id);
         }
         .instrument(tracing::Span::current()),
@@ -237,12 +232,8 @@ pub async fn abort_crs_gen_impl<
 
 /// Background task for CRS generation.
 ///
-/// Owns the meta-store permit for the entire lifetime of the request. The
-/// cancellation token is checked only during the long-running
-/// [`async_generate_crs`] phase via an inner `tokio::select!`; once
-/// generation succeeds, the disk-write phase is intentionally uncancellable
-/// so we never end up with "purged material on disk" + "Done state in
-/// meta store".
+/// Owns the meta-store permit for the entire lifetime of the request,
+/// which is used to dictate ownership of storage related to the request ID.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
@@ -264,7 +255,6 @@ pub(crate) async fn crs_gen_background<
 ) {
     let start = tokio::time::Instant::now();
 
-    // Race the long-running generation against cancellation.
     let outcome: Result<(tfhe::zk::CompactPkeCrs, CrsGenMetadata), String> = tokio::select! {
         biased;
         () = cancel_token.cancelled() => Err(format!("CRS generation aborted for request {req_id}")),
@@ -297,8 +287,6 @@ pub(crate) async fn crs_gen_background<
             let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
         }
         Ok((pp, crs_info)) => {
-            // write_crs consumes the permit via update_meta_store internally
-            // (Ok → update_ok_req_in_meta_store, Err → update_err).
             if let Err(e) = crypto_storage
                 .inner
                 .write_crs(req_id, epoch_id, pp, crs_info, meta_store, permit, op_tag)

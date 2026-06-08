@@ -92,10 +92,6 @@ pub async fn key_gen_impl<
 
     // Check for existence of request preprocessing ID
     // also check that the request ID is not used yet
-    // If all is ok we claim the request ID in the meta store. The claim itself
-    // is made later (just before spawning the background task) so that the
-    // fallible setup below cannot leave an orphaned `Pending` entry; here we only
-    // do a fail-fast existence check and gather the parameters.
     let (params, permit) = {
         // If we're in insecure mode, we skip removing preprocessed material since it may not exist
         let params = if !insecure {
@@ -103,7 +99,7 @@ pub async fn key_gen_impl<
                 retrieve_from_meta_store(&service.preprocessing_meta_store, &preproc_id, op_tag)
                     .await
                     .map_err(|e| {
-                        // Remap the error to include the correct request ID
+                        // Remap the error to include the correct request ID (key gen ID instead of preproc ID)
                         MetricedError::new(
                             op_tag,
                             Some(req_id),
@@ -136,8 +132,7 @@ pub async fn key_gen_impl<
         }
 
         // Fail fast: reject before the remaining setup if this request id is
-        // already known to the meta store (in-flight, completed, or tombstoned).
-        // The authoritative, race-closing claim is made just before the spawn.
+        // already known to the meta store.
         ensure_not_in_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
 
         (params, rate_limiter_permit)
@@ -156,14 +151,6 @@ pub async fn key_gen_impl<
         )
     })?;
 
-    // Claim the meta-store entry now: after the fallible setup above (so a setup
-    // failure cannot leave an orphaned `Pending` entry) and before any storage
-    // modification, which only happens in the background task spawned below.
-    // Everything between here and the spawn is infallible, so the permit cannot
-    // be dropped without being threaded into the task. This `insert` is also the
-    // authoritative existence check behind the earlier fail-fast read, and (since
-    // the central path has no serial lock) preserves the precise gRPC code
-    // (e.g. `AlreadyExists`) when two requests race on the same id.
     let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
 
     let token = CancellationToken::new();
@@ -371,7 +358,6 @@ pub(crate) async fn key_gen_background<
     let start = tokio::time::Instant::now();
     match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
-            // Race the long-running fhe-key generation against the cancel token.
             let outcome = tokio::select! {
                 biased; // favor the cancel branch to reduce wasted work on cancellation
                 () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),

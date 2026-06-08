@@ -357,13 +357,13 @@ pub async fn get_public_decryption_result_impl<
     })?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let arc = retrieve_from_meta_store(
+    let dec_res = retrieve_from_meta_store(
         &service.pub_dec_meta_store,
         &request_id,
         OP_PUBLIC_DECRYPT_RESULT,
     )
     .await?;
-    let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
+    let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*dec_res).clone();
 
     if retrieved_req_id != request_id {
         return Err(MetricedError::new(

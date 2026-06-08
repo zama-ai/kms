@@ -235,8 +235,7 @@ impl<
                     insecure,
                 )
                 .await;
-                // Cleanup runs on every termination (normal completion,
-                // generation error, or abort).
+                // Cleanup runs on every termination
                 ongoing.lock().await.remove(&req_id);
             }
             .instrument(tracing::Span::current()),
@@ -364,10 +363,6 @@ impl<
         let pke_params = params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
-        // Build the long-running generation as a single async block, then race
-        // it against the cancellation token in an inner select!. Only the
-        // long-running phase is cancellable; the disk-write phase is
-        // intentionally uncancellable to avoid torn states.
         let extra_data_for_compute = extra_data.clone();
         let domain_for_compute = eip712_domain.clone();
         let generate_pp = async {
