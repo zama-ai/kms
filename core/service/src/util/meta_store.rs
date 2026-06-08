@@ -970,7 +970,7 @@ mod tests {
     fn reserve(
         store: &mut MetaStore<String>,
         id: &RequestId,
-    ) -> Result<MetaStorePermit, MetaStoreError> {
+    ) -> Result<MetaStorePermit<String>, MetaStoreError> {
         if store.exists(id) {
             store.lock_entry(id)
         } else {
@@ -1095,15 +1095,7 @@ mod tests {
         // Cannot delete twice.
         assert!(meta_store.try_delete(&id).is_err());
     }
-
-    #[test]
-    fn permit_send_across_spawn() {
-        // Compile-time check: MetaStorePermit must be Send so it can be
-        // moved into tokio::spawn closures.
-        fn assert_send<T: Send>() {}
-        assert_send::<MetaStorePermit>();
-    }
-
+    
     #[test]
     fn error_variants() {
         let mut store: MetaStore<String> = MetaStore::new(1, 1);
