@@ -209,17 +209,6 @@ fn solana_user_decrypt_client_id(solana_pubkey: &[u8; 32]) -> alloy_primitives::
     alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_pubkey)[12..])
 }
 
-/// Placeholder EIP-712 domain for the Solana user-decryption response payload. On the Solana
-/// path the response binding is the keccak `link` (see `compute_link_solana`), which is passed
-/// opaquely into signcryption; the domain is response metadata only (no EVM verifying contract
-/// exists). Constructed inline rather than reusing the test-only `dummy_domain`.
-fn solana_user_decrypt_response_domain() -> alloy_sol_types::Eip712Domain {
-    alloy_sol_types::eip712_domain!(
-        name: "SolanaUserDecryption",
-        version: "1",
-    )
-}
-
 pub(crate) fn validate_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
@@ -292,8 +281,9 @@ fn unpack_user_decrypt_req(
     // enforced by the kms-connector before this call — exactly as the gateway enforces the EVM
     // ACL before the EVM path — so here we only bind the response to the request via the Solana
     // link (`compute_link_solana`). The link is passed opaquely into signcryption, so the
-    // binding is sound as long as the client recomputes the same link; the EIP-712 domain is
-    // response metadata only in the centralized path, so a placeholder domain is used.
+    // binding is sound as long as the client recomputes the same link. The response cert is the
+    // standard secp256k1 EIP-712 the gateway verifies, signed under the gateway's `Decryption`
+    // domain (`req.domain`) — see the domain note at the return below.
     if let Some(solana_pubkey) = parse_solana_user_decrypt_pubkey(&req.client_address) {
         let mut handles = Vec::with_capacity(req.typed_ciphertexts.len());
         for c in &req.typed_ciphertexts {
@@ -322,6 +312,13 @@ fn unpack_user_decrypt_req(
                     "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {e}"
                 )
             })?;
+        // The KMS signs `UserDecryptResponseVerification` under the gateway's `Decryption`
+        // EIP-712 domain (name/version/chainId/verifyingContract, carried in `req.domain`) so the
+        // gateway's `userDecryptionResponse` recovers the registered KMS signer on-chain. The
+        // response cert is the standard secp256k1 EIP-712 — identical to EVM; only the user
+        // *authorization* seam differs (ed25519, already enforced by the connector), so there is
+        // no user EIP-712 to verify here.
+        let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
         return Ok((
             req.typed_ciphertexts.clone(),
             link,
@@ -331,7 +328,7 @@ fn unpack_user_decrypt_req(
             key_id,
             context_id,
             epoch_id,
-            solana_user_decrypt_response_domain(),
+            response_domain,
             req.extra_data.clone(),
         ));
     }
