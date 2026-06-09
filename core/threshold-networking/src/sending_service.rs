@@ -493,6 +493,15 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             self.conf.get_max_waiting_time_for_message_queue(),
         );
         let mut returned_packet = loop {
+            // packet : Option<Option<NetworkRoundValue>>
+            // Outer Option layer is to signal whether we received something from the channel
+            // Inner Option layer is to signal whether the channel is closed
+            // i.e:
+            // - None: we keep waiting for messages (and log a warn)
+            // - Some(None): the channel is closed, we return an error
+            // - Some(Some(packet)): we received a packet, we break the loop and process it
+            // Note: if we know a sender has completed its session, we assume the connection with
+            // it is synchronous, and thus we wait for the timeout time to ensure there is no more messages lingering, before returning an error
             let packet = tokio::select! {
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
