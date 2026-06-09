@@ -88,15 +88,33 @@ async fn solana_user_decrypt_live() {
     let (signing, pubkey) = load_solana_keypair(&keypair_path);
     let handle = alloy_primitives::hex::decode(handle_hex.trim_start_matches("0x")).unwrap();
     let handle32: [u8; 32] = handle.try_into().expect("handle must be 32 bytes");
-    let start_ts = U256::from(1_700_000_000u64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let start_ts = U256::from(now - 60); // small buffer so startTimestamp <= block time
     let duration_days = U256::from(30u64);
     let msg = auth_message(contracts_chain_id, &pk_bytes, &[handle32], start_ts, duration_days);
     let signature = signing.sign(&msg);
 
+    // extra_data v1 = 0x01 || context_id (32-byte BE): the KMS context the connector validates +
+    // routes to (same versioned format the EVM user-decrypt path uses; plain 0x00 is rejected).
+    let context_id = U256::from_str_radix(
+        &env_or(
+            "SOLANA_UD_CONTEXT_ID",
+            "3166189940082864718613269121331309980362851143201109172953918312716374638593",
+        ),
+        10,
+    )
+    .unwrap();
+    let mut extra_data = vec![0x01u8];
+    extra_data.extend_from_slice(&context_id.to_be_bytes::<32>());
+    let extra_data_hex = format!("0x{}", alloy_primitives::hex::encode(&extra_data));
+
     // 3. Build + POST the user-decrypt request.
     let user_b58 = bs58::encode(pubkey).into_string();
     let body = serde_json::json!({
-        "handleContractPairs": [{ "ctHandle": format!("0x{}", alloy_primitives::hex::encode(handle32)),
+        "handleContractPairs": [{ "handle": format!("0x{}", alloy_primitives::hex::encode(handle32)),
                                   "contractAddress": user_b58 }],
         "requestValidity": { "startTimestamp": start_ts.to_string(), "durationDays": duration_days.to_string() },
         "contractsChainId": contracts_chain_id.to_string(),
@@ -104,7 +122,7 @@ async fn solana_user_decrypt_live() {
         "userAddress": user_b58,
         "signature": alloy_primitives::hex::encode(signature.to_bytes()),
         "publicKey": alloy_primitives::hex::encode(&pk_bytes),
-        "extraData": "0x00",
+        "extraData": extra_data_hex,
     });
     let http = reqwest::Client::new();
     let post = http.post(format!("{relayer}/v2/user-decrypt")).json(&body).send().await.unwrap();
