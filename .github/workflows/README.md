@@ -84,6 +84,18 @@ Builds Docker images **once per PR** and fans out to dependent workflows. Saves 
 
 Concurrency: groups by PR head ref, cancels in-progress runs.
 
+### Opt-in kind metrics (`kind-metrics` label)
+
+When the PR carries the `kind-metrics` label, `kind-testing` installs a lean
+kube-prometheus-stack in the kind cluster and remote-writes the KMS metrics
+(names `ci_`-prefixed, const-label `deployment_profile=kind-ci`, external label
+`ci_run_id`) to Grafana Cloud using the `GRAFANA_CLOUD_PROM_*` secrets.
+
+Note: adding the label does **not** start a run by itself — `labeled` events
+only trigger CI for the `docker` and `pr-preview-*` labels. Label the PR first,
+then push (or re-run the workflow) so the label is present in the run's event
+payload.
+
 ---
 
 ## Main Workflow (`main.yml`)
@@ -308,6 +320,8 @@ graph TD
 ## Best Practices
 
 To trigger a PR preview, add a `pr-preview-{type}` label. Choose `threshold` (4-party, fastest, most common) or `centralized` (1-party, fast smoke); `*WithEnclave` variants are slower (Nitro provisioning).
+
+To ship kind-test metrics to Grafana Cloud, add the `kind-metrics` label and then push or re-run (see "Opt-in kind metrics" above).
 
 To run a deployment locally:
 
