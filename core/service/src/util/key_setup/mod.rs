@@ -705,7 +705,8 @@ where
             &mut priv_storages[storage_index],
             request_id,
             deterministic,
-            storage_index + 1,
+            // 1-based party id for the 0-based storage index; saturating, so it cannot be 0.
+            std::num::NonZeroUsize::MIN.saturating_add(storage_index),
             subject,
             tls_wildcard,
         )
@@ -720,13 +721,14 @@ where
 /// This is used by deployment paths where the storage backend already selects
 /// the physical party destination (for example with a per-party storage
 /// prefix). The `party_id` remains the logical 1-based party identifier used
-/// for deterministic test seeding and certificate/log context.
+/// for deterministic test seeding and certificate/log context; the
+/// `NonZeroUsize` type enforces at the boundary that it cannot be 0.
 pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     request_id: &RequestId,
     deterministic: bool,
-    party_id: usize,
+    party_id: std::num::NonZeroUsize,
     subject: String,
     tls_wildcard: bool,
 ) -> anyhow::Result<()>
@@ -734,7 +736,7 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    let mut rng = get_rng(deterministic, Some(party_id as u64));
+    let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
 
     // Check if keys already exist with error handling
     let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
