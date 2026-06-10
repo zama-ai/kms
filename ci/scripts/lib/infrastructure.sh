@@ -150,11 +150,15 @@ deploy_kube_prometheus_stack() {
     # cluster, which is acceptable for CI.
     local REMOTE_WRITE_URL_FILE
     REMOTE_WRITE_URL_FILE="$(mktemp)"
-    # Remove the URL file when this function returns, success or failure.
-    trap 'rm -f "${REMOTE_WRITE_URL_FILE}"' RETURN
     chmod 600 "${REMOTE_WRITE_URL_FILE}"
     printf '%s' "${GRAFANA_CLOUD_PROM_URL}" > "${REMOTE_WRITE_URL_FILE}"
 
+    # Capture helm's status instead of relying on errexit so the URL file is
+    # removed on success and failure alike. (A RETURN trap is not an option:
+    # it would persist after this function returns and re-fire on the caller's
+    # return, where the local path variable no longer exists — fatal under the
+    # script's set -u.)
+    local HELM_STATUS=0
     helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         --version "${KUBE_PROMETHEUS_STACK_VERSION}" \
         --namespace monitoring \
@@ -162,7 +166,9 @@ deploy_kube_prometheus_stack() {
         -f "${REPO_ROOT}/ci/kube-testing/infra/kube-prometheus-stack-values.yaml" \
         --set-file "prometheus.prometheusSpec.remoteWrite[0].url=${REMOTE_WRITE_URL_FILE}" \
         --set-string "prometheus.prometheusSpec.externalLabels.ci_run_id=${GITHUB_RUN_ID:-local}" \
-        --wait --timeout 5m
+        --wait --timeout 5m || HELM_STATUS=$?
+    rm -f "${REMOTE_WRITE_URL_FILE}"
+    return "${HELM_STATUS}"
 }
 
 #=============================================================================
