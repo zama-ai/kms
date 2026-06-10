@@ -92,9 +92,10 @@ kube-prometheus-stack in the kind cluster and remote-writes the KMS metrics
 `ci_run_id`) to Grafana Cloud using the `GRAFANA_CLOUD_PROM_*` secrets.
 
 Note: adding the label does **not** start a run by itself — `labeled` events
-only trigger CI for the `docker` and `pr-preview-*` labels. Label the PR first,
-then push (or re-run the workflow) so the label is present in the run's event
-payload.
+only trigger CI for the `docker` and `pr-preview-*` labels — and re-running an
+existing workflow does not help either, because re-runs replay the original
+event payload from before the label existed. Label the PR first, then push a
+new commit (or close and reopen the PR) so a fresh event carries the label.
 
 ---
 
@@ -321,7 +322,7 @@ graph TD
 
 To trigger a PR preview, add a `pr-preview-{type}` label. Choose `threshold` (4-party, fastest, most common) or `centralized` (1-party, fast smoke); `*WithEnclave` variants are slower (Nitro provisioning).
 
-To ship kind-test metrics to Grafana Cloud, add the `kind-metrics` label and then push or re-run (see "Opt-in kind metrics" above).
+To ship kind-test metrics to Grafana Cloud, add the `kind-metrics` label and then push a new commit (see "Opt-in kind metrics" above — re-runs replay the pre-label event payload).
 
 To run a deployment locally:
 
