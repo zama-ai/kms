@@ -41,6 +41,16 @@ setup_infrastructure() {
 
         deploy_tkms_infra           # S3 buckets, IAM roles, service accounts
         deploy_registry_credentials # GHCR access via sync-secrets
+
+        # --enable-metrics is kind-only: kube-prometheus-stack (and with it the
+        # ServiceMonitor CRD the kms-core chart renders against) is only
+        # installed on kind targets above. Force it off so deploy_kms (same
+        # shell, runs after) does not enable a ServiceMonitor the cluster has
+        # no CRD for, which would fail the Helm deploy.
+        if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+            log_warn "--enable-metrics is only supported on kind targets; disabling for TARGET=${TARGET}."
+            export ENABLE_METRICS="false"
+        fi
     fi
 }
 
@@ -103,11 +113,16 @@ KUBE_PROMETHEUS_STACK_VERSION="${KUBE_PROMETHEUS_STACK_VERSION:-77.6.2}"
 deploy_kube_prometheus_stack() {
     log_info "Deploying kube-prometheus-stack (metrics enabled)..."
 
-    # Require the full credential set; a partial set would create an unusable
-    # auth secret and fail remote-write at runtime instead of failing fast here.
+    # Require the full credential set: a partial set would create an unusable
+    # auth secret that only fails later, at remote-write time. Skip the install
+    # (and force metrics off below) instead.
     if [[ -z "${GRAFANA_CLOUD_PROM_URL:-}" || -z "${GRAFANA_CLOUD_PROM_USERNAME:-}" || -z "${GRAFANA_CLOUD_PROM_PASSWORD:-}" ]]; then
         log_warn "GRAFANA_CLOUD_PROM_URL/USERNAME/PASSWORD not all set; skipping kube-prometheus-stack install."
         log_warn "Metrics will not be remote-written. Set all GRAFANA_CLOUD_PROM_* secrets to enable."
+        # Force metrics off for the rest of the deploy so deploy_kms (same shell, runs after)
+        # does not enable the kms-core ServiceMonitor — its CRD ships with the
+        # kube-prometheus-stack we just skipped, so the Helm deploy would fail without it.
+        export ENABLE_METRICS="false"
         return 0
     fi
 
@@ -115,24 +130,45 @@ deploy_kube_prometheus_stack() {
     kubectl create namespace monitoring \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    # Basic-auth secret referenced by Prometheus remoteWrite[].basicAuth.
-    kubectl create secret generic grafana-cloud-prom-auth \
-        --namespace monitoring \
-        --from-literal=username="${GRAFANA_CLOUD_PROM_USERNAME:-}" \
-        --from-literal=password="${GRAFANA_CLOUD_PROM_PASSWORD:-}" \
-        --dry-run=client -o yaml | kubectl apply -f -
+    # Basic-auth secret referenced by Prometheus remoteWrite[].basicAuth. Feed the
+    # credentials via stdin (env-file) instead of --from-literal so they never appear
+    # in argv (/proc/<pid>/cmdline is world-readable and shows up in `ps`).
+    printf 'username=%s\npassword=%s\n' \
+        "${GRAFANA_CLOUD_PROM_USERNAME:-}" "${GRAFANA_CLOUD_PROM_PASSWORD:-}" |
+        kubectl create secret generic grafana-cloud-prom-auth \
+            --namespace monitoring \
+            --from-env-file=/dev/stdin \
+            --dry-run=client -o yaml | kubectl apply -f -
 
     helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
     helm repo update prometheus-community
 
+    # Pass the remote-write URL via --set-file so the URL (a GitHub secret like
+    # the credentials above) never appears in helm's argv (/proc/<pid>/cmdline
+    # is world-readable and shows up in `ps`). It still ends up in the Helm
+    # release values and the rendered Prometheus CR inside the ephemeral kind
+    # cluster, which is acceptable for CI.
+    local REMOTE_WRITE_URL_FILE
+    REMOTE_WRITE_URL_FILE="$(mktemp)"
+    chmod 600 "${REMOTE_WRITE_URL_FILE}"
+    printf '%s' "${GRAFANA_CLOUD_PROM_URL}" > "${REMOTE_WRITE_URL_FILE}"
+
+    # Capture helm's status instead of relying on errexit so the URL file is
+    # removed on success and failure alike. (A RETURN trap is not an option:
+    # it would persist after this function returns and re-fire on the caller's
+    # return, where the local path variable no longer exists — fatal under the
+    # script's set -u.)
+    local HELM_STATUS=0
     helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         --version "${KUBE_PROMETHEUS_STACK_VERSION}" \
         --namespace monitoring \
         --create-namespace \
         -f "${REPO_ROOT}/ci/kube-testing/infra/kube-prometheus-stack-values.yaml" \
-        --set-string "prometheus.prometheusSpec.remoteWrite[0].url=${GRAFANA_CLOUD_PROM_URL}" \
+        --set-file "prometheus.prometheusSpec.remoteWrite[0].url=${REMOTE_WRITE_URL_FILE}" \
         --set-string "prometheus.prometheusSpec.externalLabels.ci_run_id=${GITHUB_RUN_ID:-local}" \
-        --wait --timeout 5m
+        --wait --timeout 5m || HELM_STATUS=$?
+    rm -f "${REMOTE_WRITE_URL_FILE}"
+    return "${HELM_STATUS}"
 }
 
 #=============================================================================

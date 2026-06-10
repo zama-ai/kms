@@ -39,10 +39,10 @@
 //!
 //! ## Metrics
 //!
-//! These tests only drive operations; the timing signal is emitted by the long-lived KMS server pod
-//! as Prometheus metrics (e.g. `kms_operation_duration_ms`) and pulled by Prometheus/Grafana — the
-//! ephemeral client is not scraped. In kind-CI every metric is tagged `deployment_profile="kind-ci"`.
-//! To add one, instrument the server path (see `docs/developer/metrics.md`); no metric code goes here.
+//! This test only drives operations; with metrics enabled, the resulting metrics are emitted by the
+//! KMS server pods and scraped by the in-cluster kube-prometheus-stack (kms-core ServiceMonitor,
+//! names `ci_`-prefixed), then remote-written to Grafana Cloud tagged `deployment_profile=kind-ci`.
+//! See `docs/developer/metrics.md`.
 
 #![cfg(feature = "kind_tests")]
 

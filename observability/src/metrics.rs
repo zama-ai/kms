@@ -1,5 +1,5 @@
 use crate::metrics_names::{
-    TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    TAG_OPERATION, TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     TAG_USER_DECRYPTION_KIND,
 };
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
@@ -8,8 +8,12 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// Label keys for the duration histogram (must match all tag keys used by callers)
+/// Label keys for the duration histogram (must match all tag keys used by callers).
+/// The first key (`operation`) holds the primary operation name (e.g. OP_KEYGEN_REQUEST),
+/// matching the label key used by the `*_operations_total` counters and the payload size
+/// histogram. The second key (`operation_type`) is for subtypes such as OP_TYPE_TOTAL.
 const DURATION_LABEL_KEYS: &[&str] = &[
+    TAG_OPERATION,
     TAG_OPERATION_TYPE,
     TAG_PARTY_ID,
     TAG_TFHE_TYPE,
@@ -18,7 +22,8 @@ const DURATION_LABEL_KEYS: &[&str] = &[
 ];
 
 /// Buckets (ms) for `kms_operation_duration_ms`. Durations are recorded in whole milliseconds,
-/// so sub-ms ops are observed as `0`; KMS ops can still range up to minutes. Prometheus'
+/// so sub-ms ops are observed as `0`; KMS ops can still range up to minutes. Prometheus' default
+/// histogram buckets are tuned for seconds and would put most ms-valued observations in `+Inf`.
 const DURATION_BUCKETS_MS: &[f64] = &[
     1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 30_000.0,
     60_000.0, 120_000.0, 300_000.0,
@@ -108,11 +113,12 @@ impl CoreMetrics {
     /// Build metrics with `config`, registering every metric in `registry`. Production uses the
     /// process-global default registry via [`CoreMetrics::with_config`]; tests pass a fresh registry
     /// so a single instance can be inspected in isolation without colliding with that shared state.
-    fn with_config_in_registry(config: MetricsConfig, registry: &prometheus::Registry) -> Self {
+    fn with_config_in_registry(mut config: MetricsConfig, registry: &prometheus::Registry) -> Self {
         let prefix = &config.prefix;
 
         // Apply the configured labels as const-labels to every metric, so the registration sites
         // below need no change. See `MetricsConfig::from_env`.
+        filter_metrics_labels(&mut config.labels);
         let const_labels: HashMap<String, String> = config.labels.clone().into_iter().collect();
         let opts = |name: String, help: &'static str| {
             Opts::new(name, help).const_labels(const_labels.clone())
@@ -453,10 +459,15 @@ impl CoreMetrics {
         let mut values: Vec<&str> = vec![""; DURATION_LABEL_KEYS.len()];
         values[0] = operation.as_ref();
         for (key, value) in extra_tags {
-            if let Some(idx) = DURATION_LABEL_KEYS.iter().position(|k| k == key) {
-                values[idx] = value;
-            } else {
-                warn!(key, "ignoring unknown duration metric tag key");
+            match DURATION_LABEL_KEYS.iter().position(|k| k == key) {
+                // Index 0 is the `operation` label, always filled from `operation` above; a tag
+                // must not be able to override it and mislabel the series.
+                Some(0) => warn!(
+                    key,
+                    "ignoring duration metric tag that would override the operation label"
+                ),
+                Some(idx) => values[idx] = value,
+                None => warn!(key, "ignoring unknown duration metric tag key"),
             }
         }
         self.duration_histogram
@@ -477,6 +488,11 @@ impl CoreMetrics {
         self.record_duration_with_tags(operation, duration, tags)
     }
 
+    /// Record a serialized payload size (bytes) into `kms_payload_size_bytes`, keyed by the
+    /// `operation` label. Storage write paths pass the element's type name (`<T as Named>::NAME`),
+    /// so sizes of distinct persisted objects (keys, keysets, …) stay distinguishable, and record
+    /// only after a successful write so the histogram reflects payloads actually persisted.
+    /// `size == 0` is ignored.
     pub fn observe_size(&self, operation: impl AsRef<str>, size: f64) {
         if size == 0.0 {
             return;
@@ -484,6 +500,15 @@ impl CoreMetrics {
         self.size_histogram
             .with_label_values(&[operation.as_ref()])
             .observe(size);
+    }
+
+    /// Number of samples recorded into `kms_payload_size_bytes` for `operation` (the element type
+    /// name on storage write paths). Cumulative for the process; intended for tests asserting that
+    /// a write path recorded its payload size.
+    pub fn payload_size_sample_count(&self, operation: impl AsRef<str>) -> u64 {
+        self.size_histogram
+            .with_label_values(&[operation.as_ref()])
+            .get_sample_count()
     }
 
     /// Start building a duration guard for timing an operation
@@ -721,16 +746,22 @@ impl MetricsConfig {
     /// metrics so a scraper can tell them from production. Malformed/invalidly-named entries are
     /// skipped with a warning; unset/empty means no labels.
     pub fn from_env() -> Self {
+        Self::from_env_value(std::env::var(METRICS_LABELS_ENV).ok())
+    }
+
+    /// [`from_env`](Self::from_env) with the raw env value passed in, so tests can exercise the
+    /// env-to-config path without mutating the process environment.
+    fn from_env_value(raw: Option<String>) -> Self {
         Self {
-            labels: parse_metrics_labels(std::env::var(METRICS_LABELS_ENV).ok().as_deref()),
+            labels: parse_metrics_labels(raw.as_deref()),
             ..Self::default()
         }
     }
 }
 
-/// Parse a `key=value,key=value` label list. Empty, `=`-less, empty-key, invalidly-named, or
-/// reserved/colliding entries (see [`is_reserved_label_name`]) are skipped with a warning — a bad
-/// env var must not crash metric registration.
+/// Parse a `key=value,key=value` label list. Empty, `=`-less, empty-key, empty-value,
+/// invalidly-named, or reserved/colliding entries (see [`is_reserved_label_name`]) are skipped with
+/// a warning — a bad env var must not crash metric registration.
 fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
     let Some(raw) = raw else {
@@ -749,15 +780,13 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
             continue;
         };
         let (key, value) = (key.trim(), value.trim());
-        if !is_valid_label_name(key) {
-            warn!(key, "ignoring metrics label with invalid label name");
+        if value.is_empty() {
+            // Prometheus treats an empty label value as the label being absent, so the
+            // configured label would silently disappear from every exported series.
+            warn!(key, "ignoring metrics label with empty value");
             continue;
         }
-        if is_reserved_label_name(key) {
-            warn!(
-                key,
-                "ignoring metrics label that collides with a built-in metric label name"
-            );
+        if !is_acceptable_label_key(key) {
             continue;
         }
         labels.insert(key.to_string(), value.to_string());
@@ -765,11 +794,32 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
     labels
 }
 
+/// Drop invalid or reserved keys from `labels` in place (warns on each rejection).
+fn filter_metrics_labels(labels: &mut BTreeMap<String, String>) {
+    labels.retain(|key, _| is_acceptable_label_key(key));
+}
+
+/// Returns whether `key` may be used as a configured const-label. Invalid or reserved names are
+/// logged and rejected so metric registration cannot panic.
+fn is_acceptable_label_key(key: &str) -> bool {
+    if !is_valid_label_name(key) {
+        warn!(key, "ignoring metrics label with invalid label name");
+        return false;
+    }
+    if is_reserved_label_name(key) {
+        warn!(
+            key,
+            "ignoring metrics label that collides with a built-in metric label name"
+        );
+        return false;
+    }
+    true
+}
+
 /// Returns whether `name` is a valid, non-reserved Prometheus label name. Valid names match
 /// `[a-zA-Z_][a-zA-Z0-9_]*`; names beginning with `__` are reserved by Prometheus for internal use
 /// and are rejected so a configured label can never shadow them.
 fn is_valid_label_name(name: &str) -> bool {
-    // `__`-prefixed names are reserved by Prometheus.
     if name.starts_with("__") {
         return false;
     }
@@ -781,12 +831,12 @@ fn is_valid_label_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Label names already used by built-in metrics, as variable labels (`operation`/`error`, the
-/// duration tags in [`DURATION_LABEL_KEYS`]) or const-labels (`version` on the version gauge). A
-/// configured const-label colliding with one of these makes Prometheus reject the metric at
-/// registration — which would panic the process — so such entries are skipped instead.
+/// Label names already reserved by built-in metrics: `error`, the duration tags in
+/// [`DURATION_LABEL_KEYS`] (which include `operation`), the `version` const-label, and the `le`
+/// histogram bucket-boundary label. A configured const-label colliding with any of these would make
+/// Prometheus reject the metric at registration (panicking the `.expect`), so it is skipped instead.
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version"];
+    const EXTRA_RESERVED: &[&str] = &["error", "version", "le"];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
@@ -866,9 +916,11 @@ mod tests {
             "_test_cardinality",
             Duration::from_millis(1),
             &[
+                (TAG_OPERATION_TYPE, "total".to_string()), // exercise the subtype label (now at its own key)
                 (TAG_PARTY_ID, "1".to_string()),
                 (TAG_TFHE_TYPE, "fhe_uint8".to_string()),
                 (TAG_PUBLIC_DECRYPTION_KIND, "test".to_string()),
+                (TAG_USER_DECRYPTION_KIND, "test".to_string()),
             ],
         );
 
@@ -881,7 +933,10 @@ mod tests {
             .iter()
             .find(|metric| {
                 metric.get_label().iter().any(|label| {
-                    label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
+                    // Locate the specific seeded sample by its primary operation name.
+                    // The primary op lives under the `operation` label (to match counters + docs
+                    // and to leave `operation_type` free for subtypes like "total").
+                    label.name() == TAG_OPERATION && label.value() == "_test_cardinality"
                 })
             })
             .expect("seeded duration sample should be present");
@@ -909,9 +964,6 @@ mod tests {
             );
         }
 
-        // No unexpected dynamic keys: every exported key must be a declared duration label or one of
-        // the process-constant const-labels. Replaces the old hard `<= 5` cap, which the (variable
-        // number of) configured const-labels would otherwise trip.
         let configured: BTreeSet<&str> = METRICS.labels().keys().map(String::as_str).collect();
         for &key in &actual_labels {
             assert!(
@@ -939,14 +991,11 @@ mod tests {
 
     #[test]
     fn parse_metrics_labels_skips_malformed_and_empty() {
-        // Unset / empty / whitespace-only yields no labels.
         assert!(parse_metrics_labels(None).is_empty());
         assert!(parse_metrics_labels(Some("")).is_empty());
         assert!(parse_metrics_labels(Some("   ")).is_empty());
 
-        // `noequals` (no '='), `=novalue` (empty key), `1bad=x` (invalid name) and empty items are
-        // all skipped; only `good=ok` survives.
-        let labels = parse_metrics_labels(Some("noequals,=novalue,1bad=x,good=ok,,"));
+        let labels = parse_metrics_labels(Some("noequals,=novalue,emptyval=,1bad=x,good=ok,,"));
         assert_eq!(labels.get("good").map(String::as_str), Some("ok"));
         assert_eq!(labels.len(), 1);
     }
@@ -960,7 +1009,6 @@ mod tests {
         assert!(!is_valid_label_name("1leading_digit"));
         assert!(!is_valid_label_name("has-dash"));
         assert!(!is_valid_label_name("has.dot"));
-        // `__`-prefixed names are reserved by Prometheus.
         assert!(!is_valid_label_name("__reserved"));
     }
 
@@ -969,16 +1017,15 @@ mod tests {
         assert!(is_reserved_label_name("operation"));
         assert!(is_reserved_label_name("error"));
         assert!(is_reserved_label_name("version"));
+        assert!(is_reserved_label_name("le"));
         assert!(is_reserved_label_name(TAG_OPERATION_TYPE));
         assert!(!is_reserved_label_name("deployment_profile"));
     }
 
     #[test]
     fn parse_metrics_labels_skips_reserved_and_colliding_names() {
-        // Names that collide with built-in metric labels (which would panic at registration) and
-        // `__`-reserved names are dropped; a valid custom label still survives.
         let labels = parse_metrics_labels(Some(
-            "operation=x,error=y,version=z,operation_type=w,__r=1,deployment_profile=kind-ci",
+            "operation=x,error=y,version=z,le=bucket,operation_type=w,__r=1,deployment_profile=kind-ci",
         ));
         assert_eq!(
             labels.get("deployment_profile").map(String::as_str),
@@ -988,20 +1035,55 @@ mod tests {
     }
 
     #[test]
-    fn from_env_uses_default_prefix_and_parses_labels_from_env() {
-        // Hermetic: assert `from_env` delegates to `parse_metrics_labels` on the current env, so the
-        // test holds whether or not `KMS_METRICS_LABELS` happens to be set in the test process.
-        let expected = parse_metrics_labels(std::env::var(METRICS_LABELS_ENV).ok().as_deref());
-        let config = MetricsConfig::from_env();
+    fn from_env_value_parses_labels_and_keeps_defaults() {
+        let config = MetricsConfig::from_env_value(Some(
+            "deployment_profile=kind-ci,operation=spoof,bad entry".to_string(),
+        ));
         assert_eq!(config.prefix, "kms");
-        assert_eq!(config.labels, expected);
+        assert_eq!(
+            config.labels.get("deployment_profile").map(String::as_str),
+            Some("kind-ci")
+        );
+        assert_eq!(config.labels.len(), 1);
+    }
+
+    #[test]
+    fn from_env_value_unset_means_no_labels() {
+        let config = MetricsConfig::from_env_value(None);
+        assert_eq!(config.prefix, "kms");
+        assert!(config.labels.is_empty());
+    }
+
+    #[test]
+    fn with_config_filters_invalid_and_reserved_labels() {
+        let mut config = MetricsConfig::default();
+        config
+            .labels
+            .insert("deployment_profile".to_string(), "kind-ci".to_string());
+        config.labels.insert("le".to_string(), "bucket".to_string());
+        config
+            .labels
+            .insert("operation".to_string(), "x".to_string());
+        config
+            .labels
+            .insert("__reserved".to_string(), "1".to_string());
+        config.labels.insert("1bad".to_string(), "x".to_string());
+
+        let registry = prometheus::Registry::new();
+        let metrics = CoreMetrics::with_config_in_registry(config, &registry);
+
+        assert_eq!(metrics.labels().len(), 1);
+        assert_eq!(
+            metrics
+                .labels()
+                .get("deployment_profile")
+                .map(String::as_str),
+            Some("kind-ci")
+        );
     }
 
     #[test]
     fn config_labels_are_attached_to_every_metric() {
-        // Build a full `CoreMetrics` in an isolated registry — not the global default one the other
-        // tests assert against — and confirm the configured const-label flows through `with_config`
-        // onto a real metric.
         let mut config = MetricsConfig::default();
         config
             .labels
@@ -1009,7 +1091,6 @@ mod tests {
         let registry = prometheus::Registry::new();
         let metrics = CoreMetrics::with_config_in_registry(config, &registry);
 
-        // The accessor exposes exactly what was configured.
         assert_eq!(
             metrics
                 .labels()
@@ -1018,7 +1099,6 @@ mod tests {
             Some("kind-ci")
         );
 
-        // ... and the label is actually exported (`kms_version` is always registered and set).
         let families = registry.gather();
         let version = families
             .iter()
@@ -1031,6 +1111,48 @@ mod tests {
                 .iter()
                 .any(|l| l.name() == "deployment_profile" && l.value() == "kind-ci"),
             "configured const-label should appear on every exported metric"
+        );
+    }
+
+    #[test]
+    fn duration_tag_cannot_override_operation_label() {
+        METRICS.observe_duration_with_tags(
+            "_test_op_overwrite",
+            Duration::from_millis(1),
+            &[(TAG_OPERATION, "_test_spoofed".to_string())],
+        );
+
+        let duration_metrics = prometheus::gather()
+            .into_iter()
+            .find(|family| family.name() == "kms_operation_duration_ms")
+            .expect("duration histogram should be registered")
+            .take_metric();
+        let operation_values: Vec<String> = duration_metrics
+            .iter()
+            .flat_map(|metric| metric.get_label())
+            .filter(|label| label.name() == TAG_OPERATION)
+            .map(|label| label.value().to_string())
+            .collect();
+        assert!(
+            operation_values.iter().any(|v| v == "_test_op_overwrite"),
+            "the operation argument must fill the operation label"
+        );
+        assert!(
+            !operation_values.iter().any(|v| v == "_test_spoofed"),
+            "a TAG_OPERATION tag must not override the operation label"
+        );
+    }
+
+    #[test]
+    fn payload_size_sample_count_tracks_observed_sizes() {
+        assert_eq!(METRICS.payload_size_sample_count("_test_size_unused"), 0);
+
+        let before = METRICS.payload_size_sample_count("_test_size_op");
+        METRICS.observe_size("_test_size_op", 42.0);
+        METRICS.observe_size("_test_size_op", 0.0); // ignored: zero sizes are not recorded
+        assert_eq!(
+            METRICS.payload_size_sample_count("_test_size_op"),
+            before + 1
         );
     }
 }

@@ -3,6 +3,7 @@
 // Counters are incremented for each operation, and also used for error tracking.
 
 pub const OP_BOOT: &str = "boot";
+pub const OP_SYSTEM_STARTUP: &str = "system_startup"; // sanity-check increment emitted once by every process at metrics init
 // Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
@@ -11,7 +12,8 @@ pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
-// More specific metrics for key generation, only used with counters
+// More specific operation names for key generation, used on the request counter
+// and the duration histogram
 pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
 pub const OP_INSECURE_COMPRESSED_KEYGEN: &str = "insecure_compressed_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
@@ -62,7 +64,7 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
 pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
-pub const TAG_OPERATION_TYPE: &str = "operation_type"; // TODO not used yet
+pub const TAG_OPERATION_TYPE: &str = "operation_type"; // subtype for duration histogram (e.g. "total", "load_crs_pk"); primary operation name uses TAG_OPERATION for consistency with counters
 pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";

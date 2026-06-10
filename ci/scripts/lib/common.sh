@@ -49,7 +49,8 @@ Options:
   --enable-tls             Explicitly enable TLS (default for threshold mode)
   --disable-tls            Explicitly disable TLS (overrides default for threshold mode)
   --enable-metrics         Install kube-prometheus-stack and remote-write KMS metrics
-                           to Grafana Cloud (reads GRAFANA_CLOUD_PROM_* from env)
+                           to Grafana Cloud (kind targets only; reads
+                           GRAFANA_CLOUD_PROM_* from env)
   --debug                  Enable debug logging (port-forward logs to ./logs/port-forward/)
   --help                   Show this help
 EOF
