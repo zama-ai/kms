@@ -128,7 +128,8 @@ Track the distribution of values:
 NOTE: `{prefix}_payload_size_bytes` is emitted from the versioned-storage write paths
 (`safe_write_element_versioned` for file storage, `S3Storage::store_data_at_key`, and `RamStorage`);
 there its `operation` label carries the serialized element's **type name** (e.g. a key/keyset type),
-not an operation name. Call `observe_size` from other paths whenever a payload size is worth tracking.
+not an operation name, and the size is recorded only after the write succeeds. Call `observe_size`
+from other paths whenever a payload size is worth tracking.
 
 Both histograms use **explicit buckets** tuned to KMS workloads (`kms_operation_duration_ms`: 1 ms →
 5 min; `kms_payload_size_bytes`: 1 KiB → 64 GiB). Prometheus' default buckets top out at ~10 (tuned for
@@ -180,10 +181,16 @@ METRICS.record_tasks(num_workers);  // kms_tasks <n>
 
 ### Using Custom Prefix
 
+Only one `CoreMetrics` may be constructed per process: every instance registers into the
+process-global default registry, including the fixed-name `kms_version` gauge, so a second
+construction panics on duplicate registration. In KMS binaries that instance is the global
+`METRICS` (built on first use) — a custom prefix is only an option for a separate binary that
+never touches `METRICS`:
+
 ```rust
 use observability::metrics::{CoreMetrics, MetricsConfig};
 
-// Initialize with custom prefix
+// In a binary that does not use the global METRICS instance:
 let config = MetricsConfig {
     prefix: "app".to_string(),
     ..Default::default()
@@ -266,8 +273,10 @@ KMS_METRICS_LABELS="deployment_profile=kind-ci"
 ```
 
 ```promql
-# In Grafana, scope a query to kind-CI runs only
-histogram_quantile(0.95, sum by (le) (rate(kms_operation_duration_ms_bucket{deployment_profile="kind-ci"}[5m])))
+# In Grafana, scope a query to kind-CI runs only. In the kind-CI pipeline every
+# metric name additionally carries the ci_ prefix (applied at scrape time by the
+# ServiceMonitor), hence ci_kms_..., not kms_....
+histogram_quantile(0.95, sum by (le) (rate(ci_kms_operation_duration_ms_bucket{deployment_profile="kind-ci"}[5m])))
 ```
 
 Conventions:
@@ -281,10 +290,13 @@ Conventions:
 In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
 env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`
 sets only `deployment_profile=kind-ci`. (A per-run `ci_run_id` is also attached in kind — but as a
-Prometheus *external label* from `GITHUB_RUN_ID`, not a KMS const-label.) Malformed, invalidly-named,
-`__`-reserved, or colliding entries (names already used by a built-in metric label) are skipped with a
-warning, so a typo never takes the server down. Unset/empty means no extra labels — the default for
-production.
+Prometheus *external label* from `GITHUB_RUN_ID`, not a KMS const-label.) Malformed, empty-valued,
+invalidly-named, `__`-reserved, or colliding entries (names already used by a built-in metric label)
+are skipped with a warning, so a typo never takes the server down. Unset/empty means no extra labels —
+the default for production.
+
+At runtime, `METRICS.labels()` returns the labels that were actually accepted and attached, and the
+server logs them at startup so operators can confirm how a deployment is tagged.
 
 ## Best Practices
 
@@ -345,7 +357,7 @@ When adding new metrics:
        OP_NEW_OPERATION,
        duration,
        &[(TAG_NEW_TAG, value.to_string())]
-   );  // records `new_tag` only if it is also added to DURATION_LABEL_KEYS — see "New operations vs new metric families"
+   );  // records `new_tag` only if it is also added to DURATION_LABEL_KEYS — see "New operation vs new metric family"
    ```
 
 This ensures consistency and maintainability of the metrics system across the codebase.

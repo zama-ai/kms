@@ -39,29 +39,33 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - **Description**: Total number of operations processed by the KMS core service.
 - **Alarm**: If the counter is a flat line over a period of time for critical operations.
 
-**Operation Types**:
+**Operation Types** (values of the `operation` label; values marked *(duration only)* appear on `kms_operation_duration_ms` — and on `kms_operation_errors_total` when they fail — but not on this counter):
 
 *Key Generation Operations*:
 - `keygen_request` - Key generation requests
 - `keygen_result` - Key generation result retrievals
+- `keygen_abort` - Key generation aborts
 - `keygen_preproc_request` - Key generation preprocessing requests
 - `keygen_preproc_result` - Key generation preprocessing results
 - `standard_keygen` - Standard (uncompressed) key generation
+- `standard_compressed_keygen` - Compressed key generation
 - `decompression_keygen` - Decompression key generation
 
 *Decryption Operations*:
 - `user_decrypt_request` - User decryption requests
 - `user_decrypt_result` - User decryption result retrievals
-- `user_decrypt_inner` - Individual user decryption operations
+- `user_decrypt_inner` - Individual user decryption operations *(duration only)*
 - `public_decrypt_request` - Public decryption requests
 - `public_decrypt_result` - Public decryption result retrievals
-- `public_decrypt_inner` - Individual public decryption operations
+- `public_decrypt_inner` - Individual public decryption operations *(duration only)*
 
 *CRS Operations*:
 - `crs_gen_request` - CRS generation requests
 - `crs_gen_result` - CRS generation result retrievals
+- `crs_gen_abort` - CRS generation aborts
 
 *System Operations*:
+- `system_startup` - Metrics-system sanity check, incremented once by every process at startup
 - `boot` - Service boot / PRSS initialization
 - `new_mpc_context` - MPC context creation
 - `destroy_mpc_context` - MPC context destruction
@@ -72,6 +76,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `custodian_backup_recovery` - Backup recovery operations
 - `custodian_recovery_init` - Recovery initialization
 - `restore_from_backup` - Backup restoration operations
+- `key_material_availability` - Key material availability checks
 
 *Epoch Operations*:
 - `new_mpc_epoch` - MPC epoch creation
@@ -98,7 +103,11 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `unavailable` - Service temporarily unavailable (tonic `Unavailable`)
 - `other` - Any other / unmapped gRPC status code
 - `async_call_error` - Failure in an async worker thread, after the gRPC call already returned
-- `backup_error` - Backup operation failure (recorded on the separate `kms_backup_errors_total` counter)
+
+#### Metric Name: `kms_backup_errors_total`
+- **Type**: Counter
+- **Description**: Total number of backup errors, kept separate from `kms_operation_errors_total` because backup failures must never be drowned out by ordinary operation errors. Labels: `operation` (the backup operation) and `error` (always `backup_error`).
+- **Alarm**: Any increase warrants investigation.
 
 ### Network Metrics
 
@@ -123,7 +132,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 #### Metric Name: `kms_payload_size_bytes`
 - **Type**: Histogram
 - **Description**: Size of KMS operation payloads in bytes. Uses explicit buckets (1 KiB → 64 GiB) to cover large FHE key/keyset payloads.
-- **Tags / NOTE**: On RPC paths the `operation` label is the operation name. On versioned storage write paths (`safe_write_element_versioned` for file-backed vault and S3 `store_data_at_key`) the `operation` label carries the element's type name (via the `Named` trait, e.g. a key or keyset type) so sizes of different persisted objects are distinguishable. Call `observe_size` from other paths when useful.
+- **Tags / NOTE**: On RPC paths the `operation` label is the operation name. On versioned storage write paths (`safe_write_element_versioned` for file-backed vault, S3 `store_data_at_key`, and the in-memory `RamStorage`) the `operation` label carries the element's type name (via the `Named` trait, e.g. a key or keyset type) so sizes of different persisted objects are distinguishable; sizes are recorded only after the write succeeds. Call `observe_size` from other paths when useful.
 - **Alarm**: If payload sizes exceed expected ranges, indicating potential issues.
 
 ### System Resource Metrics
@@ -155,11 +164,11 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `public_decryption_mode` - Mode for public decryption operations
 - `user_decryption_mode` - Mode for user decryption operations
 
-High-cardinality tags such as `key_id` or `request_id` are possible on some series but should be used with care (they are excluded from the duration histogram to control cardinality; see the developer metrics guide for the low-cardinality guard and best practices).
+High-cardinality values such as `key_id` or `request_id` are not accepted as labels by any metric family — the duration histogram only records the fixed label keys above and ignores unknown keys with a warning. See the developer metrics guide for the low-cardinality guard and best practices.
 
 **Static / Deployment Labels (const-labels)**: In addition to the variable tags above, every metric can carry static labels configured once at startup via the `KMS_METRICS_LABELS` environment variable (comma-separated `key=value` list). These are attached as Prometheus const-labels to *all* metrics for the process. This is the supported way to distinguish deployments: the kind CI overlay sets `deployment_profile=kind-ci`, so CI series stay separable from production in a shared Prometheus/Grafana. (The threshold and centralized kind matrices run in separate namespaces, `kms-test-threshold`/`kms-test-centralized`, so they are already distinguishable by the `namespace` label — not by a `deployment_type` const-label.)
 
-- Malformed entries, empty keys, names starting with `__`, or names that collide with built-in labels (`operation`, `error`, `version`, `le`, the duration label keys, etc.) are skipped with a warning at startup. A bad configuration cannot crash metric registration.
+- Malformed entries, empty keys, empty values, names starting with `__`, or names that collide with built-in labels (`operation`, `error`, `version`, `le`, the duration label keys, etc.) are skipped with a warning at startup. A bad configuration cannot crash metric registration.
 - In Helm: set `kmsCore.metricsLabels` (e.g. `deployment_profile=kind-ci`); the chart renders it into the `KMS_METRICS_LABELS` env on the kms-server container.
 - The `ci_` metric name prefix (for separating CI series) is applied via ServiceMonitor `metricRelabelings` when enabled.
 - See the [developer metrics guide](../../developer/metrics.md#distinguishing-deployments-kind-ci-vs-production) for the full mechanism, examples, and the `labels()` accessor for runtime inspection.
@@ -178,7 +187,8 @@ High-cardinality tags such as `key_id` or `request_id` are possible on some seri
 - **Insecure Operation Types**:
   - `insecure_keygen_request` - Insecure key generation requests
   - `insecure_keygen_result` - Insecure key generation results
-  - `insecure_keygen` - Direct insecure key generation
+  - `insecure_standard_keygen` - Insecure standard key generation
+  - `insecure_standard_compressed_keygen` - Insecure compressed key generation
   - `insecure_decompression_keygen` - Insecure decompression key generation
   - `insecure_crs_gen_request` - Insecure CRS generation requests
   - `insecure_crs_gen_result` - Insecure CRS generation results
