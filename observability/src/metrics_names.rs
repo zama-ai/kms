@@ -12,7 +12,8 @@ pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
-// More specific metrics for key generation, only used with counters
+// More specific operation names for key generation, used on the request counter
+// and the duration histogram
 pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
 pub const OP_INSECURE_COMPRESSED_KEYGEN: &str = "insecure_compressed_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";

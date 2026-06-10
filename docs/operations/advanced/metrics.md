@@ -39,7 +39,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - **Description**: Total number of operations processed by the KMS core service.
 - **Alarm**: If the counter is a flat line over a period of time for critical operations.
 
-**Operation Types** (values of the `operation` label; values marked *(duration only)* appear on `kms_operation_duration_ms` — and on `kms_operation_errors_total` when they fail — but not on this counter):
+**Operation Types** (values of the `operation` label; values marked *(duration only)* appear on `kms_operation_duration_ms` — and some of them on `kms_operation_errors_total` when they fail — but not on this counter):
 
 *Key Generation Operations*:
 - `keygen_request` - Key generation requests
@@ -66,7 +66,6 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 *System Operations*:
 - `system_startup` - Metrics-system sanity check, incremented once by every process at startup
-- `boot` - Service boot / PRSS initialization
 - `new_mpc_context` - MPC context creation
 - `destroy_mpc_context` - MPC context destruction
 
@@ -106,7 +105,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 #### Metric Name: `kms_backup_errors_total`
 - **Type**: Counter
-- **Description**: Total number of backup errors, kept separate from `kms_operation_errors_total` because backup failures must never be drowned out by ordinary operation errors. Labels: `operation` (the backup operation) and `error` (always `backup_error`).
+- **Description**: Total number of backup errors, kept separate from `kms_operation_errors_total` because backup failures must never be drowned out by ordinary operation errors. Labels: `operation` (the operation whose backup-vault update failed, e.g. `boot` — service boot / PRSS initialization — `decompression_keygen`, or a custodian operation) and `error` (always `backup_error`).
 - **Alarm**: Any increase warrants investigation.
 
 ### Network Metrics
@@ -132,7 +131,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 #### Metric Name: `kms_payload_size_bytes`
 - **Type**: Histogram
 - **Description**: Size of KMS operation payloads in bytes. Uses explicit buckets (1 KiB → 64 GiB) to cover large FHE key/keyset payloads.
-- **Tags / NOTE**: On RPC paths the `operation` label is the operation name. On versioned storage write paths (`safe_write_element_versioned` for file-backed vault, S3 `store_data_at_key`, and the in-memory `RamStorage`) the `operation` label carries the element's type name (via the `Named` trait, e.g. a key or keyset type) so sizes of different persisted objects are distinguishable; sizes are recorded only after the write succeeds. Call `observe_size` from other paths when useful.
+- **Tags / NOTE**: Currently only the versioned storage write paths emit this metric (`safe_write_element_versioned` for file-backed vault, S3 `store_data_at_key`, and the in-memory `RamStorage`); there the `operation` label carries the element's type name (via the `Named` trait, e.g. a key or keyset type) so sizes of different persisted objects are distinguishable, and sizes are recorded only after the write succeeds. Call `observe_size` from other paths (e.g. RPC handlers, labelling with the operation name) when useful.
 - **Alarm**: If payload sizes exceed expected ranges, indicating potential issues.
 
 ### System Resource Metrics
