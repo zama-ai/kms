@@ -1,5 +1,6 @@
 use crate::conf::{ENVIRONMENT, ExecutionEnvironment, TelemetryConfig};
 use crate::metrics::{METRICS, METRICS_LABELS_ENV};
+use crate::metrics_names::OP_SYSTEM_STARTUP;
 use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
 use axum::Json;
@@ -129,7 +130,7 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(config: &T) -> Result<(), anyh
     let state = MetricsState::new(config_json);
 
     // Use the global METRICS instance also as a sanity check that metrics are working
-    METRICS.increment_request_counter("system_startup");
+    METRICS.increment_request_counter(OP_SYSTEM_STARTUP);
 
     // Log the static labels applied to `METRICS` so operators can confirm how this deployment is tagged.
     let metric_labels = METRICS.labels();

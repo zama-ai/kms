@@ -459,10 +459,15 @@ impl CoreMetrics {
         let mut values: Vec<&str> = vec![""; DURATION_LABEL_KEYS.len()];
         values[0] = operation.as_ref();
         for (key, value) in extra_tags {
-            if let Some(idx) = DURATION_LABEL_KEYS.iter().position(|k| k == key) {
-                values[idx] = value;
-            } else {
-                warn!(key, "ignoring unknown duration metric tag key");
+            match DURATION_LABEL_KEYS.iter().position(|k| k == key) {
+                // Index 0 is the `operation` label, always filled from `operation` above; a tag
+                // must not be able to override it and mislabel the series.
+                Some(0) => warn!(
+                    key,
+                    "ignoring duration metric tag that would override the operation label"
+                ),
+                Some(idx) => values[idx] = value,
+                None => warn!(key, "ignoring unknown duration metric tag key"),
             }
         }
         self.duration_histogram
@@ -485,8 +490,9 @@ impl CoreMetrics {
 
     /// Record a serialized payload size (bytes) into `kms_payload_size_bytes`, keyed by the
     /// `operation` label. Storage write paths pass the element's type name (`<T as Named>::NAME`),
-    /// so sizes of distinct persisted objects (keys, keysets, …) stay distinguishable. `size == 0`
-    /// is ignored.
+    /// so sizes of distinct persisted objects (keys, keysets, …) stay distinguishable, and record
+    /// only after a successful write so the histogram reflects payloads actually persisted.
+    /// `size == 0` is ignored.
     pub fn observe_size(&self, operation: impl AsRef<str>, size: f64) {
         if size == 0.0 {
             return;
@@ -494,6 +500,15 @@ impl CoreMetrics {
         self.size_histogram
             .with_label_values(&[operation.as_ref()])
             .observe(size);
+    }
+
+    /// Number of samples recorded into `kms_payload_size_bytes` for `operation` (the element type
+    /// name on storage write paths). Cumulative for the process; intended for tests asserting that
+    /// a write path recorded its payload size.
+    pub fn payload_size_sample_count(&self, operation: impl AsRef<str>) -> u64 {
+        self.size_histogram
+            .with_label_values(&[operation.as_ref()])
+            .get_sample_count()
     }
 
     /// Start building a duration guard for timing an operation
@@ -731,16 +746,22 @@ impl MetricsConfig {
     /// metrics so a scraper can tell them from production. Malformed/invalidly-named entries are
     /// skipped with a warning; unset/empty means no labels.
     pub fn from_env() -> Self {
+        Self::from_env_value(std::env::var(METRICS_LABELS_ENV).ok())
+    }
+
+    /// [`from_env`](Self::from_env) with the raw env value passed in, so tests can exercise the
+    /// env-to-config path without mutating the process environment.
+    fn from_env_value(raw: Option<String>) -> Self {
         Self {
-            labels: parse_metrics_labels(std::env::var(METRICS_LABELS_ENV).ok().as_deref()),
+            labels: parse_metrics_labels(raw.as_deref()),
             ..Self::default()
         }
     }
 }
 
-/// Parse a `key=value,key=value` label list. Empty, `=`-less, empty-key, invalidly-named, or
-/// reserved/colliding entries (see [`is_reserved_label_name`]) are skipped with a warning — a bad
-/// env var must not crash metric registration.
+/// Parse a `key=value,key=value` label list. Empty, `=`-less, empty-key, empty-value,
+/// invalidly-named, or reserved/colliding entries (see [`is_reserved_label_name`]) are skipped with
+/// a warning — a bad env var must not crash metric registration.
 fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
     let Some(raw) = raw else {
@@ -759,6 +780,12 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
             continue;
         };
         let (key, value) = (key.trim(), value.trim());
+        if value.is_empty() {
+            // Prometheus treats an empty label value as the label being absent, so the
+            // configured label would silently disappear from every exported series.
+            warn!(key, "ignoring metrics label with empty value");
+            continue;
+        }
         if !is_acceptable_label_key(key) {
             continue;
         }
@@ -968,7 +995,7 @@ mod tests {
         assert!(parse_metrics_labels(Some("")).is_empty());
         assert!(parse_metrics_labels(Some("   ")).is_empty());
 
-        let labels = parse_metrics_labels(Some("noequals,=novalue,1bad=x,good=ok,,"));
+        let labels = parse_metrics_labels(Some("noequals,=novalue,emptyval=,1bad=x,good=ok,,"));
         assert_eq!(labels.get("good").map(String::as_str), Some("ok"));
         assert_eq!(labels.len(), 1);
     }
@@ -1008,11 +1035,23 @@ mod tests {
     }
 
     #[test]
-    fn from_env_uses_default_prefix_and_parses_labels_from_env() {
-        let expected = parse_metrics_labels(std::env::var(METRICS_LABELS_ENV).ok().as_deref());
-        let config = MetricsConfig::from_env();
+    fn from_env_value_parses_labels_and_keeps_defaults() {
+        let config = MetricsConfig::from_env_value(Some(
+            "deployment_profile=kind-ci,operation=spoof,bad entry".to_string(),
+        ));
         assert_eq!(config.prefix, "kms");
-        assert_eq!(config.labels, expected);
+        assert_eq!(
+            config.labels.get("deployment_profile").map(String::as_str),
+            Some("kind-ci")
+        );
+        assert_eq!(config.labels.len(), 1);
+    }
+
+    #[test]
+    fn from_env_value_unset_means_no_labels() {
+        let config = MetricsConfig::from_env_value(None);
+        assert_eq!(config.prefix, "kms");
+        assert!(config.labels.is_empty());
     }
 
     #[test]
@@ -1072,6 +1111,48 @@ mod tests {
                 .iter()
                 .any(|l| l.name() == "deployment_profile" && l.value() == "kind-ci"),
             "configured const-label should appear on every exported metric"
+        );
+    }
+
+    #[test]
+    fn duration_tag_cannot_override_operation_label() {
+        METRICS.observe_duration_with_tags(
+            "_test_op_overwrite",
+            Duration::from_millis(1),
+            &[(TAG_OPERATION, "_test_spoofed".to_string())],
+        );
+
+        let duration_metrics = prometheus::gather()
+            .into_iter()
+            .find(|family| family.name() == "kms_operation_duration_ms")
+            .expect("duration histogram should be registered")
+            .take_metric();
+        let operation_values: Vec<String> = duration_metrics
+            .iter()
+            .flat_map(|metric| metric.get_label())
+            .filter(|label| label.name() == TAG_OPERATION)
+            .map(|label| label.value().to_string())
+            .collect();
+        assert!(
+            operation_values.iter().any(|v| v == "_test_op_overwrite"),
+            "the operation argument must fill the operation label"
+        );
+        assert!(
+            !operation_values.iter().any(|v| v == "_test_spoofed"),
+            "a TAG_OPERATION tag must not override the operation label"
+        );
+    }
+
+    #[test]
+    fn payload_size_sample_count_tracks_observed_sizes() {
+        assert_eq!(METRICS.payload_size_sample_count("_test_size_unused"), 0);
+
+        let before = METRICS.payload_size_sample_count("_test_size_op");
+        METRICS.observe_size("_test_size_op", 42.0);
+        METRICS.observe_size("_test_size_op", 0.0); // ignored: zero sizes are not recorded
+        assert_eq!(
+            METRICS.payload_size_sample_count("_test_size_op"),
+            before + 1
         );
     }
 }

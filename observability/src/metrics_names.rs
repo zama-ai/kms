@@ -3,6 +3,7 @@
 // Counters are incremented for each operation, and also used for error tracking.
 
 pub const OP_BOOT: &str = "boot";
+pub const OP_SYSTEM_STARTUP: &str = "system_startup"; // sanity-check increment emitted once by every process at metrics init
 // Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
