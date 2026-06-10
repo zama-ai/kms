@@ -673,8 +673,9 @@ impl<
                     // from the newly generated compressed keyset. Revisit whether it should
                     // instead preserve the old keyset's CompactPublicKey to keep the
                     // externally visible public key stable across epochs of the same key_id.
+                    // `CompressedXofKeySet::decompress` takes `&self`, so decompress in
+                    // place instead of first cloning the whole (multi-GiB) keyset.
                     let compact_public_key = compressed_keyset
-                        .clone()
                         .decompress()
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to decompress reshared compressed keyset: {e}")
@@ -701,7 +702,9 @@ impl<
                         }
                     };
 
-                    let public_material = PublicKeyMaterial::new(compressed_keyset.clone());
+                    // Last use of `compressed_keyset` — move it instead of deep-cloning
+                    // the (multi-GiB) keyset.
+                    let public_material = PublicKeyMaterial::new(compressed_keyset);
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
                         Arc::new(new_private_keyset),

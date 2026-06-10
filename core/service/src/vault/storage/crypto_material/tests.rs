@@ -369,6 +369,8 @@ async fn write_central_keys() {
         err.contains("Error while updating meta store for") && err.contains("request is missing"),
         "expected meta-store update failure when empty, got: {err}"
     );
+    // The failed write must not populate the in-memory cache.
+    assert_eq!(crypto_storage.cached_fhe_key_count().await, 0);
 
     // update the meta store and the write should be ok
     {
@@ -387,6 +389,8 @@ async fn write_central_keys() {
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
+    // The successful write caches exactly one FHE key entry.
+    assert_eq!(crypto_storage.cached_fhe_key_count().await, 1);
 
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set

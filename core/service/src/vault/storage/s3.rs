@@ -151,7 +151,7 @@ impl S3Storage {
 
         // Move `buf` into `s3_put_blob` (it takes ownership and wraps it in a
         // `ByteStream`); cloning here would duplicate the full serialized blob,
-        // which is ~tens of GiB for production FHE keys.
+        // which is multiple GiB for production FHE keys.
         s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
 
         Ok(())

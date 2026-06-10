@@ -337,7 +337,7 @@ impl ThresholdFheKeys {
                     decompression_key: decompression_key.clone(),
                 },
                 PublicKeyMaterial::Compressed { keyset } => {
-                    // `CompressedXofKeySet::decompress` takes `&self` (tfhe 1.6.1), so we
+                    // `CompressedXofKeySet::decompress` takes `&self` (since tfhe 1.6), so we
                     // decompress through the `Arc` directly instead of first cloning the
                     // whole (multi-GiB) compressed keyset.
                     let (_pk, sk) = keyset
@@ -1074,6 +1074,24 @@ mod tests {
 
         let v3: PublicKeyMaterial = v0.upgrade().unwrap();
         assert!(matches!(v3, PublicKeyMaterial::Compressed { .. }));
+    }
+
+    /// Sunshine: `from_arc` wraps the given `Arc` without copying — the resulting
+    /// material shares the caller's allocation instead of deep-cloning the keyset.
+    #[test]
+    fn from_arc_shares_the_keyset_allocation() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let (_keyset, compressed_keyset) =
+            gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
+        let shared = Arc::new(compressed_keyset);
+
+        let material = PublicKeyMaterial::from_arc(Arc::clone(&shared));
+        match &material {
+            PublicKeyMaterial::Compressed { keyset } => {
+                assert!(Arc::ptr_eq(keyset, &shared), "keyset must not be copied");
+            }
+            PublicKeyMaterial::Uncompressed { .. } => panic!("expected compressed material"),
+        }
     }
 
     /// Verify that a V3 ThresholdFheKeys with Compressed keys can roundtrip through

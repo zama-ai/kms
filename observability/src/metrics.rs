@@ -707,6 +707,20 @@ mod tests {
         );
     }
 
+    /// Sunshine: the FHE key cache gauge reflects the recorded count, including
+    /// zero (empty cache), and clamps values above `i64::MAX` instead of wrapping.
+    #[test]
+    fn record_fhe_key_cache_size_sets_and_clamps() {
+        METRICS.record_fhe_key_cache_size(3);
+        assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), 3);
+
+        METRICS.record_fhe_key_cache_size(u64::MAX);
+        assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), i64::MAX);
+
+        METRICS.record_fhe_key_cache_size(0);
+        assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), 0);
+    }
+
     #[test]
     fn duration_histogram_uses_only_low_cardinality_labels() {
         let _ = &*METRICS;
