@@ -238,10 +238,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) -> anyhow::Result<()> {
         // Hold a permit for `old_key_id` exclusively in the keygen meta-store for the whole
         // migration.
-        let updated_fhe_keys = with_overwriting_claim(
-            &dkg_pubinfo_meta_store,
-            old_key_id,
-            async || {
+        let updated_fhe_keys =
+            with_overwriting_claim(&dkg_pubinfo_meta_store, old_key_id, async || {
                 // Lock order: pub -> priv -> backup.
                 let mut pub_storage = self.inner.public_storage.lock().await;
                 let mut priv_storage = self.inner.private_storage.lock().await;
@@ -310,7 +308,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     .key_digest_map
                     .get(&PubDataType::PublicKey)
                     .ok_or_else(|| {
-                        anyhow::anyhow!("Migrated ThresholdFheKeys metadata missing PublicKey digest")
+                        anyhow::anyhow!(
+                            "Migrated ThresholdFheKeys metadata missing PublicKey digest"
+                        )
                     })?
                     .clone();
 
@@ -344,7 +344,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 )
                 .await
                 .map_err(|e| {
-                    anyhow::anyhow!("Failed to deserialize PublicKey for old keyset {old_key_id}: {e}")
+                    anyhow::anyhow!(
+                        "Failed to deserialize PublicKey for old keyset {old_key_id}: {e}"
+                    )
                 })?;
 
                 // Re-sign the metadata under old_key_id, preserving the migrated
@@ -434,9 +436,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
 
                 Ok((new_metadata, updated_fhe_keys))
-            },
-        )
-        .await?;
+            })
+            .await?;
 
         tracing::info!(
             "Copied compressed key from {new_key_id} to original {old_key_id} \
