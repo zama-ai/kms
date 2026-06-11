@@ -11,8 +11,7 @@ use crate::{
     keyset_config::KeySetConfig,
     online::{
         preprocessing::{
-            DKGPreprocessing, PreprocessorFactory,
-            orchestration::producer_traits::ProducerFactory,
+            DKGPreprocessing, PreprocessorFactory, orchestration::producer_traits::ProducerFactory,
         },
         triple::Triple,
     },
@@ -133,7 +132,8 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
             ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
             ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -167,7 +167,8 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
             ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
             ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -210,7 +211,8 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
             ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
             ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -246,7 +248,8 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
             ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
             ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,

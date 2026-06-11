@@ -80,7 +80,8 @@ impl BGVPreprocessingOrchestrator {
             ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
             ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Self {
             poly_size,
