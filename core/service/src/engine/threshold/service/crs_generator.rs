@@ -588,6 +588,7 @@ mod tests {
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
+        testing::utils::poll_result_until_ready,
     };
 
     use super::*;
@@ -876,8 +877,7 @@ mod tests {
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
 
         assert_eq!(
-            crs_gen
-                .get_result(Request::new(req_id.into()))
+            poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
                 .await
                 .unwrap_err()
                 .code(),
@@ -964,8 +964,7 @@ mod tests {
 
         let request = Request::new(req);
         crs_gen.crs_gen(request).await.unwrap();
-        let _crs = crs_gen
-            .get_result(Request::new(req_id.into()))
+        let _crs = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
             .await
             .unwrap();
     }
@@ -1014,9 +1013,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
-        // Try to get the result and see it has been aborted
-        let err = crs_gen
-            .get_result(Request::new(req_id.into()))
+        let err = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);

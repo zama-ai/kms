@@ -1226,10 +1226,11 @@ mod tests {
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol
-        // and always produces the same response
-        public_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        // and always produces the same response.
+        crate::testing::utils::poll_result_until_ready(|| {
+            public_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }

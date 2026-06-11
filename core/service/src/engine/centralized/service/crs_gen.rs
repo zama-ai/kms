@@ -313,6 +313,7 @@ mod tests {
         consts::DEFAULT_EPOCH_ID,
         dummy_domain,
         engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
+        testing::utils::poll_result_until_ready,
     };
 
     use super::*;
@@ -336,9 +337,12 @@ mod tests {
         let _res = crs_gen_impl(&kms, Request::new(request), true)
             .await
             .unwrap();
-        let _ = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
-            .await
-            .unwrap();
+        // The result endpoint is non-blocking; poll until the background CRS gen completes.
+        let _ = crate::testing::utils::poll_result_until_ready(|| {
+            get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -544,9 +548,11 @@ mod tests {
             let _req = crs_gen_impl(&kms, Request::new(request), false)
                 .await
                 .unwrap();
-            let res = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
-                .await
-                .unwrap();
+            let res = crate::testing::utils::poll_result_until_ready(|| {
+                get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+            })
+            .await
+            .unwrap();
 
             assert_eq!(
                 res.into_inner()
@@ -640,9 +646,11 @@ mod tests {
         // The cancellation arm updates the meta store with an "aborted" error message,
         // so retrieving the result returns Aborted (the meta store maps "abort" error
         // messages to tonic::Code::Aborted).
-        let err = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
-            .await
-            .unwrap_err();
+        let err = poll_result_until_ready(|| {
+            get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+        })
+        .await
+        .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
     }
 
@@ -665,10 +673,13 @@ mod tests {
         crs_gen_impl(&kms, Request::new(request), false)
             .await
             .unwrap();
-        // Block until CRS generation completes so the meta store entry is set
-        let _ = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
-            .await
-            .unwrap();
+        // Poll until CRS generation completes so the meta store entry is set
+        // (the result endpoint is non-blocking).
+        let _ = poll_result_until_ready(|| {
+            get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+        })
+        .await
+        .unwrap();
 
         // Wait for the background task to remove the cancellation token after completion.
         // The meta store is updated before the token removal, so poll until the ongoing map is empty.

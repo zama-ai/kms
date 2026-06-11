@@ -1745,11 +1745,12 @@ pub(crate) mod tests {
             }))
             .await
             .unwrap();
-        let _result = epoch_manager
-            .get_epoch_result(tonic::Request::new(epoch_id.into()))
-            .await
-            .unwrap()
-            .into_inner();
+        let _result = crate::testing::utils::poll_result_until_ready(|| {
+            epoch_manager.get_epoch_result(tonic::Request::new(epoch_id.into()))
+        })
+        .await
+        .unwrap()
+        .into_inner();
     }
 
     //TODO(#2882): Make a test for answer unavailable.

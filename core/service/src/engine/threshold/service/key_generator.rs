@@ -2098,8 +2098,9 @@ mod tests {
 
         // The result endpoint is non-blocking; poll until the background keygen fails.
         assert_eq!(
-            crate::testing::utils::poll_result_until_ready(|| kg
-                .get_result(Request::new(key_id.into())))
+            crate::testing::utils::poll_result_until_ready(
+                || kg.get_result(Request::new(key_id.into()))
+            )
             .await
             .unwrap_err()
             .code(),

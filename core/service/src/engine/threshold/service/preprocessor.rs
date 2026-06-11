@@ -545,6 +545,7 @@ mod tests {
     use super::*;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
+    use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use aes_prng::AesRng;
     use kms_grpc::{
@@ -765,9 +766,8 @@ mod tests {
             .await
             .unwrap();
 
-        // but the response should come back to be an error
         assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
+            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
                 .await
                 .unwrap_err()
                 .code(),
@@ -870,8 +870,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Block until preprocessing has finished so the bucket is in the Done state.
-        prep.get_result(tonic::Request::new(req_id.into()))
+        poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
             .await
             .unwrap();
 
@@ -906,8 +905,7 @@ mod tests {
             .await
             .unwrap();
 
-        // no need to wait because [get_result] is semi-blocking
-        prep.get_result(tonic::Request::new(req_id.into()))
+        poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
             .await
             .unwrap();
     }
@@ -964,9 +962,10 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(status.code(), tonic::Code::NotFound);
-        // Retrieving the result must now surface an error (the bucket was updated to aborted)
+        // Retrieving the result must now surface an error (the bucket was updated to
+        // aborted; poll since the result endpoint is non-blocking)
         assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
+            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
                 .await
                 .unwrap_err()
                 .code(),

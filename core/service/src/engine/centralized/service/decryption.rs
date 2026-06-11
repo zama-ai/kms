@@ -511,6 +511,7 @@ mod tests_public_decryption {
             base::derive_request_id,
             centralized::service::decryption::tests::{make_test_msg_ct, setup_test_kms_with_key},
         },
+        testing::utils::poll_result_until_ready,
     };
 
     use super::*;
@@ -538,10 +539,11 @@ mod tests_public_decryption {
             .await
             .unwrap();
 
-        let response =
+        let response = poll_result_until_ready(|| {
             get_public_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
-                .await
-                .unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(
             response.into_inner().payload.unwrap().plaintexts[0].clone(),
             msg.into(),
@@ -752,6 +754,7 @@ mod test_user_decryption {
             base::derive_request_id,
             centralized::service::decryption::tests::{make_test_msg_ct, setup_test_kms_with_key},
         },
+        testing::utils::poll_result_until_ready,
         util::key_setup::test_tools::TestingPlaintext,
     };
 
@@ -795,10 +798,11 @@ mod test_user_decryption {
             .await
             .unwrap();
 
-        let response =
+        let response = poll_result_until_ready(|| {
             get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
-                .await
-                .unwrap();
+        })
+        .await
+        .unwrap();
         // LEGACY should have been using safe_deserialize
         let signcrypted_msg: HybridKemCt = bc2wrap::deserialize_unsafe(
             &response

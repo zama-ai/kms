@@ -1145,9 +1145,10 @@ mod tests {
             epoch_id: Some(epoch_id.into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
-        user_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        crate::testing::utils::poll_result_until_ready(|| {
+            user_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }
