@@ -230,10 +230,7 @@ pub async fn abort_crs_gen_impl<
     }
 }
 
-/// Background task for CRS generation.
-///
-/// Owns the meta-store permit for the entire lifetime of the request,
-/// which is used to dictate ownership of storage related to the request ID.
+/// Background task for CRS generation
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,

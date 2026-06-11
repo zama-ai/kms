@@ -117,9 +117,6 @@ impl<PRSSSetupTypeZ64: Clone, PRSSSetupTypeZ128: Clone>
     // 1. This is a gRPC service method that directly propagates errors to the transport layer
     // 2. Performance optimization - avoiding unnecessary boxing/unboxing of errors
     // 3. Simplicity - maintaining direct compatibility with the tonic gRPC interface
-    // The clippy::result_large_err warning is suppressed because this is an API boundary
-    // where the error type is dictated by the external interface requirements.
-    #[allow(clippy::result_large_err)]
     fn get_poly64(&self) -> Result<PRSSSetupTypeZ64, tonic::Status> {
         match self {
             SupportedPRSSSetup::ResiduePolyZ64(res) => Ok(res.clone()),
@@ -135,9 +132,6 @@ impl<PRSSSetupTypeZ64: Clone, PRSSSetupTypeZ128: Clone>
     // 1. This is a gRPC service method that directly propagates errors to the transport layer
     // 2. Performance optimization - avoiding unnecessary boxing/unboxing of errors
     // 3. Simplicity - maintaining direct compatibility with the tonic gRPC interface
-    // The clippy::result_large_err warning is suppressed because this is an API boundary
-    // where the error type is dictated by the external interface requirements.
-    #[allow(clippy::result_large_err)]
     fn get_poly128(&self) -> Result<PRSSSetupTypeZ128, tonic::Status> {
         match self {
             SupportedPRSSSetup::ResiduePolyZ128(res) => Ok(res.clone()),
@@ -453,7 +447,6 @@ where
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
-    #[allow(clippy::result_large_err)]
     async fn create_base_session(
         &self,
         request_sid: SessionId,
@@ -484,7 +477,6 @@ where
             )?)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,

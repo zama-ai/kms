@@ -593,7 +593,7 @@ impl<
 
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: &PrivateSigKey,
@@ -787,7 +787,7 @@ impl<
         Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn reshare_as_set_2(
         &self,
         two_sets_session: TwoSetsBaseSession,
@@ -901,7 +901,7 @@ impl<
         Ok(task)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn reshare_as_both_sets(
         &self,
         two_sets_session: TwoSetsBaseSession,

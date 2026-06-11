@@ -110,7 +110,7 @@ pub async fn threshold_insecure_key_gen(
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn threshold_key_gen_secure(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
