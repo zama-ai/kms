@@ -175,9 +175,7 @@ impl PublicKeyMaterial {
         }
     }
 
-    /// Build compressed key material from an already-`Arc`'d keyset. Lets the
-    /// caller share one allocation with the public-storage `PublicKeySet` instead
-    /// of deep-cloning the (multi-GiB) compressed keyset.
+    /// Like [`Self::new`], but shares the caller's `Arc` instead of allocating.
     pub fn from_arc(keyset: Arc<CompressedXofKeySet>) -> Self {
         Self::Compressed { keyset }
     }
@@ -325,31 +323,26 @@ impl ThresholdFheKeys {
     }
 
     fn expand_keys(&self) -> &UncompressedKeys {
-        self.key_cache.get_or_init(|| {
-            match &self.public_material {
-                PublicKeyMaterial::Uncompressed {
-                    integer_server_key,
-                    sns_key,
-                    decompression_key,
-                } => UncompressedKeys {
-                    integer_server_key: integer_server_key.clone(),
-                    sns_key: sns_key.clone(),
-                    decompression_key: decompression_key.clone(),
-                },
-                PublicKeyMaterial::Compressed { keyset } => {
-                    // `CompressedXofKeySet::decompress` takes `&self` (since tfhe 1.6), so we
-                    // decompress through the `Arc` directly instead of first cloning the
-                    // whole (multi-GiB) compressed keyset.
-                    let (_pk, sk) = keyset
-                        .decompress()
-                        .expect("Call is infallible")
-                        .into_raw_parts();
-                    let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
-                    UncompressedKeys {
-                        integer_server_key: Arc::new(isk),
-                        sns_key: snsk.map(Arc::new),
-                        decompression_key: decompk.map(Arc::new),
-                    }
+        self.key_cache.get_or_init(|| match &self.public_material {
+            PublicKeyMaterial::Uncompressed {
+                integer_server_key,
+                sns_key,
+                decompression_key,
+            } => UncompressedKeys {
+                integer_server_key: integer_server_key.clone(),
+                sns_key: sns_key.clone(),
+                decompression_key: decompression_key.clone(),
+            },
+            PublicKeyMaterial::Compressed { keyset } => {
+                let (_pk, sk) = keyset
+                    .decompress()
+                    .expect("Call is infallible")
+                    .into_raw_parts();
+                let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
+                UncompressedKeys {
+                    integer_server_key: Arc::new(isk),
+                    sns_key: snsk.map(Arc::new),
+                    decompression_key: decompk.map(Arc::new),
                 }
             }
         })
@@ -1076,8 +1069,6 @@ mod tests {
         assert!(matches!(v3, PublicKeyMaterial::Compressed { .. }));
     }
 
-    /// Sunshine: `from_arc` wraps the given `Arc` without copying — the resulting
-    /// material shares the caller's allocation instead of deep-cloning the keyset.
     #[test]
     fn from_arc_shares_the_keyset_allocation() {
         let mut rng = AesRng::seed_from_u64(7);

@@ -454,6 +454,7 @@ impl CoreMetrics {
         self.rate_limiter_gauge.set(count as i64);
     }
 
+    /// Record the number of FHE key entries in the in-memory cache into the gauge
     pub fn record_fhe_key_cache_size(&self, count: u64) {
         let value = i64::try_from(count).unwrap_or(i64::MAX);
         self.fhe_key_cache_size_gauge.set(value);
@@ -707,8 +708,6 @@ mod tests {
         );
     }
 
-    /// Sunshine: the FHE key cache gauge reflects the recorded count, including
-    /// zero (empty cache), and clamps values above `i64::MAX` instead of wrapping.
     #[test]
     fn record_fhe_key_cache_size_sets_and_clamps() {
         METRICS.record_fhe_key_cache_size(3);

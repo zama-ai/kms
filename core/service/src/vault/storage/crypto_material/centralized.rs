@@ -128,8 +128,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         storage_ok
     }
 
-    /// Number of FHE key entries currently held in the in-memory cache.
-    /// Exposed for observability (see the `fhe_key_cache_size` metric).
+    /// Number of cached FHE key entries (feeds the `fhe_key_cache_size` gauge).
     pub(crate) async fn cached_fhe_key_count(&self) -> usize {
         self.fhe_keys.read().await.len()
     }

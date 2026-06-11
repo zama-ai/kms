@@ -673,8 +673,6 @@ impl<
                     // from the newly generated compressed keyset. Revisit whether it should
                     // instead preserve the old keyset's CompactPublicKey to keep the
                     // externally visible public key stable across epochs of the same key_id.
-                    // `CompressedXofKeySet::decompress` takes `&self`, so decompress in
-                    // place instead of first cloning the whole (multi-GiB) keyset.
                     let compact_public_key = compressed_keyset
                         .decompress()
                         .map_err(|e| {
@@ -702,8 +700,6 @@ impl<
                         }
                     };
 
-                    // Last use of `compressed_keyset` — move it instead of deep-cloning
-                    // the (multi-GiB) keyset.
                     let public_material = PublicKeyMaterial::new(compressed_keyset);
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
@@ -1406,15 +1402,10 @@ impl<
         )
         .await;
 
-        // Reclaim the in-memory FHE key cache for this epoch. `destroy_epoch`
-        // only deletes the on-disk material; without this the (potentially
-        // tens-of-GiB) decompressed key material would stay resident until
-        // process restart. This is pure memory reclaim with no decryption-
-        // behaviour change: decryptions under a destroyed epoch are already
-        // rejected by epoch validation (the epoch is removed from the session
-        // maker above). Done unconditionally (the epoch is torn down regardless)
-        // and best-effort; it only touches the `fhe_keys` cache, the last lock
-        // in the documented order.
+        // `destroy_epoch` only deletes on-disk material; also drop the cached
+        // decompressed keys or they stay resident until restart. Safe even if
+        // destruction partially failed: the epoch is already gone from the
+        // session maker, so nothing can reach these entries anymore.
         let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
         if removed > 0 {
             tracing::info!(
