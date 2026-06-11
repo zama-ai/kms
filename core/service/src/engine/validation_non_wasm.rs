@@ -27,7 +27,7 @@ use kms_grpc::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
         TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
-    rpc_types::optional_protobuf_to_alloy_domain,
+    rpc_types::{compute_link_solana, optional_protobuf_to_alloy_domain},
 };
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
@@ -188,6 +188,33 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
 /// Observe that the validation is limited to checking the structure of the request and parsing data into the correct types,
 /// and does not check the existence of any of the referenced IDs (like request_id or key_id) or the consistency between them.
 #[allow(clippy::type_complexity)]
+/// Parses a Solana-native user-decryption client identity carried as
+/// `"solana:<64 lowercase hex chars>"` in [`UserDecryptionRequest::client_address`].
+///
+/// Solana users authenticate with an ed25519 `signMessage` over a 32-byte pubkey rather
+/// than an EVM EIP-712 wallet signature over a 20-byte address, so the standard checksummed
+/// `Address` parse cannot represent them. Returns `None` for an ordinary EVM client address,
+/// which takes the unchanged EIP-712 path.
+fn parse_solana_user_decrypt_pubkey(client_address: &str) -> Option<[u8; 32]> {
+    let hex = client_address.strip_prefix("solana:")?;
+    // Canonical form: exactly 64 LOWERCASE hex chars. The kms-connector sets this field with
+    // `hex::encode` (lowercase) over the 32-byte ed25519 pubkey, so requiring that exact encoding
+    // keeps one identity ↔ one client_address ↔ one derived client_id (no upper/mixed-case aliasing).
+    if hex.len() != 64 || !hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
+        return None;
+    }
+    let bytes = alloy_primitives::hex::decode(hex).ok()?;
+    <[u8; 32]>::try_from(bytes.as_slice()).ok()
+}
+
+/// Derives the stable 20-byte signcryption `client_id` from a 32-byte Solana pubkey as
+/// `keccak256(pubkey)[12..]`, mirroring EVM address derivation. The client reproduces this
+/// to de-signcrypt the response; it is a deterministic label, not an authorization input
+/// (Solana user-decrypt authorization is enforced by the kms-connector before this call).
+fn solana_user_decrypt_client_id(solana_pubkey: &[u8; 32]) -> alloy_primitives::Address {
+    alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_pubkey)[12..])
+}
+
 pub(crate) fn validate_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
@@ -252,6 +279,64 @@ fn unpack_user_decrypt_req(
     sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     if req.typed_ciphertexts.is_empty() {
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
+    }
+
+    // Solana-native user decryption: the client identity is a 32-byte ed25519 pubkey carried
+    // as "solana:<hex>" (the EVM checksum parse below cannot represent it) and there is no EVM
+    // verifying contract. Authorization (RPC-verified on-chain ACL + ed25519 signMessage) is
+    // enforced by the kms-connector before this call — exactly as the gateway enforces the EVM
+    // ACL before the EVM path — so here we only bind the response to the request via the Solana
+    // link (`compute_link_solana`). The link is passed opaquely into signcryption, so the
+    // binding is sound as long as the client recomputes the same link. The response cert is the
+    // standard secp256k1 EIP-712 the gateway verifies, signed under the gateway's `Decryption`
+    // domain (`req.domain`) — see the domain note at the return below.
+    if let Some(solana_pubkey) = parse_solana_user_decrypt_pubkey(&req.client_address) {
+        let mut handles = Vec::with_capacity(req.typed_ciphertexts.len());
+        for c in &req.typed_ciphertexts {
+            if c.external_handle.len() > 32 {
+                return Err(anyhow::anyhow!(
+                    "Solana user-decrypt external_handle too long: {} bytes (max 32)",
+                    c.external_handle.len()
+                )
+                .into());
+            }
+            let mut handle = [0u8; 32];
+            handle[32 - c.external_handle.len()..].copy_from_slice(&c.external_handle);
+            handles.push(handle);
+        }
+        // Handle byte-layout (canonical fhevm): chain id at bytes [22..30], big-endian.
+        let first = &handles[0];
+        let mut chain_id_bytes = [0u8; 8];
+        chain_id_bytes.copy_from_slice(&first[22..30]);
+        let host_chain_id = u64::from_be_bytes(chain_id_bytes);
+
+        let link = compute_link_solana(&req.enc_key, &handles, &solana_pubkey, host_chain_id);
+        let client_verf_key = solana_user_decrypt_client_id(&solana_pubkey);
+        let _client_enc_key =
+            UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
+                anyhow::anyhow!(
+                    "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {e}"
+                )
+            })?;
+        // The KMS signs `UserDecryptResponseVerification` under the gateway's `Decryption`
+        // EIP-712 domain (name/version/chainId/verifyingContract, carried in `req.domain`) so the
+        // gateway's `userDecryptionResponse` recovers the registered KMS signer on-chain. The
+        // response cert is the standard secp256k1 EIP-712 — identical to EVM; only the user
+        // *authorization* seam differs (ed25519, already enforced by the connector), so there is
+        // no user EIP-712 to verify here.
+        let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+        return Ok((
+            req.typed_ciphertexts.clone(),
+            link,
+            req.enc_key.clone(),
+            client_verf_key,
+            request_id,
+            key_id,
+            context_id,
+            epoch_id,
+            response_domain,
+            req.extra_data.clone(),
+        ));
     }
 
     let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
@@ -988,6 +1073,63 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         extra_data,
         resharing,
     })
+}
+
+#[cfg(test)]
+mod solana_user_decrypt_tests {
+    use super::{parse_solana_user_decrypt_pubkey, solana_user_decrypt_client_id};
+
+    #[test]
+    fn parses_solana_client_address_and_rejects_evm() {
+        let pubkey = [0x11u8; 32];
+        let addr = format!("solana:{}", alloy_primitives::hex::encode(pubkey));
+        assert_eq!(parse_solana_user_decrypt_pubkey(&addr), Some(pubkey));
+
+        // Ordinary EVM checksummed address → None (takes the unchanged EIP-712 path).
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey("0x66f9664f97F2b50F62D13eA064982f936dE76657"),
+            None
+        );
+        // Malformed Solana payloads → None.
+        assert_eq!(parse_solana_user_decrypt_pubkey("solana:zz"), None);
+        assert_eq!(parse_solana_user_decrypt_pubkey("solana:1122"), None); // too short
+        // A bare 64-hex string WITHOUT the `solana:` prefix is NOT treated as Solana; it falls to
+        // the EVM path (which rejects it as a non-checksummed address). No silent mis-dispatch.
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey(&alloy_primitives::hex::encode(pubkey)),
+            None
+        );
+        // Uppercase / mixed-case hex is rejected — canonical client_address form is lowercase.
+        // Use a pubkey whose hex contains letters so uppercasing actually changes it.
+        let letters = [0xabu8; 32];
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey(&format!(
+                "solana:{}",
+                alloy_primitives::hex::encode(letters).to_uppercase()
+            )),
+            None
+        );
+        // The same identity in canonical lowercase still parses.
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey(&format!(
+                "solana:{}",
+                alloy_primitives::hex::encode(letters)
+            )),
+            Some(letters)
+        );
+    }
+
+    #[test]
+    fn client_id_is_keccak_derived_and_deterministic() {
+        let pubkey = [0x22u8; 32];
+        let id = solana_user_decrypt_client_id(&pubkey);
+        assert_eq!(id, solana_user_decrypt_client_id(&pubkey));
+        let expected = &alloy_primitives::keccak256(pubkey)[12..];
+        assert_eq!(id.as_slice(), expected);
+        let mut other = pubkey;
+        other[0] ^= 0xff;
+        assert_ne!(id, solana_user_decrypt_client_id(&other));
+    }
 }
 
 #[cfg(test)]
