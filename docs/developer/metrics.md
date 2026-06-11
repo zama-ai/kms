@@ -7,7 +7,9 @@ The KMS Core metrics system provides comprehensive observability through OpenTel
 All metrics follow a consistent naming pattern with a configurable prefix (default: "kms"). The full metric name is constructed by combining the prefix with the metric-specific suffix. Metric names are defined as constants in the `metrics_names` module to ensure consistency and prevent typos.
 
 ### Operation Names
+
 Standard operation names are defined as constants:
+
 ```rust
 pub const OP_BOOT: &str = "boot";
 pub const OP_SYSTEM_STARTUP: &str = "system_startup"; // sanity-check increment emitted once by every process at metrics init
@@ -69,7 +71,9 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 ```
 
 ### Error Types
+
 Standard grpc error types are defined as constants:
+
 ```rust
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
 pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
@@ -82,19 +86,23 @@ pub const ERR_INTERNAL: &str = "internal_error";
 pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
 ```
+
 Finally two more errors exist: one for problems happening in an async worker thread (i.e. after the initial grpc call has been returned) and one for backup errors:
+
 ```rust
 pub const ERR_ASYNC: &str = "async_call_error";
 pub const ERR_BACKUP: &str = "backup_error";
 ```
 
 ### Tag Keys
+
 Standard metric tag keys are defined as constants:
+
 ```rust
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
-pub const TAG_ALGORITHM: &str = "algorithm";
+pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
 pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
@@ -105,7 +113,9 @@ pub const CENTRAL_TAG: &str = "central";
 ```
 
 ### Counters
+
 Track values that only increase:
+
 - `{prefix}_operations_total` - Total number of operations processed
   ```rust
   metrics.increment_request_counter(OP_KEYGEN_REQUEST);  // {prefix}_operations_total{operation="keygen_request"}
@@ -116,7 +126,9 @@ Track values that only increase:
   ```
 
 ### Histograms
+
 Track the distribution of values:
+
 - `{prefix}_operation_duration_ms` - Duration of operations in milliseconds
   ```rust
   let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)
@@ -127,11 +139,11 @@ Track the distribution of values:
   ```rust
   metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64);  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
   ```
-NOTE: `{prefix}_payload_size_bytes` is emitted from the versioned-storage write paths
-(`safe_write_element_versioned` for file storage, `S3Storage::store_data_at_key`, and `RamStorage`);
-there its `operation` label carries the serialized element's **type name** (e.g. a key/keyset type),
-not an operation name, and the size is recorded only after the write succeeds. Call `observe_size`
-from other paths whenever a payload size is worth tracking.
+  NOTE: `{prefix}_payload_size_bytes` is emitted from the versioned-storage write paths
+  (`safe_write_element_versioned` for file storage, `S3Storage::store_data_at_key`, and `RamStorage`);
+  there its `operation` label carries the serialized element's **type name** (e.g. a key/keyset type),
+  not an operation name, and the size is recorded only after the write succeeds. Call `observe_size`
+  from other paths whenever a payload size is worth tracking.
 
 Both histograms use **explicit buckets** tuned to KMS workloads (`kms_operation_duration_ms`: 1 ms →
 5 min; `kms_payload_size_bytes`: 1 KiB → 64 GiB). Prometheus' default buckets top out at ~10 (tuned for
@@ -139,6 +151,7 @@ seconds), so our millisecond- and byte-valued observations would otherwise pile 
 `histogram_quantile` (p50/p95) meaningless.
 
 ### Gauges
+
 Track instantaneous values that can rise and fall. There is **no generic gauge API** — each gauge is a
 dedicated metric set through its own `record_*` method (e.g. `METRICS.record_cpu_load(load)`). Names
 assume the default `kms` prefix:
@@ -224,6 +237,7 @@ fn run_keygen(party_id: usize) -> Result<(), Error> {
 ```
 
 Manual recording, when you need the elapsed value or must record before the guard drops:
+
 ```rust
 fn explicit_timing() -> Result<(), Error> {
     let guard = METRICS.time_operation(OP_KEYGEN_REQUEST)
@@ -266,7 +280,7 @@ Every metric can carry **static labels** that identify the deployment it came fr
 Prometheus/Grafana can tell e.g. kind-CI integration-test metrics apart from production ones.
 
 These labels are read once at startup from the `KMS_METRICS_LABELS` environment variable — a
-comma-separated `key=value` list — and applied as Prometheus *const-labels* to **every** metric. No
+comma-separated `key=value` list — and applied as Prometheus _const-labels_ to **every** metric. No
 metric call site changes; the distinction is purely a deployment concern.
 
 ```bash
@@ -282,6 +296,7 @@ histogram_quantile(0.95, sum by (le) (rate(ci_kms_operation_duration_ms_bucket{d
 ```
 
 Conventions:
+
 - `deployment_profile=kind-ci` — the only const-label the kind overlay applies, marking every metric
   from the kind-cluster integration tests.
 - The threshold and centralized matrices deploy to separate namespaces (`kms-test-threshold` /
@@ -292,7 +307,7 @@ Conventions:
 In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
 env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`
 sets only `deployment_profile=kind-ci`. (A per-run `ci_run_id` is also attached in kind — but as a
-Prometheus *external label* from `GITHUB_RUN_ID`, not a KMS const-label.) Malformed, empty-valued,
+Prometheus _external label_ from `GITHUB_RUN_ID`, not a KMS const-label.) Malformed, empty-valued,
 invalidly-named, `__`-reserved, or colliding entries (names already used by a built-in metric label)
 are skipped with a warning, so a typo never takes the server down. Unset/empty means no extra labels —
 the default for production.
@@ -303,6 +318,7 @@ server logs them at startup so operators can confirm how a deployment is tagged.
 ## Best Practices
 
 ### 1. Operation Naming
+
 - Use the `OP_*` constants from `metrics_names` — never raw strings
 - Names mirror the gRPC method, with a phase suffix where a request and its result are tracked
   separately (`_request` / `_result`)
@@ -311,10 +327,12 @@ server logs them at startup so operators can confirm how a deployment is tagged.
   `crs_gen_request`
 
 ### 2. Error Recording
+
 - Use predefined error type constants from `metrics_names` module
 - These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request.
 
 ### 3. Tag Usage
+
 - Use tag keys that match parameter names when possible
 - Keep tag keys short and consistent
 - Common tags from `metrics_names`:
@@ -326,11 +344,13 @@ server logs them at startup so operators can confirm how a deployment is tagged.
 - Also to _not_ use tags that will have high cardinality. E.g. using `RequestId` as tag would not be acceptable.
 
 ### 4. Duration Measurement
+
 - Use the `observe_duration_with_tags` method with proper operation name constants
 - Include operation type tags for all duration measurements
 - Keep measurements consistent across similar operations
 
 ### 5. Metric Consistency
+
 - Always import metric names from the `metrics_names` module
 - Use the same operation names in logs and metrics
 - Follow the established naming patterns when adding new metrics
@@ -340,6 +360,7 @@ server logs them at startup so operators can confirm how a deployment is tagged.
 When adding new metrics:
 
 1. Add new constants to `metrics_names.rs`:
+
    ```rust
    // Operation names
    pub const OP_NEW_OPERATION: &str = "new_operation";
@@ -352,6 +373,7 @@ When adding new metrics:
    ```
 
 2. Use the new constants in your code:
+
    ```rust
    use observability::metrics_names::{OP_NEW_OPERATION, TAG_NEW_TAG};
 
