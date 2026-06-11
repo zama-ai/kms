@@ -422,10 +422,6 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
 
 #[tokio::test]
 async fn write_threshold_keys_sunshine() {
-    // The "empty meta store" failure case from the previous test is no
-    // longer reachable: under the strong-permit invariant `write_fhe_keys`
-    // takes a `MetaStorePermit`, which can only be obtained from
-    // `MetaStore::insert`.
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
         .unwrap()
@@ -460,7 +456,6 @@ async fn write_threshold_keys_sunshine() {
 
 #[tokio::test]
 async fn write_threshold_keys_meta_update() {
-    // The previous "double-write" failure case is no longer reachable —
     // `MetaStore::insert` refuses to mint a second permit for an existing
     // entry, so write_fhe_keys cannot be called twice for the same req_id.
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
@@ -624,13 +619,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         err
     );
 }
-
-// `write_threshold_compressed_empty_update_cleans_up` was removed: it
-// exercised the "write to empty meta store → purge partial material" path,
-// which is no longer reachable under the strong-permit invariant
-// (write_fhe_keys requires a `MetaStorePermit` minted by `MetaStore::insert`).
-// The cleanup-on-storage-failure behaviour is still covered by
-// `write_threshold_keys_failed_storage`.
 
 #[tokio::test]
 async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
@@ -1342,10 +1330,6 @@ async fn write_backup_keys() {
     );
     let recovery = dummy_recovery_material("write_backup_keys");
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    // Note: the previous "missing meta-store entry → MetaStoreError" sub-test
-    // is no longer reachable under the strong-permit invariant —
-    // `write_backup_keys` takes a `MetaStorePermit` which can only be minted
-    // from `MetaStore::insert`.
 
     let req_id = recovery.custodian_context().context_id;
     let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
@@ -1457,14 +1441,6 @@ async fn update_meta_store_storage_outcomes() {
             .is_err(),
     );
 }
-
-// The previous `update_meta_store_failure_paths` test exercised "missing
-// entry" and "already-set entry" failure modes by passing a `None` permit.
-// Under the strong-permit invariant, these states are unreachable from the
-// outside: `insert` produces a permit only for a fresh `Pending` entry, and
-// no API constructs a permit for a missing or already-completed one. The
-// fallback `MetaStore::try_delete` primitive still covers the recovery path,
-// exercised in `util::meta_store::tests`.
 
 #[tokio::test]
 async fn inner_update_backup_vault_paths() {
