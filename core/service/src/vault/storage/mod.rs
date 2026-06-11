@@ -696,8 +696,7 @@ pub mod tests {
             .await
             .unwrap();
         let after = observability::metrics::METRICS.payload_size_sample_count(TestType::NAME);
-        // `>` rather than an exact count because tests sharing the process-global METRICS may
-        // store a TestType concurrently.
+        // `>` not an exact count: parallel tests share the global METRICS.
         assert!(
             after > before,
             "storing data must record a payload-size sample (before={before}, after={after})"

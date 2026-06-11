@@ -460,8 +460,7 @@ impl CoreMetrics {
         values[0] = operation.as_ref();
         for (key, value) in extra_tags {
             match DURATION_LABEL_KEYS.iter().position(|k| k == key) {
-                // Index 0 is the `operation` label, always filled from `operation` above; a tag
-                // must not be able to override it and mislabel the series.
+                // values[0] is the operation label; never let a tag override it.
                 Some(0) => warn!(
                     key,
                     "ignoring duration metric tag that would override the operation label"
@@ -502,9 +501,8 @@ impl CoreMetrics {
             .observe(size);
     }
 
-    /// Number of samples recorded into `kms_payload_size_bytes` for `operation` (the element type
-    /// name on storage write paths). Cumulative for the process; intended for tests asserting that
-    /// a write path recorded its payload size.
+    /// Sample count of `kms_payload_size_bytes` for `operation`, cumulative for the process.
+    /// Mainly for tests asserting that a write path recorded its payload size.
     pub fn payload_size_sample_count(&self, operation: impl AsRef<str>) -> u64 {
         self.size_histogram
             .with_label_values(&[operation.as_ref()])
@@ -749,8 +747,8 @@ impl MetricsConfig {
         Self::from_env_value(std::env::var(METRICS_LABELS_ENV).ok())
     }
 
-    /// [`from_env`](Self::from_env) with the raw env value passed in, so tests can exercise the
-    /// env-to-config path without mutating the process environment.
+    /// [`from_env`](Self::from_env) with the env value passed in, so tests don't mutate the
+    /// environment.
     fn from_env_value(raw: Option<String>) -> Self {
         Self {
             labels: parse_metrics_labels(raw.as_deref()),
@@ -781,8 +779,7 @@ fn parse_metrics_labels(raw: Option<&str>) -> BTreeMap<String, String> {
         };
         let (key, value) = (key.trim(), value.trim());
         if value.is_empty() {
-            // Prometheus treats an empty label value as the label being absent, so the
-            // configured label would silently disappear from every exported series.
+            // An empty label value reads as "label absent" in Prometheus.
             warn!(key, "ignoring metrics label with empty value");
             continue;
         }
