@@ -219,13 +219,15 @@ pub(crate) async fn run_crs_centralized(
         }
     };
 
-    let mut response = Err(tonic::Status::not_found(""));
-    let mut ctr = 0;
-    while response.is_err() && ctr < 5 {
+    let mut response = kms_client
+        .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
+        .await;
+    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+        // Sleep to give the server some time to complete CRS generation
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         response = kms_client
             .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
             .await;
-        ctr += 1;
     }
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
