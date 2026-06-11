@@ -10,15 +10,6 @@
 //! recorded), and the raw [`MetaStoreError`] when the caller owns the outcome
 //! (fire-and-forget completion paths, or internal `anyhow` flows).
 //!
-//! The **inherent `MetaStore` methods** are `pub(crate)` guard-level primitives:
-//! the caller is assumed to already hold the appropriate `RwLock` guard, and they
-//! do no metric bookkeeping. Reach for them directly only where the helper layer
-//! does not fit — notably the key-migration path in
-//! `copy_compressed_key_to_original`, which holds a single permit across a claim
-//! on an existing entry ([`lock_entry`](MetaStore::lock_entry)) →
-//! [`finalize`](MetaStore::finalize) /
-//! [`abort_reservation`](MetaStore::abort_reservation) and is an `anyhow` flow.
-//!
 //! # Entry lifecycle
 //!
 //! `insert` → [`MetaStorePermit`] → (`update` to finish | `delete` to tombstone),
@@ -28,6 +19,17 @@
 //! (used as a cross-lock sync point); pairing it with
 //! [`finalize`](MetaStore::finalize) / [`abort_reservation`](MetaStore::abort_reservation)
 //! supports in-place rewrites of an existing entry for key migration.
+//!
+//! # Requirements
+//!
+//! The **inherent `MetaStore` methods** are `pub(crate)` guard-level primitives:
+//! the caller is assumed to already hold the appropriate `RwLock` guard, and they
+//! do no metric bookkeeping. Reach for them directly only where the helper layer
+//! does not fit — notably the key-migration path in
+//! `copy_compressed_key_to_original`, which holds a single permit across a claim
+//! on an existing entry ([`lock_entry`](MetaStore::lock_entry)) →
+//! [`finalize`](MetaStore::finalize) /
+//! [`abort_reservation`](MetaStore::abort_reservation) and is an `anyhow` flow.
 //!
 //! Any meta store that is NOT used for decryption (user or public) should be unlimited and MUST ensure that all data elements are present.
 
@@ -56,24 +58,19 @@ cfg_if::cfg_if! {
 /// hand-coding the code per callsite.
 #[derive(Error, Debug)]
 pub(crate) enum MetaStoreError {
-    /// `insert` saw an entry already stored at this request id.
     #[error("the element with ID {req_id} already exists; cannot insert twice")]
     AlreadyExists { req_id: RequestId },
 
-    /// `insert` could not make room: the store is at capacity and the
-    /// completed-cache is at or below its minimum size.
     #[error(
         "meta store is full and the completed cache is at its minimum size; cannot insert {req_id}"
     )]
     CapacityFull { req_id: RequestId },
 
-    /// No entry exists for this request id.
     #[error("the element with ID {req_id} does not exist")]
     NotFound { req_id: RequestId },
 
     /// Entry is in an in-flight state: either still `Pending` or another
-    /// caller holds a live `MetaStorePermit`. Both situations block mutation
-    /// and the caller may want to retry once the holder is done.
+    /// caller holds a live `MetaStorePermit`.
     #[error("the element with ID {req_id} is locked (pending or held by another permit)")]
     Locked { req_id: RequestId },
 
@@ -139,6 +136,7 @@ impl MetaStoreError {
 /// check `strong_count == 1` to determine that no permit is outstanding.
 pub struct MetaStorePermit<T> {
     req_id: RequestId,
+    /// Lightweight type used to tracking the permit, automatically dropped when the permit is dropped.
     _claim: Arc<()>,
     /// Needed to prevent permits of same `req_id` to be used across meta-stores.
     _phantom: PhantomData<T>,
@@ -162,8 +160,6 @@ pub enum EntryState<T> {
 }
 
 impl<T> std::fmt::Display for EntryState<T> {
-    /// Render the state variant (without the contained value, which need not be
-    /// `Display`), e.g. for diagnostics and assertion messages.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             EntryState::Pending => "Pending",
@@ -220,9 +216,6 @@ pub struct MetaStore<T> {
     // Queue of all elements that have been completed
     complete_queue: VecDeque<RequestId>,
     // Number of tombstoned (`Deleted`) entries still occupying `storage`.
-    // Tombstones are permanent (never removed from `storage` nor evicted), so this
-    // only ever grows. Tracked here so `get_processing_count` stays O(1) while
-    // excluding tombstones (which are neither processing nor completed).
     deleted_count: usize,
 }
 
@@ -278,9 +271,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Verify the invariant that storage.len() >= complete_queue.len() + deleted_count
-    /// (i.e. the processing count is non-negative). This is critical for preventing
-    /// underflow in get_processing_count().
-    /// Logs error if invariant is violated but does not panic
+    /// (i.e. the processing count is non-negative).
     fn verify_invariant(&self) -> bool {
         let is_valid = self.storage.len() >= self.complete_queue.len() + self.deleted_count;
         if !is_valid {
@@ -294,15 +285,12 @@ impl<T> MetaStore<T> {
         is_valid
     }
 
-    // The non local effect warning is a false positive here, because we return an error only if the pop_front()
-    // fails, which means that the queue is empty, and thus we do not have any non-local effects.
     #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
     /// Insert a new element, throwing an error if the element already exists or if the system is fully loaded.
     ///
     /// On success, returns a [`MetaStorePermit`] granting the caller the right to
     /// later [`update`] or [`delete`] this entry. Hold the permit until the
-    /// mutation; drop it if the work is abandoned (other callers can recover via
+    /// mutation or drop it if the work is abandoned (other callers can recover via
     /// `try_delete`).
     ///
     /// Elements can trivially be inserted until the store reaches its [capacity].
@@ -314,10 +302,6 @@ impl<T> MetaStore<T> {
         &mut self,
         request_id: &RequestId,
     ) -> Result<MetaStorePermit<T>, MetaStoreError> {
-        // `Deleted` is a permanent tombstone: a request id, once deleted, may
-        // not be reused for a fresh insert. Callers that need to overwrite an
-        // existing entry should use [`lock_entry`](MetaStore::lock_entry) +
-        // [`finalize`](MetaStore::finalize) instead.
         if self.storage.contains_key(request_id) {
             return Err(MetaStoreError::AlreadyExists {
                 req_id: *request_id,
@@ -381,10 +365,6 @@ impl<T> MetaStore<T> {
     /// This is intended for callers that need to update or delete an existing entry but do not hold its original insert permit.
     ///
     /// Note that acquiring a permit on an existing entry does not change its state: the entry remains `Pending` or `Done` as it was before.
-    ///
-    /// Lock: assumes the caller already holds the write guard. gRPC callers
-    /// should instead use [`lock_entry_in_meta_store`], which locks internally
-    /// and maps the error for propagation.
     pub(crate) fn lock_entry(
         &mut self,
         request_id: &RequestId,
@@ -525,7 +505,6 @@ impl<T> MetaStore<T> {
         if matches!(cell, StoredEntry::Deleted) {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
-        // TODO don't use mem replace
         let old = std::mem::replace(cell, StoredEntry::Deleted);
         // `old` is Pending or Done here (the Deleted case errored above), so this
         // is always a fresh transition into a tombstone.
@@ -539,10 +518,6 @@ impl<T> MetaStore<T> {
     /// Like [`delete`], but for callers that do not hold a permit. Succeeds
     /// for any non-Deleted state when no live permit is outstanding. Returns
     /// the previous state.
-    ///
-    /// Lock: assumes the caller already holds the write guard. Most callers
-    /// should use [`try_delete_in_meta_store`], which locks internally and lets
-    /// the caller inspect the returned [`EntryState`].
     pub(crate) fn try_delete(
         &mut self,
         request_id: &RequestId,
@@ -580,7 +555,6 @@ impl<T> MetaStore<T> {
         }
         // Safe: we just verified the entry exists and is not Deleted.
         let cell = self.storage.get_mut(request_id).unwrap();
-        // TODO ensure we can just clone the old entry
         let old = std::mem::replace(cell, StoredEntry::Deleted);
         // `old` is Pending or Done here (the Deleted case errored above), so this
         // is always a fresh transition into a tombstone.
@@ -686,16 +660,14 @@ pub(crate) async fn add_req_to_meta_store<T>(
         .map_err(|e| e.into_metriced(request_metric))
 }
 
+///////////// HELPER FUNCTIONS /////////////////////////////////////////////
+
 /// Fail-fast, read-only existence check that mirrors [`MetaStore::insert`]'s
 /// duplicate rejection: returns an `AlreadyExists` [`MetricedError`] if an entry
 /// (pending, completed, or tombstoned) already occupies `req_id`.
 ///
 /// Intended to be called *before* expensive setup/computation so a request for
-/// an already-known id is rejected early, without claiming a permit. It only
-/// takes the read lock and is advisory: the authoritative, race-closing claim is
-/// still made later by [`add_req_to_meta_store`], whose `insert` re-checks under
-/// the write lock. A caller therefore must not rely on this check alone for
-/// mutual exclusion — it only avoids wasted work in the common case.
+/// an already-known id is rejected early, without claiming a permit.
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn ensure_not_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
@@ -759,12 +731,6 @@ pub(crate) async fn update_ok_req_in_meta_store<T>(
     }
 }
 
-/// Helper method for updating the meta store with an error result.
-/// The method gracefully handles potential update failures by logging and updating metrics.
-/// [permit] is consumed to mark the entry done.
-/// [error] is the error message to store.
-/// [request_metric] is a free-form string used only for error logging the origin of the failure.
-/// Returns true if the update was successful, false otherwise.
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn update_err_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
@@ -825,23 +791,15 @@ pub(crate) async fn try_delete_in_meta_store<T>(
 /// untouched.
 ///
 /// This is the **only** sanctioned path that overwrites an already-completed
-/// entry: the underlying [`MetaStore::finalize`] / [`MetaStore::abort_reservation`]
-/// are private, so a completed value can never be silently replaced through the
-/// normal `insert → update` flow. It exists for the key-migration edge case
-/// (`copy_compressed_key_to_original`), where storage keyed by `req_id` is
-/// rewritten and must be atomic w.r.t. a concurrent migration or insert of the
-/// same id — those bail with `Locked`/`AlreadyExists` against the held claim
-/// before any of `work`'s side effects run.
+/// entry.
+/// It exists for the key-migration edge case (`copy_compressed_key_to_original`),
+/// where storage keyed by `req_id` is rewritten and must be atomic.
 ///
-/// The entry is required to exist: callers migrate a key whose data is already
-/// present, so [`lock_entry`](MetaStore::lock_entry) is used rather than a
-/// get-or-create (see the claim site below). A missing entry fails with
-/// `NotFound`.
+/// The entry is required to exist.
 ///
-/// `work` returns `(value, payload)`: `value` is committed under `req_id`;
+/// `work` returns `(value, payload)`: `value` is stored under `req_id`;
 /// `payload` is returned to the caller (e.g. to update an out-of-store cache
-/// only after the commit succeeds). The claim is acquired before `work` runs and
-/// the lock is *not* held while `work` is in flight — only the per-entry permit.
+/// only after the commit succeeds).
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn with_overwriting_claim<T, R, F>(
     meta_store: &RwLock<MetaStore<T>>,
@@ -851,15 +809,6 @@ pub(crate) async fn with_overwriting_claim<T, R, F>(
 where
     F: AsyncFnOnce() -> anyhow::Result<(T, R)>,
 {
-    // Claim the existing entry. We can assume it is always present: the sole
-    // caller, `copy_compressed_key_to_original`, only migrates an `old_key_id`
-    // whose `FheKeyInfo` lives in private storage, and the keygen meta store is
-    // seeded at startup from exactly that set of keys (see `public_key_info` in
-    // `kms_impl.rs`) and is unbounded (`new_from_map`, capacity `usize::MAX`), so
-    // it never evicts. Any key that can be migrated therefore always has a `Done`
-    // entry here; a missing entry means the migration target does not exist, and
-    // failing with `NotFound` is the correct outcome (there is nothing to claim
-    // or create).
     let permit = meta_store
         .write()
         .await
