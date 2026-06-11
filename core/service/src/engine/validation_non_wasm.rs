@@ -191,6 +191,12 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
 /// which takes the unchanged EIP-712 path.
 fn parse_solana_user_decrypt_pubkey(client_address: &str) -> Option<[u8; 32]> {
     let hex = client_address.strip_prefix("solana:")?;
+    // Canonical form: exactly 64 LOWERCASE hex chars. The kms-connector sets this field with
+    // `hex::encode` (lowercase) over the 32-byte ed25519 pubkey, so requiring that exact encoding
+    // keeps one identity ↔ one client_address ↔ one derived client_id (no upper/mixed-case aliasing).
+    if hex.len() != 64 || !hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
+        return None;
+    }
     let bytes = alloy_primitives::hex::decode(hex).ok()?;
     <[u8; 32]>::try_from(bytes.as_slice()).ok()
 }
@@ -1083,6 +1089,30 @@ mod solana_user_decrypt_tests {
         // Malformed Solana payloads → None.
         assert_eq!(parse_solana_user_decrypt_pubkey("solana:zz"), None);
         assert_eq!(parse_solana_user_decrypt_pubkey("solana:1122"), None); // too short
+        // A bare 64-hex string WITHOUT the `solana:` prefix is NOT treated as Solana; it falls to
+        // the EVM path (which rejects it as a non-checksummed address). No silent mis-dispatch.
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey(&alloy_primitives::hex::encode(pubkey)),
+            None
+        );
+        // Uppercase / mixed-case hex is rejected — canonical client_address form is lowercase.
+        // Use a pubkey whose hex contains letters so uppercasing actually changes it.
+        let letters = [0xabu8; 32];
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey(&format!(
+                "solana:{}",
+                alloy_primitives::hex::encode(letters).to_uppercase()
+            )),
+            None
+        );
+        // The same identity in canonical lowercase still parses.
+        assert_eq!(
+            parse_solana_user_decrypt_pubkey(&format!(
+                "solana:{}",
+                alloy_primitives::hex::encode(letters)
+            )),
+            Some(letters)
+        );
     }
 
     #[test]
