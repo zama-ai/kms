@@ -98,12 +98,8 @@ pub enum PublicKeySet {
 /// This struct provides thread-safe access to public, private, and optional backup storage,
 /// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
 ///
-/// # Lock ordering (deadlock avoidance)
-///
-/// Whenever more than one of these locks is needed, acquire them in this fixed
-/// order:
-///
-/// `meta_store -> public_storage -> private_storage -> backup_vault -> pk_cache`
+/// Warning: In relation to concurrency where multiple locks are needed always lock as follows:
+/// meta_store -> public_storage -> private_storage second -> backup_vault -> pk_cache.
 ///
 /// TODO(#3036) Note that holding a MetaStore lock should eventually be sufficient to not require locking multiple things at once.
 pub struct CryptoMaterialStorage<

@@ -323,11 +323,13 @@ impl MetaStoreStatusServiceImpl {
                 Some(EntryState::Deleted) => (RequestProcessingStatus::Deleted, None),
                 None => {
                     // INVARIANT VIOLATION: Request ID from store's own collection is not retrievable
+                    // This indicates data corruption or race condition
                     tracing::error!(
                         "INVARIANT VIOLATION: Request {} found in {:?} store ID list but not retrievable - data corruption detected",
                         request_id,
                         store_type
                     );
+                    // Mark as FAILED since this represents a system error
                     (
                         RequestProcessingStatus::Failed,
                         Some("Internal error: Request data corrupted".to_string()),

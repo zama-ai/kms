@@ -227,9 +227,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         };
 
         // Process the result of orchestration or orchestrator creation.
-        // Only the long-running orchestration is cancellable; orchestrator
-        // construction is fast and synchronous, and the post-orchestration
-        // steps (external sig + meta store update) must commit atomically.
         let handle_update: Result<_, String> = match orchestrator_result {
             Ok(orchestrator) => {
                 tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);

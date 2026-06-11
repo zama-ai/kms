@@ -214,17 +214,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// and replaces the `ThresholdFheKeys` at `(old_key_id, old_epoch_id)` with the
     /// migrated one, re-signed under `old_key_id`.
     ///
-    /// The keygen meta-store entry for `old_key_id` is claimed for the whole
-    /// operation via [`with_overwriting_claim`], so a concurrent migration to —
-    /// or insert of — the same id is rejected before any backend is touched
-    /// rather than racing the writes below. The operation is then
-    /// split into validate-then-mutate phases: everything is read and checked
-    /// before any backend is mutated, so a malformed migration input cannot
-    /// leave pub and priv storage in inconsistent states. On any failure during
-    /// those phases the claim is rolled back, leaving the existing `old_key_id`
-    /// entry untouched; on success the entry is committed to the re-signed
-    /// metadata.
-    ///
     /// The old `CompactPublicKey` and `ServerKey` files at `old_key_id` are
     /// preserved for compatibility. The migration keygen also stores the old
     /// `CompactPublicKey` at `new_key_id`, so the public key bytes remain
@@ -246,12 +235,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // Claim `old_key_id` exclusively for the whole migration via
         // `with_overwriting_claim`: it locks the existing meta-store entry
         // *before* the work below runs, so a concurrent
-        // migration or insert of the same id bails with `Locked`/`AlreadyExists`
-        // rather than racing our Phase B storage writes. On success it commits
-        // the re-signed metadata; on any failure it rolls the claim back,
-        // leaving the existing entry untouched. The closure
-        // returns `(metadata, fhe_keys)`: the metadata is committed to the
-        // meta-store, the keys are handed back for the in-memory cache below.
+        // migration or insert of the same id bails with `Locked`/`AlreadyExists`.
         let updated_fhe_keys =
             with_overwriting_claim(&dkg_pubinfo_meta_store, old_key_id, async || {
                 // --- Phase A: validate everything before mutating anything. ---

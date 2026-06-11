@@ -395,13 +395,7 @@ async fn test_copy_compressed_key_to_original_success() {
         let meta = match entry {
             crate::util::meta_store::EntryState::Done(Ok(arc)) => arc,
             other => panic!(
-                "meta_store should hold Done(Ok(metadata)) for old_key_id={old_key_id}, got {state}",
-                state = match other {
-                    crate::util::meta_store::EntryState::Pending => "Pending".to_owned(),
-                    crate::util::meta_store::EntryState::Done(Err(e)) => format!("Done(Err: {e})"),
-                    crate::util::meta_store::EntryState::Deleted => "Deleted".to_owned(),
-                    crate::util::meta_store::EntryState::Done(Ok(_)) => unreachable!(),
-                }
+                "meta_store should hold Done(Ok(metadata)) for old_key_id={old_key_id}, got {other:?}",
             ),
         };
         assert_current_compressed_metadata(&meta, &old_key_id);

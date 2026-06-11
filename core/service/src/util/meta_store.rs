@@ -151,6 +151,7 @@ impl<T> MetaStorePermit<T> {
 }
 
 /// Public-facing snapshot of an entry's state.
+#[derive(Debug, Clone)]
 pub enum EntryState<T> {
     /// Entry exists, but is being worked on (either being computed or being deleted)
     Pending,

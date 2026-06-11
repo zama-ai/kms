@@ -187,8 +187,6 @@ where
 
         // Fail fast: reject before the (expensive) key generation and backup
         // re-encryption if this context id is already known to the meta store.
-        // The authoritative, race-closing claim is made inside
-        // `inner_new_custodian_context` just before it first modifies storage.
         ensure_not_in_meta_store(
             &self.custodian_meta_store,
             &custodian_context_id,
@@ -217,7 +215,6 @@ where
         &self,
         request: tonic::Request<DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
-        // TODO validate thisn flow
         let context_id = parse_optional_grpc_request_id(
             &request.into_inner().context_id,
             RequestIdParsingErr::CustodianContextDestruction,
@@ -302,11 +299,6 @@ where
         )
         .await?;
 
-        // Claim the meta-store entry now: after the fallible key generation and
-        // recovery-validation setup above (so a failure there cannot leave an
-        // orphaned `Pending` entry) and before the first storage modification
-        // below. This `insert` is also the authoritative existence check behind
-        // the fail-fast read in `new_custodian_context`.
         let meta_permit = add_req_to_meta_store(
             &self.custodian_meta_store,
             &inner_context.context_id,
@@ -322,9 +314,7 @@ where
 
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        // This block modifies storage (the backup vault) under the held claim and
-        // is fallible; on any failure we must record the error on the permit
-        // rather than let it drop, which would orphan the `Pending` entry.
+        // We keep the result so we can update the meta-store with an appropriate error in case of failure.
         let prep: anyhow::Result<()> = async {
             let lock_start = std::time::Instant::now();
             let mut guarded_backup_vault = backup_vault.lock().await;

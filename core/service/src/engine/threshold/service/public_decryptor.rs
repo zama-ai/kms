@@ -538,7 +538,7 @@ impl<
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: _permit should be dropped at the end of this function
+            // permit should be dropped at the end of this function
             let mut meta_permit = Some(meta_permit);
             let mut decs = HashMap::new();
 
@@ -562,7 +562,7 @@ impl<
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
                     meta_permit
-                        .take() //todo why this?
+                        .take() // Ensure permit gets set to `None` after updating meta store with an errror
                         .expect("permit must still be present on first error"),
                     err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
