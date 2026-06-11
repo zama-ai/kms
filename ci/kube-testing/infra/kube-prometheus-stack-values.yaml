@@ -62,12 +62,10 @@ prometheus:
         cpu: "1"
         memory: 1Gi
 
-    # Remote-write to Grafana Cloud. `url` is injected via `helm --set-file`
-    # into this same list element. Scraped metrics are already `ci_`-prefixed
-    # at scrape time, so no metric renaming happens here. Synthetic series
-    # (`up`, `scrape_*`) are generated after metric relabeling and therefore
-    # keep their original names, but still carry the target's `namespace`
-    # label and pass the filter below — useful for debugging scrapes.
+    # Remote-write to Grafana Cloud; `url` is injected via `helm --set-file`.
+    # Scraped metrics are already `ci_`-prefixed at scrape time. Synthetic
+    # series (`up`, `scrape_*`) keep their original names but carry the
+    # target's `namespace` label, so they pass the filter below.
     remoteWrite:
       - basicAuth:
           username:
@@ -76,10 +74,8 @@ prometheus:
           password:
             name: grafana-cloud-prom-auth
             key: password
-        # Safety net: only ship series coming from the KMS namespaces, in case
-        # additional scrape targets are ever enabled. Relabel regexes are fully
-        # anchored; `kms-test.*` covers both the CI namespaces (kms-test-threshold,
-        # kms-test-centralized) and the kind-local default namespace (kms-test).
+        # Safety net: only ship series from the KMS namespaces. The (anchored)
+        # `kms-test.*` also matches the kind-local default namespace `kms-test`.
         writeRelabelConfigs:
           - sourceLabels: [namespace]
             regex: "kms-test.*"
