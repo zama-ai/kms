@@ -1,6 +1,6 @@
 # KMS Core Metrics Guide
 
-The KMS Core metrics system provides comprehensive observability through OpenTelemetry. This guide explains the metric types, their usage patterns, and best practices.
+The KMS Core metrics system provides comprehensive observability through Prometheus metrics served on the `/metrics` endpoint. This guide explains the metric types, their usage patterns, and best practices.
 
 ## Metric Types and Naming
 
@@ -94,7 +94,7 @@ Standard metric tag keys are defined as constants:
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
-pub const TAG_ALGORITHM: &str = "algorithm";
+pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
 pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
@@ -312,7 +312,7 @@ server logs them at startup so operators can confirm how a deployment is tagged.
 
 ### 2. Error Recording
 - Use predefined error type constants from `metrics_names` module
-- These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request.
+- These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. Today that means `ERR_ASYNC` (an error in the async worker thread, after the gRPC call already returned) and `ERR_BACKUP` (backup failures, recorded on the separate `kms_backup_errors_total` counter).
 
 ### 3. Tag Usage
 - Use tag keys that match parameter names when possible
