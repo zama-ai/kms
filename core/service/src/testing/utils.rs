@@ -645,6 +645,39 @@ pub mod setup {
     }
 }
 
+/// Poll a non-blocking KMS `get_*_result` endpoint until it yields a terminal result.
+///
+/// The result endpoints return [`tonic::Code::Unavailable`] while the background
+/// task (keygen, CRS gen, decryption, …) is still running. This helper repeatedly
+/// invokes `fetch` — which must issue a single `get_*_result` request — retrying
+/// with a short delay while the response is `Unavailable`, and returns the first
+/// terminal outcome (a success, or any non-`Unavailable` error), mirroring how
+/// real clients poll.
+///
+/// Panics if no terminal result appears within [`crate::consts::MAX_TRIES`]
+/// attempts, so a stuck background task fails the test instead of hanging forever.
+pub async fn poll_result_until_ready<T, Fut, F>(
+    mut fetch: F,
+) -> Result<tonic::Response<T>, crate::engine::utils::MetricedError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<
+            Output = Result<tonic::Response<T>, crate::engine::utils::MetricedError>,
+        >,
+{
+    for _ in 0..crate::consts::MAX_TRIES {
+        let res = fetch().await;
+        if !matches!(&res, Err(e) if e.code() == tonic::Code::Unavailable) {
+            return res;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!(
+        "result endpoint never became ready after {} attempts",
+        crate::consts::MAX_TRIES
+    );
+}
+
 // NOTE: this test stays out of the setup module
 // because we don't want it to have the "testing" feature
 #[tokio::test]

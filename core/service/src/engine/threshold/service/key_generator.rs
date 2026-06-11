@@ -2096,12 +2096,13 @@ mod tests {
         // keygen should pass because the failure occurs in background process
         kg.key_gen(request).await.unwrap();
 
-        // no need to wait because [get_result] is semi-blocking
+        // The result endpoint is non-blocking; poll until the background keygen fails.
         assert_eq!(
-            kg.get_result(tonic::Request::new(key_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
+            crate::testing::utils::poll_result_until_ready(|| kg
+                .get_result(Request::new(key_id.into())))
+            .await
+            .unwrap_err()
+            .code(),
             tonic::Code::Internal
         );
     }
@@ -2240,10 +2241,12 @@ mod tests {
 
         kg.key_gen(tonic_req).await.unwrap();
 
-        // no need to wait because [get_result] is semi-blocking
-        kg.get_result(tonic::Request::new(key_id.into()))
-            .await
-            .unwrap();
+        // The result endpoint is non-blocking; poll until the background keygen completes.
+        crate::testing::utils::poll_result_until_ready(|| {
+            kg.get_result(Request::new(key_id.into()))
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -2292,11 +2295,12 @@ mod tests {
         // Check that a second abort returns NotFound
         let status = kg.abort_key_gen(prep_id).await;
         assert_eq!(status.code(), tonic::Code::NotFound);
-        // Try to get the result and see it has been aborted
-        let err = kg
-            .get_result(Request::new(key_id.into()))
-            .await
-            .unwrap_err();
+        // Try to get the result and see it has been aborted (poll: non-blocking endpoint).
+        let err = crate::testing::utils::poll_result_until_ready(|| {
+            kg.get_result(Request::new(key_id.into()))
+        })
+        .await
+        .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

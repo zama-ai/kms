@@ -554,10 +554,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        // no need to wait because get result is semi-blocking
-        let _res = get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()), false)
-            .await
-            .unwrap();
+        // The result endpoint is non-blocking; poll until the background keygen completes.
+        let _res = crate::testing::utils::poll_result_until_ready(|| {
+            get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()), false)
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -815,9 +817,11 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let _res = get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()), false)
-            .await
-            .unwrap();
+        let _res = crate::testing::utils::poll_result_until_ready(|| {
+            get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()), false)
+        })
+        .await
+        .unwrap();
 
         let err = key_gen_impl(
             &kms,
