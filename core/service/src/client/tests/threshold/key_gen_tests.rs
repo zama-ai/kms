@@ -71,6 +71,15 @@ use tokio::task::JoinSet;
 use tonic::transport::Channel;
 use tonic::{Response, Status};
 
+/// Polling budget (number of `get_key_gen_preproc_result` retries at
+/// [`PREPROC_POLL_SLEEP_MS`] each) for real, secure preprocessing.
+#[cfg(feature = "slow_tests")]
+const SECURE_PREPROC_POLL_MAX_ITER: usize = 6000;
+
+/// Sleep between preprocessing-result poll attempts.
+#[cfg(feature = "slow_tests")]
+const PREPROC_POLL_SLEEP_MS: u64 = 500;
+
 #[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {
@@ -979,7 +988,9 @@ pub(crate) async fn run_preproc(
 
     // the responses should be empty
     let extra_data = preproc_request.extra_data.clone();
-    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    let responses =
+        poll_key_gen_preproc_result(preproc_request, kms_clients, SECURE_PREPROC_POLL_MAX_ITER)
+            .await;
     assert!(responses.len() + expected_num_parties_crashed == amount_parties);
     for response in responses {
         internal_client
@@ -1002,7 +1013,7 @@ async fn poll_key_gen_preproc_result(
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(PREPROC_POLL_SLEEP_MS)).await;
 
             let mut response = client
                 .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
@@ -1011,7 +1022,7 @@ async fn poll_key_gen_preproc_result(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(PREPROC_POLL_SLEEP_MS)).await;
                 if ctr >= max_iter {
                     panic!("timeout while waiting for preprocessing after {max_iter} retries");
                 }
