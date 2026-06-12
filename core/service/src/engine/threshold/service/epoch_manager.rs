@@ -1402,10 +1402,10 @@ impl<
         )
         .await;
 
-        // `destroy_epoch` only deletes on-disk material; also drop the cached
-        // decompressed keys or they stay resident until restart. Safe even if
-        // destruction partially failed: the epoch is already gone from the
-        // session maker, so nothing can reach these entries anymore.
+        // `destroy_epoch` above removes only the on-disk material, so the cached
+        // decompressed keys must be dropped here separately or they stay resident
+        // until restart. Safe even if destruction partially failed: the epoch is
+        // already gone from the session maker, so nothing can reach these entries.
         let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
         if removed > 0 {
             tracing::info!(

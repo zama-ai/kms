@@ -63,8 +63,9 @@ pub async fn safe_write_element_versioned<
     if let Some(p) = file_path.parent() {
         tokio::fs::create_dir_all(p).await?
     };
-    // Temp file + fsync + atomic rename, so a crash mid-write cannot leave a
-    // partial file at `file_path` (rename alone is not a durability barrier).
+    // Serialize into a sibling temp file, fsync it, then atomically rename it
+    // over `file_path`, so a crash mid-write cannot leave a partial file there
+    // (rename alone is not a durability barrier).
     // The temp name is dot-prefixed so directory listings skip a leftover
     // (`FileStorage::all_data_ids` parses every non-hidden name as a
     // `RequestId`), and carries a pid+counter suffix because concurrent writers
@@ -74,6 +75,10 @@ pub async fn safe_write_element_versioned<
         let file_name = file_path
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?;
+        // A function-local `static` is initialized once per process, not per
+        // call: every call shares this one counter, and `fetch_add` returns the
+        // previous value, so concurrent writers in this process get 0, 1, 2, ...
+        // The pid distinguishes writers across processes.
         static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut name = std::ffi::OsString::from(".");
