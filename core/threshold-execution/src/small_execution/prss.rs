@@ -1130,7 +1130,7 @@ mod tests {
     use crate::tests::ensure_test_data_setup;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
-    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
+    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_client_key};
     use crate::tfhe_internals::utils::expanded_encrypt;
     use crate::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
@@ -1295,9 +1295,14 @@ mod tests {
         let roles = generate_fixed_roles(num_parties);
 
         // generate key shares for all parties
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
 
         set_server_key(keyset.public_keys.server_key.clone());
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg, 8).unwrap();

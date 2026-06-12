@@ -1745,7 +1745,8 @@ pub mod tests {
             endpoints::keygen::distributed_decompression_keygen_z128,
             tfhe_internals::{
                 compression_decompression_key::CompressionPrivateKeyShares,
-                glwe_key::GlweSecretKeyShare, test_feature::gen_uncompressed_key_set,
+                glwe_key::GlweSecretKeyShare,
+                test_feature::{ClientKeyView, gen_uncompressed_key_set},
             },
         };
         use test_utils::{read_element, write_element};
@@ -1757,15 +1758,11 @@ pub mod tests {
         let keyset1 = gen_uncompressed_key_set(params, tag.clone(), &mut rng);
         let keyset2 = gen_uncompressed_key_set(params, tag, &mut rng);
 
-        let compression_key_1_poly_size = keyset1
-            .get_raw_compression_client_key()
-            .unwrap()
-            .polynomial_size();
-        let compression_key_1 = keyset1
-            .get_raw_compression_client_key()
-            .unwrap()
-            .into_container();
-        let glwe_key_2 = keyset2.get_raw_glwe_client_key();
+        let eck1 = ClientKeyView::new(&keyset1.client_key);
+        let compression_key_1_poly_size =
+            eck1.raw_compression_client_key().unwrap().polynomial_size();
+        let compression_key_1 = eck1.raw_compression_client_key().unwrap().into_container();
+        let glwe_key_2 = ClientKeyView::new(&keyset2.client_key).raw_glwe_client_key();
         let glwe_key_2_poly_size = glwe_key_2.polynomial_size();
         let glwe_key_2 = glwe_key_2.into_container();
 
