@@ -278,13 +278,13 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
 /// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
-fn reconstruct_w_errors_sync_common<Z>(
+pub fn reconstruct_w_errors_sync<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
     num_bots: usize,
     sharing: &ShamirSharings<Z>,
-    hints: Option<&ReconstructionHints<Z>>,
+    hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>
 where
     Z: Ring + ErrorCorrect,
@@ -302,11 +302,7 @@ where
             ))
         })?;
 
-        let opened = if let Some(hints) = hints {
-            sharing.err_reconstruct_with_hints(degree, max_errs, hints)?
-        } else {
-            sharing.err_reconstruct(degree, max_errs)?
-        };
+        let opened = sharing.err_reconstruct_with_hints(degree, max_errs, hints)?;
         return Ok(Some(opened));
     }
 
@@ -320,44 +316,6 @@ where
 
     // Not enough shares to reconstruct (yet)
     Ok(None)
-}
-
-/// [`reconstruct_w_errors_sync_common`] without precomputed [`ReconstructionHints`].
-pub fn reconstruct_w_errors_sync<Z>(
-    num_parties: usize,
-    degree: usize,
-    threshold: usize,
-    num_bots: usize,
-    sharing: &ShamirSharings<Z>,
-) -> anyhow::Result<Option<Z>>
-where
-    Z: Ring + ErrorCorrect,
-    ShamirSharings<Z>: RevealOp<Z>,
-{
-    reconstruct_w_errors_sync_common(num_parties, degree, threshold, num_bots, sharing, None)
-}
-
-/// [`reconstruct_w_errors_sync_common`] with precomputed [`ReconstructionHints`].
-pub fn reconstruct_w_errors_sync_with_hints<Z>(
-    num_parties: usize,
-    degree: usize,
-    threshold: usize,
-    num_bots: usize,
-    sharing: &ShamirSharings<Z>,
-    hints: &ReconstructionHints<Z>,
-) -> anyhow::Result<Option<Z>>
-where
-    Z: Ring + ErrorCorrect,
-    ShamirSharings<Z>: RevealOp<Z>,
-{
-    reconstruct_w_errors_sync_common(
-        num_parties,
-        degree,
-        threshold,
-        num_bots,
-        sharing,
-        Some(hints),
-    )
 }
 
 /// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
@@ -374,13 +332,13 @@ where
 /// thus we always perform the check "case B".
 ///
 /// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
-fn reconstruct_w_errors_async_common<Z>(
+pub fn reconstruct_w_errors_async<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
     num_bots: usize,
     sharing: &ShamirSharings<Z>,
-    hints: Option<&ReconstructionHints<Z>>,
+    hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>
 where
     Z: Ring + ErrorCorrect,
@@ -396,11 +354,7 @@ where
                 ))
             })?;
 
-            let opened = if let Some(hints) = hints {
-                sharing.err_reconstruct_with_hints(degree, max_errs, hints)?
-            } else {
-                sharing.err_reconstruct(degree, max_errs)?
-            };
+            let opened = sharing.err_reconstruct_with_hints(degree, max_errs, hints)?;
             Ok(Some(opened))
         } else {
             //We do not have enough shares yet
@@ -409,11 +363,7 @@ where
     } else if degree + 2 * threshold < num_parties {
         if num_heard_from > degree + threshold {
             let r: usize = num_heard_from - (degree + threshold + 1);
-            let opened_poly = if let Some(hints) = hints {
-                Z::error_correct_with_hints(sharing, degree, r, hints)
-            } else {
-                Z::error_correct(sharing, degree, r)
-            };
+            let opened_poly = Z::error_correct_with_hints(sharing, degree, r, hints);
             if let Ok(opened_poly) = opened_poly {
                 if opened_poly.deg() <= degree {
                     //Check how many shares lie on the polynomial
@@ -448,44 +398,6 @@ where
             "Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}"
         )))
     }
-}
-
-/// [`reconstruct_w_errors_async_common`] without precomputed [`ReconstructionHints`].
-pub fn reconstruct_w_errors_async<Z>(
-    num_parties: usize,
-    degree: usize,
-    threshold: usize,
-    num_bots: usize,
-    sharing: &ShamirSharings<Z>,
-) -> anyhow::Result<Option<Z>>
-where
-    Z: Ring + ErrorCorrect,
-    ShamirSharings<Z>: RevealOp<Z>,
-{
-    reconstruct_w_errors_async_common(num_parties, degree, threshold, num_bots, sharing, None)
-}
-
-/// [`reconstruct_w_errors_async_common`] with precomputed [`ReconstructionHints`].
-pub fn reconstruct_w_errors_async_with_hints<Z>(
-    num_parties: usize,
-    degree: usize,
-    threshold: usize,
-    num_bots: usize,
-    sharing: &ShamirSharings<Z>,
-    hints: &ReconstructionHints<Z>,
-) -> anyhow::Result<Option<Z>>
-where
-    Z: Ring + ErrorCorrect,
-    ShamirSharings<Z>: RevealOp<Z>,
-{
-    reconstruct_w_errors_async_common(
-        num_parties,
-        degree,
-        threshold,
-        num_bots,
-        sharing,
-        Some(hints),
-    )
 }
 
 #[cfg(test)]
@@ -594,9 +506,11 @@ mod tests {
             ShamirSharings::<ResiduePolyF4<Z128>>::share(&mut rng, secret, num_parties, threshold)
                 .unwrap();
 
-        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &sharings)
-            .unwrap()
-            .unwrap();
+        let hints = ReconstructionHints::new(&sharings, threshold).unwrap();
+        let opened =
+            reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &sharings, &hints)
+                .unwrap()
+                .unwrap();
 
         assert_eq!(opened, secret);
     }
@@ -631,9 +545,16 @@ mod tests {
         for i in threshold..3 * threshold {
             contribution.push(sharings.shares[i]);
             let faulty_shares = ShamirSharings::create(contribution.clone());
-            let opened =
-                reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &faulty_shares)
-                    .unwrap();
+            let hints = ReconstructionHints::new(&faulty_shares, threshold).unwrap();
+            let opened = reconstruct_w_errors_async(
+                num_parties,
+                threshold,
+                threshold,
+                0,
+                &faulty_shares,
+                &hints,
+            )
+            .unwrap();
 
             assert!(opened.is_none());
         }
@@ -641,9 +562,11 @@ mod tests {
         //With all shares we should be able to decode
         contribution.push(*sharings.shares.last().unwrap());
         let shares = ShamirSharings::create(contribution.clone());
-        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &shares)
-            .unwrap()
-            .unwrap();
+        let hints = ReconstructionHints::new(&shares, threshold).unwrap();
+        let opened =
+            reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &shares, &hints)
+                .unwrap()
+                .unwrap();
 
         assert_eq!(opened, secret);
     }
@@ -736,10 +659,17 @@ mod tests {
             }
         }
 
-        let opened =
-            reconstruct_w_errors_sync(num_parties, threshold, threshold, 0, &packed_sharmir_shares)
-                .unwrap()
-                .unwrap();
+        let hints = ReconstructionHints::new(&packed_sharmir_shares, threshold).unwrap();
+        let opened = reconstruct_w_errors_sync(
+            num_parties,
+            threshold,
+            threshold,
+            0,
+            &packed_sharmir_shares,
+            &hints,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(opened.at(0), secret1.at(0));
         assert_eq!(opened.at(1), secret2.at(0));
     }
