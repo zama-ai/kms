@@ -16,7 +16,6 @@ use crate::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
     },
-    engine::base::safe_serialize_hash_element_versioned,
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
@@ -26,7 +25,7 @@ use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
     sharing::{shamir::ShamirSharings, share::Share},
 };
-use hashing::DomainSep;
+use hashing::{DomainSep, hash_versioned};
 use kms_grpc::{
     ContextId, RequestId,
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
@@ -587,9 +586,8 @@ impl Operator {
             // we simply use the digest as the commitment
             // since the share should have enough entropy
             // is simply a sha3 hash with some metadata of the share
-            let msg_digest =
-                safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                    .map_err(|e| BackupError::OperatorError(e.to_string()))?;
+            let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
+                .map_err(|e| BackupError::OperatorError(e.to_string()))?;
 
             // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
             ct_shares.insert(role_j, InnerOperatorBackupOutput { signcryption });
@@ -693,14 +691,13 @@ impl Operator {
             return Err(e);
         }
         let actual_commitment =
-            safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                .map_err(|e| {
-                    tracing::warn!(
-                        "Could not hash BackupMaterial for commitment check (role {}): {e}",
-                        output.custodian_role
-                    );
-                    RecoverySkipReason::ParseError
-                })?;
+            hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).map_err(|e| {
+                tracing::warn!(
+                    "Could not hash BackupMaterial for commitment check (role {}): {e}",
+                    output.custodian_role
+                );
+                RecoverySkipReason::ParseError
+            })?;
         let expected_commitment = recovery_material.get(&output.custodian_role).map_err(|_| {
             tracing::warn!(
                 "No stored commitment for custodian role {}",

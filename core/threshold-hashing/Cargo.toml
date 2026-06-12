@@ -12,3 +12,5 @@ anyhow.workspace = true
 serde.workspace = true
 sha3.workspace = true
 bc2wrap.workspace = true
+tfhe-versionable.workspace = true
+tfhe-safe-serialize.workspace = true

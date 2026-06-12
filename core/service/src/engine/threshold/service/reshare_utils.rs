@@ -602,7 +602,6 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use crate::engine::base::safe_serialize_hash_element_versioned;
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
@@ -615,7 +614,9 @@ mod tests {
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_versioned_at_request_id;
+
     use aes_prng::AesRng;
+    use hashing::hash_versioned;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
@@ -691,16 +692,10 @@ mod tests {
         let public_key = CompactPublicKey::new(&client_key);
 
         // generate digests
-        let server_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &server_key,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &public_key,
-        )
-        .unwrap();
+        let server_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
         let key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
             (PubDataType::ServerKey, server_key_digest),
             (PubDataType::PublicKey, public_key_digest),
@@ -1042,11 +1037,8 @@ mod tests {
                 .unwrap();
 
         // generate digest
-        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compressed_keyset,
-        )
-        .unwrap();
+        let compressed_keyset_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
         let key_digests: HashMap<PubDataType, Vec<u8>> =
             HashMap::from_iter([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]);
 
