@@ -35,7 +35,7 @@ This documentation is designed for:
 - **Network**: PrivateLink connections to other 12 parties required
 - **Ports**: <GRPC_PORT> (gRPC, default: 50100), <P2P_PORT> (P2P - varies by party ID, default: 50001), <METRICS_PORT> (metrics, default: 9646)
 
-> **Common Issues**: See [Emergency Procedures](emergency-procedures.md) for `enable_sys_metrics` deprecation, OOMKilled errors, and resource limit fixes.
+> **Common Issues**: See [Emergency Procedures](emergency-procedures.md) for OOMKilled errors and resource limit fixes.
 
 ## Getting Help
 

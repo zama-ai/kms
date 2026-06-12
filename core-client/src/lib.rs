@@ -1322,7 +1322,8 @@ async fn fetch_keys_auto_detect(
 ///
 /// parameters:
 /// - `keys_folder`: the root of the storage of the core client
-/// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
+/// - `stored_key_storage_prefix`: optional storage prefix under which the key material was stored
+/// - `cipher_params`: the value to encrypt along with its type and encryption options
 pub async fn encrypt(
     keys_folder: &Path,
     stored_key_storage_prefix: Option<&str>,

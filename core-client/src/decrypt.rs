@@ -96,7 +96,7 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     rng: &mut R,
     num_requests: usize,
@@ -240,7 +240,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     Ok(result_vec)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     rng: &mut R,
     num_requests: usize,
@@ -495,7 +495,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     Ok(result_vec)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn get_public_decrypt_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     dec_req: Option<PublicDecryptionRequest>,

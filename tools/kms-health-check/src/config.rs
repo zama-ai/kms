@@ -12,11 +12,11 @@ pub type KmsConfig = CoreConfig;
 /// Health check tool specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckConfig {
-    /// Connection timeout in seconds (env: HEALTH_CHECK_CONNECTION_TIMEOUT_SECS)
+    /// Connection timeout in seconds (env: HEALTH_CHECK__CONNECTION_TIMEOUT_SECS)
     #[serde(default = "default_connection_timeout")]
     pub connection_timeout_secs: u64,
 
-    /// Request timeout in seconds (env: HEALTH_CHECK_REQUEST_TIMEOUT_SECS)
+    /// Request timeout in seconds (env: HEALTH_CHECK__REQUEST_TIMEOUT_SECS)
     #[serde(default = "default_request_timeout")]
     pub request_timeout_secs: u64,
 }

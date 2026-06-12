@@ -10,7 +10,7 @@ kmsCoreClient:
   decryption_mode: "NoiseFloodSmall"
   fhe_parameter: "Test"
   image:
-    name: ghcr.io/zama-ai/kms-core-client
+    name: ghcr.io/zama-ai/kms/core-client
     tag: latest-dev
     pullPolicy: IfNotPresent
   envFrom:
@@ -21,7 +21,7 @@ kmsCore:
   nameOverride: kms-core
   addressOverride:
   image:
-    name: ghcr.io/zama-ai/kms-service
+    name: ghcr.io/zama-ai/kms/core-service
     tag: latest-dev
     pullPolicy: IfNotPresent
   publicVault:

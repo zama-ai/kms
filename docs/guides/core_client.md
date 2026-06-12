@@ -5,7 +5,7 @@ The core client library is also used for running tests.
 
 ## Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install). Ensure you have a recent version of Rust installed on your system. We require `v1.86` or newer.
+- [Rust](https://www.rust-lang.org/tools/install). The version pinned in [rust-toolchain.toml](../../rust-toolchain.toml) is picked up automatically by `rustup` when building inside the repository.
 - [The protobuf compiler, `protoc`](https://protobuf.dev/installation/) must be installed.
 - [Docker](https://docs.docker.com/engine/install/) must be installed and running. IMPORTANT: Note that running the KMS servers requires a lot of RAM. So please _ensure that your Docker is set up to have at least 24 GB of RAM_. If not, the KMS nodes may exit with `code 137`.
 - Ensure you have access to the required Docker images on Github:

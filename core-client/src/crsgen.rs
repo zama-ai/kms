@@ -19,7 +19,7 @@ use tokio::task::JoinSet;
 use tonic::Code;
 use tonic::transport::Channel;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn do_crsgen(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,

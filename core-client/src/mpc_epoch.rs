@@ -96,7 +96,7 @@ impl PreviousEpochParameters {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 // NOTE: The new context must already exist !
 pub(crate) async fn do_new_epoch(
     internal_client: &mut Client,

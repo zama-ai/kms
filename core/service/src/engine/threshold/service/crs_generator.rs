@@ -173,7 +173,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn inner_crs_gen(
         &self,
         req_id: RequestId,
@@ -346,7 +346,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn crs_gen_background(
         req_id: &RequestId,
         epoch_id: &EpochId,

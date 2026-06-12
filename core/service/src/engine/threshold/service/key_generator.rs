@@ -98,7 +98,7 @@ struct DkgSessions {
 /// Enum to handle both compressed and uncompressed DKG results.
 /// This allows the same code path to handle both keygen and compressed_keygen outputs.
 // It's ok to have a big enum here since the way this type is used is only temporary.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum ThresholdKeyGenResult {
     /// Standard keygen result with full public key set
     Uncompressed(
@@ -222,7 +222,7 @@ impl<
 // This is essentially the same as an Option, but it's
 // more clear to label the variants as `Secure`
 // and `Insecure`.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum PreprocHandleWithMode {
     Secure(
@@ -253,7 +253,7 @@ impl<
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > RealKeyGenerator<PubS, PrivS, KG>
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
@@ -996,7 +996,7 @@ impl<
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn decompression_key_gen_background(
         req_id: &RequestId,
         epoch_id: &EpochId,
@@ -1119,7 +1119,6 @@ impl<
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn compressed_key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -1170,7 +1169,6 @@ impl<
         Ok((compressed_keyset, existing_private_keys))
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -1221,7 +1219,7 @@ impl<
         Ok((pub_keyset, existing_private_keys))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn key_gen_background(
         req_id: &RequestId,
         epoch_id: &EpochId,
