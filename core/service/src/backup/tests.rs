@@ -462,14 +462,18 @@ fn full_flow_malicious_custodian_second() {
         }
     }
 }
-
+#[rstest::rstest]
+#[case(4, 5, 2)]
+#[case(4, 3, 1)]
+#[case(13, 3, 1)]
 #[test]
-fn full_flow_malicious_operator() {
+fn full_flow_malicious_operator(
+    #[case] operator_count: usize,
+    #[case] custodian_count: usize,
+    #[case] custodian_threshold: usize,
+) {
     let mut rng = AesRng::seed_from_u64(1337);
     let backup_id = derive_request_id(std::stringify!(full_flow_malicious_operator)).unwrap();
-    let operator_count = 4usize;
-    let custodian_count = 5usize;
-    let custodian_threshold = 2usize;
 
     let (setup_msgs, mnemonics) = generate_setup_messages(&mut rng, custodian_count);
     let (operators, payload_for_custodians) = operator_handle_init(

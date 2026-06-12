@@ -63,9 +63,6 @@ pub struct DecryptParams {
     /// Public verification key of the operator who requested the recovery
     #[clap(long, short = 'v', required = true)]
     pub operator_verf_key: PathBuf,
-    /// The MPC context ID for which the recovery is being done.
-    #[clap(long, short = 'm', required = true)]
-    pub mpc_context_id: String,
     /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
     pub recovery_request_path: PathBuf,

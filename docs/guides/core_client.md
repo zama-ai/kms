@@ -38,6 +38,7 @@ The file to be used must be specified with the `-f` flag, e.g. `-f config/client
 The core client currently ships with the following pre-defined configurations:
 - `./config/client_local_centralized.toml` for the centralized version run via docker-compose.
 - `./config/client_local_threshold.toml` for the threshold version with n=4 parties and threshold t=1 run via docker-compose.
+- `./config/client_local_threshold_custodian_backup.toml` for the threshold version when executing custodian backup instructions towards a *single* KMS core from the CLI.
 
 Values inside the TOML configs are:
 - `kms_type` - The kind of KMS to interact with; "centralized" or "threshold".
@@ -226,7 +227,7 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
 
   As a concrete example of a command for a setup with 4 servers is the following:
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
+  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
   ```
   As output, the custodian context/backup ID is printed.
 4. Custodians do partial decryption.
@@ -241,11 +242,11 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   That is, `-i` expresses the custodian context/backup ID which helped to decrypt this. This value is given as output from `custodian-recovery-init` above. The `-r` arguments is a sorted list of the custodians partially decrypted output for each KMS node. The list must be sorted in the monotonically increasing order of the custodian per KMS node.
   As a concrete example (which allows to restore for _all_ KMS server in one go) consider the following:
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
+  $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
   ```
-  Note: In practice custodians should only share the reencrypted partial decryption of a given KMS operator with that operator. I.e. all partial decryptions should not be broadcast. While each partial decryption is encrypted under an ephemeral key of a given KMS node, it is still best-practice to _not_ indiscriminantly publicize these. This will however require updating the `client_local_threshold.toml` to only contain a `[[cores]]` entry for the relevant KMS server. E.g. node 2. In that case the example command would be the following:
+  Note: In practice custodians should only share the reencrypted partial decryption of a given KMS operator with that operator. I.e. all partial decryptions should not be broadcast. While each partial decryption is encrypted under an ephemeral key of a given KMS node, it is still best-practice to _not_ indiscriminantly publicize these.  For example considering only node 2 the example command would be the following:
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3
+  $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3
   ```
 6. Recover the backup.
   With the backup decryption key recovered in RAM, it is now possible for the KMS nodes to decrypt the backup. This is done with the following command, similar to the import/export approach above:
@@ -258,7 +259,7 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
 
   Consider the following example as a concrete call:
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold.toml backup-restore
+  $ cargo run -- -f config/client_local_threshold_backup_custodian.toml backup-restore
   ```
 
 ### Concrete e2e example for custodian backup
@@ -286,12 +287,12 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 2. Add a new custodian context.
   In the `core-client` folder run the following:
   ```{bash}
-  cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
+  cargo run -- -f config/client_local_threshold_backup_custodian.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
   ```
 3. Initiate the recovery.
   In the `core-client` folder run the following:
   ```{bash}
-  cargo run -- -f config/client_local_threshold.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
+  cargo run -- -f config/client_local_threshold_backup_custodian.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
   ```
   Take note of the ID printed on the CLI after completion.
 4. Custodians do partial decryption.
@@ -327,12 +328,12 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 5. KMS nodes recover the backup decryption key.
   Execute the following from `core-client` replacing the ID following `-i` with the appropriate ID learned in step 3.
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3   -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
+  $ cargo run -- -f  config/client_local_threshold_backup_custodian.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3   -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
   ```
 6. Recover the backup.
   In the core-client folder execute the following command:
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold.toml backup-restore
+  $ cargo run -- -f config/client_local_threshold_backup_custodian.toml backup-restore
   ```
 
 ## Supported Operations
@@ -601,7 +602,7 @@ See [the custodian setup section](./backup.md#custodian-setup) for details.
 
 Finally a concrete example of a command for a setup with 3 custodians is the following:
 ```{bash}
-$ cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
+$ cargo run -- -f config/client_local_threshold_backup_custodian.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
 ```
 
 ### New Epoch (Resharing)

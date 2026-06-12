@@ -596,12 +596,6 @@ where
             )
         })?;
 
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        self.inner
-            .crypto_storage
-            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
-            .await;
-
         Ok(Response::new(Empty {}))
     }
 
@@ -853,12 +847,6 @@ where
                 tonic::Code::Internal,
             )
         })?;
-
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        self.inner
-            .crypto_storage
-            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
-            .await;
 
         Ok(Response::new(Empty {}))
     }
