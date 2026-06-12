@@ -17,6 +17,10 @@ service CoreServiceEndpoint {
 
   rpc GetKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
 
+  rpc InsecureKeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
+
+  rpc GetInsecureKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
+
   rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
 
   rpc GetKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);

@@ -68,6 +68,26 @@ impl_endpoint! {
             self.keygen_preprocessor.partial_key_gen_preproc(request).await.map_err(|e| e.into())
         }
 
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn insecure_key_gen_preproc(
+            &self,
+            request: Request<KeyGenPreprocRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.insecure_key_gen_preproc(request).await.map_err(|e| e.into())
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn get_insecure_key_gen_preproc_result(
+            &self,
+            request: Request<RequestId>,
+        ) -> Result<Response<KeyGenPreprocResult>, Status> {
+            METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_RESULT);
+            self.keygen_preprocessor.get_insecure_result(request).await.map_err(|e| e.into())
+        }
+
         #[tracing::instrument(skip(self, request))]
         async fn get_key_gen_preproc_result(
             &self,
