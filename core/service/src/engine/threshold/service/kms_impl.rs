@@ -178,7 +178,7 @@ impl PublicKeyMaterial {
     /// Hand out a shared reference to the owned compressed keyset, if any.
     /// Cheap (`Arc` clone) — lets callers reuse the allocation instead of
     /// deep-cloning the multi-GiB keyset.
-    pub fn compressed_keyset(&self) -> Option<Arc<CompressedXofKeySet>> {
+    pub(crate) fn compressed_keyset(&self) -> Option<Arc<CompressedXofKeySet>> {
         match self {
             Self::Compressed { keyset } => Some(Arc::clone(keyset)),
             Self::Uncompressed { .. } => None,
