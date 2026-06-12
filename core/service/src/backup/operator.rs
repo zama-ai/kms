@@ -857,7 +857,7 @@ fn validate_custodian_messages(
                 && timestamp < now.add(TIMESTAMP_VALIDATION_WINDOW))
             {
                 tracing::warn!(
-                    "Invalid timestamp in custodian setup message from custodian {}: expected within {:?} seconds of now, but got {:?}",
+                    "Invalid timestamp in custodian setup message from custodian {}: expected within {:?} of now, but got {:?}",
                     custodian_role,
                     TIMESTAMP_VALIDATION_WINDOW,
                     timestamp
