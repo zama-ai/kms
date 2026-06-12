@@ -34,7 +34,6 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{BaseKmsStruct, compute_external_signature_preprocessing},
@@ -46,7 +45,10 @@ use crate::{
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
-        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store_with_timeout},
+        meta_store::{
+            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+            update_req_in_meta_store,
+        },
         rate_limiter::RateLimiter,
     },
 };
@@ -81,7 +83,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         extra_data: Vec<u8>,
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
-        permit: OwnedSemaphorePermit,
+        rate_limiting_permit: OwnedSemaphorePermit,
+        meta_permit: MetaStorePermit<BucketMetaStore>,
         #[cfg(feature = "insecure")] percentage_offline: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
@@ -107,7 +110,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         let factory = Arc::clone(&self.preproc_factory);
         let bucket_store = Arc::clone(&self.preproc_buckets);
-        let bucket_store_cancellation = Arc::clone(&self.preproc_buckets);
 
         let token = CancellationToken::new();
         {
@@ -129,48 +131,25 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             async move {
                 // Keep timer in the async task, will drop at the end of the task
                 let _timer = timer;
-                 tokio::select! {
-                    res = Self::preprocessing_background(
-                        sk,
-                        &request_id,
-                        &domain_clone,
-                        small_sessions,
-                        bucket_store,
-                        my_identity,
-                        dkg_params,
-                        keyset_config,
-                        extra_data,
-                        factory,
-                        permit,
-                        #[cfg(feature = "insecure")] percentage_offline
-                    ) => {
-                        match res {
-                            Ok(()) => {
-                                tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
-                            },
-                            Err(()) => {
-                                MetricedError::handle_unreturnable_error(
-                                    OP_KEYGEN_PREPROC_REQUEST,
-                                    Some(request_id),
-                                    "Preprocessing background task failed".to_string(),
-                                );
-                            }
-                        }
-                        // Remove cancellation token since generation is now done.
-                        ongoing.lock().await.remove(&request_id);
-                    },
-                    () = token.cancelled() => {
-                        // NOTE: Any correlated randomness that was already generated should be cleaned up from Redis on drop.
-                        tracing::error!("Preprocessing of request {} exiting before completion because of an abort request.", &request_id);
-                        let mut guarded_bucket_store = bucket_store_cancellation.write().await;
-                        let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was aborted".to_string()));
-                        MetricedError::handle_unreturnable_error(
-                            OP_KEYGEN_PREPROC_REQUEST,
-                            Some(request_id),
-                            format!("Preprocessing background with preprocessing id {} failed since the task got aborted", request_id),
-                        );
-                    },
-                }
+                Self::preprocessing_background(
+                    sk,
+                    &request_id,
+                    &domain_clone,
+                    small_sessions,
+                    bucket_store,
+                    my_identity,
+                    dkg_params,
+                    keyset_config,
+                    extra_data,
+                    factory,
+                    rate_limiting_permit,
+                    meta_permit,
+                    token,
+                    #[cfg(feature = "insecure")]
+                    percentage_offline,
+                )
+                .await;
+                ongoing.lock().await.remove(&request_id);
             }
             .instrument(tracing::Span::current()),
         );
@@ -189,13 +168,15 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         keyset_config: ddec_keyset_config::KeySetConfig,
         extra_data: Vec<u8>,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
-        permit: OwnedSemaphorePermit,
+        rate_limiting_permit: OwnedSemaphorePermit,
+        meta_permit: MetaStorePermit<BucketMetaStore>,
+        cancel_token: CancellationToken,
         #[cfg(feature = "insecure")] partial_params: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
-    ) -> Result<(), ()> {
+    ) {
         // dropped at the end of the function
-        let _permit = permit;
+        let _rate_limiting_permit = rate_limiting_permit;
         let preprocessing_started_at = Instant::now();
 
         #[cfg(feature = "insecure")]
@@ -245,15 +226,18 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(factory, params, keyset_config)
         };
 
-        // Process the result of orchestration or orchestrator creation
-        let handle_update = match orchestrator_result {
+        // Process the result of orchestration or orchestrator creation.
+        let handle_update: Result<_, String> = match orchestrator_result {
             Ok(orchestrator) => {
                 tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
-                // Execute the orchestration with the successfully created orchestrator
-                match orchestrator
-                    .orchestrate_dkg_processing_small_session::<P>(sessions)
-                    .await
-                {
+                let orchestration_outcome = tokio::select! {
+                    biased;
+                    () = cancel_token.cancelled() => Err("aborted".to_string()),
+                    res = orchestrator
+                        .orchestrate_dkg_processing_small_session::<P>(sessions)
+                    => res.map_err(|e| e.to_string()),
+                };
+                match orchestration_outcome {
                     Ok((sessions, preproc_handle)) => {
                         tracing::info!(
                             "Preproc orchestration phase finished for request {} on P[{:?}] (elapsed: {:.1}s). Finalizing result...",
@@ -265,7 +249,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     }
                     Err(error) => {
                         tracing::error!("Failed during preprocessing orchestration: {}", error);
-                        Err(error.to_string())
+                        Err(error)
                     }
                 }
             }
@@ -276,7 +260,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         };
 
         #[cfg(feature = "insecure")]
-        let handle_update = {
+        let handle_update: Result<_, String> = {
             use threshold_execution::online::preprocessing::{
                 DKGPreprocessing, dummy::DummyPreprocessing,
             };
@@ -291,16 +275,20 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                             own_identity,
                             partial_params.percentage_offline,
                         );
-                        let preproc = Box::new(DummyPreprocessing::new(
-                            0,
-                            sessions.first().ok_or_else(|| {
+                        match sessions.first() {
+                            Some(first_session) => {
+                                let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> =
+                                    Box::new(DummyPreprocessing::new(0, first_session));
+                                Ok((sessions, Arc::new(Mutex::new(preproc))))
+                            }
+                            None => {
                                 tracing::error!(
                                     "Could not retrieve any session after partial preprocessing"
-                                )
-                            })?,
-                        ));
-                        let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
-                        Ok((sessions, Arc::new(Mutex::new(preproc))))
+                                );
+                                Err("Could not retrieve any session after partial preprocessing"
+                                    .to_string())
+                            }
+                        }
                     } else {
                         tracing::debug!(
                             "Preproc request {} on P[{:?}] keeping real preprocessing handle (partial={}%)",
@@ -315,64 +303,63 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             }
         };
 
-        tracing::debug!(
-            "Preproc request {} on P[{:?}] computing external signature",
-            req_id,
-            own_identity,
-        );
-        let external_signature =
-            match compute_external_signature_preprocessing(&sk, req_id, domain, extra_data) {
-                Ok(sig) => sig,
-                Err(e) => {
-                    tracing::error!("Failed to compute external signature: {}", e);
-                    return Err(());
+        // Build the final bucket result by combining the orchestration outcome
+        // with the external signature computation.
+        let bucket_result: Result<BucketMetaStore, String> = match handle_update {
+            Err(e) => Err(e),
+            Ok((_sessions, inner)) => {
+                tracing::debug!(
+                    "Preproc request {} on P[{:?}] computing external signature",
+                    req_id,
+                    own_identity,
+                );
+                match compute_external_signature_preprocessing(&sk, req_id, domain, extra_data) {
+                    Ok(external_signature) => Ok(BucketMetaStore {
+                        external_signature,
+                        preprocessing_id: *req_id,
+                        preprocessing_store: inner,
+                        dkg_param: params,
+                    }),
+                    Err(e) => {
+                        tracing::error!("Failed to compute external signature: {}", e);
+                        Err(format!("Failed to compute external signature: {e}"))
+                    }
                 }
-            };
+            }
+        };
 
-        let mut guarded_meta_store = bucket_store.write().await;
+        // Consume the meta-store permit in exactly one terminal-state write.
+        let bucket_result_ok = bucket_result.is_ok();
+        let meta_store_ok = update_req_in_meta_store::<_, String>(
+            &bucket_store,
+            meta_permit,
+            bucket_result,
+            OP_KEYGEN_PREPROC_REQUEST,
+        )
+        .await;
 
-        let handle_update = handle_update.map(|(_sessions, inner)| inner);
-        // We cannot do much if updating the storage fails at this point...
-        let meta_store_write = guarded_meta_store.update(
-            req_id,
-            handle_update.clone().map(|inner| BucketMetaStore {
-                external_signature,
-                preprocessing_id: *req_id,
-                preprocessing_store: inner,
-                dkg_param: params,
-            }),
-        );
-
-        // Log completion status
-        match (handle_update, meta_store_write) {
-            (Ok(_), Ok(_)) => tracing::info!(
+        if bucket_result_ok && meta_store_ok {
+            tracing::info!(
                 "Preproc Finished Successfully P[{:?}] for request {} (total elapsed: {:.1}s)",
                 own_identity,
                 req_id,
                 preprocessing_started_at.elapsed().as_secs_f64(),
-            ),
-            (Err(e), _) => {
-                tracing::error!(
-                    "Preproc Failed P[{:?}] for request {} after {:.1}s with error: {}",
-                    own_identity,
-                    req_id,
-                    preprocessing_started_at.elapsed().as_secs_f64(),
-                    e
-                );
-                return Err(());
-            }
-            (_, Err(e)) => {
-                tracing::error!(
-                    "Preproc Failed due to meta store issue P[{:?}] for request {} after {:.1}s with error: {}",
-                    own_identity,
-                    req_id,
-                    preprocessing_started_at.elapsed().as_secs_f64(),
-                    e
-                );
-                return Err(());
-            }
+            );
+        } else if !bucket_result_ok {
+            tracing::error!(
+                "Preproc Failed P[{:?}] for request {} after {:.1}s",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            );
+        } else {
+            tracing::error!(
+                "Preproc meta store update failed P[{:?}] for request {} after {:.1}s",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            );
         }
-        Ok(())
     }
 
     async fn inner_key_gen_preproc(
@@ -382,7 +369,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> Result<Response<Empty>, MetricedError> {
-        let permit = self.rate_limiter.start_preproc().await?;
+        let rate_limiting_permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
 
         let (
@@ -405,12 +392,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
-        // Add preprocessing to metastore and fail in case it is already present
-        add_req_to_meta_store(
-            &mut self.preproc_buckets.write().await,
+        // Add preprocessing to metastore and fail in case it is already present.
+        let meta_permit = add_req_to_meta_store(
+            &self.preproc_buckets,
             &request_id,
             OP_KEYGEN_PREPROC_REQUEST,
-        )?;
+        )
+        .await?;
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 
@@ -423,7 +411,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 extra_data,
                 &eip712_domain,
                 timer,
-                permit,
+                rate_limiting_permit,
+                meta_permit,
             #[cfg(feature = "insecure")] partial_params
         ).await.map_err(|e|
             MetricedError::new(OP_KEYGEN_PREPROC_REQUEST,
@@ -484,19 +473,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
                     )
                 })?;
 
-        tracing::info!(
-            "Polling preproc result for request {} (waiting up to {}s)",
-            request_id,
-            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-        );
+        tracing::info!("Reading preproc result for request {}", request_id);
 
-        let preproc_data = retrieve_from_meta_store_with_timeout(
-            self.preproc_buckets.read().await,
-            &request_id,
-            OP_KEYGEN_PREPROC_RESULT,
-            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-        )
-        .await?;
+        let preproc_data =
+            retrieve_from_meta_store(&self.preproc_buckets, &request_id, OP_KEYGEN_PREPROC_RESULT)
+                .await?;
 
         tracing::info!("Preproc result ready for request {}", request_id);
 
@@ -515,7 +496,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
         Ok(Response::new(KeyGenPreprocResult {
             preprocessing_id: Some(request_id.into()),
-            external_signature: preproc_data.external_signature,
+            external_signature: preproc_data.external_signature.clone(),
         }))
     }
 
@@ -561,6 +542,7 @@ mod tests {
     use super::*;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
+    use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use aes_prng::AesRng;
     use kms_grpc::{
@@ -781,9 +763,8 @@ mod tests {
             .await
             .unwrap();
 
-        // but the response should come back to be an error
         assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
+            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
                 .await
                 .unwrap_err()
                 .code(),
@@ -886,8 +867,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Block until preprocessing has finished so the bucket is in the Done state.
-        prep.get_result(tonic::Request::new(req_id.into()))
+        poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
             .await
             .unwrap();
 
@@ -922,8 +902,7 @@ mod tests {
             .await
             .unwrap();
 
-        // no need to wait because [get_result] is semi-blocking
-        prep.get_result(tonic::Request::new(req_id.into()))
+        poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
             .await
             .unwrap();
     }
@@ -980,9 +959,10 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(status.code(), tonic::Code::NotFound);
-        // Retrieving the result must now surface an error (the bucket was updated to aborted)
+        // Retrieving the result must now surface an error (the bucket was updated to
+        // aborted; poll since the result endpoint is non-blocking)
         assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
+            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
                 .await
                 .unwrap_err()
                 .code(),

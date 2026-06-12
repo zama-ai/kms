@@ -495,11 +495,8 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        add_req_to_meta_store(
-            &mut meta_store.write().await,
-            &req_id,
-            OP_USER_DECRYPT_REQUEST,
-        )?;
+        let meta_permit =
+            add_req_to_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -548,6 +545,7 @@ impl<
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
+            let meta_permit = meta_permit;
 
             let result = Self::inner_user_decrypt(
                 &req_id,
@@ -566,12 +564,8 @@ impl<
                 metric_tags,
             )
             .await;
-            update_req_in_meta_store(
-                &mut meta_store.write().await,
-                &req_id,
-                result,
-                OP_USER_DECRYPT_REQUEST,
-            );
+            update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
+                .await;
         };
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
@@ -598,12 +592,13 @@ impl<
                 })?;
 
         // Retrieve the UserDecryptMetaStore object
-        let (payload, external_signature, extra_data) = retrieve_from_meta_store(
-            self.user_decrypt_meta_store.read().await,
+        let arc = retrieve_from_meta_store(
+            &self.user_decrypt_meta_store,
             &request_id,
             OP_USER_DECRYPT_RESULT,
         )
         .await?;
+        let (payload, external_signature, extra_data) = (*arc).clone();
 
         let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
             MetricedError::new(
@@ -752,7 +747,7 @@ mod tests {
 
         let key_id = RequestId::new_random(rng);
         let mut key_store = MetaStore::new_unlimited();
-        key_store.insert(&key_id).unwrap();
+        let meta_store_permit = key_store.insert(&key_id).unwrap();
         let key_meta_store = Arc::new(RwLock::new(key_store));
 
         let user_decryptor =
@@ -782,6 +777,7 @@ mod tests {
                 threshold_fhe_keys,
                 PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                meta_store_permit,
                 "",
             )
             .await
@@ -1149,9 +1145,10 @@ mod tests {
             epoch_id: Some(epoch_id.into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
-        user_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        crate::testing::utils::poll_result_until_ready(|| {
+            user_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }

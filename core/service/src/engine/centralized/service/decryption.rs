@@ -83,11 +83,12 @@ pub async fn user_decrypt_impl<
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let mut rng = service.base_kms.new_rng().await;
-    add_req_to_meta_store(
-        &mut service.user_dec_meta_store.write().await,
+    let meta_permit = add_req_to_meta_store(
+        &service.user_dec_meta_store,
         &request_id,
         OP_USER_DECRYPT_REQUEST,
-    )?;
+    )
+    .await?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -110,6 +111,7 @@ pub async fn user_decrypt_impl<
         async move {
             let _timer = timer;
             let _permit = permit;
+            let meta_permit = meta_permit;
 
             tracing::info!(
                 "Starting user decryption using key_id {} for request ID {}",
@@ -131,11 +133,12 @@ pub async fn user_decrypt_impl<
             .await;
             let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
             let _ = update_req_in_meta_store(
-                &mut meta_store.write().await,
-                &request_id,
+                &meta_store,
+                meta_permit,
                 res_with_extra_data,
                 OP_USER_DECRYPT_REQUEST,
-            );
+            )
+            .await;
         }
         .instrument(tracing::Span::current()),
     );
@@ -165,12 +168,13 @@ pub async fn get_user_decryption_result_impl<
             },
         )?;
 
-    let (payload, external_signature, extra_data) = retrieve_from_meta_store(
-        service.user_dec_meta_store.read().await,
+    let arc = retrieve_from_meta_store(
+        &service.user_dec_meta_store,
         &request_id,
         OP_USER_DECRYPT_RESULT,
     )
     .await?;
+    let (payload, external_signature, extra_data) = (*arc).clone();
 
     // sign the response
     let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
@@ -258,11 +262,12 @@ pub async fn public_decrypt_impl<
 
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
-    add_req_to_meta_store(
-        &mut service.pub_dec_meta_store.write().await,
+    let meta_permit = add_req_to_meta_store(
+        &service.pub_dec_meta_store,
         &request_id,
         OP_PUBLIC_DECRYPT_REQUEST,
-    )?;
+    )
+    .await?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let sig_key = service.base_kms.sig_key().map_err(|e| {
@@ -279,6 +284,7 @@ pub async fn public_decrypt_impl<
     let _handle = tokio::spawn(async move {
         let _timer = timer;
         let _permit = permit;
+        let meta_permit = meta_permit;
         tracing::info!(
             "Starting decryption using key_id {} for request ID {}",
             &key_id,
@@ -315,12 +321,8 @@ pub async fn public_decrypt_impl<
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
         };
-        let _ = update_req_in_meta_store(
-            &mut meta_store.write().await,
-            &request_id,
-            res,
-            OP_PUBLIC_DECRYPT_REQUEST,
-        );
+        let _ = update_req_in_meta_store(&meta_store, meta_permit, res, OP_PUBLIC_DECRYPT_REQUEST)
+            .await;
         tracing::info!(
             "⏱️ Core Event Time for decryption computation: {:?}",
             start.elapsed()
@@ -355,12 +357,13 @@ pub async fn get_public_decryption_result_impl<
     })?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let (retrieved_req_id, plaintexts, external_signature, extra_data) = retrieve_from_meta_store(
-        service.pub_dec_meta_store.read().await,
+    let dec_res = retrieve_from_meta_store(
+        &service.pub_dec_meta_store,
         &request_id,
         OP_PUBLIC_DECRYPT_RESULT,
     )
     .await?;
+    let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*dec_res).clone();
 
     if retrieved_req_id != request_id {
         return Err(MetricedError::new(
@@ -508,6 +511,7 @@ mod tests_public_decryption {
             base::derive_request_id,
             centralized::service::decryption::tests::{make_test_msg_ct, setup_test_kms_with_key},
         },
+        testing::utils::poll_result_until_ready,
     };
 
     use super::*;
@@ -535,10 +539,11 @@ mod tests_public_decryption {
             .await
             .unwrap();
 
-        let response =
+        let response = poll_result_until_ready(|| {
             get_public_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
-                .await
-                .unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(
             response.into_inner().payload.unwrap().plaintexts[0].clone(),
             msg.into(),
@@ -749,6 +754,7 @@ mod test_user_decryption {
             base::derive_request_id,
             centralized::service::decryption::tests::{make_test_msg_ct, setup_test_kms_with_key},
         },
+        testing::utils::poll_result_until_ready,
         util::key_setup::test_tools::TestingPlaintext,
     };
 
@@ -792,10 +798,11 @@ mod test_user_decryption {
             .await
             .unwrap();
 
-        let response =
+        let response = poll_result_until_ready(|| {
             get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
-                .await
-                .unwrap();
+        })
+        .await
+        .unwrap();
         // LEGACY should have been using safe_deserialize
         let signcrypted_msg: HybridKemCt = bc2wrap::deserialize_unsafe(
             &response

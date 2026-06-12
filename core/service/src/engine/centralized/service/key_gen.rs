@@ -11,8 +11,8 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
 use crate::util::meta_store::{
-    MetaStore, add_req_to_meta_store, handle_res, retrieve_from_meta_store,
-    update_err_req_in_meta_store,
+    EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store, ensure_not_in_meta_store,
+    retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
 use crate::vault::storage::{Storage, StorageExt};
@@ -26,14 +26,12 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_ABORT,
     OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, TAG_PARTY_ID,
 };
-use std::collections::HashMap;
-use std::future::Future;
 use std::sync::Arc;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio_util::sync::CancellationToken;
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -54,7 +52,7 @@ pub async fn key_gen_impl<
     } else {
         OP_KEYGEN_REQUEST
     };
-    let permit = service.rate_limiter.start_keygen(op_tag).await?;
+    let rate_limiter_permit = service.rate_limiter.start_keygen(op_tag).await?;
     // TODO add serial lock to have similar flow to threshold case
     // Acquire the serial lock to make sure no other keygen is running concurrently
     // let _guard = service.serial_lock.lock().await;
@@ -94,26 +92,21 @@ pub async fn key_gen_impl<
 
     // Check for existence of request preprocessing ID
     // also check that the request ID is not used yet
-    // If all is ok write the request ID to the meta store
-    // All validation must be done before inserting the request ID
     let (params, permit) = {
         // If we're in insecure mode, we skip removing preprocessed material since it may not exist
         let params = if !insecure {
-            let preproc = retrieve_from_meta_store(
-                service.preprocessing_meta_store.read().await,
-                &preproc_id,
-                op_tag,
-            )
-            .await
-            .map_err(|e| {
-                // Remap the error to include the correct request ID
-                MetricedError::new(
-                    op_tag,
-                    Some(req_id),
-                    anyhow::anyhow!(e.internal_err().to_string()),
-                    e.code(),
-                )
-            })?;
+            let preproc =
+                retrieve_from_meta_store(&service.preprocessing_meta_store, &preproc_id, op_tag)
+                    .await
+                    .map_err(|e| {
+                        // Remap the error to include the correct request ID (key gen ID instead of preproc ID)
+                        MetricedError::new(
+                            op_tag,
+                            Some(req_id),
+                            anyhow::anyhow!(e.internal_err().to_string()),
+                            e.code(),
+                        )
+                    })?;
             preproc.dkg_param
         } else {
             dkg_params
@@ -138,16 +131,14 @@ pub async fn key_gen_impl<
             ));
         }
 
-        // check that the request ID is not used yet
-        // and then insert the request ID only if it's unused
-        // all validation must be done before inserting the request ID
-        add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)?;
+        // Fail fast: reject before the remaining setup if this request id is
+        // already known to the meta store.
+        ensure_not_in_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
 
-        (params, permit)
+        (params, rate_limiter_permit)
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
-    let key_meta_store_cancel = Arc::clone(&service.key_meta_map);
     let sk = service
             .base_kms
             .sig_key()
@@ -160,6 +151,8 @@ pub async fn key_gen_impl<
         )
     })?;
 
+    let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
+
     let token = CancellationToken::new();
     {
         service
@@ -170,119 +163,67 @@ pub async fn key_gen_impl<
     }
     let ongoing = Arc::clone(&service.ongoing_key_gen);
     let crypto_storage = service.crypto_storage.clone();
-    let crypto_storage_cancel = service.crypto_storage.clone();
 
     let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
-    let keygen_background = async move {
-        // "Remove" the preprocessing material by deleting its entry from the meta store
-        tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-        let handle = {
-            let mut meta_store_guard = preproc_meta_store.write().await;
-            meta_store_guard.delete(&preproc_id)
-        };
-        match handle_res(handle, &preproc_id).await {
-            Ok(_) => {
-                tracing::info!(
-                    "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
-                );
-            }
-            Err(e) => {
-                MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-            }
-        }
-        key_gen_background(
-            &req_id,
-            &preproc_id,
-            &epoch_id,
-            meta_store,
-            crypto_storage,
-            sk,
-            params,
-            internal_keyset_config,
-            eip712_domain,
-            extra_data,
-            op_tag,
-        )
-        .await;
-    };
+
     service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
-            run_keygen_with_cancel(
-                keygen_background,
+            // "Remove" the preprocessing material by deleting its entry from the meta store
+            tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
+            let delete_res = try_delete_in_meta_store(&preproc_meta_store, &preproc_id).await;
+            match delete_res {
+                Ok(EntryState::Done(Ok(_))) => {
+                    tracing::info!(
+                        "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                    );
+                }
+                Ok(EntryState::Done(Err(e))) => {
+                    MetricedError::handle_unreturnable_error(
+                        op_tag,
+                        Some(req_id),
+                        anyhow::anyhow!(
+                            "Preprocessing ID {preproc_id} finished with error: {e}"
+                        ),
+                    );
+                }
+                Ok(_) => {
+                    MetricedError::handle_unreturnable_error(
+                        op_tag,
+                        Some(req_id),
+                        anyhow::anyhow!(
+                            "Preprocessing ID {preproc_id} deleted but was not in Done state"
+                        ),
+                    );
+                }
+                Err(e) => {
+                    MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+                }
+            }
+            key_gen_background(
+                meta_permit,
                 token,
-                req_id,
-                preproc_id,
-                epoch_id,
-                ongoing,
-                key_meta_store_cancel,
-                crypto_storage_cancel,
+                &req_id,
+                &preproc_id,
+                &epoch_id,
+                meta_store,
+                crypto_storage,
+                sk,
+                params,
+                internal_keyset_config,
+                eip712_domain,
+                extra_data,
+                op_tag,
             )
             .await;
+            // Cleanup runs on every termination (normal completion, error, or abort).
+            ongoing.lock().await.remove(&preproc_id);
         }
         .instrument(tracing::Span::current()),
     );
 
     Ok(Response::new(Empty {}))
-}
-
-/// Runs the key-generation background future under a cancellation token. If the
-/// token is cancelled before the future completes, the key meta store is
-/// updated with an `Aborted` error and any partial key material is purged.
-///
-/// Extracted from `key_gen_impl` so the cancel arm can be exercised
-/// deterministically in tests with a pending future.
-#[expect(clippy::too_many_arguments)]
-pub(crate) async fn run_keygen_with_cancel<
-    Fut: Future<Output = ()>,
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
->(
-    keygen_background: Fut,
-    token: CancellationToken,
-    req_id: RequestId,
-    preproc_id: RequestId,
-    epoch_id: EpochId,
-    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
-    key_meta_store_cancel: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    crypto_storage_cancel: CentralizedCryptoMaterialStorage<PubS, PrivS>,
-) {
-    tokio::select! {
-        () = keygen_background => {
-            tracing::info!(
-                "Key generation of request {} with preproc id {} exiting normally.",
-                req_id, preproc_id
-            );
-            // Remove cancellation token since generation is now done.
-            ongoing.lock().await.remove(&preproc_id);
-        },
-        () = token.cancelled() => {
-            MetricedError::handle_unreturnable_error(
-                OP_KEYGEN_REQUEST,
-                Some(req_id),
-                format!(
-                    "Key generation background with preprocessing id {} failed since the task got aborted",
-                    preproc_id
-                ),
-            );
-            tracing::error!(
-                "Key generation of request {} exiting before completion because of an abort request.",
-                &req_id
-            );
-            let mut guarded_meta_store = key_meta_store_cancel.write().await;
-            if let Err(e) = guarded_meta_store
-                .update(&req_id, Result::Err("Key generation was aborted".to_string()))
-            {
-                tracing::warn!(
-                    "Failed to mark request {req_id} as aborted in the key meta store: {e}"
-                );
-            }
-            crypto_storage_cancel
-                .purge_fhe_keys(&req_id, &epoch_id)
-                .await;
-        }
-    }
 }
 
 /// Implementation of the get_key_gen_result endpoint
@@ -308,9 +249,8 @@ pub async fn get_key_gen_result_impl<
 
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let key_gen_res =
-        retrieve_from_meta_store(service.key_meta_map.read().await, &request_id, op_tag).await?;
-    match key_gen_res {
+    let key_gen_res = retrieve_from_meta_store(&service.key_meta_map, &request_id, op_tag).await?;
+    match (*key_gen_res).clone() {
         KeyGenMetadata::Current(res) => {
             if request_id != res.key_id {
                 return Err(MetricedError::new(
@@ -394,12 +334,15 @@ pub async fn abort_key_gen_impl<
     }
 }
 
-/// Background task for key generation
+/// Background task for key generation. Owns the meta-store permit for the
+/// entire lifetime of the request.
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 >(
+    permit: MetaStorePermit<KeyGenMetadata>,
+    cancel_token: CancellationToken,
     req_id: &RequestId,
     preproc_id: &RequestId,
     epoch_id: &EpochId,
@@ -415,26 +358,29 @@ pub(crate) async fn key_gen_background<
     let start = tokio::time::Instant::now();
     match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
-            let keygen_result = match async_generate_fhe_keys(
-                &sk,
-                params,
-                standard_key_set_config.to_owned(),
-                req_id,
-                preproc_id,
-                None,
-                eip712_domain,
-                extra_data,
-            )
-            .await
-            {
+            let outcome = tokio::select! {
+                biased; // favor the cancel branch to reduce wasted work on cancellation
+                () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),
+                res = async_generate_fhe_keys(
+                    &sk,
+                    params,
+                    standard_key_set_config.to_owned(),
+                    req_id,
+                    preproc_id,
+                    None,
+                    eip712_domain,
+                    extra_data,
+                ) => res.map_err(|e| format!("Failed key generation: {e}")),
+            };
+
+            let keygen_result = match outcome {
                 Ok(result) => result,
-                Err(e) => {
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        req_id,
-                        format!("Failed key generation: {e}"),
-                        op_tag,
-                    );
+                Err(msg) => {
+                    // Purge any partial key material on cancellation
+                    if cancel_token.is_cancelled() {
+                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                    }
+                    let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
             };
@@ -456,7 +402,7 @@ pub(crate) async fn key_gen_background<
                 ),
             };
             if let Err(e) = crypto_storage
-                .write_fhe_keys(req_id, epoch_id, key_info, pks, meta_store, op_tag)
+                .write_fhe_keys(req_id, epoch_id, key_info, pks, meta_store, permit, op_tag)
                 .await
             {
                 tracing::error!("Failed to write centralized keys for request {req_id}: {e}");
@@ -469,30 +415,32 @@ pub(crate) async fn key_gen_background<
                 Ok((from, to)) => (from, to),
                 Err(e) => {
                     let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        req_id,
+                        &meta_store,
+                        permit,
                         format!("Failed to use decompression key generation parameters: {e}"),
                         op_tag,
-                    );
+                    )
+                    .await;
                     return;
                 }
             };
-            let decompression_key = match async_generate_decompression_keys(
-                crypto_storage.clone(),
-                epoch_id,
-                &from,
-                &to,
-            )
-            .await
-            {
-                Ok(decompression_key) => decompression_key,
-                Err(e) => {
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        req_id,
-                        format!("Failed decompression key generation: {e}"),
-                        op_tag,
-                    );
+            let outcome = tokio::select! {
+                biased; // favor the cancel branch to reduce wasted work on cancellation
+                () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),
+                res = async_generate_decompression_keys(
+                    crypto_storage.clone(),
+                    epoch_id,
+                    &from,
+                    &to,
+                ) => res.map_err(|e| format!("Failed decompression key generation: {e}")),
+            };
+            let decompression_key = match outcome {
+                Ok(k) => k,
+                Err(msg) => {
+                    if cancel_token.is_cancelled() {
+                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                    }
+                    let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
             };
@@ -508,17 +456,18 @@ pub(crate) async fn key_gen_background<
                 Ok(info) => info,
                 Err(e) => {
                     let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        req_id,
+                        &meta_store,
+                        permit,
                         format!("Failed to compute decompression key info: {e}"),
                         op_tag,
-                    );
+                    )
+                    .await;
                     return;
                 }
             };
             if let Err(e) = crypto_storage
                 .inner
-                .write_decompression_key(req_id, info, decompression_key, meta_store)
+                .write_decompression_key(req_id, info, decompression_key, meta_store, permit)
                 .await
             {
                 tracing::error!(
@@ -605,10 +554,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        // no need to wait because get result is semi-blocking
-        let _res = get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()), false)
-            .await
-            .unwrap();
+        // The result endpoint is non-blocking; poll until the background keygen completes.
+        let _res = crate::testing::utils::poll_result_until_ready(|| {
+            get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()), false)
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -866,9 +817,11 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let _res = get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()), false)
-            .await
-            .unwrap();
+        let _res = crate::testing::utils::poll_result_until_ready(|| {
+            get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()), false)
+        })
+        .await
+        .unwrap();
 
         let err = key_gen_impl(
             &kms,
@@ -949,77 +902,5 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
-    }
-
-    /// Drives the cancel arm of `run_keygen_with_cancel` deterministically by
-    /// passing a never-completing keygen future, then issues an abort via
-    /// `abort_key_gen_impl` and checks that `get_key_gen_result_impl` returns
-    /// `Aborted` rather than waiting the full timeout. Mirrors the threshold
-    /// `abort_during_key_gen` test that uses `SlowOnlineDistributedKeyGen128`.
-    #[tokio::test]
-    async fn abort_during_key_gen() {
-        use crate::consts::DEFAULT_EPOCH_ID;
-        use crate::util::meta_store::add_req_to_meta_store;
-
-        let mut rng = AesRng::seed_from_u64(42);
-        let preproc_id = derive_request_id("test_central_abort_during_key_gen_preproc").unwrap();
-        let req_id = derive_request_id("test_central_abort_during_key_gen_reqid").unwrap();
-        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
-
-        // Register the request id in the key meta store so `get_key_gen_result_impl`
-        // has a cell to wait on, mirroring what `key_gen_impl` does before spawning.
-        add_req_to_meta_store(
-            &mut kms.key_meta_map.write().await,
-            &req_id,
-            OP_KEYGEN_REQUEST,
-        )
-        .unwrap();
-
-        // Register the cancellation token in `ongoing_key_gen` so `abort_key_gen_impl`
-        // finds it, and spawn the cancel-aware task with a pending future so only the
-        // cancel arm can fire.
-        let token = CancellationToken::new();
-        kms.ongoing_key_gen
-            .lock()
-            .await
-            .insert(preproc_id, token.clone());
-
-        let ongoing = Arc::clone(&kms.ongoing_key_gen);
-        let key_meta = Arc::clone(&kms.key_meta_map);
-        let crypto_storage = kms.crypto_storage.clone();
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        let task = tokio::spawn(async move {
-            run_keygen_with_cancel(
-                std::future::pending::<()>(),
-                token,
-                req_id,
-                preproc_id,
-                epoch_id,
-                ongoing,
-                key_meta,
-                crypto_storage,
-            )
-            .await;
-        });
-
-        // Abort should succeed and trigger the cancel arm.
-        abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
-            .await
-            .unwrap();
-        // Second abort returns NotFound since the token was removed.
-        let err = abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::NotFound);
-
-        // Wait for the cancel arm to finish writing the meta store update.
-        task.await.unwrap();
-
-        // The key meta store now holds the aborted error, so `get_key_gen_result_impl`
-        // returns `Aborted` immediately instead of blocking for the 60s timeout.
-        let err = get_key_gen_result_impl(&kms, Request::new(req_id.into()), false)
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

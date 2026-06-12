@@ -318,11 +318,9 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        add_req_to_meta_store(
-            &mut self.pub_dec_meta_store.write().await,
-            &req_id,
-            OP_PUBLIC_DECRYPT_REQUEST,
-        )?;
+        let meta_permit =
+            add_req_to_meta_store(&self.pub_dec_meta_store, &req_id, OP_PUBLIC_DECRYPT_REQUEST)
+                .await?;
 
         let ext_handles_bytes = ciphertexts
             .iter()
@@ -540,7 +538,8 @@ impl<
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: _permit should be dropped at the end of this function
+            // permit should be dropped at the end of this function
+            let mut meta_permit = Some(meta_permit);
             let mut decs = HashMap::new();
 
             // Collect all results first, without holding any locks
@@ -561,11 +560,14 @@ impl<
                     }
                 };
                 let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    &req_id,
+                    &meta_store,
+                    meta_permit
+                        .take() // Ensure permit gets set to `None` after updating meta store with an errror
+                        .expect("permit must still be present on first error"),
                     err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
-                );
+                )
+                .await;
                 return;
             }
             // All the inner decrypts succeeded ok...
@@ -600,11 +602,14 @@ impl<
             };
 
             update_req_in_meta_store(
-                &mut meta_store.write().await,
-                &req_id,
+                &meta_store,
+                meta_permit
+                    .take()
+                    .expect("permit must still be present on success path"),
                 res,
                 OP_PUBLIC_DECRYPT_REQUEST,
-            );
+            )
+            .await;
         };
         // Increment the error counter if ever the task fails
         self.tracker.spawn(async move {
@@ -633,13 +638,13 @@ impl<
             )
         })?;
 
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-            retrieve_from_meta_store(
-                self.pub_dec_meta_store.read().await,
-                &request_id,
-                OP_PUBLIC_DECRYPT_RESULT,
-            )
-            .await?;
+        let arc = retrieve_from_meta_store(
+            &self.pub_dec_meta_store,
+            &request_id,
+            OP_PUBLIC_DECRYPT_RESULT,
+        )
+        .await?;
+        let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
 
         if request_id != retrieved_req_id {
             return Err(MetricedError::new(
@@ -859,8 +864,7 @@ mod tests {
         .unwrap();
 
         let mut key_store = MetaStore::new_unlimited();
-        key_store.insert(&key_id).unwrap();
-        // key_store.update(&key_id, Ok(info.clone())).unwrap();
+        let meta_store_permit = key_store.insert(&key_id).unwrap();
         let key_meta_store = Arc::new(RwLock::new(key_store));
 
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
@@ -877,6 +881,7 @@ mod tests {
                 threshold_fhe_keys,
                 PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                meta_store_permit,
                 "",
             )
             .await
@@ -1221,10 +1226,11 @@ mod tests {
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol
-        // and always produces the same response
-        public_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        // and always produces the same response.
+        crate::testing::utils::poll_result_until_ready(|| {
+            public_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }

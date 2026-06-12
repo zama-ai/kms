@@ -11,9 +11,7 @@ use crate::{
     },
     dummy_domain,
     engine::base::{CrsGenMetadata, KeyGenMetadata, derive_request_id},
-    util::meta_store::{
-        add_req_to_meta_store, ensure_meta_store_request_pending, retrieve_from_meta_store,
-    },
+    util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
         Vault,
         storage::{Storage, StorageProxy, crypto_material::PublicKeySet},
@@ -51,7 +49,7 @@ use crate::{
         centralized::central_kms::{async_generate_crs, generate_fhe_keys},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
-    util::meta_store::{MetaStore, update_ok_req_in_meta_store},
+    util::meta_store::MetaStore,
     vault::storage::{
         StorageReader, StorageReaderExt,
         crypto_material::{
@@ -149,54 +147,12 @@ async fn write_crs() {
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
-    // writing to an empty meta store should fail
-    let result = crypto_storage
-        .write_crs(
-            &req_id,
-            &default_epoch_id,
-            pp.clone(),
-            crs_info.clone(),
-            meta_store.clone(),
-            OP_CRS_GEN_REQUEST,
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains(&format!(
-            "Error while updating meta store for {req_id}: request is missing"
-        )),
-        "expected meta-store update failure when empty, got: {err}"
-    );
-    {
-        let guard = pub_storage.lock().await;
-        let crs_exists = guard
-            .data_exists(&req_id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap();
-        assert!(!crs_exists, "CRS should be purged after meta-store failure");
-    }
-    {
-        let guard = crypto_storage.private_storage.lock().await;
-        let crs_info_exists = guard
-            .data_exists_at_epoch(
-                &req_id,
-                &default_epoch_id,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await
-            .unwrap();
-        assert!(
-            !crs_info_exists,
-            "CRS metadata should be purged after meta-store failure"
-        );
-    }
-
-    // update the meta store and we should be ok
-    {
-        let meta_store = meta_store.clone();
+    // insert the meta-store entry and use the resulting permit to drive the
+    // write — this is the only legal way to call write_crs.
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
     let result = crypto_storage
         .write_crs(
             &req_id,
@@ -204,43 +160,15 @@ async fn write_crs() {
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
+            permit,
             OP_CRS_GEN_REQUEST,
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
 
-    // writing the same thing should fail because the
-    // meta store disallow updating a cell that is set
-    let result = crypto_storage
-        .write_crs(
-            &req_id,
-            &default_epoch_id,
-            pp.clone(),
-            crs_info.clone(),
-            meta_store.clone(),
-            OP_CRS_GEN_REQUEST,
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Error while updating meta store"),
-        "expected meta-store conflict on double write, got: {err}"
-    );
-    assert!(
-        err.contains("request is already completed"),
-        "expected meta-store conflict on double write, got: {err}"
-    );
-    {
-        let guard = pub_storage.lock().await;
-        let crs_exists = guard
-            .data_exists(&req_id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap();
-        assert!(
-            crs_exists,
-            "Already-committed CRS should remain after duplicate-write conflict"
-        );
-    }
+    // Note: under the strong-permit invariant a "second write to the same
+    // req_id" path is impossible from the outside — `MetaStore::insert`
+    // refuses to mint a second permit for an existing entry.
 
     // writing on a failed storage device should fail
     {
@@ -248,10 +176,10 @@ async fn write_crs() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_crs_2").unwrap();
-    {
+    let new_permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&new_req_id).unwrap();
-    }
+        guard.insert(&new_req_id).unwrap()
+    };
     let result = crypto_storage
         .write_crs(
             &new_req_id,
@@ -259,6 +187,7 @@ async fn write_crs() {
             pp,
             crs_info,
             meta_store.clone(),
+            new_permit,
             OP_CRS_GEN_REQUEST,
         )
         .await;
@@ -353,29 +282,11 @@ async fn write_central_keys() {
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
-    // write to an empty meta store should fail
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            key_info.clone(),
-            fhe_key_set.clone(),
-            meta_store.clone(),
-            "",
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Error while updating meta store for") && err.contains("request is missing"),
-        "expected meta-store update failure when empty, got: {err}"
-    );
-
-    // update the meta store and the write should be ok
-    {
-        let meta_store = meta_store.clone();
+    // Insert + capture permit, then write.
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
     let result = crypto_storage
         .write_fhe_keys(
             &req_id,
@@ -383,29 +294,15 @@ async fn write_central_keys() {
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            permit,
             "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
 
-    // writing the same thing should fail because the
-    // meta store disallow updating a cell that is set
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            key_info.clone(),
-            fhe_key_set.clone(),
-            meta_store.clone(),
-            "",
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Error while updating meta store for")
-            && err.contains("request is already completed"),
-        "expected meta-store conflict on double write, got: {err}"
-    );
+    // Note: under the strong-permit invariant, "second write to same req_id"
+    // is impossible from the outside — `insert` refuses to mint a duplicate
+    // permit.
 
     // write on a failed storage device should fail
     {
@@ -413,10 +310,10 @@ async fn write_central_keys() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_central_keys_2").unwrap();
-    {
+    let new_permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&new_req_id).unwrap();
-    }
+        guard.insert(&new_req_id).unwrap()
+    };
     let result = crypto_storage
         .write_fhe_keys(
             &new_req_id,
@@ -424,6 +321,7 @@ async fn write_central_keys() {
             key_info,
             fhe_key_set,
             meta_store.clone(),
+            new_permit,
             "",
         )
         .await;
@@ -481,10 +379,10 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
     }));
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    {
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
 
     {
         let mut storage_guard = pub_storage.lock().await;
@@ -498,6 +396,7 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             key_info,
             public_key_set,
             meta_store.clone(),
+            permit,
             "",
         )
         .await;
@@ -506,20 +405,23 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
         "expected storage failure to surface an error, got: {result:?}"
     );
 
-    let status = {
+    let is_err_status = {
         let guard = meta_store.read().await;
-        guard
-            .retrieve(&req_id)
-            .expect("request should remain tracked in meta store after failure")
+        matches!(
+            guard
+                .retrieve(&req_id)
+                .expect("request should remain tracked in meta store after failure"),
+            EntryState::Done(Err(_))
+        )
     };
     assert!(
-        status.get().await.as_ref().is_err(),
+        is_err_status,
         "expected terminal error status in meta store after storage failure"
     );
 }
 
 #[tokio::test]
-async fn write_threshold_empty_update() {
+async fn write_threshold_keys_sunshine() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
         .unwrap()
@@ -528,62 +430,10 @@ async fn write_threshold_empty_update() {
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set.clone()));
 
-    // write to an empty meta store should fail
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            threshold_fhe_keys.clone(),
-            boxed_public_key_set.clone(),
-            meta_store.clone(),
-            "",
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Error while updating meta store for"),
-        "expected meta-store update failure when empty, got: {err}"
-    );
-    {
-        let guard = crypto_storage.inner.public_storage.lock().await;
-        let pk_exists = guard
-            .data_exists(&req_id, &PubDataType::PublicKey.to_string())
-            .await
-            .unwrap();
-        let sk_exists = guard
-            .data_exists(&req_id, &PubDataType::ServerKey.to_string())
-            .await
-            .unwrap();
-        assert!(
-            !pk_exists && !sk_exists,
-            "threshold public material should be purged after meta-store failure"
-        );
-    }
-    {
-        let guard = crypto_storage.inner.private_storage.lock().await;
-        let key_info_exists = guard
-            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
-            .await
-            .unwrap();
-        assert!(
-            !key_info_exists,
-            "threshold private material should be purged after meta-store failure"
-        );
-    }
-    let cache_read = crypto_storage
-        .read_guarded_fhe_keys(&req_id, &epoch_id)
-        .await;
-    assert!(
-        cache_read.is_err(),
-        "threshold cache should not retain failed writes"
-    );
-
-    // update the meta store and the write should be ok
-    {
-        let meta_store = meta_store.clone();
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
     let result = crypto_storage
         .write_fhe_keys(
             &req_id,
@@ -591,6 +441,7 @@ async fn write_threshold_empty_update() {
             threshold_fhe_keys.clone(),
             boxed_public_key_set.clone(),
             meta_store.clone(),
+            permit,
             "",
         )
         .await;
@@ -605,6 +456,8 @@ async fn write_threshold_empty_update() {
 
 #[tokio::test]
 async fn write_threshold_keys_meta_update() {
+    // `MetaStore::insert` refuses to mint a second permit for an existing
+    // entry, so write_fhe_keys cannot be called twice for the same req_id.
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
         .unwrap()
@@ -613,12 +466,10 @@ async fn write_threshold_keys_meta_update() {
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
-    // update the meta store and the write should be ok
-    {
-        let meta_store = meta_store.clone();
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
     let result = crypto_storage
         .write_fhe_keys(
             &req_id,
@@ -626,32 +477,15 @@ async fn write_threshold_keys_meta_update() {
             threshold_fhe_keys.clone(),
             boxed_public_key_set.clone(),
             meta_store.clone(),
+            permit,
             "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
-    // check the meta store is correct
     {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
     }
-    // writing the same thing should fail because the
-    // meta store disallow updating a cell that is set
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            threshold_fhe_keys.clone(),
-            boxed_public_key_set.clone(),
-            meta_store.clone(),
-            "",
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Error while updating meta store for"),
-        "expected meta-store conflict on double write, got: {err}"
-    );
     {
         let guard = crypto_storage.inner.public_storage.lock().await;
         let pk_exists = guard
@@ -664,7 +498,7 @@ async fn write_threshold_keys_meta_update() {
             .unwrap();
         assert!(
             pk_exists && sk_exists,
-            "Already-committed threshold public material should remain on duplicate conflict"
+            "committed threshold public material should be present"
         );
     }
     {
@@ -675,17 +509,14 @@ async fn write_threshold_keys_meta_update() {
             .unwrap();
         assert!(
             key_info_exists,
-            "Already-committed threshold private material should remain on duplicate conflict"
+            "committed threshold private material should be present"
         );
     }
 
     let refreshed = crypto_storage
         .read_guarded_fhe_keys(&req_id, &epoch_id)
         .await;
-    assert!(
-        refreshed.is_ok(),
-        "threshold read path should still succeed after duplicate conflict"
-    );
+    assert!(refreshed.is_ok(), "threshold read path should succeed");
 }
 
 #[tokio::test]
@@ -698,12 +529,10 @@ async fn write_threshold_keys_failed_storage() {
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
-    // update the meta store and the write should be ok
-    {
-        let meta_store = meta_store.clone();
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
     let result = crypto_storage
         .write_fhe_keys(
             &req_id,
@@ -711,6 +540,7 @@ async fn write_threshold_keys_failed_storage() {
             threshold_fhe_keys.clone(),
             boxed_public_key_set.clone(),
             meta_store.clone(),
+            permit,
             "",
         )
         .await;
@@ -728,10 +558,10 @@ async fn write_threshold_keys_failed_storage() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
-    {
+    let new_permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&new_req_id).unwrap();
-    }
+        guard.insert(&new_req_id).unwrap()
+    };
     let result = crypto_storage
         .write_fhe_keys(
             &new_req_id,
@@ -739,6 +569,7 @@ async fn write_threshold_keys_failed_storage() {
             threshold_fhe_keys.clone(),
             boxed_public_key_set,
             meta_store.clone(),
+            new_permit,
             "",
         )
         .await;
@@ -790,67 +621,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 }
 
 #[tokio::test]
-async fn write_threshold_compressed_empty_update_cleans_up() {
-    let req_id = derive_request_id("write_threshold_compressed_empty_update").unwrap();
-    let epoch_id: EpochId = derive_request_id("write_threshold_compressed_empty_update_epoch")
-        .unwrap()
-        .into();
-    let (crypto_storage, mut threshold_fhe_keys, _fhe_key_set) = setup_threshold_store(&req_id);
-    let (_, _, compressed_keyset, compact_pk, _) = generate_compressed_keys(&req_id, &req_id, 42);
-    threshold_fhe_keys.public_material = PublicKeyMaterial::new(compressed_keyset.clone());
-
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    let result = crypto_storage
-        .write_fhe_keys(
-            &req_id,
-            &epoch_id,
-            threshold_fhe_keys,
-            PublicKeySet::Compressed {
-                compact_public_key: Arc::new(compact_pk),
-                compressed_keyset: Arc::new(compressed_keyset),
-            },
-            meta_store,
-            "",
-        )
-        .await;
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Error while updating meta store for"),
-        "expected meta-store update failure when empty, got: {err}"
-    );
-
-    {
-        let guard = crypto_storage.inner.public_storage.lock().await;
-        let compressed_exists = guard
-            .data_exists(&req_id, &PubDataType::CompressedXofKeySet.to_string())
-            .await
-            .unwrap();
-        assert!(
-            !compressed_exists,
-            "compressed public material should be purged after meta-store failure"
-        );
-    }
-    {
-        let guard = crypto_storage.inner.private_storage.lock().await;
-        let key_info_exists = guard
-            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
-            .await
-            .unwrap();
-        assert!(
-            !key_info_exists,
-            "compressed private material should be purged after meta-store failure"
-        );
-    }
-    let cache_read = crypto_storage
-        .read_guarded_fhe_keys(&req_id, &epoch_id)
-        .await;
-    assert!(
-        cache_read.is_err(),
-        "compressed threshold cache should not retain failed writes"
-    );
-}
-
-#[tokio::test]
 async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     let req_id =
         derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key").unwrap();
@@ -869,10 +639,10 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
         generate_compressed_keys(&req_id, &req_id, 50);
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    {
+    let permit = {
         let mut guard = meta_store.write().await;
-        guard.insert(&req_id).unwrap();
-    }
+        guard.insert(&req_id).unwrap()
+    };
 
     crypto_storage
         .write_fhe_keys(
@@ -884,6 +654,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
                 compressed_keyset: Arc::new(compressed_keyset),
             },
             meta_store,
+            permit,
             "",
         )
         .await
@@ -1559,21 +1330,14 @@ async fn write_backup_keys() {
     );
     let recovery = dummy_recovery_material("write_backup_keys");
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    // Fails when meta store entry is missing, even though vault is present.
-    let err = storage
-        .write_backup_keys(recovery.clone(), Arc::clone(&meta_store))
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(err, StorageError::MetaStore(_)),
-        "expected MetaStoreError when meta store entry is missing, got: {err:?}"
-    );
 
     let req_id = recovery.custodian_context().context_id;
-    add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
     // Validate that writing works, when entry is present in meta store
     storage
-        .write_backup_keys(recovery, Arc::clone(&meta_store))
+        .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
         .await
         .unwrap();
     let pub_s = storage.public_storage.lock().await;
@@ -1583,12 +1347,15 @@ async fn write_backup_keys() {
             .await
             .unwrap()
     );
-    // Request is no longer pending
-    assert!(
-        ensure_meta_store_request_pending(&meta_store, &req_id)
+    // Request is no longer pending:
+    assert!(matches!(
+        meta_store
+            .read()
             .await
-            .is_err()
-    );
+            .retrieve(&req_id)
+            .expect("request should remain tracked in meta store"),
+        EntryState::Done(Ok(_))
+    ));
 }
 
 #[tokio::test]
@@ -1597,9 +1364,13 @@ async fn write_backup_keys_no_vault() {
     let recovery = dummy_recovery_material("write_backup_keys_no_vault");
     let req_id = recovery.custodian_context().context_id;
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    add_req_to_meta_store(&mut meta_store.write().await, &req_id, TEST_METRIC).unwrap();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
     assert_eq!(
-        storage.write_backup_keys(recovery, meta_store).await,
+        storage
+            .write_backup_keys(recovery, meta_store, permit)
+            .await,
         Err(StorageError::Backup),
     );
 }
@@ -1616,106 +1387,59 @@ async fn update_meta_store_storage_outcomes() {
     let req_writing = derive_request_id("ums_writing").unwrap();
     let meta_store: Arc<RwLock<MetaStore<u32>>> = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
-    {
-        let mut write_guard = meta_store.write().await;
-        add_req_to_meta_store(&mut write_guard, &req_ok, TEST_METRIC).unwrap();
-        add_req_to_meta_store(&mut write_guard, &req_backup, TEST_METRIC).unwrap();
-        add_req_to_meta_store(&mut write_guard, &req_writing, TEST_METRIC).unwrap();
-        assert!(
-            update_meta_store(Ok(()), &req_ok, 42_u32, &mut write_guard, TEST_METRIC)
-                .await
-                .is_ok()
-        );
-        assert_eq!(
-            update_meta_store(
-                Err(StorageError::Backup),
-                &req_backup,
-                7_u32,
-                &mut write_guard,
-                TEST_METRIC,
-            )
-            .await,
-            Err(StorageError::Backup),
-        );
-        assert_eq!(
-            update_meta_store(
-                Err(StorageError::Writing),
-                &req_writing,
-                0_u32,
-                &mut write_guard,
-                TEST_METRIC,
-            )
-            .await,
-            Err(StorageError::Writing),
-        );
-    }
+    let permit_ok = add_req_to_meta_store(&meta_store, &req_ok, TEST_METRIC)
+        .await
+        .unwrap();
+    let permit_backup = add_req_to_meta_store(&meta_store, &req_backup, TEST_METRIC)
+        .await
+        .unwrap();
+    let permit_writing = add_req_to_meta_store(&meta_store, &req_writing, TEST_METRIC)
+        .await
+        .unwrap();
+    assert!(
+        update_meta_store(Ok(()), 42_u32, &meta_store, permit_ok, TEST_METRIC)
+            .await
+            .is_ok()
+    );
     assert_eq!(
-        retrieve_from_meta_store::<u32>(meta_store.read().await, &req_ok, TEST_METRIC)
+        update_meta_store(
+            Err(StorageError::Backup),
+            7_u32,
+            &meta_store,
+            permit_backup,
+            TEST_METRIC,
+        )
+        .await,
+        Err(StorageError::Backup),
+    );
+    assert_eq!(
+        update_meta_store(
+            Err(StorageError::Writing),
+            0_u32,
+            &meta_store,
+            permit_writing,
+            TEST_METRIC,
+        )
+        .await,
+        Err(StorageError::Writing),
+    );
+    assert_eq!(
+        *retrieve_from_meta_store::<u32>(&meta_store, &req_ok, TEST_METRIC)
             .await
             .unwrap(),
         42
     );
     assert_eq!(
-        retrieve_from_meta_store::<u32>(meta_store.read().await, &req_backup, TEST_METRIC)
+        *retrieve_from_meta_store::<u32>(&meta_store, &req_backup, TEST_METRIC)
             .await
             .unwrap(),
         7
     );
     assert!(
-        retrieve_from_meta_store::<u32>(meta_store.read().await, &req_writing, TEST_METRIC)
+        retrieve_from_meta_store::<u32>(&meta_store, &req_writing, TEST_METRIC)
             .await
             .is_err(),
     );
-}
-
-#[tokio::test]
-async fn update_meta_store_failure_paths() {
-    // Failure paths: meta store update itself fails, in three flavours:
-    //   - storage Ok + missing entry         -> MetaStoreError "but storage succeeded";
-    //   - storage Err + missing entry        -> MetaStoreError "Also failed to store data";
-    //   - storage Ok + already-set entry     -> MetaStoreError (cell.is_set() rejects update).
-    let missing = derive_request_id("ums_missing").unwrap();
-    let already_set = derive_request_id("ums_already_set").unwrap();
-    let meta_store: Arc<RwLock<MetaStore<u32>>> = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    add_req_to_meta_store(&mut meta_store.write().await, &already_set, TEST_METRIC).unwrap();
-    assert!(update_ok_req_in_meta_store(
-        &mut meta_store.write().await,
-        &already_set,
-        99_u32,
-        TEST_METRIC,
-    ));
-
-    let mut guard = meta_store.write().await;
-    match update_meta_store(Ok(()), &missing, 1_u32, &mut guard, TEST_METRIC)
-        .await
-        .unwrap_err()
-    {
-        StorageError::MetaStore(msg) => assert!(
-            msg.contains("but storage succeeded"),
-            "expected 'but storage succeeded' in: {msg}"
-        ),
-        other => panic!("expected MetaStoreError, got {other:?}"),
-    }
-    match update_meta_store(
-        Err(StorageError::Writing),
-        &missing,
-        2_u32,
-        &mut guard,
-        TEST_METRIC,
-    )
-    .await
-    .unwrap_err()
-    {
-        StorageError::MetaStore(msg) => assert!(
-            msg.contains("Also failed to store data"),
-            "expected combined error in: {msg}"
-        ),
-        other => panic!("expected MetaStoreError, got {other:?}"),
-    }
-    assert!(matches!(
-        update_meta_store(Ok(()), &already_set, 1_u32, &mut guard, TEST_METRIC).await,
-        Err(StorageError::MetaStore(_)),
-    ));
 }
 
 #[tokio::test]
