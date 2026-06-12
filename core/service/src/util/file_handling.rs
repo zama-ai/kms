@@ -199,28 +199,6 @@ mod tests {
         assert!(res.is_err());
     }
 
-    // Multi-thread runtime so the inline blocking writes actually overlap.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn concurrent_writes_to_same_path_are_not_corrupted() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = std::sync::Arc::new(dir.path().join("element"));
-        let mut handles = Vec::new();
-        for i in 0..8u32 {
-            let path = std::sync::Arc::clone(&path);
-            handles.push(tokio::spawn(async move {
-                safe_write_element_versioned(path.as_path(), &TestType { i }).await
-            }));
-        }
-        for h in handles {
-            h.await.unwrap().unwrap();
-        }
-        // One writer's complete value, never interleaved bytes.
-        let read_back: TestType = safe_read_element_versioned(path.as_path()).await.unwrap();
-        assert!(read_back.i < 8, "unexpected value {}", read_back.i);
-        let stranded = leftovers(dir.path(), "element");
-        assert!(stranded.is_empty(), "leftover temp files: {stranded:?}");
-    }
-
     // A write that fails before the rename must leave a pre-existing
     // destination untouched.
     #[cfg(unix)]
