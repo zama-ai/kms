@@ -212,6 +212,75 @@ fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     }
 }
 
+/// Compose the `bit_idx`-th bit of every still-valid share into the reconstruction
+/// (quotient) field. Shared by the hinted and non-hinted Hensel lift.
+fn compute_binary_shares<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    shares_with_validity: &[(Share<ResiduePoly<Z, EXTENSION_DEGREE>>, bool)],
+    bit_idx: usize,
+) -> Vec<Share<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+{
+    shares_with_validity
+        .iter()
+        .filter_map(|(sh, is_valid)| {
+            if *is_valid {
+                Some(Share::<
+                    <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
+                >::new(
+                    sh.owner(), sh.value().bit_compose(bit_idx)
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// One Hensel-lift correction step shared by the hinted and non-hinted reconstruction:
+/// subtract the contribution of the GF error-corrected bit polynomial `fi_mod2` (evaluated at
+/// each party's exceptional point) from every still-valid share, refresh that share's validity,
+/// and accumulate the lifted bits into `res`. Returns the owners of the shares that became
+/// invalid during this step.
+fn apply_bit_correction<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    shares_with_validity: &mut [(Share<ResiduePoly<Z, EXTENSION_DEGREE>>, bool)],
+    ordered_powers: &[Vec<ResiduePoly<Z, EXTENSION_DEGREE>>],
+    fi_mod2: &Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+    bit_idx: usize,
+    res: &mut Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
+) -> Vec<Role>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
+    ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
+    BitwisePoly:
+        From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
+    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
+{
+    let bitwise = BitwisePoly::from(fi_mod2.clone());
+    let mut evicted = Vec::new();
+    // remove the LSBs computed from error correction in the quotient field
+    for (j, (share, is_valid)) in shares_with_validity.iter_mut().enumerate() {
+        if *is_valid {
+            // compute fi(\gamma_1) ..., fi(\gamma_n) \in GR[Z = {2^64/2^128}]
+            let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
+            *share -= offset;
+
+            // divisibility check of pi; only needed while the share is still valid
+            *is_valid = share.value().multiple_pow2(bit_idx + 1);
+
+            // Log at most once, when the share becomes invalid
+            if !*is_valid {
+                tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
+                evicted.push(share.owner());
+            }
+        }
+    }
+    accumulate_and_lift_bitwise_poly(res, fi_mod2, bit_idx);
+    evicted
+}
+
 fn shamir_error_correct<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
     degree: usize,
@@ -227,7 +296,6 @@ where
         From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
     BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
 {
-    // threshold is the degree of the shamir polynomial
     let ring_size: usize = Z::BIT_LENGTH;
 
     //Start with all values being valid (none of them are Bot)
@@ -239,66 +307,44 @@ where
 
     let initial_length = shares_with_validity.len();
 
+    // Exceptional powers fetched (per party) from the memoized store.
     let parties: Vec<_> = sharing
         .shares
         .iter()
         .map(|x| x.owner().one_based())
         .collect();
-
     let ordered_powers: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>> = parties
         .iter()
         .map(|party_id| ResiduePoly::<Z, EXTENSION_DEGREE>::exceptional_set(*party_id, degree))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut res = Poly::<ResiduePoly<Z, EXTENSION_DEGREE>>::zero();
+    // (owner, iteration) of shares that became invalid, for test-side bookkeeping only.
+    #[cfg(test)]
+    let mut all_evicted: Vec<(Role, usize)> = Vec::new();
 
     for bit_idx in 0..ring_size {
-        //Compute z = pi(y/2^i), where Bots are filtered out
-        let binary_shares: Vec<
-            Share<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
-        > = shares_with_validity
-            .iter()
-            .filter_map(|(sh, is_valid)| {
-                if *is_valid {
-                    Some(Share::<
-                        <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
-                    >::new(
-                        sh.owner(), sh.value().bit_compose(bit_idx)
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
+        // z = pi(y/2^i), Bots filtered out
+        let binary_shares = compute_binary_shares(&shares_with_validity, bit_idx);
         let num_new_bot = initial_length - binary_shares.len();
-        // apply error correction on z
+
         // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
         let fi_mod2 = error_correction(binary_shares, degree, max_errs - num_new_bot)?;
-        let bitwise = BitwisePoly::from(fi_mod2.clone());
 
-        // remove LSBs computed from error correction in GF(256)
-        for (j, (share, is_valid)) in shares_with_validity.iter_mut().enumerate() {
-            if *is_valid {
-                // compute fi(\gamma_1) ..., fi(\gamma_n) \in GR[Z = {2^64/2^128}]
-                let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
-                *share -= offset;
+        let _evicted = apply_bit_correction(
+            &mut shares_with_validity,
+            &ordered_powers,
+            &fi_mod2,
+            bit_idx,
+            &mut res,
+        );
+        #[cfg(test)]
+        all_evicted.extend(_evicted.into_iter().map(|owner| (owner, bit_idx)));
+    }
 
-                //Do the divisibility check of pi, only need to do it if the share is currently valid
-                *is_valid = share.value().multiple_pow2(bit_idx + 1);
-
-                //Log at most once, when share becomes invalid
-                if !*is_valid {
-                    #[cfg(test)]
-                    if let Some(&mut ref mut indices) = err_indices {
-                        indices.push((share.owner(), bit_idx));
-                    }
-                    tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
-                }
-            }
-        }
-
-        accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
+    #[cfg(test)]
+    if let Some(indices) = err_indices {
+        indices.extend(all_evicted);
     }
 
     Ok(res)
@@ -350,23 +396,7 @@ where
     > = None;
 
     for bit_idx in 0..ring_size {
-        let binary_shares: Vec<
-            Share<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
-        > = shares_with_validity
-            .iter()
-            .filter_map(|(sh, is_valid)| {
-                if *is_valid {
-                    Some(Share::<
-                        <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
-                    >::new(
-                        sh.owner(), sh.value().bit_compose(bit_idx)
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
+        let binary_shares = compute_binary_shares(&shares_with_validity, bit_idx);
         let num_new_bot = initial_length - binary_shares.len();
 
         let fi_mod2 = if !validity_changed {
@@ -379,7 +409,7 @@ where
             )?
         } else {
             // Some parties were evicted — recompute field hints for the new valid set
-            // (or reuse previously computed fallback if validity hasn't changed again).
+            // (or reuse the previously computed fallback if validity hasn't changed again).
             if fallback_field_hints.is_none() {
                 let valid_parties: Vec<Role> = shares_with_validity
                     .iter()
@@ -394,30 +424,19 @@ where
                 fallback_field_hints.as_ref().unwrap(),
             )?
         };
-        let bitwise = BitwisePoly::from(fi_mod2.clone());
 
-        let mut evicted_this_round = false;
-        for (j, (share, is_valid)) in shares_with_validity.iter_mut().enumerate() {
-            if *is_valid {
-                let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
-                *share -= offset;
-
-                *is_valid = share.value().multiple_pow2(bit_idx + 1);
-
-                if !*is_valid {
-                    tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
-                    evicted_this_round = true;
-                }
-            }
-        }
-
-        if evicted_this_round {
+        let evicted = apply_bit_correction(
+            &mut shares_with_validity,
+            ordered_powers,
+            &fi_mod2,
+            bit_idx,
+            &mut res,
+        );
+        if !evicted.is_empty() {
             validity_changed = true;
             // Invalidate fallback hints so they get recomputed for the new valid set.
             fallback_field_hints = None;
         }
-
-        accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
     }
 
     Ok(res)

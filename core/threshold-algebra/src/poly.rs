@@ -636,42 +636,25 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
     (r1, t1)
 }
 
-//NIST: Level Zero Operation
-/// Runs Gao decoding algorithm.
+/// Common tail of [`gao_decoding`] and [`gao_decoding_with_field_hints`].
 ///
-/// - `points` holds the x-coordinates
-/// - `values` holds the y-coordinates
-/// - `k` such that we apply error correction to a polynomial of degree < k
-///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
-/// - `max_errs` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
-///
-/// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
-pub fn gao_decoding<F: Field>(
-    points: &[F],
-    values: &[F],
+/// Given the interpolation polynomial `r` (through the points/values) and the vanishing
+/// polynomial `g = prod(X - xi)` — however they were obtained — run the partial extended
+/// Euclidean algorithm and recover the message polynomial, with the usual error/degree checks.
+/// `n` is the number of evaluation points and `k` the RS dimension (`degree + 1`).
+fn gao_decoding_common<F: Field>(
+    n: usize,
     k: usize,
     max_errs: usize,
+    r: Poly<F>,
+    g: Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
-    // in the literature we find (n, k, d) codes
-    // parameter k is called v in the NIST doc (the RS dimension)
-    // this means that n is the number of points xi for which we have some values yi
-    // yi ~= G(xi))
-    // where deg(G) <= k-1
-    let n = points.len();
-
-    // d = n-k+1
+    // d = n - k + 1
     let d = (n + 1)
         .checked_sub(k)
         .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
 
-    // sanity checks for parameter sizes
-    if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: mismatch between number of values and points".to_string(),
-        ));
-    }
-
-    // We are expecting to correct more than what can be done
+    // We are expecting to correct more than what can be done:
     // Gao can only correct up to (d-1)/2 errors
     if 2 * max_errs >= d {
         return Err(anyhow_error_and_log(
@@ -679,24 +662,10 @@ pub fn gao_decoding<F: Field>(
         ));
     }
 
-    // R \in GF(256)[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
-    let r = lagrange_interpolation(points, values)?;
-
-    // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
-    // note that deg(G) >= deg(R)
-    let mut g = Poly::one();
-    for xi in points.iter() {
-        let fi = Poly {
-            coefs: vec![-*xi, F::ONE],
-        };
-        g = g * fi;
-    }
-
     // apply EEA to compute q0, q1 such that
-    // q1 = gcd(g, r) = g * t + r * q0
-    // q1 | g, q1 | r
-    // q1 and q0 are called g(x) and v(x), respectively in the Gao paper.
-    // q0 = v(x) is the error locator polynomial. Its roots are the error positions xi.
+    // q1 = gcd(g, r) = g * t + r * q0, with q1 | g and q1 | r.
+    // q1 and q0 are called g(x) and v(x), respectively, in the Gao paper.
+    // q0 = v(x) is the error locator polynomial; its roots are the error positions xi.
     let gcd_stop = (n + k) / 2;
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
@@ -726,6 +695,51 @@ pub fn gao_decoding<F: Field>(
     }
 }
 
+//NIST: Level Zero Operation
+/// Runs Gao decoding algorithm.
+///
+/// - `points` holds the x-coordinates
+/// - `values` holds the y-coordinates
+/// - `k` such that we apply error correction to a polynomial of degree < k
+///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
+/// - `max_errs` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
+///
+/// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
+pub fn gao_decoding<F: Field>(
+    points: &[F],
+    values: &[F],
+    k: usize,
+    max_errs: usize,
+) -> anyhow::Result<Poly<F>> {
+    // in the literature we find (n, k, d) codes
+    // parameter k is called v in the NIST doc (the RS dimension)
+    // this means that n is the number of points xi for which we have some values yi
+    // yi ~= G(xi)), where deg(G) <= k-1
+    let n = points.len();
+
+    // sanity check for parameter sizes
+    if values.len() != points.len() {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure: mismatch between number of values and points".to_string(),
+        ));
+    }
+
+    // R \in F[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
+    let r = lagrange_interpolation(points, values)?;
+
+    // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
+    // note that deg(G) >= deg(R)
+    let mut g = Poly::one();
+    for xi in points.iter() {
+        let fi = Poly {
+            coefs: vec![-*xi, F::ONE],
+        };
+        g = g * fi;
+    }
+
+    gao_decoding_common(n, k, max_errs, r, g)
+}
+
 /// Like [`gao_decoding`] but reuses precomputed Lagrange polynomials and the vanishing polynomial
 /// from [`FieldHints`](crate::error_correction::FieldHints).
 ///
@@ -741,53 +755,19 @@ pub fn gao_decoding_with_field_hints<F: Field>(
 ) -> anyhow::Result<Poly<F>> {
     let n = points.len();
 
-    let d = (n + 1)
-        .checked_sub(k)
-        .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
-
     if values.len() != points.len() {
         return Err(anyhow_error_and_log(
             "Gao decoding failure: mismatch between number of values and points".to_string(),
         ));
     }
 
-    if 2 * max_errs >= d {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
-        ));
-    }
-
-    // R = interpolation polynomial through (points, values).
+    // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
     let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
 
     // G = vanishing polynomial (precomputed).
     let g = vanishing_poly.clone();
 
-    let gcd_stop = (n + k) / 2;
-    let (q1, q0) = partial_xgcd(g, r, gcd_stop);
-
-    if q0.deg() > max_errs {
-        return Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.",
-            q0.deg()
-        )));
-    }
-
-    let (h, rem) = q1 / &q0;
-
-    if !rem.is_zero() {
-        Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Division remainder is not zero but {rem:?}."
-        )))
-    } else if h.deg() >= k {
-        Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Division result is of too high degree {}, but should be at most {}.",
-            h.deg(),
-            k - 1
-        )))
-    } else {
-        Ok(h)
-    }
+    gao_decoding_common(n, k, max_errs, r, g)
 }
 
 #[cfg(test)]
