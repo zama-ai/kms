@@ -373,7 +373,7 @@ Upon success, both the command to request to generate a key _and_ the command to
 
 #### Insecure (Dummy) Preprocessing
 
-Like the secure flow, an insecure key-generation consumes a preprocessing entry, but the insecure preprocessing is a dummy: no correlated randomness is generated and only the request ID is recorded, so the call completes almost instantly. It can be triggered explicitly via:
+Like the secure flow, an insecure key-generation consumes a preprocessing entry, but the insecure preprocessing is a dummy: no correlated randomness is generated and only metadata such as the request ID, parameters, and external signature is recorded, so the call completes almost instantly. It can be triggered explicitly via:
 
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]

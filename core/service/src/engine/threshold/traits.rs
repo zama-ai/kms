@@ -70,8 +70,8 @@ pub trait KeyGenPreprocessor {
         request: Request<PartialKeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, MetricedError>;
 
-    /// Insecure (dummy) preprocessing that only records the preprocessing ID
-    /// in the meta store, to be consumed by the insecure key generation.
+    /// Insecure (dummy) preprocessing that records metadata but no preprocessing
+    /// material in the meta store, to be consumed by the insecure key generation.
     #[cfg(feature = "insecure")]
     async fn insecure_key_gen_preproc(
         &self,
@@ -84,7 +84,7 @@ pub trait KeyGenPreprocessor {
     ) -> Result<Response<KeyGenPreprocResult>, MetricedError>;
 
     /// Same as [`Self::get_result`] but for preprocessing started via
-    /// [`Self::insecure_key_gen_preproc`] (only the metric tag differs).
+    /// [`Self::insecure_key_gen_preproc`].
     #[cfg(feature = "insecure")]
     async fn get_insecure_result(
         &self,

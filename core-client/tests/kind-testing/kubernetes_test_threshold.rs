@@ -332,8 +332,8 @@ async fn k8s_test_keygen_and_crs() {
 
 /// Test that sequential insecure key generations produce unique keys.
 ///
-/// Uses `InsecureKeyGen` (no keygen preprocessing) to verify that the MPC protocol assigns
-/// a fresh, unique key ID on each call. Not representative of production keygen.
+/// Uses `InsecurePreprocKeyGen` + `InsecureKeyGen` to verify that the MPC protocol
+/// assigns a fresh, unique key ID on each call. Not representative of production keygen.
 #[tokio::test]
 async fn k8s_test_keygen_uniqueness() {
     let ctx = K8sTestContext::new("k8s_test_keygen_uniqueness");
@@ -352,8 +352,8 @@ async fn k8s_test_keygen_uniqueness() {
 
 /// Cluster smoke test: insecure keygen → encrypt → threshold public decrypt → verify.
 ///
-/// Uses `InsecureKeyGen` (no keygen preprocessing) — a testing shortcut not used in
-/// production, where `PreprocKeyGen` + `KeyGen` is required. The `Encrypt` step
+/// Uses `InsecurePreprocKeyGen` + `InsecureKeyGen` — a testing shortcut not used
+/// in production, where `PreprocKeyGen` + `KeyGen` is required. The `Encrypt` step
 /// fetches both the `PublicKey` and `ServerKey` from the cluster; in real client
 /// operation only the `PublicKey` is needed for encryption.
 ///
@@ -391,7 +391,7 @@ async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
 
 /// Cluster smoke test: one insecure key handles multiple FHE types correctly.
 ///
-/// Uses `InsecureKeyGen` (no keygen preprocessing) — see `k8s_test_insecure_keygen_encrypt_and_public_decrypt`
+/// Uses `InsecurePreprocKeyGen` + `InsecureKeyGen` — see `k8s_test_insecure_keygen_encrypt_and_public_decrypt`
 /// for caveats. Validates that a single threshold key correctly serves ciphertexts
 /// of different FHE types in sequence:
 /// 1. Generate one threshold FHE key

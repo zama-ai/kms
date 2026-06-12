@@ -308,9 +308,13 @@ Type representing information on the format of a ciphertext.
 
 ```proto
 message KeyGenPreprocRequest {
-  FheParameter params = 1;
-  KeySetConfig keyset_config = 2;
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+  FheParameter params = 2;
+  KeySetConfig keyset_config = 3;
+  Eip712DomainMsg domain = 4;
+  RequestId context_id = 5;
+  RequestId epoch_id = 6;
+  bytes extra_data = 7;
 }
 ```
 
@@ -323,7 +327,7 @@ message Empty {}
 ### Description
 
 In the __threshold__ case it triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `param` using the specific settings of `keyset_config`.
-In the __centralized__ case no correlated randomness is needed, so this is a dummy that only records the `request_id`; the entry must nonetheless exist before calling `KeyGen`.
+In the __centralized__ case no correlated randomness is needed, so this is a dummy that records preprocessing metadata but no material; the entry must nonetheless exist before calling `KeyGen`.
 
 This correlated randomness will then be consumed when calling `KeyGen` with the `preproc_id` set to the current `request_id`.
 
@@ -374,9 +378,13 @@ ___NOTE_: This is a temporary workaround and will only be available in testing/d
 
 ```proto
 message KeyGenPreprocRequest {
-  FheParameter params = 1;
-  KeySetConfig keyset_config = 2;
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+  FheParameter params = 2;
+  KeySetConfig keyset_config = 3;
+  Eip712DomainMsg domain = 4;
+  RequestId context_id = 5;
+  RequestId epoch_id = 6;
+  bytes extra_data = 7;
 }
 ```
 
@@ -394,7 +402,7 @@ Because nothing is generated, this call completes (almost) instantly.
 
 As for the secure variant, a preprocessing entry is consumed by _each_ insecure key generation call that references it. Calling this endpoint explicitly is required before threshold `InsecureKeyGen`.
 In the __threshold__ setting the stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
-In the __centralized__ setting this endpoint is identical to `KeyGenPreproc` — both are dummies that only record the `request_id` — so the stored entry carries no mode and can be consumed by either `KeyGen` or `InsecureKeyGen`.
+In the __centralized__ setting this endpoint is identical to `KeyGenPreproc` — both are dummies that record preprocessing metadata but no material — so the stored entry carries no mode and can be consumed by either `KeyGen` or `InsecureKeyGen`.
 Completion status can be validated using the `GetInsecureKeyGenPreprocResult` endpoint.
 </details>
 
@@ -420,6 +428,8 @@ If the call is successful then it means preprocessing is completed.
 Otherwise, it may fail with the following `tonic::Code` error codes:
 
 - `NotFound`: There has not been an `InsecureKeyGenPreproc` call for the provided `request_id`.
+- `Unavailable`: The `InsecureKeyGenPreproc` for the queried `request_id` has started but is not finished yet.
+- `FailedPrecondition`: In threshold mode, the provided `request_id` belongs to a real `KeyGenPreproc` entry rather than an insecure preprocessing entry.
 - `Internal`: The `InsecureKeyGenPreproc` for the queried `request_id` has failed due to an internal and unrecoverable server error.
 
 ### Description
@@ -435,12 +445,15 @@ Functionally this call is similar to `GetKeyGenPreprocResult`.
 
 ```proto
 message KeyGenRequest {
-  FheParameter params = 1;
-  RequestId preproc_id = 2;
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+  optional FheParameter params = 2;
+  RequestId preproc_id = 3;
   Eip712DomainMsg domain = 4;
   KeySetConfig keyset_config = 5;
   KeySetAddedInfo keyset_added_info = 6;
+  RequestId context_id = 7;
+  RequestId epoch_id = 8;
+  bytes extra_data = 9;
 }
 ```
 
@@ -454,7 +467,7 @@ message Empty {}
 
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a `Finished` `KeyGenPreprocRequest`. This holds in both the __threshold__ and the __centralized__ setting; in the latter the preprocessing is a dummy that only records the `request_id`, but the entry must still exist.
+The `preproc_id` must be the `request_id` of a finished `KeyGenPreprocRequest`. This holds in both the __threshold__ and the __centralized__ setting; in the latter the preprocessing is a dummy that records metadata but no material, and the entry must still exist.
 The `keyset_config` is the information about the keys to generate and _must_ match the similar argument used during preprocessing in `KeyGenPreprocRequest`.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.
 
@@ -474,9 +487,16 @@ message RequestId { string request_id = 1; }
 ### Output
 
 ```proto
+message KeyDigest {
+  string key_type = 1;
+  bytes digest = 2;
+}
+
 message KeyGenResult {
   RequestId request_id = 1;
-  map<string, SignedPubDataHandle> key_results = 2;
+  RequestId preprocessing_id = 2;
+  repeated KeyDigest key_digests = 3;
+  bytes external_signature = 4;
 }
 ```
 
@@ -490,11 +510,7 @@ Because this call is dependent on previous call, it may fail with the following 
 - `Unavailable`: The `KeyGen` for the queried `request_id` has started but is not finished yet.
 - `Internal`: The `KeyGen` for the queried `request_id` has failed due to an internal and unrecoverable server error.
 
-If the call is successful, the `KeyGenResult` will contain the `request_id` used in the query, as well as the following map:
-
-- Key: `"PublicKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `tfhe::CompactPublicKey`.
-- Key: `"ServerKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `tfhe::ServerKey`.
-- __If the setting is threshold__ Key: `"SnsKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `SwitchAndSquashKey`.
+If the call is successful, the `KeyGenResult` will contain the `request_id` used in the query, the `preprocessing_id` consumed by the key generation, the digests of the generated public key material, and the EIP-712 `external_signature` over the result.
 
 </details>
 
@@ -507,12 +523,15 @@ ___NOTE_: This is a temporary workaround and will only be available in testing/d
 
 ```proto
 message KeyGenRequest {
-  FheParameter params = 1;
-  RequestId preproc_id = 2;
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+  optional FheParameter params = 2;
+  RequestId preproc_id = 3;
   Eip712DomainMsg domain = 4;
   KeySetConfig keyset_config = 5;
   KeySetAddedInfo keyset_added_info = 6;
+  RequestId context_id = 7;
+  RequestId epoch_id = 8;
+  bytes extra_data = 9;
 }
 ```
 
@@ -545,27 +564,30 @@ message RequestId { string request_id = 1; }
 ### Output
 
 ```proto
+message KeyDigest {
+  string key_type = 1;
+  bytes digest = 2;
+}
+
 message KeyGenResult {
   RequestId request_id = 1;
-  map<string, SignedPubDataHandle> key_results = 2;
+  RequestId preprocessing_id = 2;
+  repeated KeyDigest key_digests = 3;
+  bytes external_signature = 4;
 }
 ```
 
 ### Description
 
-This RPC allows to retrieve the public key material if the `request_id` is that of a finished `KeyGen`.
+This RPC allows to retrieve the insecure key generation result if the `request_id` is that of a finished `InsecureKeyGen`.
 
 Because this call is dependent on previous call, it may fail with the following `tonic::Code` error codes:
 
-- `NotFound`: There has not been a `KeyGen` call for the provided `request_id`.
-- `Unavailable`: The `KeyGen` for the queried `request_id` has started but is not finished yet.
-- `Internal`: The `KeyGen` for the queried `request_id` has failed.
+- `NotFound`: There has not been an `InsecureKeyGen` call for the provided `request_id`.
+- `Unavailable`: The `InsecureKeyGen` for the queried `request_id` has started but is not finished yet.
+- `Internal`: The `InsecureKeyGen` for the queried `request_id` has failed.
 
-If the call is successful, the `KeyGenResult` will contain the `request_id` used in the query, as well as the following map:
-
-- Key: `"PublicKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `tfhe::CompactPublicKey`.
-- Key: `"ServerKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `tfhe::ServerKey`.
-- __If the setting is threshold__ Key: `"SnsKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `SwitchAndSquashKey`.
+If the call is successful, the `KeyGenResult` will contain the `request_id` used in the query, the `preprocessing_id` consumed by the key generation, the digests of the generated public key material, and the EIP-712 `external_signature` over the result.
 
 Functionally this call is similar to `GetKeyGenResult`.
 </details>
