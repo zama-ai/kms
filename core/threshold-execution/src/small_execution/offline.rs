@@ -288,7 +288,7 @@ where
     let max_errors = (session.num_parties() - session.corrupt_roles().len() - (degree + 1)) / 2;
 
     let roles = party_vectors.iter().map(|(role, _)| *role).collect_vec();
-    let hints = ReconstructionHints::from_parties(&roles, degree);
+    let hints = ReconstructionHints::from_parties(&roles, degree)?;
 
     // Reconstruct the `amount` values in parallel: value `i` is reconstructed
     // from share `i` of every party, indexed directly out of the kept per-party
@@ -304,15 +304,9 @@ where
                     // Direct indexing is safe because we checked the length of the vector above
                     .map(|(cur_role, cur_values)| Share::new(*cur_role, cur_values[i]))
                     .collect_vec();
-                if let Ok(hints) = &hints {
-                    ShamirSharings::create(shares)
-                        .err_reconstruct_with_hints(degree, max_errors, hints)
-                        .ok()
-                } else {
-                    ShamirSharings::create(shares)
-                        .err_reconstruct(degree, max_errors)
-                        .ok()
-                }
+                ShamirSharings::create(shares)
+                    .err_reconstruct_with_hints(degree, max_errors, &hints)
+                    .ok()
             })
             .collect::<Vec<_>>()
     })

@@ -160,39 +160,6 @@ impl<Z: ErrorCorrect> ReconstructionHints<Z> {
     }
 }
 
-impl<Z: ErrorCorrect + MemoizedExceptionals> ReconstructionHints<Z> {
-    /// Like [`Self::from_parties`] but fetches exceptional powers from the
-    /// [`MemoizedExceptionals`] cache instead of recomputing them.
-    pub fn from_parties_sorted_cached(parties: &[Role], degree: usize) -> anyhow::Result<Self> {
-        let embedded_points: Vec<Z> = parties
-            .iter()
-            .map(|p| Z::embed_role_to_exceptional_sequence(p))
-            .try_collect()?;
-        let exceptional_powers: Vec<Vec<Z>> = parties
-            .iter()
-            .map(|p| Z::exceptional_set(p.one_based(), degree))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let field_hints = FieldHints::new(parties)?;
-        Ok(Self {
-            parties: parties.to_vec(),
-            degree,
-            embedded_points,
-            exceptional_powers,
-            field_hints,
-        })
-    }
-
-    /// Like [`Self::from_parties`] but fetches exceptional powers from the
-    /// [`MemoizedExceptionals`] cache instead of recomputing them.
-    ///
-    /// Parties are not required to be pre-sorted, but they will be sorted internally
-    pub fn from_parties_cached(parties: &[Role], degree: usize) -> anyhow::Result<Self> {
-        // Roles are always sorted when creating a ShamirSharing, so sort it here too
-        let parties = parties.iter().sorted().cloned().collect_vec();
-        Self::from_parties_sorted_cached(&parties, degree)
-    }
-}
-
 /// Lifts binary polynomial p to the big ring and accumulates 2^amount * p into res
 fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     res: &mut Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
