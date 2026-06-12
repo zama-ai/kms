@@ -27,6 +27,8 @@ type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 /// * `clients` - Map of party ID to gRPC client
 /// * `request_id` - Unique identifier for this key generation request
 /// * `params` - FHE parameters to use for key generation
+/// * `keyset_config` - Optional keyset configuration (defaults to compressed when `None`)
+/// * `keyset_added_info` - Optional migration info (e.g. for `UseExisting` keygen)
 ///
 /// # Returns
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
@@ -35,6 +37,8 @@ pub async fn threshold_insecure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
+    keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
+    keyset_added_info: Option<kms_grpc::kms::v1::KeySetAddedInfo>,
 ) -> anyhow::Result<
     Vec<(
         u32,
@@ -59,8 +63,8 @@ pub async fn threshold_insecure_key_gen(
             params: Some(params as i32),
             preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
             domain: Some(domain_msg.clone()),
-            keyset_config: None,
-            keyset_added_info: None,
+            keyset_config,
+            keyset_added_info: keyset_added_info.clone(),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             extra_data: default_isolated_extra_data(),
@@ -110,8 +114,8 @@ pub async fn threshold_insecure_key_gen(
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
-#[expect(clippy::too_many_arguments)]
-pub async fn threshold_key_gen_secure(
+#[allow(clippy::too_many_arguments)]
+pub async fn threshold_secure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,
@@ -137,7 +141,7 @@ pub async fn threshold_key_gen_secure(
     // extra_data via `make_extra_data` so the signed bytes stay consistent.
     assert!(
         context_id.is_none() && epoch_id.is_none(),
-        "threshold_key_gen_secure_isolated only supports default context/epoch ids"
+        "threshold_secure_key_gen_isolated only supports default context/epoch ids"
     );
     let domain_msg = domain_to_msg(&dummy_domain());
     let extra_data = default_isolated_extra_data();

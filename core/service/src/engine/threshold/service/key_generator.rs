@@ -123,7 +123,11 @@ use threshold_execution::runtime::sessions::session_parameters::GenericParameter
 use threshold_execution::tfhe_internals::{
     compression_decompression_key::CompressionPrivateKeyShares,
     glwe_key::GlweSecretKeyShare,
-    test_feature::{initialize_compressed_key_material, insecure_initialize_key_material},
+    test_feature::{
+        initialize_compressed_key_material,
+        insecure_initialize_compressed_key_material_from_existing,
+        insecure_initialize_key_material,
+    },
 };
 
 pub struct RealKeyGenerator<
@@ -1284,9 +1288,65 @@ impl<
                             .map(|(compressed_keyset, sk)| {
                                 ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
                             }),
+                            // Insecure compressed keygen from an existing private keyset
+                            // (the UseExisting migration flow). Party 1 reconstructs the
+                            // existing secret key, regenerates the compressed keyset from it,
+                            // and re-shares the (same) secret key to all parties.
+                            (
+                                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                                ddec_keyset_config::ComputeKeyType::Cpu,
+                                ddec_keyset_config::CompressedKeyConfig::All,
+                            ) => {
+                                let existing_keyset_id = match internal_keyset_config
+                                    .get_existing_keyset_id()
+                                {
+                                    Ok(id) => id,
+                                    Err(e) => {
+                                        update_err_req_in_meta_store(
+                                            &mut meta_store.write().await,
+                                            req_id,
+                                            format!(
+                                                "insecure compressed keygen from existing keyset is missing a valid existing_keyset_id: {e}"
+                                            ),
+                                            op_tag,
+                                        );
+                                        return;
+                                    }
+                                };
+                                let tag: tfhe::Tag =
+                                    existing_key_tag.unwrap_or_else(|| req_id.into());
+                                let existing_private_keys = match crypto_storage
+                                    .read_guarded_fhe_keys(&existing_keyset_id, epoch_id)
+                                    .await
+                                {
+                                    Ok(guard) => guard.private_keys.as_ref().clone(),
+                                    Err(e) => {
+                                        update_err_req_in_meta_store(
+                                            &mut meta_store.write().await,
+                                            req_id,
+                                            format!(
+                                                "insecure compressed keygen failed to read the existing private keyset {existing_keyset_id}: {e}"
+                                            ),
+                                            op_tag,
+                                        );
+                                        return;
+                                    }
+                                };
+                                insecure_initialize_compressed_key_material_from_existing(
+                                    &mut dkg_sessions.session_z128,
+                                    params,
+                                    tag,
+                                    &existing_private_keys,
+                                )
+                                .await
+                                .map(|(compressed_keyset, sk)| {
+                                    ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                                })
+                            }
                             _ => {
-                                // insecure keygen from existing compression key is not supported
-                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),  op_tag);
+                                // The only other UseExisting case (uncompressed) is not
+                                // supported insecurely; standard cases are handled above.
+                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from an existing keyset is only supported for compressed keysets".to_string(),  op_tag);
                                 return;
                             }
                         },
