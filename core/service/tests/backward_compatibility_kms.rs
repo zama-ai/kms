@@ -928,7 +928,23 @@ fn test_internal_custodian_context(
     test: &InternalCustodianContextTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: InternalCustodianContext = load_and_unversionize(dir, test, format)?;
+    let mut original_versionized: InternalCustodianContext =
+        load_and_unversionize(dir, test, format)?;
+
+    // Grab a copy of the on-disk fixture timestamp.
+    let orig_timestamp = original_versionized
+        .custodian_nodes
+        .first_key_value()
+        .expect("at least one entry in the on-disk fixture")
+        .1
+        .timestamp;
+    // Use the on-disk timestamp from the first entry for all `InternalCustodianSetupMessage`s
+    // so we can compare "expected" to "new" below.
+    original_versionized
+        .custodian_nodes
+        .values_mut()
+        .for_each(|node| node.timestamp = orig_timestamp);
+
     let enc_key: UnifiedPublicEncKey =
         load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
@@ -946,7 +962,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: 42,
+            timestamp: orig_timestamp, // Use the timestamp from the fixture
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };

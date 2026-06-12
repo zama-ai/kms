@@ -29,7 +29,7 @@ use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use tfhe::{
     CompactPublicKey, ConfigBuilder, Seed, ServerKey, safe_serialization::safe_serialize,
     shortint::ClassicPBSParameters, xof_key_set::CompressedXofKeySet,
@@ -1022,10 +1022,7 @@ fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
     let payload = CustodianSetupMessagePayload {
         header: HEADER.to_string(),
         random_value: [4_u8; 32],
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+        timestamp: SystemTime::now(),
         public_enc_key: enc_key.clone(),
         verification_key: verf_key,
     };
