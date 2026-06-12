@@ -64,6 +64,11 @@ fn write_core_client_toml(path: &Path, cfg: &CoreClientConfig) -> Result<()> {
 /// This must match the value the test enclave mock expects.
 const MOCK_PCR: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f";
 
+/// Polling budget (number of `get_*_result` retries) for real, secure MPC
+/// operations — preprocessing, key generation and CRS ceremonies.
+/// I.e how many `SLEEP_TIME_BETWEEN_REQUESTS_MS` intervals to wait before giving up and treating the operation as failed.
+const SLOW_OP_MAX_ITER: usize = 6000;
+
 /// Build a minimal `CoreConfig` for a threshold test party.
 fn build_test_core_config(
     service_port: u16,
@@ -1032,7 +1037,7 @@ async fn crs_gen(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -
         test_path,
         insecure_crs_gen,
         2048,
-        200,
+        SLOW_OP_MAX_ITER,
         *DEFAULT_EPOCH_ID,
         *DEFAULT_MPC_CONTEXT,
     )
@@ -1658,10 +1663,15 @@ async fn real_preproc_and_keygen_with_context(
             uncompressed: false,
             from_existing_shares: false,
         }),
-        200,
+        SLOW_OP_MAX_ITER,
     );
 
+    let t0 = std::time::Instant::now();
     let preproc_id = run_cmd(&preproc_config, test_path, "preprocessing with context").await?;
+    info!(
+        "Preprocessing with context done with ID {preproc_id:?} (elapsed: {:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
 
     let keygen_config = cmd_config(
         config_path,
@@ -1673,10 +1683,15 @@ async fn real_preproc_and_keygen_with_context(
                 ..Default::default()
             },
         }),
-        200,
+        SLOW_OP_MAX_ITER,
     );
 
+    let t1 = std::time::Instant::now();
     let key_id = run_cmd(&keygen_config, test_path, "key-gen with context").await?;
+    info!(
+        "Key-gen with context done (elapsed: {:.1}s)",
+        t1.elapsed().as_secs_f64()
+    );
 
     Ok((key_id.to_string(), preproc_id.to_string()))
 }
@@ -2271,8 +2286,10 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 
     // Run sequential preprocessing and keygen operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
+    let key_id_1 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
+    let key_id_2 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
 
     // Verify different key IDs generated
     assert_ne!(key_id_1, key_id_2);
@@ -2306,8 +2323,8 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
         &keys_folder_2.path().join("CLIENT"),
     )?;
     let _ = join_all([
-        real_preproc_and_keygen(&config_path, keys_folder_1.path(), 200, false),
-        real_preproc_and_keygen(&config_path, keys_folder_2.path(), 200, false),
+        real_preproc_and_keygen(&config_path, keys_folder_1.path(), SLOW_OP_MAX_ITER, false),
+        real_preproc_and_keygen(&config_path, keys_folder_2.path(), SLOW_OP_MAX_ITER, false),
     ])
     .await;
 
@@ -2439,8 +2456,10 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss("threshold_default_preproc_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
+    let key_id_1 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
+    let key_id_2 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
 
     assert_ne!(key_id_1, key_id_2);
 
@@ -2670,14 +2689,14 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
         &config_path,
         keys_folder,
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
-        200,
+        SLOW_OP_MAX_ITER,
     )
     .await?;
     let key_id_2 = real_partial_preproc_and_keygen(
         &config_path,
         keys_folder,
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
-        200,
+        SLOW_OP_MAX_ITER,
     )
     .await?;
     info!(
