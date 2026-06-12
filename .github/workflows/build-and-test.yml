@@ -91,6 +91,9 @@ jobs:
       HARBOR_READ_LOGIN: ${{ secrets.HARBOR_READ_LOGIN }}
       HARBOR_READ_TOKEN: ${{ secrets.HARBOR_READ_TOKEN }}
       ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+      GRAFANA_CLOUD_PROM_URL: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') && secrets.GRAFANA_CLOUD_PROM_URL || '' }}
+      GRAFANA_CLOUD_PROM_USERNAME: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') && secrets.GRAFANA_CLOUD_PROM_USERNAME || '' }}
+      GRAFANA_CLOUD_PROM_PASSWORD: ${{ contains(github.event.pull_request.labels.*.name, 'kind-metrics') && secrets.GRAFANA_CLOUD_PROM_PASSWORD || '' }}
 
   ############################################################################
   # Determine deployment type from PR labels

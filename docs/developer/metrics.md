@@ -7,9 +7,12 @@ The KMS Core metrics system provides comprehensive observability through OpenTel
 All metrics follow a consistent naming pattern with a configurable prefix (default: "kms"). The full metric name is constructed by combining the prefix with the metric-specific suffix. Metric names are defined as constants in the `metrics_names` module to ensure consistency and prevent typos.
 
 ### Operation Names
+
 Standard operation names are defined as constants:
+
 ```rust
 pub const OP_BOOT: &str = "boot";
+pub const OP_SYSTEM_STARTUP: &str = "system_startup"; // sanity-check increment emitted once by every process at metrics init
 // Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
@@ -18,7 +21,8 @@ pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
-// More specific metrics for key generation, only used with counters
+// More specific operation names for key generation, used on the request counter
+// and the duration histogram
 pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
 pub const OP_INSECURE_COMPRESSED_KEYGEN: &str = "insecure_compressed_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
@@ -67,7 +71,9 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 ```
 
 ### Error Types
+
 Standard grpc error types are defined as constants:
+
 ```rust
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
 pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
@@ -80,19 +86,23 @@ pub const ERR_INTERNAL: &str = "internal_error";
 pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
 ```
+
 Finally two more errors exist: one for problems happening in an async worker thread (i.e. after the initial grpc call has been returned) and one for backup errors:
+
 ```rust
 pub const ERR_ASYNC: &str = "async_call_error";
 pub const ERR_BACKUP: &str = "backup_error";
 ```
 
 ### Tag Keys
+
 Standard metric tag keys are defined as constants:
+
 ```rust
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
-pub const TAG_ALGORITHM: &str = "algorithm";
+pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
 pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
@@ -103,51 +113,62 @@ pub const CENTRAL_TAG: &str = "central";
 ```
 
 ### Counters
+
 Track values that only increase:
+
 - `{prefix}_operations_total` - Total number of operations processed
   ```rust
-  metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;  // {prefix}_operations_total{operation="keygen_request"}
+  metrics.increment_request_counter(OP_KEYGEN_REQUEST);  // {prefix}_operations_total{operation="keygen_request"}
   ```
 - `{prefix}_operation_errors_total` - Total number of operation errors
   ```rust
-  metrics.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND)?;  // {prefix}_operation_errors_total{operation="public_decrypt_request",error="not_found"}
+  metrics.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND);  // {prefix}_operation_errors_total{operation="public_decrypt_request",error="not_found"}
   ```
 
 ### Histograms
+
 Track the distribution of values:
+
 - `{prefix}_operation_duration_ms` - Duration of operations in milliseconds
   ```rust
-  let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)?
-      .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL.to_string())?
+  let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)
+      .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
       .start();  // {prefix}_operation_duration_ms{operation="keygen_request",operation_type="total"}
   ```
 - `{prefix}_payload_size_bytes` - Size of operation payloads in bytes
   ```rust
-  metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64)?;  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
+  metrics.observe_size(OP_PUBLIC_DECRYPT_REQUEST, data.len() as f64);  // {prefix}_payload_size_bytes{operation="public_decrypt_request"}
   ```
-NOTE: these are not fully implemented yet!
+  NOTE: `{prefix}_payload_size_bytes` is emitted from the versioned-storage write paths
+  (`safe_write_element_versioned` for file storage, `S3Storage::store_data_at_key`, and `RamStorage`);
+  there its `operation` label carries the serialized element's **type name** (e.g. a key/keyset type),
+  not an operation name, and the size is recorded only after the write succeeds. Call `observe_size`
+  from other paths whenever a payload size is worth tracking.
+
+Both histograms use **explicit buckets** tuned to KMS workloads (`kms_operation_duration_ms`: 1 ms →
+5 min; `kms_payload_size_bytes`: 1 KiB → 64 GiB). Prometheus' default buckets top out at ~10 (tuned for
+seconds), so our millisecond- and byte-valued observations would otherwise pile into `+Inf` and make
+`histogram_quantile` (p50/p95) meaningless.
 
 ### Gauges
-Track instantaneous values that can increase or decrease:
-- `{prefix}_gauge` - General purpose gauge for recording independent values
-  ```rust
-    cpu_load_gauge: TaggedMetric<Gauge<f64>>,       // 1-minute average CPU load, divided by number of cores
-    memory_usage_gauge: TaggedMetric<Gauge<u64>>,
-    file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
-    socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
-    socat_task_gauge: TaggedMetric<Gauge<u64>>,      // Number of socat file descriptors
-    task_gauge: TaggedMetric<Gauge<u64>>,            // Numbers active child processes of the KMS
-    // Internal system gauges
-    rate_limiter_gauge: TaggedMetric<Gauge<u64>>, // Number tokens used in the rate limiter
-    active_session_gauge: TaggedMetric<Gauge<u64>>, // Number of active sessions
-    inactive_session_gauge: TaggedMetric<Gauge<u64>>, // Number of inactive sessions
-    meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
-    meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
-    meta_storage_pub_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of public decryptions in meta storage
-    meta_storage_user_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of user decryptions in meta storage
-    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>,           // CPU load for the current process
-    process_memory_gauge: TaggedMetric<Gauge<u64>>, // Memory usage for the current process
-  ```
+
+Track instantaneous values that can rise and fall. There is **no generic gauge API** — each gauge is a
+dedicated metric set through its own `record_*` method (e.g. `METRICS.record_cpu_load(load)`). Names
+assume the default `kms` prefix:
+
+- System: `kms_cpu_load`, `kms_process_cpu_usage`, `kms_total_cpus`, `kms_memory_usage`,
+  `kms_total_memory`, `kms_process_memory_usage`
+- Process/runtime: `kms_file_descriptors`, `kms_socat_file_descriptors`, `kms_socat_tasks`,
+  `kms_tasks`, `kms_rate_limiter_usage`
+- Sessions: `kms_active_sessions`, `kms_inactive_sessions`
+- Meta storage: `kms_meta_storage_{user,pub}_decryptions` (ongoing) and
+  `kms_meta_storage_{user,pub}_decryptions_in_store` (total)
+- Build info: `kms_version` (value is always 1; the version is carried as a const-label)
+
+```rust
+METRICS.record_cpu_load(0.75);      // kms_cpu_load 0.75
+METRICS.record_tasks(num_workers);  // kms_tasks <n>
+```
 
 ## Usage Examples
 
@@ -155,83 +176,78 @@ Track instantaneous values that can increase or decrease:
 
 ```rust
 // Record operation counter
-METRICS.increment_request_counter(OP_KEYGEN_REQUEST)?;  // kms_operations_total{operation="keygen_request"}
+METRICS.increment_request_counter(OP_KEYGEN_REQUEST);  // kms_operations_total{operation="keygen_request"}
 
 // Record error with context
-METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND)?;  // kms_operation_errors_total{operation="public_decrypt_request",error="not_found"}
+METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND);  // kms_operation_errors_total{operation="public_decrypt_request",error="not_found"}
 
 // Record duration with tags
-let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)?
-    .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)?
+let _timer = METRICS
+    .time_operation(OP_KEYGEN_REQUEST)
+    .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
     .start();  // kms_operation_duration_ms{operation="keygen_request",operation_type="total"}
 
-// Record payload size
-METRICS.observe_size(OP_PUBLIC_DECRYPT_REQUEST, input.len() as f64)?;  // kms_payload_size_bytes{operation="public_decrypt_request"}
+// Record payload size (operation name on RPC paths; element type name on storage writes — see NOTE above)
+METRICS.observe_size(OP_PUBLIC_DECRYPT_REQUEST, input.len() as f64);  // kms_payload_size_bytes{operation="public_decrypt_request"}
 
-// Record current system state
-METRICS.gauge("worker_count", num_workers)?;  // kms_gauge{operation="worker_count"}
+// Record a point-in-time gauge (each gauge has a dedicated record_* method)
+METRICS.record_tasks(num_workers);  // kms_tasks <n>
 ```
 
 ### Using Custom Prefix
 
+Only one `CoreMetrics` may be constructed per process: every instance registers into the
+process-global default registry, including the fixed-name `kms_version` gauge, so a second
+construction panics on duplicate registration. In KMS binaries that instance is the global
+`METRICS` (built on first use) — a custom prefix is only an option for a separate binary that
+never touches `METRICS`:
+
 ```rust
 use observability::metrics::{CoreMetrics, MetricsConfig};
 
-// Initialize with custom prefix
+// In a binary that does not use the global METRICS instance:
 let config = MetricsConfig {
     prefix: "app".to_string(),
-    default_unit: None,
+    ..Default::default()
 };
-let metrics = CoreMetrics::with_config(config)?;
+let metrics = CoreMetrics::with_config(config);
 
 // Now metrics will use "app" prefix
-metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;  // app_operations_total{operation="keygen_request"}
+metrics.increment_request_counter(OP_KEYGEN_REQUEST);  // app_operations_total{operation="keygen_request"}
 ```
 
 ### Duration Measurement with Tags
 
-The preferred way to measure operation duration is using RAII guards with optional tags:
+The preferred way to measure operation duration is an RAII guard that records on drop. Only the keys in
+`DURATION_LABEL_KEYS` (`operation` plus `operation_type`, `party_id`, `tfhe_type`, `public_decryption_mode`,
+`user_decryption_mode`) are recorded on this histogram — unknown keys are ignored with a warning, and
+high-cardinality keys (e.g. `key_id`) must not be used.
 
 ```rust
-fn process_key(key_id: &str, algorithm: &str) -> Result<(), Error> {
-    // Basic timing with multiple tags
-    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)?
-        .tag("key_id", key_id)?
-        .tag("algorithm", algorithm)?
-        .start();  // kms_operation_duration_ms{operation="keygen_request",key_id="...",algorithm="..."}
+fn run_keygen(party_id: usize) -> Result<(), Error> {
+    // Records on drop; the operation name fills the `operation` label.
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)
+        .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
+        .tag(TAG_PARTY_ID, party_id.to_string())
+        .start();  // kms_operation_duration_ms{operation="keygen_request",operation_type="total",party_id="..."}
 
-    // Timer automatically records duration when dropped
     process_data()?;
     Ok(())
 }
 ```
-With tags:
-```rust
-fn handle_key_operation(key_id: &str) -> Result<(), Error> {
-    // Add context through tags
-    let _guard = METRICS.time_operation(OP_KEYGEN_REQUEST)?
-        .tag("key_id", key_id)?
-        .tag("operation_type", "encryption")?
-        .start();  // kms_operation_duration_ms{operation="keygen_request",key_id="...",operation_type="encryption"}
 
-    process_key()?;
-    Ok(())
-}
-```
+Manual recording, when you need the elapsed value or must record before the guard drops:
 
-Manual duration recording:
 ```rust
 fn explicit_timing() -> Result<(), Error> {
-    let guard = METRICS.time_operation(OP_KEYGEN_REQUEST)?
-        .tag("mode", "manual")?
-        .start();  // kms_operation_duration_ms{operation="keygen_request",mode="manual"}
+    let guard = METRICS.time_operation(OP_KEYGEN_REQUEST)
+        .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
+        .start();
 
     do_work()?;
 
-    // Get duration and force recording
-    let duration = guard.record_now();
-    log::info!("Operation took {:?}", duration);
-    perform_other_work()?;
+    let duration = guard.record_now();  // force recording, returns the elapsed Duration
+    tracing::info!("keygen took {:?}", duration);
     Ok(())
 }
 ```
@@ -239,40 +255,84 @@ fn explicit_timing() -> Result<(), Error> {
 ### Error Recording
 
 ```rust
-use observability::metrics::CoreMetrics; // or ::METRICS;
+use observability::metrics::METRICS;
 
 fn handle_request(request: Request) -> Result<(), Error> {
-    let metrics = CoreMetrics::new()?;
-    let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)?
-        .tag("size", data.len().to_string())?
-        .start();  // kms_operation_duration_ms{operation="keygen_request",size="..."}
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)
+        .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
+        .start();
 
-    metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;
+    METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
     match validate_data(request) {
-        Ok(()) => {
-            process_valid_data(data)
-        }
+        Ok(()) => process_valid_data(request),
         Err(e) => {
-            metrics.increment_error_counter(OP_KEYGEN_REQUEST, ERR_INVALID_ARGUMENT)?;  // kms_operation_errors_total{operation="keygen_request",error="invalid_argument"}
+            // kms_operation_errors_total{operation="keygen_request",error="invalid_argument"}
+            METRICS.increment_error_counter(OP_KEYGEN_REQUEST, ERR_INVALID_ARGUMENT);
             Err(e.into())
         }
     }
 }
 ```
 
+## Distinguishing Deployments (kind-CI vs production)
+
+Every metric can carry **static labels** that identify the deployment it came from, so a single
+Prometheus/Grafana can tell e.g. kind-CI integration-test metrics apart from production ones.
+
+These labels are read once at startup from the `KMS_METRICS_LABELS` environment variable — a
+comma-separated `key=value` list — and applied as Prometheus _const-labels_ to **every** metric. No
+metric call site changes; the distinction is purely a deployment concern.
+
+```bash
+# The kind overlay sets one const-label (comma-separate more if you need them):
+KMS_METRICS_LABELS="deployment_profile=kind-ci"
+```
+
+```promql
+# In Grafana, scope a query to kind-CI runs only. In the kind-CI pipeline every
+# metric name additionally carries the ci_ prefix (applied at scrape time by the
+# ServiceMonitor), hence ci_kms_..., not kms_....
+histogram_quantile(0.95, sum by (le) (rate(ci_kms_operation_duration_ms_bucket{deployment_profile="kind-ci"}[5m])))
+```
+
+Conventions:
+
+- `deployment_profile=kind-ci` — the only const-label the kind overlay applies, marking every metric
+  from the kind-cluster integration tests.
+- The threshold and centralized matrices deploy to separate namespaces (`kms-test-threshold` /
+  `kms-test-centralized`, from the CI `DEPLOYMENT_TYPE`), so their metrics are already told apart by
+  Prometheus' `namespace` label — there is no `deployment_type` const-label. You could add one via
+  `metricsLabels`, but keep any added labels **low-cardinality**.
+
+In the Helm chart the value is set via `kmsCore.metricsLabels` (rendered into the `KMS_METRICS_LABELS`
+env var on the kms-server container); the kind-CI overlay `ci/kube-testing/kms/values-kms-test.yaml`
+sets only `deployment_profile=kind-ci`. (A per-run `ci_run_id` is also attached in kind — but as a
+Prometheus _external label_ from `GITHUB_RUN_ID`, not a KMS const-label.) Malformed, empty-valued,
+invalidly-named, `__`-reserved, or colliding entries (names already used by a built-in metric label)
+are skipped with a warning, so a typo never takes the server down. Unset/empty means no extra labels —
+the default for production.
+
+At runtime, `METRICS.labels()` returns the labels that were actually accepted and attached, and the
+server logs them at startup so operators can confirm how a deployment is tagged.
+
 ## Best Practices
 
 ### 1. Operation Naming
-- Use operation names that match gRPC method names (e.g., "keygen", "encrypt")
-- Keep names short but meaningful
-- Follow the same naming pattern as the gRPC API for consistency
-- Examples: "keygen", "public_decrypt", "user_decrypt"
+
+- Use the `OP_*` constants from `metrics_names` — never raw strings
+- Names mirror the gRPC method, with a phase suffix where a request and its result are tracked
+  separately (`_request` / `_result`)
+- Keep names short, meaningful, and consistent between logs and metrics
+- Examples: `keygen_request`, `keygen_result`, `public_decrypt_request`, `user_decrypt_request`,
+  `crs_gen_request`
 
 ### 2. Error Recording
+
 - Use predefined error type constants from `metrics_names` module
 - These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request.
 
 ### 3. Tag Usage
+
 - Use tag keys that match parameter names when possible
 - Keep tag keys short and consistent
 - Common tags from `metrics_names`:
@@ -284,11 +344,13 @@ fn handle_request(request: Request) -> Result<(), Error> {
 - Also to _not_ use tags that will have high cardinality. E.g. using `RequestId` as tag would not be acceptable.
 
 ### 4. Duration Measurement
+
 - Use the `observe_duration_with_tags` method with proper operation name constants
 - Include operation type tags for all duration measurements
 - Keep measurements consistent across similar operations
 
 ### 5. Metric Consistency
+
 - Always import metric names from the `metrics_names` module
 - Use the same operation names in logs and metrics
 - Follow the established naming patterns when adding new metrics
@@ -298,6 +360,7 @@ fn handle_request(request: Request) -> Result<(), Error> {
 When adding new metrics:
 
 1. Add new constants to `metrics_names.rs`:
+
    ```rust
    // Operation names
    pub const OP_NEW_OPERATION: &str = "new_operation";
@@ -310,6 +373,7 @@ When adding new metrics:
    ```
 
 2. Use the new constants in your code:
+
    ```rust
    use observability::metrics_names::{OP_NEW_OPERATION, TAG_NEW_TAG};
 
@@ -317,13 +381,22 @@ When adding new metrics:
        OP_NEW_OPERATION,
        duration,
        &[(TAG_NEW_TAG, value.to_string())]
-   )?;  // kms_operation_duration_ms{operation="new_operation",new_tag="..."}
+   );  // records `new_tag` only if it is also added to DURATION_LABEL_KEYS — see "New operation vs new metric family"
    ```
 
 This ensures consistency and maintainability of the metrics system across the codebase.
 
+### New operation vs new metric family
+
+A **new operation** is cheap — define an `OP_*` constant and instrument the path. It's only a new
+value of the `operation` label on the existing families, so the low-cardinality guard and the
+`metric_families_match_allowlist` test need no changes. A **new metric family** (a new metric name)
+additionally requires registering it in `CoreMetrics` and adding it to the
+`metric_families_match_allowlist` allowlist (otherwise that test fails).
+
 ## Testing
 
 ```bash
-# Run metrics tests specifically
-cargo test -p observability --features metrics_test
+# Run the observability (metrics) tests
+cargo test -p observability
+```

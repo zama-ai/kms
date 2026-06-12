@@ -32,6 +32,8 @@ pub async fn safe_write_element_versioned<
     let mut serialized_data = Vec::new();
     safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
     tokio::fs::write(file_path, serialized_data.as_slice()).await?;
+    // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
+    observability::metrics::METRICS.observe_size(<T as Named>::NAME, serialized_data.len() as f64);
     Ok(())
 }
 

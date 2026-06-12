@@ -37,6 +37,7 @@ KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-s
 KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client}"
 CLEANUP="false"
 BUILD_IMAGES="false"
+ENABLE_METRICS="false"
 
 # Perf-testing defaults (can be overridden by env/args)
 KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
@@ -111,6 +112,7 @@ main() {
     log_info "Core Tag:        ${KMS_CORE_TAG}"
     log_info "Client Tag:      ${KMS_CLIENT_TAG}"
     log_info "TLS:             ${TLS}"
+    log_info "Metrics:         ${ENABLE_METRICS}"
     log_info "========================================="
 
     #=========================================================================
