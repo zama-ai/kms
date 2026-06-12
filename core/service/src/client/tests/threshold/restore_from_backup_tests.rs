@@ -58,8 +58,8 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
     let key_id_1 = derive_request_id("isolated-threshold-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-threshold-dkg-backup-2")?;
 
-    threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test).await?;
-    threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test).await?;
+    threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test, None, None).await?;
+    threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test, None, None).await?;
 
     // Delete threshold private key material for both keys on all parties
     let fhe_key_info_type = PrivDataType::FheKeyInfo.to_string();
@@ -267,7 +267,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<(
 
     let key_id = derive_request_id("isolated-threshold-autobackup")?;
 
-    threshold_insecure_key_gen(&clients, &key_id, FheParameter::Test).await?;
+    threshold_insecure_key_gen(&clients, &key_id, FheParameter::Test, None, None).await?;
 
     // Shutdown servers
     drop(clients);

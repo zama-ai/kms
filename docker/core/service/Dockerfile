@@ -10,7 +10,11 @@ ARG LTO_RELEASE=release-lto-thin
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3
 ARG SCCACHE_S3_PREFIX
-ENV RUSTC_WRAPPER=sccache
+# Only enable the sccache S3 cache when a bucket is provided (CI passes one via
+# the SCCACHE_BUCKET build-arg). Local builds (e.g. docker compose) leave it
+# unset, so RUSTC_WRAPPER stays empty and the build compiles without the remote
+# cache instead of failing to authenticate to S3.
+ENV RUSTC_WRAPPER=${SCCACHE_BUCKET:+sccache}
 ENV SCCACHE_IDLE_TIMEOUT=0
 ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
 ENV SCCACHE_REGION=${SCCACHE_REGION}
@@ -41,13 +45,18 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \
-    export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)" && \
-    export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)" && \
+    # The sccache S3 cache and its AWS credentials are only used in CI, where
+    # SCCACHE_BUCKET is set. Local builds provide neither the bucket nor the
+    # secrets, so skip the credential setup and remote cache there.
+    if [ -n "${SCCACHE_BUCKET}" ]; then \
+      export AWS_ACCESS_KEY_ID="$(cat /run/secrets/sccache_aws_access_key_id)"; \
+      export AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/sccache_aws_secret_access_key)"; \
+    fi && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms \
       --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
       --bin kms-custodian --bin kms-gen-keys \
       -F insecure -F threshold-execution/testing && \
-    sccache --show-stats && \
+    if [ -n "${SCCACHE_BUCKET}" ]; then sccache --show-stats; fi && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
        /app/kms/target/${LTO_RELEASE}/kms-init \
