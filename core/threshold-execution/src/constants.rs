@@ -16,15 +16,11 @@ cfg_if::cfg_if! {
         pub(crate) const PHI_XOR_CONSTANT: u8 = 2;
         pub(crate) const CHI_XOR_CONSTANT: u8 = 1;
 
-        // ---- DKG preprocessing tuning knobs ----
+        // ---- MPC tuning knobs ----
         //
         // Each value is configurable at runtime via an environment variable and
         // read once on first access (`LazyLock`). When the variable is unset or
         // cannot be parsed as a `usize`, the documented default is used.
-        //
-        // Because they are read once and cached, set the variables before the DKG
-        // preprocessing starts (e.g. in the process environment); changing them
-        // afterwards has no effect.
 
         /// Reads a `usize` tuning value from environment variable `name`, falling
         /// back to `default` when unset or unparseable.
@@ -66,8 +62,8 @@ cfg_if::cfg_if! {
         // Tuning knobs for the parallel preprocessing loops: large enough to
         // amortize rayon's split/join overhead and to avoid oversubscription
         // under the orchestrator's session-level parallelism, small enough to
-        // still parallelize the large DKG batches. These are starting points and
-        // should be benchmarked.
+        // still parallelize some tasks.
+        // NOTE: These are starting points and should be benchmarked and adjusted as needed.
 
         /// TUniform noise assembly: very cheap per item (~`bound + 2` ring ops).
         /// Env: `MPC_DKG_TUNIFORM_PAR_MIN_CHUNK` (default 4096).
@@ -84,8 +80,7 @@ cfg_if::cfg_if! {
             std::sync::LazyLock::new(|| {
                 env_usize("MPC_D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK", 256)
             });
-        /// Robust-open reconstruction (`sharing::open`): kept large so that only
-        /// the big DKG opens parallelize and ordinary small opens stay sequential.
+        /// Robust-open reconstruction (`sharing::open`).
         /// Env: `MPC_ROBUST_OPEN_PAR_MIN_CHUNK` (default 256).
         pub(crate) static ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK: std::sync::LazyLock<usize> =
             std::sync::LazyLock::new(|| {
