@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use hashing::hash_versioned;
 use itertools::Itertools;
 use kms_grpc::{
     ContextId, RequestId,
@@ -33,7 +34,7 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::{
-        base::{DSEP_PUBDATA_KEY, derive_request_id, safe_serialize_hash_element_versioned},
+        base::{DSEP_PUBDATA_KEY, derive_request_id},
         threshold::service::ThresholdFheKeys,
         validation::ResharingParams,
     },
@@ -165,7 +166,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 
         // compute the key digest for compressed keyset
         let compressed_keyset_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
+            hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
         keys_info.push(KeyInfo {
             key_id: Some((*key_req_id).into()),
             preproc_id: Some((*preproc_req_id).into()),
@@ -482,10 +483,9 @@ async fn run_new_epoch(
             // secret shares, so its stored CompactPublicKey must match the one obtained
             // by decompressing the keyset (resharing derives the PK from the new keyset,
             // per epoch_manager.rs). CompactPublicKey has no PartialEq, compare digests.
-            let stored_pk_digest =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
+            let stored_pk_digest = hash_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
             let decompressed_pk_digest =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &decompressed_pk).unwrap();
+                hash_versioned(&DSEP_PUBDATA_KEY, &decompressed_pk).unwrap();
             assert_eq!(
                 stored_pk_digest, decompressed_pk_digest,
                 "stored CompactPublicKey must equal the one derived from the reshared compressed keyset"
