@@ -12,6 +12,7 @@ use crate::engine::validation::{
     validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
+use algebra::error_correction::ReconstructionHints;
 use algebra::{
     base_ring::{Z64, Z128},
     error_correction::MemoizedExceptionals,
@@ -301,6 +302,12 @@ impl Client {
                         )));
                     }
                     let mut decrypted_blocks = Vec::new();
+                    let pivot = if let Some(pivot) = sharings.first() {
+                        pivot
+                    } else {
+                        return Ok(Vec::new());
+                    };
+                    let hints = ReconstructionHints::new(pivot, degree)?;
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
                         match reconstruct_w_errors_sync(
@@ -309,6 +316,7 @@ impl Client {
                             degree,
                             num_parties - amount_shares,
                             &cur_block_shares,
+                            &hints,
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
@@ -356,6 +364,12 @@ impl Client {
                             "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
                         )));
                     }
+                    let pivot = if let Some(pivot) = sharings.first() {
+                        pivot
+                    } else {
+                        return Ok(Vec::new());
+                    };
+                    let hints = ReconstructionHints::new(pivot, degree)?;
 
                     let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
@@ -366,6 +380,7 @@ impl Client {
                             degree,
                             num_parties - amount_shares,
                             &cur_block_shares,
+                            &hints,
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
@@ -526,6 +541,12 @@ impl Client {
             }
 
             let mut decrypted_blocks = Vec::new();
+            let pivot = if let Some(pivot) = sharings.first() {
+                pivot
+            } else {
+                return Ok(Vec::new());
+            };
+            let hints = ReconstructionHints::new(pivot, degree)?;
             for cur_block_shares in sharings {
                 // NOTE: this performs optimistic reconstruction
                 match reconstruct_w_errors_sync(
@@ -534,6 +555,7 @@ impl Client {
                     degree,
                     num_parties - amount_shares,
                     &cur_block_shares,
+                    &hints,
                 ) {
                     Ok(Some(r)) => decrypted_blocks.push(r),
                     Ok(None) => {

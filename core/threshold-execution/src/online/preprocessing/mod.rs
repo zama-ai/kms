@@ -409,7 +409,6 @@ where
     redis_factory::<EXTENSION_DEGREE>(key_prefix, redis_conf)
 }
 
-pub mod constants;
 pub mod dummy;
 pub mod memory;
 pub mod orchestration;

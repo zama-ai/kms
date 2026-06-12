@@ -1,5 +1,7 @@
+use algebra::error_correction::ReconstructionHints;
 use anyhow::Context;
 use itertools::Itertools;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
 use tonic::async_trait;
 use tracing::instrument;
@@ -241,9 +243,10 @@ async fn reconstruct_d_values<Z, Ses: BaseSessionHandles>(
 where
     Z: ErrorCorrect,
 {
-    let mut collected_shares = vec![Vec::with_capacity(session.num_parties()); amount];
-    // Go through the Role/value map of a broadcast of vectors of values and turn them into a vector of vectors of indexed values.
-    // I.e. transpose the result and convert the role and value into indexed values
+    // Validate each party's broadcast and keep the per-party value vectors.
+    // Done sequentially because it mutates the session's corrupt set; this pass
+    // is cheap (length/type checks only, no per-value work).
+    let mut party_vectors: Vec<(Role, Vec<Z>)> = Vec::with_capacity(session.num_parties());
     for (cur_role, cur_values) in d_recons {
         match cur_values {
             BroadcastValue::RingVector(cur_values) => {
@@ -256,10 +259,7 @@ where
                     session.add_corrupt(cur_role);
                     continue;
                 }
-                // No need for zip_eq as we just checked the length
-                for (cur_collect_share, cur_value) in collected_shares.iter_mut().zip(cur_values) {
-                    cur_collect_share.push(Share::new(cur_role, cur_value));
-                }
+                party_vectors.push((cur_role, cur_values));
             }
             _ => {
                 tracing::warn!(
@@ -287,14 +287,28 @@ where
     let degree = 2 * session.threshold() as usize;
     let max_errors = (session.num_parties() - session.corrupt_roles().len() - (degree + 1)) / 2;
 
+    let roles = party_vectors.iter().map(|(role, _)| *role).collect_vec();
+    let hints = ReconstructionHints::from_parties(&roles, degree)?;
+
+    // Reconstruct the `amount` values in parallel: value `i` is reconstructed
+    // from share `i` of every party, indexed directly out of the kept per-party
+    // vectors.
     spawn_compute_bound(move || {
-        collected_shares
-            .into_iter()
-            .map(|cur_collection| {
-                let sharing = ShamirSharings::create(cur_collection);
-                sharing.err_reconstruct(degree, max_errors).ok()
+        (0..amount)
+            .into_par_iter()
+            // Each item is a full (heavy) Shamir reconstruction; see the constant's doc.
+            .with_min_len(*crate::constants::D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK)
+            .map(|i| {
+                let shares = party_vectors
+                    .iter()
+                    // Direct indexing is safe because we checked the length of the vector above
+                    .map(|(cur_role, cur_values)| Share::new(*cur_role, cur_values[i]))
+                    .collect_vec();
+                ShamirSharings::create(shares)
+                    .err_reconstruct_with_hints(degree, max_errors, &hints)
+                    .ok()
             })
-            .collect_vec()
+            .collect::<Vec<_>>()
     })
     .await
 }

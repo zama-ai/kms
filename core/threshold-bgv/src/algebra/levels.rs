@@ -379,6 +379,8 @@ macro_rules! impl_field_level {
             }
 
             impl ErrorCorrect for $name {
+                type ReconstructionField = $name;
+
                 fn error_correct(
                     sharing: &ShamirSharings<$name>,
                     threshold: usize,
@@ -399,6 +401,10 @@ impl RingWithExceptionalSequence for LevelKsw {
 }
 
 impl ErrorCorrect for LevelKsw {
+    // LevelKsw decomposes via CRT into individual fields; FieldR is used as a
+    // representative but the hints path is not exercised for this type.
+    type ReconstructionField = FieldR;
+
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         threshold: usize,

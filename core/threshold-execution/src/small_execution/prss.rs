@@ -25,6 +25,7 @@ use algebra::{
 use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -627,8 +628,12 @@ where
         let prss_setup = self.prss_setup.clone();
         let mask_ctr = self.counters.mask_ctr;
 
+        // Each element is computed from an independent counter, so the batch is
+        // assembled in parallel. Element `idx` uses `ctr = mask_ctr + idx` (and
+        // `ctr + 1`).
         let res = spawn_compute_bound(move || {
-        (mask_ctr..mask_ctr + (amount as u128)).map(|ctr| {
+        (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        let ctr = mask_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -651,7 +656,7 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
-            Ok(res)}).try_collect()
+            Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
     }).instrument(tracing::Span::current()).await??;
 
         // increase counter by two for each element generated, since we have two phi calls above
@@ -671,8 +676,11 @@ where
         let prss_setup = self.prss_setup.clone();
         let prss_ctr = self.counters.prss_ctr;
 
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = prss_ctr + idx`.
         let res = spawn_compute_bound(move ||{
-            (prss_ctr..prss_ctr + (amount as u128)).map(|ctr| {
+            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        let ctr = prss_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -692,7 +700,7 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
-        Ok(res)}).try_collect()
+        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
     }).instrument(tracing::Span::current()).await??;
 
         self.counters.prss_ctr += amount as u128;
@@ -718,8 +726,11 @@ where
         let prss_setup = self.prss_setup.clone();
         let przs_ctr = self.counters.przs_ctr;
 
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = przs_ctr + idx`.
         let res = spawn_compute_bound(move ||{
-            (przs_ctr..przs_ctr + (amount as u128)).map(|ctr| {
+            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        let ctr = przs_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -741,7 +752,7 @@ where
                 return Err(anyhow_error_and_log(format!("Called przs.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
-        Ok(res)}).try_collect()
+        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
 }).instrument(tracing::Span::current()).await??;
 
         self.counters.przs_ctr += amount as u128;
