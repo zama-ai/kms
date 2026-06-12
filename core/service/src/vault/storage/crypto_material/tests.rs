@@ -370,7 +370,7 @@ async fn write_central_keys() {
         "expected meta-store update failure when empty, got: {err}"
     );
     // The failed write must not populate the in-memory cache.
-    assert_eq!(crypto_storage.cached_fhe_key_count().await, 0);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 0);
 
     // update the meta store and the write should be ok
     {
@@ -390,7 +390,7 @@ async fn write_central_keys() {
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
     // The successful write caches exactly one FHE key entry.
-    assert_eq!(crypto_storage.cached_fhe_key_count().await, 1);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
@@ -738,12 +738,12 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
         .await
         .unwrap();
 
-    assert_eq!(crypto_storage.cached_fhe_key_count().await, 2);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 2);
 
     // Purging epoch_a removes exactly its one entry; epoch_b is untouched.
     let removed = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
     assert_eq!(removed, 1);
-    assert_eq!(crypto_storage.cached_fhe_key_count().await, 1);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
     assert!(
         crypto_storage
             .read_guarded_fhe_keys(&req_b, &epoch_b)
@@ -755,7 +755,7 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
     // Purging an epoch with no cached entries is a harmless no-op.
     let removed_none = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
     assert_eq!(removed_none, 0);
-    assert_eq!(crypto_storage.cached_fhe_key_count().await, 1);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 }
 
 #[tokio::test]

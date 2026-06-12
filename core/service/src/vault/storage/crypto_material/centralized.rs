@@ -129,8 +129,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Number of cached FHE key entries (feeds the `fhe_key_cache_size` gauge).
-    pub(crate) async fn cached_fhe_key_count(&self) -> usize {
-        self.fhe_keys.read().await.len()
+    /// Non-blocking: returns `None` when the lock is contended, so the metrics
+    /// loop observes the cache without ever waiting on it.
+    pub(crate) fn cached_fhe_key_count(&self) -> Option<usize> {
+        self.fhe_keys.try_read().ok().map(|cache| cache.len())
     }
 
     /// Read the key materials for decryption in the centralized case.

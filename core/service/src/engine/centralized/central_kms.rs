@@ -1099,7 +1099,11 @@ where
     tokio::spawn(async move {
         loop {
             METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
-            METRICS.record_fhe_key_cache_size(crypto_storage.cached_fhe_key_count().await as u64);
+            // Skipped when the cache lock is contended: the gauge keeps its
+            // previous value rather than stalling the whole metrics loop.
+            if let Some(count) = crypto_storage.cached_fhe_key_count() {
+                METRICS.record_fhe_key_cache_size(count as u64);
+            }
             {
                 let user_meta_store_guard = user_meta_store.read().await;
                 METRICS.record_meta_storage_user_decryptions(
