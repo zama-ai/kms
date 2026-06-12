@@ -452,7 +452,10 @@ pub trait DKGParamsBasics: Sync {
     }
 }
 
-fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
+// `pub(crate)` so `parameters_new.rs` can reuse the exact same noise-combining
+// logic instead of duplicating it (guarantees identical budgets across the two
+// implementations).
+pub(crate) fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
     let mut total = 0;
     for noise_info in list {
         match (noise_info.bound, target_bound) {
@@ -1755,7 +1758,8 @@ impl DKGParamsSnS {
 
 /// Computes the probability that the Hamming weight of a binary string is within
 /// [(1-pmax)*size; pmax*size]
-fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
+// `pub(crate)` so `parameters_new.rs` reuses the identical sampling-trial math.
+pub(crate) fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
     assert!(pmax > 0.5 && pmax < 1.0);
     let distribution = Binomial::new(0.5, size).unwrap();
     let (min_hw, max_hw) = compute_min_max_hw(pmax, size);
@@ -1766,7 +1770,7 @@ fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
 /// with probability >=1-p_failure, where each trial has success probability p.
 ///
 /// Formula: k >= log_p_failure/log2(1 - p)
-fn compute_min_trials(p: f64, log2_p_failure: i64) -> Result<usize, String> {
+pub(crate) fn compute_min_trials(p: f64, log2_p_failure: i64) -> Result<usize, String> {
     // Input validation
     if p <= 0.0 {
         return Err(format!("p={} must be in the range (0, 1].", p));
