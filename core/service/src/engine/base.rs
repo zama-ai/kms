@@ -4,7 +4,6 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::compute_eip712_signature;
-use crate::engine::utils::MetricedError;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
@@ -77,36 +76,6 @@ pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
-
-pub(crate) fn resolve_keygen_preproc_id(
-    op_tag: &'static str,
-    key_req_id: RequestId,
-    preproc_id: Option<RequestId>,
-    insecure: bool,
-) -> Result<RequestId, MetricedError> {
-    match preproc_id {
-        Some(preproc_id) => Ok(preproc_id),
-        None if insecure => Ok(*INSECURE_PREPROCESSING_ID),
-        None => Err(MetricedError::new(
-            op_tag,
-            Some(key_req_id),
-            anyhow::anyhow!("Missing preprocessing ID in key generation request"),
-            tonic::Code::InvalidArgument,
-        )),
-    }
-}
-
-pub(crate) fn select_keygen_dkg_params(
-    request_dkg_params: DKGParams,
-    request_params_set: bool,
-    stored_dkg_params: Option<DKGParams>,
-) -> DKGParams {
-    if request_params_set {
-        request_dkg_params
-    } else {
-        stored_dkg_params.unwrap_or(request_dkg_params)
-    }
-}
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KmsFheKeyHandlesVersions {

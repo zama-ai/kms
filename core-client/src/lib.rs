@@ -36,7 +36,6 @@ use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::engine::base::INSECURE_PREPROCESSING_ID;
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
@@ -668,12 +667,12 @@ pub struct KeyGenParameters {
 /// Parameters for insecure key generation (testing/development only).
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
-    /// ID of an existing insecure preprocessing (see `insecure-preproc-key-gen`)
-    /// to consume. When omitted, the well-known `INSECURE_PREPROCESSING_ID` is
-    /// used, for which the server synthesizes an insecure (dummy) preprocessing
-    /// entry on the fly.
+    /// ID of an existing preprocessing to consume.
+    ///
+    /// In threshold mode this must come from `insecure-preproc-key-gen`.
+    /// In centralized mode any key-generation preprocessing entry can be used.
     #[clap(long, short = 'i')]
-    pub preproc_id: Option<RequestId>,
+    pub preproc_id: RequestId,
     #[command(flatten)]
     pub shared_args: SharedKeyGenParameters,
 }
@@ -1870,11 +1869,6 @@ pub async fn execute_cmd(
                 "Insecure key generation with parameter {}.",
                 fhe_params.as_str_name()
             );
-            // The insecure keygen requires a preprocessing ID just like the
-            // secure one. If none is given, the well-known
-            // INSECURE_PREPROCESSING_ID is used, for which the server
-            // synthesizes an insecure (dummy) preprocessing entry on the fly.
-            let preproc_id = preproc_id.unwrap_or(*INSECURE_PREPROCESSING_ID);
             let req_id = do_keygen(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1884,7 +1878,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 fhe_params,
-                preproc_id,
+                *preproc_id,
                 true,
                 shared_args,
                 destination_prefix,

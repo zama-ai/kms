@@ -31,7 +31,6 @@ use crate::consts::default_extra_data;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 use crate::dummy_domain;
-use crate::engine::base::INSECURE_PREPROCESSING_ID;
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
@@ -181,11 +180,14 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
     let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
 
     let (keyset_config, keyset_added_info) = keygen_config();
+    let preproc_id = derive_request_id(&format!(
+        "test_insecure_compressed_dkg_preproc_{amount_parties}_{TEST_PARAM:?}"
+    ))?;
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &key_id,
         keyset_config,
         keyset_added_info,
@@ -243,10 +245,7 @@ pub(crate) async fn run_threshold_keygen(
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
 
-    // Insecure keygen either consumes an explicit dummy preprocessing entry or
-    // uses the well-known ID as an implicit dummy preprocessing.
-    let explicit_insecure_preproc = insecure && *preproc_req_id != *INSECURE_PREPROCESSING_ID;
-    if explicit_insecure_preproc {
+    if insecure {
         run_insecure_preproc(kms_clients, preproc_req_id, parameter)
             .await
             .unwrap();
@@ -277,7 +276,6 @@ pub(crate) async fn run_threshold_keygen(
         kms_clients,
         internal_client,
         insecure,
-        explicit_insecure_preproc,
         &keyset_config,
         extra_data,
         data_root_path,
@@ -321,7 +319,6 @@ async fn wait_for_keygen_result(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     insecure: bool,
-    explicit_insecure_preproc: bool,
     keyset_config: &Option<KeySetConfig>,
     extra_data: Vec<u8>,
     data_root_path: Option<&Path>,
@@ -422,30 +419,25 @@ async fn wait_for_keygen_result(
         (out, all_private_keys) = (Some(res.0), Some(res.1));
     }
 
-    if !insecure || explicit_insecure_preproc {
-        // Try to request another kg with the same preproc but another request id,
-        // we should see that it fails because the preproc entry is consumed.
-        // This holds for secure preprocessing and explicit insecure dummy
-        // preprocessing. The well-known insecure preprocessing ID is implicit,
-        // so it intentionally remains reusable after a key generation.
-        tracing::debug!("starting another dkg with a used preproc ID");
-        let other_key_gen_id = derive_request_id("test_dkg other key id").unwrap();
-        let keygen_req_data = internal_client
-            .key_gen_request(
-                &other_key_gen_id,
-                &req_preproc,
-                None,
-                None,
-                Some(FheParameter::Test),
-                None,
-                None,
-                domain,
-            )
-            .unwrap();
-        let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
-        for response in responses {
-            assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
-        }
+    // Try to request another kg with the same preproc but another request id;
+    // the preprocessing entry must have been consumed.
+    tracing::debug!("starting another dkg with a used preproc ID");
+    let other_key_gen_id = derive_request_id("test_dkg other key id").unwrap();
+    let keygen_req_data = internal_client
+        .key_gen_request(
+            &other_key_gen_id,
+            &req_preproc,
+            None,
+            None,
+            Some(FheParameter::Test),
+            None,
+            None,
+            domain,
+        )
+        .unwrap();
+    let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
+    for response in responses {
+        assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
     }
     (out.unwrap(), all_private_keys)
 }

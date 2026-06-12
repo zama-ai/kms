@@ -434,10 +434,6 @@ pub enum PreprocMaterial {
 
 /// Build the meta-store entry stored by the insecure (dummy) preprocessing:
 /// no material is generated, only the external signature is computed.
-///
-/// Used both by the insecure preprocessing endpoint and by the insecure key
-/// generation when it synthesizes the well-known
-/// [`crate::engine::base::INSECURE_PREPROCESSING_ID`] entry on the fly.
 #[cfg(feature = "insecure")]
 pub(crate) fn new_insecure_preproc_bucket(
     sk: &crate::cryptography::signatures::PrivateSigKey,

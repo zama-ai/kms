@@ -392,7 +392,7 @@ Insecure version of `KeyGenPreproc`, where _no_ correlated randomness is generat
 Only the preprocessing ID (along with the parameters and the external signature) is recorded, so a subsequent `InsecureKeyGen` call with `preproc_id` set to the current `request_id` can validate and consume it.
 Because nothing is generated, this call completes (almost) instantly.
 
-As for the secure variant, an explicit preprocessing entry is consumed by _each_ insecure key generation call that references it. Calling this endpoint explicitly is optional however: when `InsecureKeyGen` is invoked without a `preproc_id` (or with the well-known `INSECURE_PREPROCESSING_ID` and no stored entry), the server uses the well-known ID as an implicit one-shot dummy preprocessing.
+As for the secure variant, a preprocessing entry is consumed by _each_ insecure key generation call that references it. Calling this endpoint explicitly is required before threshold `InsecureKeyGen`.
 In the __threshold__ setting the stored entry can only be consumed by `InsecureKeyGen` (calling the secure `KeyGen` with such a `preproc_id` will fail with `FailedPrecondition`, and vice versa).
 In the __centralized__ setting this endpoint is identical to `KeyGenPreproc` — both are dummies that only record the `request_id` — so the stored entry carries no mode and can be consumed by either `KeyGen` or `InsecureKeyGen`.
 Completion status can be validated using the `GetInsecureKeyGenPreprocResult` endpoint.
@@ -527,9 +527,7 @@ message Empty {}
 Insecure version of `KeyGen`, where MPC is _not_ used for key generation.
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` or `GetInsecureKeyGenResult` endpoint.
 
-The `preproc_id` must be the `request_id` of a finished `InsecureKeyGenPreproc` request, mirroring the secure flow. The entry is consumed by this call, so each insecure key generation requires its own insecure preprocessing. In the __threshold__ setting a `preproc_id` produced by the secure `KeyGenPreproc` cannot be consumed by this endpoint (it fails with `FailedPrecondition`); in the __centralized__ setting both preprocessing endpoints are identical dummies, so their entries are interchangeable.
-
-Unlike the secure flow, the `preproc_id` may also be omitted: it then defaults to the well-known `INSECURE_PREPROCESSING_ID` (derived from that string), which the server treats as an implicit one-shot dummy preprocessing if no stored entry exists. The same happens when this well-known ID is passed explicitly. This means the insecure key generation can be called without any prior preprocessing call, but note that concurrent insecure key generations sharing the well-known ID are not supported.
+The `preproc_id` must be the `request_id` of a finished preprocessing request and is consumed by this call, so each insecure key generation requires its own preprocessing. In the __threshold__ setting the preprocessing must have been produced by `InsecureKeyGenPreproc`; a `preproc_id` produced by the secure `KeyGenPreproc` fails with `FailedPrecondition`. In the __centralized__ setting both preprocessing endpoints are identical dummies, so their entries are interchangeable.
 
 The `keyset_config` is the information about the keys to generate.
 The `keyset_added_info` contains the relevant `RequestId`s for key(s) needed to generate the key switching key.

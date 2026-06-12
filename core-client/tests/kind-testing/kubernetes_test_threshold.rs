@@ -142,9 +142,22 @@ impl K8sTestContext {
         info!("[K8S-THRESHOLD] Executing InsecureKeyGen...");
         let start = std::time::Instant::now();
 
+        let preproc_results = self
+            .execute(CCCommand::InsecurePreprocKeyGen(
+                InsecureKeyGenPreprocParameters {
+                    context_id: None,
+                    epoch_id: None,
+                },
+            ))
+            .await;
+        let preproc_id = *preproc_results
+            .first()
+            .and_then(|(id, _)| id.as_ref())
+            .expect("InsecurePreprocKeyGen must return a preprocessing ID");
+
         let results = self
             .execute(CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
-                preproc_id: None,
+                preproc_id,
                 shared_args: SharedKeyGenParameters::default(),
             }))
             .await;
@@ -298,10 +311,10 @@ impl Drop for K8sTestContext {
 // TESTS
 // ============================================================================
 
-/// Smoke test: Generate a key (insecure DKG, no preprocessing) and a CRS.
+/// Smoke test: Generate a key (insecure DKG with dummy preprocessing) and a CRS.
 ///
-/// Uses `InsecureKeyGen` — a testing shortcut that skips the keygen preprocessing
-/// (offline DKG phase) by using a dummy preproc ID. PRSS is still active.
+/// Uses `InsecurePreprocKeyGen` + `InsecureKeyGen` — a testing shortcut that skips
+/// the secure offline DKG phase by using a dummy preprocessing entry. PRSS is still active.
 /// Production keygen uses `PreprocKeyGen` + `KeyGen`. This test validates that
 /// the fundamental MPC cluster wiring (gRPC, mTLS, party coordination) works.
 #[tokio::test]

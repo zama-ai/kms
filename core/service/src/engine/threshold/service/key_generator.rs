@@ -54,7 +54,6 @@ use crate::{
         base::{
             BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
             compute_info_decompression_keygen, compute_info_uncompressed_keygen,
-            resolve_keygen_preproc_id, select_keygen_dkg_params,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
@@ -113,8 +112,6 @@ enum ThresholdKeyGenResult {
 }
 
 // === Insecure Feature-Specific Imports ===
-#[cfg(feature = "insecure")]
-use crate::engine::base::INSECURE_PREPROCESSING_ID;
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
@@ -255,10 +252,6 @@ struct ResolvedPreprocessing {
     /// DKG parameters to run with. These are the parameters from the request if
     /// it set them, otherwise the parameters stored during preprocessing.
     dkg_params: DKGParams,
-    /// Whether the preprocessing entry should be deleted from the meta store once
-    /// the keygen starts. This is `true` for stored entries (real or insecure) and
-    /// `false` for the implicit insecure fallback, which has no stored entry.
-    consume_preproc_entry: bool,
 }
 
 #[cfg(feature = "insecure")]
@@ -294,7 +287,6 @@ impl<
     ) -> Result<(), MetricedError> {
         let preproc_handle_w_mode = resolved_preprocessing.handle;
         let dkg_params = resolved_preprocessing.dkg_params;
-        let consume_preproc_entry = resolved_preprocessing.consume_preproc_entry;
 
         //Retrieve the right metric tag
         let op_tag = match (
@@ -471,24 +463,19 @@ impl<
 
         let keygen_background = async move {
             // Remove the preprocessing entry from the meta store.
-            // Implicit insecure preprocessing has no stored entry to consume.
-            if consume_preproc_entry {
-                tracing::info!(
-                    "Deleting preprocessed material with ID {preproc_id} from meta store"
-                );
-                let handle = {
-                    let mut meta_store_guard = preproc_bucket.write().await;
-                    meta_store_guard.delete(&preproc_id)
-                };
-                match handle_res(handle, &preproc_id).await {
-                    Ok(_) => {
-                        tracing::info!(
-                            "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
-                        );
-                    }
-                    Err(e) => {
-                        MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-                    }
+            tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
+            let handle = {
+                let mut meta_store_guard = preproc_bucket.write().await;
+                meta_store_guard.delete(&preproc_id)
+            };
+            match handle_res(handle, &preproc_id).await {
+                Ok(_) => {
+                    tracing::info!(
+                        "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                    );
+                }
+                Err(e) => {
+                    MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
                 }
             }
 
@@ -709,25 +696,18 @@ impl<
             OP_KEYGEN_REQUEST
         };
 
-        let preproc_id = resolve_keygen_preproc_id(op_tag, key_req_id, preproc_id, insecure)?;
+        let preproc_id = preproc_id.ok_or_else(|| {
+            MetricedError::new(
+                op_tag,
+                Some(key_req_id),
+                anyhow::anyhow!("Missing preprocessing ID in key generation request"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
 
-        // Explicit preprocessing entries must exist. The implicit insecure
-        // fallback has no stored preprocessing entry.
         let preproc_bucket =
             match retrieve_from_meta_store(bucket_metastore, &preproc_id, op_tag).await {
                 Ok(bucket) => bucket,
-                #[cfg(feature = "insecure")]
-                Err(e)
-                    if insecure
-                        && preproc_id == *INSECURE_PREPROCESSING_ID
-                        && e.code() == tonic::Code::NotFound =>
-                {
-                    return Ok(ResolvedPreprocessing {
-                        handle: PreprocHandleWithMode::Insecure(preproc_id),
-                        dkg_params: request_dkg_params,
-                        consume_preproc_entry: false,
-                    });
-                }
                 Err(e) => {
                     // Remap the error to include the correct request ID
                     return Err(MetricedError::new(
@@ -751,11 +731,11 @@ impl<
         }
         // If params are set in the request they take precedence,
         // otherwise the parameters stored during preprocessing are used.
-        let dkg_param = select_keygen_dkg_params(
-            request_dkg_params,
-            request_params_set,
-            Some(preproc_bucket.dkg_param),
-        );
+        let dkg_param = if request_params_set {
+            request_dkg_params
+        } else {
+            preproc_bucket.dkg_param
+        };
         // The mode of the keygen request must match the mode of the stored
         // preprocessing: real material is required for the secure keygen and
         // insecure (dummy) preprocessing may only be used by the insecure keygen.
@@ -791,7 +771,6 @@ impl<
         Ok(ResolvedPreprocessing {
             handle: preproc_handle,
             dkg_params: dkg_param,
-            consume_preproc_entry: true,
         })
     }
 
@@ -2553,12 +2532,10 @@ mod tests {
         );
     }
 
-    /// The insecure keygen works without a preprocessing ID (and without any
-    /// prior preprocessing call): the server uses the well-known
-    /// INSECURE_PREPROCESSING_ID as an implicit one-shot dummy preprocessing.
+    /// The insecure keygen must reject a request without a preprocessing ID.
     #[cfg(feature = "insecure")]
     #[tokio::test]
-    async fn insecure_keygen_default_preproc_id() {
+    async fn insecure_keygen_missing_preproc_id() {
         let (_prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
@@ -2567,69 +2544,12 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(13);
         let key_id = RequestId::new_random(&mut rng);
 
-        ikg.insecure_key_gen(keygen_request(key_id, None))
-            .await
-            .unwrap();
-
-        let result = ikg
-            .get_result(tonic::Request::new(key_id.into()))
-            .await
-            .unwrap()
-            .into_inner();
         assert_eq!(
-            RequestId::try_from(result.preprocessing_id.unwrap()).unwrap(),
-            *INSECURE_PREPROCESSING_ID
-        );
-        assert!(
-            !kg.preproc_buckets
-                .read()
+            ikg.insecure_key_gen(keygen_request(key_id, None))
                 .await
-                .exists(&INSECURE_PREPROCESSING_ID),
-            "implicit preprocessing must not create a metastore entry"
-        );
-
-        // A second keygen must work too, using a fresh implicit entry. Also pass
-        // the well-known ID explicitly to check that it behaves the same as an
-        // absent one.
-        let other_key_id = RequestId::new_random(&mut rng);
-        ikg.insecure_key_gen(keygen_request(
-            other_key_id,
-            Some(*INSECURE_PREPROCESSING_ID),
-        ))
-        .await
-        .unwrap();
-    }
-
-    /// The implicit insecure preprocessing path uses the well-known ID, so an
-    /// ongoing keygen with that ID must be rejected instead of overwriting the
-    /// existing cancellation token.
-    #[cfg(feature = "insecure")]
-    #[tokio::test]
-    async fn insecure_keygen_default_preproc_id_already_ongoing() {
-        let (_prep_ids, kg) = setup_key_generator::<
-            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        >()
-        .await;
-        let ikg = RealInsecureKeyGenerator::from_real_keygen(&kg).await;
-        let token = CancellationToken::new();
-        kg.ongoing
-            .lock()
-            .await
-            .insert(*INSECURE_PREPROCESSING_ID, token.clone());
-        let mut rng = AesRng::seed_from_u64(15);
-        let key_id = RequestId::new_random(&mut rng);
-
-        let err = ikg
-            .insecure_key_gen(keygen_request(key_id, None))
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::AlreadyExists);
-        assert!(!token.is_cancelled());
-        assert!(
-            kg.ongoing
-                .lock()
-                .await
-                .contains_key(&INSECURE_PREPROCESSING_ID)
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
         );
     }
 

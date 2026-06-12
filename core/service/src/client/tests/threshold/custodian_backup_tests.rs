@@ -20,8 +20,7 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
 use crate::engine::base::{
-    CrsGenMetadata, DSEP_PUBDATA_KEY, INSECURE_PREPROCESSING_ID,
-    safe_serialize_hash_element_versioned,
+    CrsGenMetadata, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned,
 };
 use crate::engine::context::ContextInfo;
 use crate::testing::setup::ThresholdTestEnv;
@@ -385,6 +384,10 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         "decrypt_after_recovery_threshold_key_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+    let preproc_id: RequestId = derive_request_id(&format!(
+        "decrypt_after_recovery_threshold_preproc_{n}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = keygen_config();
@@ -392,7 +395,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -546,6 +549,10 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         "decrypt_after_recovery_threshold_negative_key_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+    let preproc_id: RequestId = derive_request_id(&format!(
+        "decrypt_after_recovery_threshold_negative_preproc_{n}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
 
     // Generate a key so we have FHE material to delete + recover.
     let (keyset_config, keyset_added_info) = keygen_config();
@@ -553,7 +560,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -677,6 +684,8 @@ async fn test_keygen_backup_presence_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence_threshold", 3, 1).await;
     let req_key_id: RequestId =
         derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("test_keygen_backup_presence_threshold_preproc").unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
@@ -684,7 +693,7 @@ async fn test_keygen_backup_presence_threshold() {
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -727,6 +736,8 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
         derive_request_id("test_custodian_reencryption_threshold_cus_b").unwrap();
     let req_key_id: RequestId =
         derive_request_id("test_custodian_reencryption_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("test_custodian_reencryption_threshold_preproc").unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
@@ -734,7 +745,7 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -891,6 +902,8 @@ async fn test_backup_after_reshare_threshold() {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let req_key_id: RequestId =
         derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("test_backup_after_reshare_threshold_preproc").unwrap();
     let crs_req: RequestId = derive_request_id("test_backup_after_reshare_threshold_crs").unwrap();
     let new_epoch_id: EpochId = derive_request_id("test_backup_after_reshare_threshold_epoch")
         .unwrap()
@@ -902,7 +915,7 @@ async fn test_backup_after_reshare_threshold() {
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -956,7 +969,7 @@ async fn test_backup_after_reshare_threshold() {
         epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         keys_info: vec![KeyInfo {
             key_id: Some(req_key_id.into()),
-            preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
+            preproc_id: Some(preproc_id.into()),
             key_parameters: FheParameter::Test.into(),
             key_digests: vec![
                 kms_grpc::kms::v1::KeyDigest {

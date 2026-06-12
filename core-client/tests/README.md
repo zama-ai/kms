@@ -60,7 +60,7 @@ The client binary accepts these commands (passed as `CCCommand` in tests via `ex
 
 | Command | Description | Requires epoch | Requires PRSS |
 |---------|-------------|----------------|---------------|
-| `InsecureKeyGen` | Threshold DKG, no preprocessing (insecure) | ✅ | ❌ |
+| `InsecureKeyGen` | Threshold DKG with dummy preprocessing (insecure) | ✅ | ❌ |
 | `KeyGen` | Threshold DKG with preprocessing (secure) | ✅ | ✅ |
 | `PreprocKeyGen` | Offline preprocessing phase for DKG | ✅ | ✅ |
 | `CrsGen` | Generate CRS (ZK ceremony, secure) | ✅ | ✅ |

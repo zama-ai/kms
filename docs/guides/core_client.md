@@ -78,10 +78,15 @@ docker run -v ./core-client/config:/config \
   kms-core-client -f /config/client_local_threshold.toml <command>
 
 # Example: Generate insecure keys
+PREPROC_ID=$(docker run -v ./core-client/config:/config \
+  --network host \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-core-client -f /config/client_local_threshold.toml insecure-preproc-key-gen \
+  | grep request_id | cut -d'"' -f4)
 docker run -v ./core-client/config:/config \
   --network host \
   ghcr.io/zama-ai/kms/core-client:latest \
-  kms-core-client -f /config/client_local_threshold.toml insecure-key-gen
+  kms-core-client -f /config/client_local_threshold.toml insecure-key-gen --preproc-id "$PREPROC_ID"
 ```
 
 The Docker image also includes the **kms-health-check** tool for monitoring KMS deployments:
@@ -346,11 +351,13 @@ These commands generate a set of private and public FHE keys. It will return a `
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen [--preproc-id <REQUEST_ID>] [--uncompressed]
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen --preproc-id <REQUEST_ID> [--uncompressed]
 ```
 
+Required arguments:
+ - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing preprocessing entry to consume (see [below](#insecure-dummy-preprocessing)). In threshold mode this must come from `insecure-preproc-key-gen`; in centralized mode either preprocessing endpoint can be used.
+
 Optional arguments:
- - `-i`/`--preproc-id <REQUEST_ID>`: ID of an existing insecure (dummy) preprocessing to consume (see [below](#insecure-dummy-preprocessing)). When omitted, the server uses the well-known `INSECURE_PREPROCESSING_ID` as an implicit one-shot dummy preprocessing.
  - `-u`/`--uncompressed`: Generate legacy uncompressed public key material (`PublicKey` + `ServerKey`). By default key generation stores compressed key material.
 
 This means that a single KMS core will generate a set of FHE keys in plain. In a threshold KMS, the contained private key material will then be secret shared between all KMS cores.
@@ -376,9 +383,9 @@ Optional arguments:
  - `--context-id <CONTEXT_ID>`: the context ID to use for the preprocessing. Defaults to the default context if not specified.
  - `--epoch-id <EPOCH_ID>`: the epoch ID to use for the preprocessing. Defaults to the default epoch if not specified.
 
-The resulting `REQUEST_ID` can then be passed to `insecure-key-gen` via `--preproc-id`. Each explicit entry is consumed by the key generation, so a fresh insecure preprocessing is needed for each insecure key-generation call that passes an explicit preprocessing ID. If `insecure-key-gen` is invoked without `--preproc-id`, this step is not needed: the server uses the well-known `INSECURE_PREPROCESSING_ID` as an implicit one-shot dummy preprocessing (which also means concurrent no-argument insecure key generations against the same cluster are not supported).
+The resulting `REQUEST_ID` must then be passed to `insecure-key-gen` via `--preproc-id`. Each entry is consumed by the key generation, so a fresh preprocessing is needed for each insecure key-generation call.
 
-Note that in the threshold setting an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`; in the centralized setting both preprocessing variants are identical dummies and are interchangeable.
+Note that in the threshold setting an insecure preprocessing entry can only be consumed by `insecure-key-gen`, and a secure preprocessing entry only by `key-gen`; in the centralized setting both preprocessing variants are dummy entries and are interchangeable.
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
@@ -692,7 +699,8 @@ This prints the public key for each configured core.
 
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
+    $ PREPROC_ID=$(cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-preproc-key-gen | grep request_id | cut -d'"' -f4)
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen --preproc-id "$PREPROC_ID"
     ```
 - Generate an encryption of `0x2342` of type `euint16` and ask for a user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once it has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
     ```{bash}
