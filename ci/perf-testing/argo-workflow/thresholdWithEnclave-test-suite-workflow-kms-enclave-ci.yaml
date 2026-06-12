@@ -116,10 +116,26 @@ spec:
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
+          # WARMUP Decrypt test (1 request)
+          ##########################################################################
+          - name: warmup-public-decrypt-euint64-req1
+            dependencies: ["crs-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "warmup-public-decrypt-euint64-req1"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                - name: fhe-params
+                  value: "Default"
+          ##########################################################################
           # Public decrypt tests
           ##########################################################################
           - name: public-decrypt-euint64-req1
-            dependencies: ["crs-gen"]
+            dependencies: ["warmup-public-decrypt-euint64-req1"]
             template: run-test
             continueOn:
               failed: true
@@ -217,6 +233,76 @@ spec:
                 - name: fhe-params
                   value: "Default"
 
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req500
+            dependencies: ["user-decrypt-euint64-req100"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req500"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
+                - name: fhe-params
+                  value: "Default"
+
+
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req500
+            dependencies: ["public-decrypt-euint64-req500"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req500"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
+                - name: fhe-params
+                  value: "Default"
+
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req1000
+            dependencies: ["user-decrypt-euint64-req500"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req1000"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
+                - name: fhe-params
+                  value: "Default"
+
+
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req1000
+            dependencies: ["public-decrypt-euint64-req1000"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req1000"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
+                - name: fhe-params
+                  value: "Default"
+
           # Summary report generation
           - name: generate-summary
             dependencies: [
@@ -229,7 +315,11 @@ spec:
               "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt tests with FHE_PARAMS = Default
               "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt tests with FHE_PARAMS = Default
               "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req100"     # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
             ]
             template: summary-report
             continueOn:
@@ -256,6 +346,14 @@ spec:
                 value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
               - name: test-result-10
                 value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
+              - name: test-result-11
+                value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
+              - name: test-result-12
+                value: "{{tasks.user-decrypt-euint64-req500.outputs.parameters.test-result}}"
+              - name: test-result-13
+                value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
+              - name: test-result-14
+                value: "{{tasks.user-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -371,7 +469,10 @@ spec:
           latency_info=""
           throughput_info=""
           avg_latency=""
-          median_latency=""
+          std_dev_latency=""
+          p50_latency=""
+          p95_latency=""
+          p99_latency=""
           min_latency=""
           max_latency=""
           throughput=""
@@ -380,10 +481,13 @@ spec:
           if grep -q "Latency" /tmp/test_logs.txt; then
             latency_line=$(grep "Latency for" /tmp/test_logs.txt | tail -1)
             avg_latency=$(echo "$latency_line" | sed -n 's/.*Avg: \([^,]*\).*/\1/p')
-            median_latency=$(echo "$latency_line" | sed -n 's/.*Median: \([^,]*\).*/\1/p')
+            std_dev_latency=$(echo "$latency_line" | sed -n 's/.*StdDev: \([^,]*\).*/\1/p')
+            p50_latency=$(echo "$latency_line" | sed -n 's/.*P50: \([^,]*\).*/\1/p')
+            p95_latency=$(echo "$latency_line" | sed -n 's/.*P95: \([^,]*\).*/\1/p')
+            p99_latency=$(echo "$latency_line" | sed -n 's/.*P99: \([^,]*\).*/\1/p')
             min_latency=$(echo "$latency_line" | sed -n 's/.*Min: \([^,]*\).*/\1/p')
             max_latency=$(echo "$latency_line" | sed -n 's/.*Max: \([^,}"]*\).*/\1/p')
-            latency_info="Found latency metrics: Avg=$avg_latency, Median=$median_latency, Min=$min_latency, Max=$max_latency"
+            latency_info="Found latency metrics: Avg=$avg_latency, StdDev=$std_dev_latency, P50=$p50_latency, P95=$p95_latency, P99=$p99_latency, Min=$min_latency, Max=$max_latency"
           fi
 
           # Extract throughput metrics
@@ -428,14 +532,17 @@ spec:
           escaped_command=$(echo "{{inputs.parameters.test-command}}" | sed 's/"/\\"/g')
 
           # Create JSON using printf to avoid HERE document issues
-          printf '{\n  "test_name": "{{inputs.parameters.test-name}}",\n  "test_command": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "request_id": "%s",\n  "fhe_params": "{{inputs.parameters.fhe-params}}",\n  "performance_metrics": {\n    "latency": {\n      "avg": "%s",\n      "median": "%s",\n      "min": "%s",\n      "max": "%s"\n    },\n    "throughput": "%s"\n  }\n}\n' \
+          printf '{\n  "test_name": "{{inputs.parameters.test-name}}",\n  "test_command": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "request_id": "%s",\n  "fhe_params": "{{inputs.parameters.fhe-params}}",\n  "performance_metrics": {\n    "latency": {\n      "avg": "%s",\n      "std_dev": "%s",\n      "p50": "%s",\n      "p95": "%s",\n      "p99": "%s",\n      "min": "%s",\n      "max": "%s"\n    },\n    "throughput": "%s"\n  }\n}\n' \
             "$escaped_command" \
             "$test_exit" \
             "$duration" \
             "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             "$request_id" \
             "$avg_latency" \
-            "$median_latency" \
+            "$std_dev_latency" \
+            "$p50_latency" \
+            "$p95_latency" \
+            "$p99_latency" \
             "$min_latency" \
             "$max_latency" \
             "$throughput" \
@@ -479,6 +586,10 @@ spec:
         - name: test-result-8
         - name: test-result-9
         - name: test-result-10
+        - name: test-result-11
+        - name: test-result-12
+        - name: test-result-13
+        - name: test-result-14
         - name: tls
         - name: run_url
       script:
@@ -506,6 +617,10 @@ spec:
           echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req10.json
           echo '{{inputs.parameters.test-result-9}}' > /mnt/results/public-decrypt-euint64-req100.json
           echo '{{inputs.parameters.test-result-10}}' > /mnt/results/user-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-11}}' > /mnt/results/public-decrypt-euint64-req500.json
+          echo '{{inputs.parameters.test-result-12}}' > /mnt/results/user-decrypt-euint64-req500.json
+          echo '{{inputs.parameters.test-result-13}}' > /mnt/results/public-decrypt-euint64-req1000.json
+          echo '{{inputs.parameters.test-result-14}}' > /mnt/results/user-decrypt-euint64-req1000.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -534,7 +649,11 @@ spec:
             /mnt/results/public-decrypt-euint64-req10.json \
             /mnt/results/user-decrypt-euint64-req10.json \
             /mnt/results/public-decrypt-euint64-req100.json \
-            /mnt/results/user-decrypt-euint64-req100.json; do
+            /mnt/results/user-decrypt-euint64-req100.json \
+            /mnt/results/public-decrypt-euint64-req500.json \
+            /mnt/results/user-decrypt-euint64-req500.json \
+            /mnt/results/public-decrypt-euint64-req1000.json \
+            /mnt/results/user-decrypt-euint64-req1000.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -567,6 +686,12 @@ spec:
               duration=$(jq -r '.duration // "0"' "$result" 2>/dev/null || echo "0")
               command=$(jq -r '.test_command // "unknown"' "$result" 2>/dev/null || echo "unknown")
               avg_latency=$(jq -r '.performance_metrics.latency.avg // empty' "$result" 2>/dev/null || echo "")
+              std_dev_latency=$(jq -r '.performance_metrics.latency.std_dev // empty' "$result" 2>/dev/null || echo "")
+              p50_latency=$(jq -r '.performance_metrics.latency.p50 // empty' "$result" 2>/dev/null || echo "")
+              p95_latency=$(jq -r '.performance_metrics.latency.p95 // empty' "$result" 2>/dev/null || echo "")
+              p99_latency=$(jq -r '.performance_metrics.latency.p99 // empty' "$result" 2>/dev/null || echo "")
+              min_latency=$(jq -r '.performance_metrics.latency.min // empty' "$result" 2>/dev/null || echo "")
+              max_latency=$(jq -r '.performance_metrics.latency.max // empty' "$result" 2>/dev/null || echo "")
               throughput=$(jq -r '.performance_metrics.throughput // empty' "$result" 2>/dev/null || echo "")
 
               # Ensure duration is numeric
@@ -580,7 +705,7 @@ spec:
                 passed=$((passed + 1))
                 perf_info=""
                 if [ -n "$avg_latency" ] && [ "$avg_latency" != "null" ] && [ "$avg_latency" != "" ]; then
-                  perf_info=" | Avg Latency: $avg_latency"
+                  perf_info=" | Avg: $avg_latency, StdDev: $std_dev_latency, P50: $p50_latency, P95: $p95_latency, P99: $p99_latency, Min: $min_latency, Max: $max_latency"
                 fi
                 if [ -n "$throughput" ] && [ "$throughput" != "null" ] && [ "$throughput" != "" ]; then
                   perf_info="$perf_info | Throughput: $throughput req/s"
@@ -697,19 +822,29 @@ spec:
                   /mnt/results/public-decrypt-euint64-req10.json \
                   /mnt/results/user-decrypt-euint64-req10.json \
                   /mnt/results/public-decrypt-euint64-req100.json \
-                  /mnt/results/user-decrypt-euint64-req100.json; do
+                  /mnt/results/user-decrypt-euint64-req100.json \
+                  /mnt/results/public-decrypt-euint64-req500.json \
+                  /mnt/results/user-decrypt-euint64-req500.json \
+                  /mnt/results/public-decrypt-euint64-req1000.json \
+                  /mnt/results/user-decrypt-euint64-req1000.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
                     exit_code=$(jq -r '.exit_code' $result)
                     duration=$(jq -r '.duration' $result)
                     avg_latency=$(jq -r '.performance_metrics.latency.avg // empty' $result)
+                    std_dev_latency=$(jq -r '.performance_metrics.latency.std_dev // empty' $result)
+                    p50_latency=$(jq -r '.performance_metrics.latency.p50 // empty' $result)
+                    p95_latency=$(jq -r '.performance_metrics.latency.p95 // empty' $result)
+                    p99_latency=$(jq -r '.performance_metrics.latency.p99 // empty' $result)
+                    min_latency=$(jq -r '.performance_metrics.latency.min // empty' $result)
+                    max_latency=$(jq -r '.performance_metrics.latency.max // empty' $result)
                     throughput=$(jq -r '.performance_metrics.throughput // empty' $result)
 
                     if [ "$exit_code" -eq "0" ]; then
                       perf_info=""
                       if [ -n "$avg_latency" ] && [ "$avg_latency" != "null" ] && [ "$avg_latency" != "" ]; then
-                        perf_info="| Avg Latency: $avg_latency"
+                        perf_info="| Avg: $avg_latency, StdDev: $std_dev_latency, P50: $p50_latency, P95: $p95_latency, P99: $p99_latency, Min: $min_latency, Max: $max_latency"
                       fi
                       if [ -n "$throughput" ] && [ "$throughput" != "null" ] && [ "$throughput" != "" ]; then
                         perf_info="$perf_info | Throughput: $throughput req/s"
