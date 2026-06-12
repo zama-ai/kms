@@ -175,9 +175,14 @@ impl PublicKeyMaterial {
         }
     }
 
-    /// Like [`Self::new`], but shares the caller's `Arc` instead of allocating.
-    pub fn from_arc(keyset: Arc<CompressedXofKeySet>) -> Self {
-        Self::Compressed { keyset }
+    /// Hand out a shared reference to the owned compressed keyset, if any.
+    /// Cheap (`Arc` clone) — lets callers reuse the allocation instead of
+    /// deep-cloning the multi-GiB keyset.
+    pub fn compressed_keyset(&self) -> Option<Arc<CompressedXofKeySet>> {
+        match self {
+            Self::Compressed { keyset } => Some(Arc::clone(keyset)),
+            Self::Uncompressed { .. } => None,
+        }
     }
 
     pub fn new_uncompressed(
@@ -1069,22 +1074,6 @@ mod tests {
         assert!(matches!(v3, PublicKeyMaterial::Compressed { .. }));
     }
 
-    #[test]
-    fn from_arc_shares_the_keyset_allocation() {
-        let mut rng = AesRng::seed_from_u64(7);
-        let (_keyset, compressed_keyset) =
-            gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-        let shared = Arc::new(compressed_keyset);
-
-        let material = PublicKeyMaterial::from_arc(Arc::clone(&shared));
-        match &material {
-            PublicKeyMaterial::Compressed { keyset } => {
-                assert!(Arc::ptr_eq(keyset, &shared), "keyset must not be copied");
-            }
-            PublicKeyMaterial::Uncompressed { .. } => panic!("expected compressed material"),
-        }
-    }
-
     /// Verify that a V3 ThresholdFheKeys with Compressed keys can roundtrip through
     /// safe_serialize / safe_deserialize, and that lazy decompression works after.
     #[test]
@@ -1105,6 +1094,16 @@ mod tests {
             ),
         );
         assert!(original.is_compressed());
+        // The material owns the keyset and hands out shared (not copied) refs.
+        let shared = original
+            .public_material
+            .compressed_keyset()
+            .expect("compressed material");
+        match &original.public_material {
+            PublicKeyMaterial::Compressed { keyset } => assert!(Arc::ptr_eq(&shared, keyset)),
+            PublicKeyMaterial::Uncompressed { .. } => unreachable!(),
+        }
+        drop(shared);
 
         // Decompress the original before serialization so we have reference values
         let orig_srv_key = bc2wrap::serialize(&*original.integer_server_key()).unwrap();

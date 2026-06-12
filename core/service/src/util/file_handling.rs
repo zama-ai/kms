@@ -1,6 +1,6 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{Unversionize, Versionize};
@@ -17,32 +17,6 @@ pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::
     Ok(())
 }
 
-/// Removes the temp file on drop unless [`disarm`](TempFileGuard::disarm)ed,
-/// so a failed write never strands a partial file.
-struct TempFileGuard {
-    path: Option<PathBuf>,
-}
-
-impl TempFileGuard {
-    fn new(path: PathBuf) -> Self {
-        Self { path: Some(path) }
-    }
-
-    /// Call once the temp file has been renamed into place.
-    fn disarm(mut self) {
-        self.path = None;
-    }
-}
-
-impl Drop for TempFileGuard {
-    fn drop(&mut self) {
-        if let Some(path) = self.path.take() {
-            // Best-effort; must not mask the error that got us here.
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-}
-
 /// This is a wrapper around safe_serialize versioned for the async use case.
 ///
 /// Streams the serialization into a sibling temp file (synced, then atomically
@@ -50,7 +24,7 @@ impl Drop for TempFileGuard {
 /// Serialization runs inline: `safe_serialize` borrows `element`, so it cannot
 /// move into `spawn_blocking`, and `block_in_place` panics on current-thread
 /// runtimes. Key writes are rare enough that blocking here is acceptable.
-/// On any error the temp file is removed (see [`TempFileGuard`]).
+/// On any error the temp file is removed (`NamedTempFile` deletes on drop).
 pub async fn safe_write_element_versioned<
     T: Serialize + Versionize + Named + Send,
     P: AsRef<Path>,
@@ -59,63 +33,45 @@ pub async fn safe_write_element_versioned<
     element: &T,
 ) -> anyhow::Result<()> {
     let file_path = file_path.as_ref();
+    if file_path.file_name().is_none() {
+        anyhow::bail!("invalid file path: {}", file_path.display());
+    }
     // Create the parent directories of the file path if they don't exist
     if let Some(p) = file_path.parent() {
         tokio::fs::create_dir_all(p).await?
     };
     // Serialize into a sibling temp file, fsync it, then atomically rename it
     // over `file_path`, so a crash mid-write cannot leave a partial file there
-    // (rename alone is not a durability barrier).
-    // The temp name is dot-prefixed so directory listings skip a leftover
-    // (`FileStorage::all_data_ids` parses every non-hidden name as a
-    // `RequestId`), and carries a pid+counter suffix because concurrent writers
-    // to the same path are possible: the storage mutex is per-instance and
-    // callers like `kms-custodian` bypass the storage layer entirely.
-    let tmp_path = {
-        let file_name = file_path
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?;
-        // A function-local `static` is initialized once per process, not per
-        // call: every call shares this one counter, and `fetch_add` returns the
-        // previous value, so concurrent writers in this process get 0, 1, 2, ...
-        // The pid distinguishes writers across processes.
-        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut name = std::ffi::OsString::from(".");
-        name.push(file_name);
-        name.push(format!(".partial.{}.{seq}", std::process::id()));
-        match file_path.parent() {
-            Some(parent) => parent.join(name),
-            None => PathBuf::from(name),
-        }
+    // (rename alone is not a durability barrier). The temp file must live in
+    // the same directory (rename cannot cross filesystems); its dot-prefixed
+    // name is skipped by directory listings (`FileStorage::all_data_ids`
+    // parses every non-hidden name as a `RequestId`) and is unique per writer,
+    // so concurrent writers to the same path cannot collide.
+    let parent = match file_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
     };
-    let cleanup = TempFileGuard::new(tmp_path.clone());
-    {
-        let file = std::fs::File::create(&tmp_path)
-            .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", tmp_path.display()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        safe_serialize(element, &mut writer, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow::anyhow!("failed to serialize into {}: {e}", tmp_path.display()))?;
-        let file = writer
-            .into_inner()
-            .map_err(|e| anyhow::anyhow!("failed to flush {}: {e}", tmp_path.display()))?;
-        file.sync_all()
-            .map_err(|e| anyhow::anyhow!("failed to sync {}: {e}", tmp_path.display()))?;
-    }
-    tokio::fs::rename(&tmp_path, file_path).await.map_err(|e| {
+    let tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
+    let mut writer = std::io::BufWriter::new(tmp);
+    safe_serialize(element, &mut writer, SAFE_SER_SIZE_LIMIT).map_err(|e| {
         anyhow::anyhow!(
-            "failed to rename {} to {}: {e}",
-            tmp_path.display(),
-            file_path.display()
+            "failed to serialize into {}: {e}",
+            writer.get_ref().path().display()
         )
     })?;
+    let tmp = writer
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("failed to flush temp file: {e}"))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| anyhow::anyhow!("failed to sync {}: {e}", tmp.path().display()))?;
+    tmp.persist(file_path)
+        .map_err(|e| anyhow::anyhow!("failed to persist {}: {e}", file_path.display()))?;
     // Best-effort fsync of the parent dir so the rename itself is durable.
-    if let Some(parent) = file_path.parent()
-        && let Ok(dir) = std::fs::File::open(parent)
-    {
+    if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
-    cleanup.disarm();
     Ok(())
 }
 
@@ -196,6 +152,16 @@ mod tests {
         remove_file(file_name).await.unwrap();
     }
 
+    /// Anything in `dir` other than `expected` is a stranded temp file.
+    fn leftovers(dir: &std::path::Path, expected: &str) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != expected)
+            .collect()
+    }
+
     #[tokio::test]
     async fn safe_write_then_read_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
@@ -204,23 +170,9 @@ mod tests {
         safe_write_element_versioned(&path, &element).await.unwrap();
         let read_back: TestType = safe_read_element_versioned(&path).await.unwrap();
         assert_eq!(read_back, element);
-    }
-
-    #[tokio::test]
-    async fn safe_write_leaves_no_partial_tempfile() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("element");
-        safe_write_element_versioned(&path, &TestType { i: 1 })
-            .await
-            .unwrap();
-        assert!(path.exists());
-        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.contains(".partial"))
-            .collect();
-        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+        // Only the final file remains; the temp was renamed, not left behind.
+        let stranded = leftovers(path.parent().unwrap(), "element");
+        assert!(stranded.is_empty(), "leftover temp files: {stranded:?}");
     }
 
     #[tokio::test]
@@ -233,15 +185,10 @@ mod tests {
         let res = safe_write_element_versioned(&path, &TestType { i: 3 }).await;
         assert!(res.is_err(), "write onto an existing directory should fail");
 
-        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.contains(".partial"))
-            .collect();
+        let stranded = leftovers(dir.path(), "element");
         assert!(
-            leftovers.is_empty(),
-            "failed write left partial temp files: {leftovers:?}"
+            stranded.is_empty(),
+            "failed write left partial temp files: {stranded:?}"
         );
     }
 
@@ -270,13 +217,8 @@ mod tests {
         // One writer's complete value, never interleaved bytes.
         let read_back: TestType = safe_read_element_versioned(path.as_path()).await.unwrap();
         assert!(read_back.i < 8, "unexpected value {}", read_back.i);
-        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.contains(".partial"))
-            .collect();
-        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+        let stranded = leftovers(dir.path(), "element");
+        assert!(stranded.is_empty(), "leftover temp files: {stranded:?}");
     }
 
     // A write that fails before the rename must leave a pre-existing

@@ -1407,11 +1407,9 @@ impl<
         // until restart. Safe even if destruction partially failed: the epoch is
         // already gone from the session maker, so nothing can reach these entries.
         let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
-        if removed > 0 {
-            tracing::info!(
-                "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
-            );
-        }
+        tracing::info!(
+            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
+        );
 
         res
     }

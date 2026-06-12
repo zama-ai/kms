@@ -1512,14 +1512,17 @@ impl<
                     }
                 };
 
-                // One shared allocation for both the private-side material and the
-                // public-storage keyset below — the keyset is multi-GiB.
-                let compressed_keyset = Arc::new(compressed_keyset);
                 let threshold_fhe_keys = ThresholdFheKeys::new(
                     Arc::new(private_keys),
-                    PublicKeyMaterial::from_arc(Arc::clone(&compressed_keyset)),
+                    PublicKeyMaterial::new(compressed_keyset),
                     info,
                 );
+                // Share the material's keyset allocation with the public-storage
+                // set below — the keyset is multi-GiB.
+                let compressed_keyset = threshold_fhe_keys
+                    .public_material
+                    .compressed_keyset()
+                    .expect("material was just built compressed");
 
                 // NOTE: when there is an existing compact pk from an older keygen (an older key ID),
                 // then this pk is effectively copied to the new key ID.
