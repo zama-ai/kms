@@ -246,11 +246,6 @@ where
     // Validate each party's broadcast and keep the per-party value vectors.
     // Done sequentially because it mutates the session's corrupt set; this pass
     // is cheap (length/type checks only, no per-value work).
-    //
-    // We deliberately do NOT build a full transposed `amount`-long vector of
-    // share-vectors up front anymore (the previous `vec![Vec; amount]` +
-    // per-party push transpose). Instead we keep the per-party vectors and index
-    // into them inside the parallel reconstruction below.
     let mut party_vectors: Vec<(Role, Vec<Z>)> = Vec::with_capacity(session.num_parties());
     for (cur_role, cur_values) in d_recons {
         match cur_values {
