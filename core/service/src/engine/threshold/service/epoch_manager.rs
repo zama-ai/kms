@@ -711,6 +711,7 @@ impl<
 
                     storage_tasks.push(
                         async move {
+                            // Skip incremental update of backup vault and just do the backup at the end of the resharing
                             crypto_storage
                                 .resharing_fhe_write_no_backup(
                                     &key_info.key_id,
@@ -741,6 +742,7 @@ impl<
                 new_extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
+            // Skip incremental update of backup vault and just do the backup at the end of the resharing
             storage_tasks.push(
                 crypto_storage
                     .resharing_crs_write_no_backup(&crs_info.crs_id, &new_epoch_id, crs_meta_data)
