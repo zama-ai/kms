@@ -175,6 +175,16 @@ impl PublicKeyMaterial {
         }
     }
 
+    /// Hand out a shared reference to the owned compressed keyset, if any.
+    /// Cheap (`Arc` clone) — lets callers reuse the allocation instead of
+    /// deep-cloning the multi-GiB keyset.
+    pub(crate) fn compressed_keyset(&self) -> Option<Arc<CompressedXofKeySet>> {
+        match self {
+            Self::Compressed { keyset } => Some(Arc::clone(keyset)),
+            Self::Uncompressed { .. } => None,
+        }
+    }
+
     pub fn new_uncompressed(
         integer_server_key: Arc<ServerKey>,
         sns_key: Option<Arc<NoiseSquashingKey>>,
@@ -318,29 +328,26 @@ impl ThresholdFheKeys {
     }
 
     fn expand_keys(&self) -> &UncompressedKeys {
-        self.key_cache.get_or_init(|| {
-            match &self.public_material {
-                PublicKeyMaterial::Uncompressed {
-                    integer_server_key,
-                    sns_key,
-                    decompression_key,
-                } => UncompressedKeys {
-                    integer_server_key: integer_server_key.clone(),
-                    sns_key: sns_key.clone(),
-                    decompression_key: decompression_key.clone(),
-                },
-                PublicKeyMaterial::Compressed { keyset } => {
-                    let cloned = (**keyset).clone(); // TODO(dp): can possibly get rid of this later once tfhe-rs #3469 lands
-                    let (_pk, sk) = cloned
-                        .decompress()
-                        .expect("Call is infallible")
-                        .into_raw_parts();
-                    let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
-                    UncompressedKeys {
-                        integer_server_key: Arc::new(isk),
-                        sns_key: snsk.map(Arc::new),
-                        decompression_key: decompk.map(Arc::new),
-                    }
+        self.key_cache.get_or_init(|| match &self.public_material {
+            PublicKeyMaterial::Uncompressed {
+                integer_server_key,
+                sns_key,
+                decompression_key,
+            } => UncompressedKeys {
+                integer_server_key: integer_server_key.clone(),
+                sns_key: sns_key.clone(),
+                decompression_key: decompression_key.clone(),
+            },
+            PublicKeyMaterial::Compressed { keyset } => {
+                let (_pk, sk) = keyset
+                    .decompress()
+                    .expect("Call is infallible")
+                    .into_raw_parts();
+                let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
+                UncompressedKeys {
+                    integer_server_key: Arc::new(isk),
+                    sns_key: snsk.map(Arc::new),
+                    decompression_key: decompk.map(Arc::new),
                 }
             }
         })
@@ -829,6 +836,7 @@ where
         immutable_session_maker.clone(),
         Arc::clone(&user_decrypt_meta_store),
         Arc::clone(&pub_dec_meta_store),
+        crypto_storage.clone(),
         telemetry_conf.refresh_interval(),
     );
 
@@ -858,18 +866,28 @@ where
     ))
 }
 
-fn update_threshold_kms_system_metrics(
+fn update_threshold_kms_system_metrics<PubS, PrivS>(
     rate_limiter: RateLimiter,
     session_maker: ImmutableSessionMaker,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     refresh_interval: std::time::Duration,
-) -> tokio::task::JoinHandle<()> {
+) -> tokio::task::JoinHandle<()>
+where
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+{
     tokio::spawn(async move {
         loop {
             metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
             metrics::METRICS.record_active_sessions(session_maker.active_sessions().await);
             metrics::METRICS.record_inactive_sessions(session_maker.inactive_sessions().await);
+            // Skipped when the cache lock is contended: the gauge keeps its
+            // previous value rather than stalling the whole metrics loop.
+            if let Some(count) = crypto_storage.cached_fhe_key_count() {
+                metrics::METRICS.record_fhe_key_cache_size(count as u64);
+            }
             {
                 let user_meta_store_guard = user_meta_store.read().await;
                 metrics::METRICS.record_meta_storage_user_decryptions(
@@ -1079,6 +1097,16 @@ mod tests {
             ),
         );
         assert!(original.is_compressed());
+        // The material owns the keyset and hands out shared (not copied) refs.
+        let shared = original
+            .public_material
+            .compressed_keyset()
+            .expect("compressed material");
+        match &original.public_material {
+            PublicKeyMaterial::Compressed { keyset } => assert!(Arc::ptr_eq(&shared, keyset)),
+            PublicKeyMaterial::Uncompressed { .. } => unreachable!(),
+        }
+        drop(shared);
 
         // Decompress the original before serialization so we have reference values
         let orig_srv_key = bc2wrap::serialize(&*original.integer_server_key()).unwrap();

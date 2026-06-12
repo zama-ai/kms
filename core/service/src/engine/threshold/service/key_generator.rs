@@ -1574,9 +1574,15 @@ impl<
 
                 let threshold_fhe_keys = ThresholdFheKeys::new(
                     Arc::new(private_keys),
-                    PublicKeyMaterial::new(compressed_keyset.clone()),
+                    PublicKeyMaterial::new(compressed_keyset),
                     info,
                 );
+                // Share the material's keyset allocation with the public-storage
+                // set below — the keyset is multi-GiB.
+                let compressed_keyset = threshold_fhe_keys
+                    .public_material
+                    .compressed_keyset()
+                    .expect("material was just built compressed");
 
                 // NOTE: when there is an existing compact pk from an older keygen (an older key ID),
                 // then this pk is effectively copied to the new key ID.
@@ -1587,7 +1593,7 @@ impl<
                         threshold_fhe_keys,
                         PublicKeySet::Compressed {
                             compact_public_key: Arc::new(compact_public_key),
-                            compressed_keyset: Arc::new(compressed_keyset),
+                            compressed_keyset,
                         },
                         Arc::clone(&meta_store),
                         op_tag,
