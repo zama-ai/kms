@@ -68,10 +68,6 @@ pub async fn safe_write_element_versioned<
         .map_err(|e| anyhow::anyhow!("failed to sync {}: {e}", tmp.path().display()))?;
     tmp.persist(file_path)
         .map_err(|e| anyhow::anyhow!("failed to persist {}: {e}", file_path.display()))?;
-    // Best-effort fsync of the parent dir so the rename itself is durable.
-    if let Ok(dir) = std::fs::File::open(parent) {
-        let _ = dir.sync_all();
-    }
     Ok(())
 }
 
