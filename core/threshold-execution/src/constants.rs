@@ -34,8 +34,8 @@ cfg_if::cfg_if! {
                         default
                     })
                 },
-                Err(_) => {
-                    tracing::warn!("Env var {name} not set; using default {default}");
+                Err(e) => {
+                    tracing::warn!("Error reading env var {name}: {e:?}; using default {default}");
                     default
                 },
             };
