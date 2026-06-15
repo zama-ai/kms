@@ -277,7 +277,7 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
-/// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
+/// This errors out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
 pub fn reconstruct_w_errors_sync<Z>(
     num_parties: usize,
     degree: usize,
@@ -331,7 +331,7 @@ where
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
 ///
-/// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
+/// This errors out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
 pub fn reconstruct_w_errors_async<Z>(
     num_parties: usize,
     degree: usize,
