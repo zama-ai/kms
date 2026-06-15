@@ -125,7 +125,7 @@ impl<Z: ErrorCorrect> ReconstructionHints<Z> {
     pub fn new(sharing: &ShamirSharings<Z>, degree: usize) -> anyhow::Result<Self> {
         // ShamirSharings are always sorted by owner Role, so the parties are already sorted here.
         let parties: Vec<Role> = sharing.shares.iter().map(|s| s.owner()).collect();
-        Self::from_parties_sorted(&parties, degree)
+        Self::from_parties_sorted(parties, degree)
     }
 
     /// Build hints from an explicit list of parties and a degree.
@@ -133,25 +133,25 @@ impl<Z: ErrorCorrect> ReconstructionHints<Z> {
     /// Computes exceptional powers directly from the embedded points.
     ///
     /// Parties are not required to be pre-sorted, but they will be sorted internally
-    pub fn from_parties(parties: &[Role], degree: usize) -> anyhow::Result<Self> {
+    pub fn from_parties(parties: Vec<Role>, degree: usize) -> anyhow::Result<Self> {
         // Roles are always sorted when creating a ShamirSharing, so sort it here too
-        let parties = parties.iter().sorted().cloned().collect_vec();
-        Self::from_parties_sorted(&parties, degree)
+        let parties = parties.into_iter().sorted_unstable().collect_vec();
+        Self::from_parties_sorted(parties, degree)
     }
 
     /// Build hints from an explicit list of parties and a degree.
     ///
     /// Computes exceptional powers directly from the embedded points.
-    pub fn from_parties_sorted(parties: &[Role], degree: usize) -> anyhow::Result<Self> {
+    fn from_parties_sorted(parties: Vec<Role>, degree: usize) -> anyhow::Result<Self> {
         let embedded_points: Vec<Z> = parties
             .iter()
             .map(|p| Z::embed_role_to_exceptional_sequence(p))
             .try_collect()?;
         let exceptional_powers: Vec<Vec<Z>> = compute_powers_list(&embedded_points, degree);
 
-        let field_hints = FieldHints::new(parties)?;
+        let field_hints = FieldHints::new(&parties)?;
         Ok(Self {
-            parties: parties.to_vec(),
+            parties,
             degree,
             embedded_points,
             exceptional_powers,

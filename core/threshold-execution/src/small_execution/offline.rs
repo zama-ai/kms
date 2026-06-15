@@ -288,7 +288,7 @@ where
     let max_errors = (session.num_parties() - session.corrupt_roles().len() - (degree + 1)) / 2;
 
     let roles = party_vectors.iter().map(|(role, _)| *role).collect_vec();
-    let hints = ReconstructionHints::from_parties(&roles, degree)?;
+    let hints = ReconstructionHints::from_parties(roles, degree)?;
 
     // Reconstruct the `amount` values in parallel: value `i` is reconstructed
     // from share `i` of every party, indexed directly out of the kept per-party
