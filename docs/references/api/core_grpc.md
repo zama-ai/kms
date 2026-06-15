@@ -372,7 +372,7 @@ This is because, to initiate a Distributed Key Generation, we must provide a `pr
 <details>
     <summary> InsecureKeyGenPreproc </summary>
 
-___NOTE_: This is a temporary workaround and will only be available in testing/debugging setups. **NOT in production**__
+___NOTE_: This is a temporary workaround and will only be available in testing/debugging setups. **NOT in production**___
 
 ### Input
 
