@@ -30,20 +30,20 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:50100
 # JSON output for monitoring
 kms-health-check --format json full --config /path/to/config.toml --endpoint localhost:50100
 
-# Using custom timeout configuration
-kms-health-check live --endpoint localhost:50100 --health-config health-check.toml
-
 # Using environment variables for timeouts (note the double underscore separator)
 HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 kms-health-check live --endpoint localhost:50100
 ```
 
 ## Configuration
 
-The health check tool supports configurable timeouts through a dedicated configuration file and environment variables.
+The tool deals with two distinct kinds of configuration:
+
+- **KMS server config** — passed via `config --file <path>` or `full --config <path>`. The file is parsed and validated using the KMS server's own validation logic. The `live` subcommand also accepts a `--config` flag, but its value is currently unused: peer health is retrieved from the server via the `GetHealthStatus` RPC, so `live` only needs `--endpoint`.
+- **Tool config (timeouts)** — there is no CLI flag for this; it is configured through a configuration file at a fixed location or environment variables, as described below.
 
 ### Health Check Configuration File
 
-Create a `health-check.toml` file to configure timeout settings:
+Create a `config/health_check.toml` file (resolved relative to the tool's working directory; `/etc/config/health_check.toml` is also read) to configure timeout settings:
 
 ```toml
 # Health Check Tool Configuration
@@ -54,11 +54,7 @@ connection_timeout_secs = 5
 request_timeout_secs = 10
 ```
 
-Use the configuration file with the `--health-config` flag:
-
-```bash
-kms-health-check live --endpoint localhost:50100 --health-config health-check.toml
-```
+The file is picked up automatically — there is no CLI flag for it.
 
 ### Environment Variables
 
@@ -86,7 +82,7 @@ HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=15 kms-health-check live --endpoint localh
 Configuration values are applied in the following order (highest precedence first):
 
 1. Environment variables (`HEALTH_CHECK__*`)
-2. Configuration file (`--health-config`)
+2. Configuration files (`config/health_check.toml`, `/etc/config/health_check.toml`)
 3. Default values
 
 
@@ -186,7 +182,7 @@ graph TD
 ```
 
 ### Endpoint
-- **Service**: `kms.v1.CoreService`
+- **Service**: `kms_service.v1.CoreServiceEndpoint`
 - **Method**: `GetHealthStatus(Empty) -> HealthStatusResponse`
 - **Additional**: `GetKeyMaterialAvailability(Empty) -> KeyMaterialAvailabilityResponse`
 - **Ports**: 50100 (default KMS port)
@@ -268,8 +264,8 @@ message KeyMaterialAvailabilityResponse {
 
 ```bash
 # Using grpcurl
-grpcurl -plaintext localhost:50100 kms.v1.CoreService/GetHealthStatus
-grpcurl -plaintext localhost:50100 kms.v1.CoreService/GetKeyMaterialAvailability
+grpcurl -plaintext localhost:50100 kms_service.v1.CoreServiceEndpoint/GetHealthStatus
+grpcurl -plaintext localhost:50100 kms_service.v1.CoreServiceEndpoint/GetKeyMaterialAvailability
 
 # Using the health check tool (which calls both endpoints internally)
 kms-health-check live --endpoint localhost:50100

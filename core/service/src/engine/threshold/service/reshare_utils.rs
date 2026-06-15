@@ -27,7 +27,7 @@ const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public mater
 /// This allows resharing to work with both standard keys (ServerKey + PublicKey) and
 /// compressed keys (CompressedXofKeySet).
 // It's ok to have a big enum here since the way this type is used is only temporary.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum VerifiedPublicMaterial {
     /// Standard uncompressed keyset with server key and public key
     Uncompressed(FhePubKeySet),
@@ -49,16 +49,15 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
 }
 
 impl VerifiedPublicMaterial {
-    // TODO: is there no better way to find if a particular key exists? we want to avoid the cloning
     pub(crate) fn has_oprf_key(&self) -> bool {
-        let server_key = match self {
-            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => fhe_pubkeys.server_key.clone(),
-            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
-                compressed_keyset.clone().into_raw_parts().2.decompress()
+        match self {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+                fhe_pubkeys.server_key.has_oprf_key()
             }
-        };
-        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
-        oprf_key.is_some()
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                compressed_keyset.has_oprf_key()
+            }
+        }
     }
 }
 
@@ -603,7 +602,6 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use crate::engine::base::safe_serialize_hash_element_versioned;
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
@@ -616,7 +614,9 @@ mod tests {
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_versioned_at_request_id;
+
     use aes_prng::AesRng;
+    use hashing::hash_versioned;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
@@ -692,16 +692,10 @@ mod tests {
         let public_key = CompactPublicKey::new(&client_key);
 
         // generate digests
-        let server_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &server_key,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &public_key,
-        )
-        .unwrap();
+        let server_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
         let key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
             (PubDataType::ServerKey, server_key_digest),
             (PubDataType::PublicKey, public_key_digest),
@@ -1043,11 +1037,8 @@ mod tests {
                 .unwrap();
 
         // generate digest
-        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compressed_keyset,
-        )
-        .unwrap();
+        let compressed_keyset_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
         let key_digests: HashMap<PubDataType, Vec<u8>> =
             HashMap::from_iter([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]);
 

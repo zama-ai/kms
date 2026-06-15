@@ -12,8 +12,6 @@ use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
-#[cfg(feature = "wasm_tests")]
-use crate::util::file_handling::write_element;
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -334,7 +332,7 @@ async fn default_user_decryption_threshold_with_crash(
     .await;
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_threshold(
     dkg_params: DKGParams,
     key_id: &RequestId,
@@ -541,8 +539,8 @@ pub(crate) async fn user_decryption_threshold(
             } else {
                 crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
             };
-            let path = format!("{}.{}", path_prefix, msg.bits());
-            write_element(&path, &transcript).await.unwrap();
+            let path = format!("{}.{}.json", path_prefix, msg.bits());
+            transcript.write_stable_test_vector_json(&path).unwrap();
         }
     }
 
@@ -562,7 +560,7 @@ pub(crate) async fn user_decryption_threshold(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn process_batch_threshold_user_decryption(
     internal_client: &mut Client,
     msg: TestingPlaintext,

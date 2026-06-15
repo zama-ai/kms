@@ -14,7 +14,7 @@ Optionally, the gRPC service can be run in an Amazon Nitro enclave and store sen
 ### Directory overview
 - `config`
     - Default and example configuration files used when running the Core Service.
-- [`src/bin`](./src/bin/README.md)
+- [`src/bin`](./src/bin/)
     - Code used to compile binary files. This includes the actual KMS Core Service, but also utilities needed for generating TLS certificates for the KMS Core servers.
 - `src/client`
     - Example client code which is primarily used for testing the KMS Core.
@@ -32,9 +32,9 @@ Optionally, the gRPC service can be run in an Amazon Nitro enclave and store sen
     - Code for backwards compatibility and integration testing.
 
 ## Compiling and running
-Information about the compiling and running the KMS Core service can be found [here](./src/bin/README.md).
+Information about the compiling and running the KMS Core service can be found [here](../../docs/guides/kms-server-bin.md).
 Details on how to interact with a running KMS Core service can be found [here](../../core-client/README.md).
 
 ## Contribution
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](../../CONTRIBUTING.md).

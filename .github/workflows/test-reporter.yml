@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -76,7 +76,11 @@ jobs:
         with:
           report-path: '/tmp/junit/**/*.xml'
           title: 'Consolidated Tests Results ${{ env.TIMESTAMP }}'
-          overwrite-comment: true
+          # Kept false: two reporters (main + parallel-testing) post here, and
+          # overwrite-comment would make them clobber each other's comment. The
+          # trade-off is that comments accumulate across pushes on a PR; the
+          # timestamped title disambiguates the latest one.
+          overwrite-comment: false
           summary-report: false
           github-report: true
           pull-request-report: true

@@ -80,11 +80,6 @@ data:
     {{- if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
-      {{- if .Values.kmsCore.thresholdMode.peersList }}
-    num_parties = {{ len .Values.kmsCore.thresholdMode.peersList }}
-      {{- else }}
-    num_parties = {{ int .Values.kmsPeers.count }}
-      {{- end }}
       {{- if .Values.kmsCore.addressOverride }}
     tls_subject = "{{ .Values.kmsCore.addressOverride }}-{{ .Values.kmsPeers.id}}"
       {{- else }}

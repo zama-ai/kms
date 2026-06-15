@@ -221,7 +221,7 @@ Crypto provider should exist at this point"
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn get_verifiers_and_pcrs_for_x509_cert(
         &self,
         cert: &X509Certificate<'_>,
@@ -262,7 +262,7 @@ Crypto provider should exist at this point"
         Ok((client_verifier, server_verifier, pcrs_for_mpc_identity))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn get_verifiers_and_pcrs_for_cert_der(
         &self,
         cert: &CertificateDer<'_>,
@@ -480,7 +480,7 @@ pub enum CertVerified {
     Server(ServerCertVerified),
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn validate_wrapped_cert(
     cert: &X509Certificate,
     trusted_releases: HashSet<ReleasePCRValues>,

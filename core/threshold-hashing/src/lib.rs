@@ -3,6 +3,8 @@ use sha3::{
     Shake256,
     digest::{ExtendableOutput, Update, XofReader},
 };
+use tfhe_safe_serialize::{Named, safe_serialize};
+use tfhe_versionable::Versionize;
 
 /// Domain separator for hashing elements.
 /// This is used to ensure that the hash is unique to the context in which it is used.
@@ -80,6 +82,17 @@ where
     let mut writer = HashingWriter::new(domain_separator);
 
     let _hashed_bytes = bc2wrap::serialize_into(msg, &mut writer)?;
+    Ok(writer.finalize())
+}
+
+/// Compute the SHAKE-256 hash of a [`Versionize`]'d value `T` using [`tfhe_safe_serialize::safe_serialize`].
+/// The call will fail if the serialized size of `T` is larger than [`SAFE_SER_SIZE_LIMIT`] (currently 2 GB).
+pub fn hash_versioned<T>(domain_sep: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
+where
+    T: Serialize + Versionize + Named,
+{
+    let mut writer = HashingWriter::new(domain_sep);
+    safe_serialize(msg, &mut writer, SAFE_SER_SIZE_LIMIT)?;
     Ok(writer.finalize())
 }
 

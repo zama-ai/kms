@@ -176,7 +176,7 @@ async fn default_user_decryption_centralized_precompute_sns(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_centralized(
     dkg_params: &DKGParams,
     key_id: &RequestId,
@@ -323,10 +323,7 @@ pub(crate) async fn user_decryption_centralized(
             use kms_grpc::kms::v1::TypedPlaintext;
             use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
-            use crate::{
-                client::user_decryption_wasm::TestingUserDecryptionTranscript,
-                util::file_handling::write_element,
-            };
+            use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
             let transcript = TestingUserDecryptionTranscript {
                 server_addrs: internal_client.get_server_addrs(),
                 client_address: internal_client.client_address,
@@ -352,8 +349,8 @@ pub(crate) async fn user_decryption_centralized(
             } else {
                 crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH
             };
-            let path = format!("{}.{}", path_prefix, msg.bits());
-            write_element(&path, &transcript).await.unwrap();
+            let path = format!("{}.{}.json", path_prefix, msg.bits());
+            transcript.write_stable_test_vector_json(&path).unwrap();
         }
     }
 

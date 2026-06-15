@@ -600,7 +600,7 @@ impl<
 
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
@@ -674,7 +674,6 @@ impl<
                     // instead preserve the old keyset's CompactPublicKey to keep the
                     // externally visible public key stable across epochs of the same key_id.
                     let compact_public_key = compressed_keyset
-                        .clone()
                         .decompress()
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to decompress reshared compressed keyset: {e}")
@@ -701,7 +700,7 @@ impl<
                         }
                     };
 
-                    let public_material = PublicKeyMaterial::new(compressed_keyset.clone());
+                    let public_material = PublicKeyMaterial::new(compressed_keyset);
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
                         Arc::new(new_private_keyset),
@@ -814,7 +813,7 @@ impl<
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn reshare_as_set_2(
         &self,
         two_sets_session: TwoSetsBaseSession,
@@ -930,7 +929,7 @@ impl<
         Ok(task)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn reshare_as_both_sets(
         &self,
         two_sets_session: TwoSetsBaseSession,
@@ -1395,13 +1394,24 @@ impl<
 
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
-        Self::destroy_epoch(
+        let res = Self::destroy_epoch(
             &epoch_id,
             &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
             &priv_storage,
             &self.session_maker,
         )
-        .await
+        .await;
+
+        // `destroy_epoch` above removes only the on-disk material, so the cached
+        // decompressed keys must be dropped here separately or they stay resident
+        // until restart. Safe even if destruction partially failed: the epoch is
+        // already gone from the session maker, so nothing can reach these entries.
+        let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
+        tracing::info!(
+            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
+        );
+
+        res
     }
 
     async fn get_epoch_result(

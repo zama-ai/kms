@@ -78,7 +78,7 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum CentralizedKeyGenResult {
     Uncompressed(FhePubKeySet, KmsFheKeyHandles),
     Compressed(
@@ -89,7 +89,7 @@ pub(crate) enum CentralizedKeyGenResult {
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -223,7 +223,7 @@ pub(crate) async fn async_generate_crs(
     recv.await?
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -296,7 +296,7 @@ pub(crate) fn generate_fhe_keys(
     Ok((compressed_keyset, public_key, handles))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn generate_uncompressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -508,7 +508,7 @@ pub fn central_public_decrypt<
 }
 
 /// Perform asynchronous user decryption and serialize the result
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn async_user_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -986,6 +986,7 @@ impl<
             rate_limiter.clone(),
             Arc::clone(&user_dec_meta_store),
             Arc::clone(&pub_dec_meta_store),
+            crypto_storage.clone(),
             telemetry_conf.refresh_interval(),
         );
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -1071,7 +1072,6 @@ impl<
     }
 }
 
-#[allow(clippy::let_underscore_future)]
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -1085,15 +1085,25 @@ impl<
     }
 }
 
-fn update_central_kms_system_metrics(
+fn update_central_kms_system_metrics<PubS, PrivS>(
     rate_limiter: RateLimiter,
     user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     refresh_interval: std::time::Duration,
-) -> tokio::task::JoinHandle<()> {
+) -> tokio::task::JoinHandle<()>
+where
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+{
     tokio::spawn(async move {
         loop {
             METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
+            // Skipped when the cache lock is contended: the gauge keeps its
+            // previous value rather than stalling the whole metrics loop.
+            if let Some(count) = crypto_storage.cached_fhe_key_count() {
+                METRICS.record_fhe_key_cache_size(count as u64);
+            }
             {
                 let user_meta_store_guard = user_meta_store.read().await;
                 METRICS.record_meta_storage_user_decryptions(

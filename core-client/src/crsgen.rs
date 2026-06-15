@@ -1,7 +1,9 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain};
+
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
+use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
@@ -9,7 +11,7 @@ use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::{DSEP_PUBDATA_CRS, safe_serialize_hash_element_versioned};
+use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,7 +21,7 @@ use tokio::task::JoinSet;
 use tonic::Code;
 use tonic::transport::Channel;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn do_crsgen(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
@@ -312,7 +314,7 @@ fn check_crsgen_ext_signature(
     extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
-    let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
+    let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
     tracing::info!(
         "Checking external signature on CRS gen result. crs_id={},digest={}",
@@ -475,8 +477,8 @@ mod tests {
         );
 
         let max_num_bits = max_num_bits_from_crs(&crs);
-        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs)
-            .expect("serialization should succeed");
+        let crs_digest =
+            hash_versioned(&DSEP_PUBDATA_CRS, &crs).expect("serialization should succeed");
         let crs_sol_struct =
             CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), vec![]);
         let crs_sol_struct_extra_data =

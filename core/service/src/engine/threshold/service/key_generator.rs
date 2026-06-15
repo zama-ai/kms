@@ -98,7 +98,7 @@ struct DkgSessions {
 /// Enum to handle both compressed and uncompressed DKG results.
 /// This allows the same code path to handle both keygen and compressed_keygen outputs.
 // It's ok to have a big enum here since the way this type is used is only temporary.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum ThresholdKeyGenResult {
     /// Standard keygen result with full public key set
     Uncompressed(
@@ -123,7 +123,11 @@ use threshold_execution::runtime::sessions::session_parameters::GenericParameter
 use threshold_execution::tfhe_internals::{
     compression_decompression_key::CompressionPrivateKeyShares,
     glwe_key::GlweSecretKeyShare,
-    test_feature::{initialize_compressed_key_material, insecure_initialize_key_material},
+    test_feature::{
+        initialize_compressed_key_material,
+        insecure_initialize_compressed_key_material_from_existing,
+        insecure_initialize_key_material,
+    },
 };
 
 pub struct RealKeyGenerator<
@@ -222,7 +226,7 @@ impl<
 // This is essentially the same as an Option, but it's
 // more clear to label the variants as `Secure`
 // and `Insecure`.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum PreprocHandleWithMode {
     Secure(
@@ -253,7 +257,7 @@ impl<
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > RealKeyGenerator<PubS, PrivS, KG>
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
@@ -996,7 +1000,7 @@ impl<
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn decompression_key_gen_background(
         req_id: &RequestId,
         epoch_id: &EpochId,
@@ -1119,7 +1123,6 @@ impl<
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn compressed_key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -1170,7 +1173,6 @@ impl<
         Ok((compressed_keyset, existing_private_keys))
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn key_gen_from_existing_private_keyset<P>(
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -1221,7 +1223,7 @@ impl<
         Ok((pub_keyset, existing_private_keys))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn key_gen_background(
         req_id: &RequestId,
         epoch_id: &EpochId,
@@ -1286,9 +1288,65 @@ impl<
                             .map(|(compressed_keyset, sk)| {
                                 ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
                             }),
+                            // Insecure compressed keygen from an existing private keyset
+                            // (the UseExisting migration flow). Party 1 reconstructs the
+                            // existing secret key, regenerates the compressed keyset from it,
+                            // and re-shares the (same) secret key to all parties.
+                            (
+                                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                                ddec_keyset_config::ComputeKeyType::Cpu,
+                                ddec_keyset_config::CompressedKeyConfig::All,
+                            ) => {
+                                let existing_keyset_id = match internal_keyset_config
+                                    .get_existing_keyset_id()
+                                {
+                                    Ok(id) => id,
+                                    Err(e) => {
+                                        update_err_req_in_meta_store(
+                                            &mut meta_store.write().await,
+                                            req_id,
+                                            format!(
+                                                "insecure compressed keygen from existing keyset is missing a valid existing_keyset_id: {e}"
+                                            ),
+                                            op_tag,
+                                        );
+                                        return;
+                                    }
+                                };
+                                let tag: tfhe::Tag =
+                                    existing_key_tag.unwrap_or_else(|| req_id.into());
+                                let existing_private_keys = match crypto_storage
+                                    .read_guarded_fhe_keys(&existing_keyset_id, epoch_id)
+                                    .await
+                                {
+                                    Ok(guard) => guard.private_keys.as_ref().clone(),
+                                    Err(e) => {
+                                        update_err_req_in_meta_store(
+                                            &mut meta_store.write().await,
+                                            req_id,
+                                            format!(
+                                                "insecure compressed keygen failed to read the existing private keyset {existing_keyset_id}: {e}"
+                                            ),
+                                            op_tag,
+                                        );
+                                        return;
+                                    }
+                                };
+                                insecure_initialize_compressed_key_material_from_existing(
+                                    &mut dkg_sessions.session_z128,
+                                    params,
+                                    tag,
+                                    &existing_private_keys,
+                                )
+                                .await
+                                .map(|(compressed_keyset, sk)| {
+                                    ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                                })
+                            }
                             _ => {
-                                // insecure keygen from existing compression key is not supported
-                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),  op_tag);
+                                // The only other UseExisting case (uncompressed) is not
+                                // supported insecurely; standard cases are handled above.
+                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from an existing keyset is only supported for compressed keysets".to_string(),  op_tag);
                                 return;
                             }
                         },
@@ -1516,9 +1574,15 @@ impl<
 
                 let threshold_fhe_keys = ThresholdFheKeys::new(
                     Arc::new(private_keys),
-                    PublicKeyMaterial::new(compressed_keyset.clone()),
+                    PublicKeyMaterial::new(compressed_keyset),
                     info,
                 );
+                // Share the material's keyset allocation with the public-storage
+                // set below — the keyset is multi-GiB.
+                let compressed_keyset = threshold_fhe_keys
+                    .public_material
+                    .compressed_keyset()
+                    .expect("material was just built compressed");
 
                 // NOTE: when there is an existing compact pk from an older keygen (an older key ID),
                 // then this pk is effectively copied to the new key ID.
@@ -1529,7 +1593,7 @@ impl<
                         threshold_fhe_keys,
                         PublicKeySet::Compressed {
                             compact_public_key: Arc::new(compact_public_key),
-                            compressed_keyset: Arc::new(compressed_keyset),
+                            compressed_keyset,
                         },
                         Arc::clone(&meta_store),
                         op_tag,

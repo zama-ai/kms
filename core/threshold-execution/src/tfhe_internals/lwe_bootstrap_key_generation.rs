@@ -76,7 +76,7 @@ where
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSION_DEGREE: usize>(
     input_lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,

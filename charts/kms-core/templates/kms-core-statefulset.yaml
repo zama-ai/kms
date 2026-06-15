@@ -347,11 +347,6 @@ spec:
               {{ include "kmsCoreMode" . }} \
             {{- if .Values.kmsCore.thresholdMode.enabled }}
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-            {{- if .Values.kmsCore.thresholdMode.peersList }}
-              --num-parties {{ len .Values.kmsCore.thresholdMode.peersList }} \
-            {{- else }}
-              --num-parties {{ int .Values.kmsPeers.count }} \
-            {{- end }}
             {{- if .Values.kmsCore.addressOverride }}
               --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
             {{- else }}

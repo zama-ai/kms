@@ -269,7 +269,6 @@ impl fmt::Display for PubDataType {
 }
 
 /// The default type is not important, but we need to have one for `EnumIter` derive.
-#[allow(clippy::derivable_impls)]
 impl Default for PubDataType {
     fn default() -> Self {
         PubDataType::PublicKey // Default is public FHE encryption key.
@@ -347,7 +346,7 @@ impl fmt::Display for PrivDataType {
     }
 }
 
-#[allow(clippy::derivable_impls)]
+#[expect(clippy::derivable_impls)]
 impl Default for PrivDataType {
     fn default() -> Self {
         PrivDataType::FheKeyInfo // Default is private FHE key material
