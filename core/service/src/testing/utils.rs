@@ -371,7 +371,6 @@ pub async fn compute_cipher_from_stored_key(
     // the server key which is a thread global variable using RefCell in tfhe
     // and if the key is reset in another rayon thread while compute_cipher is running,
     // it can cause a panic due to the RefCell borrow rules.
-    // By using spawn_blocking, we ensure that compute_cipher runs in a dedicated tokio thread where the server key won't be reset by other threads.
     tokio::task::spawn_blocking(move || compute_cipher(msg, &pk, Some(server_key), enc_config))
         .await
         .unwrap()
