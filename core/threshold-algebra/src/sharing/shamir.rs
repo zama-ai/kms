@@ -192,22 +192,22 @@ where
 
 pub trait RevealOp<Z> {
     fn reconstruct(&self, degree: usize) -> anyhow::Result<Z> {
-        self.err_reconstruct(degree, 0)
+        self.error_reconstruct(degree, 0)
     }
 
-    fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z>;
+    fn error_reconstruct(&self, degree: usize, max_errors: usize) -> anyhow::Result<Z>;
 
-    fn err_reconstruct_with_hints(
+    fn error_reconstruct_with_hints(
         &self,
         degree: usize,
-        max_errs: usize,
+        max_errors: usize,
         _hints: &ReconstructionHints<Z>,
     ) -> anyhow::Result<Z>
     where
         Z: ErrorCorrect,
     {
         // Default: ignore hints
-        self.err_reconstruct(degree, max_errs)
+        self.error_reconstruct(degree, max_errors)
     }
 }
 
@@ -215,18 +215,18 @@ impl<Z> RevealOp<Z> for ShamirSharings<Z>
 where
     Z: ErrorCorrect,
 {
-    fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z> {
-        let recon = <Z as ErrorCorrect>::error_correct(self, degree, max_errs)?;
+    fn error_reconstruct(&self, degree: usize, max_errors: usize) -> anyhow::Result<Z> {
+        let recon = <Z as ErrorCorrect>::error_correct(self, degree, max_errors)?;
         Ok(recon.eval(&Z::ZERO))
     }
 
-    fn err_reconstruct_with_hints(
+    fn error_reconstruct_with_hints(
         &self,
         degree: usize,
-        max_errs: usize,
+        max_errors: usize,
         hints: &ReconstructionHints<Z>,
     ) -> anyhow::Result<Z> {
-        let recon = Z::error_correct_with_hints(self, degree, max_errs, hints)?;
+        let recon = Z::error_correct_with_hints(self, degree, max_errors, hints)?;
         Ok(recon.eval(&Z::ZERO))
     }
 }
@@ -295,14 +295,14 @@ where
     //Make sure we have enough shares already to try and reconstrcut
     if degree + 2 * threshold < num_parties && num_heard_from > degree + 2 * threshold {
         // the maximum number of errors we can correct is threshold minus the number of bots
-        // max_errs = threshold - num_bots
-        let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
+        // max_errors = threshold - num_bots
+        let max_errorss = threshold.checked_sub(num_bots).ok_or_else(|| {
             anyhow_error_and_warn_log(format!(
-                "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
+                "Underflow in reconstruction computing max_errors:  num_bots ({num_bots}) > threshold ({threshold})"
             ))
         })?;
 
-        let opened = sharing.err_reconstruct_with_hints(degree, max_errs, hints)?;
+        let opened = sharing.error_reconstruct_with_hints(degree, max_errorss, hints)?;
         return Ok(Some(opened));
     }
 
@@ -348,13 +348,13 @@ where
     let num_heard_from = sharing.shares.len() + num_bots;
     if degree + 3 * threshold < num_parties {
         if num_heard_from > degree + 2 * threshold {
-            let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
+            let max_errors = threshold.checked_sub(num_bots).ok_or_else(|| {
                 anyhow_error_and_warn_log(format!(
-                    "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
+                    "Underflow in reconstruction computing max_errors:  num_bots ({num_bots}) > threshold ({threshold})"
                 ))
             })?;
 
-            let opened = sharing.err_reconstruct_with_hints(degree, max_errs, hints)?;
+            let opened = sharing.error_reconstruct_with_hints(degree, max_errors, hints)?;
             Ok(Some(opened))
         } else {
             //We do not have enough shares yet

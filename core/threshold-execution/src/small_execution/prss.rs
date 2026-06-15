@@ -2499,7 +2499,7 @@ mod tests {
             .map(|idx| {
                 let reconstruct =
                     ShamirSharings::create(results.iter().map(|shares| shares[idx]).collect())
-                        .err_reconstruct(degree, max_error);
+                        .error_reconstruct(degree, max_error);
                 assert!(
                     reconstruct.is_ok(),
                     "Failed to reconstruct at idx {idx}: {reconstruct:?}"

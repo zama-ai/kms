@@ -645,7 +645,7 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
 fn gao_decoding_common<F: Field>(
     n: usize,
     k: usize,
-    max_errs: usize,
+    max_errors: usize,
     r: Poly<F>,
     g: Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
@@ -656,7 +656,7 @@ fn gao_decoding_common<F: Field>(
 
     // We are expecting to correct more than what can be done:
     // Gao can only correct up to (d-1)/2 errors
-    if 2 * max_errs >= d {
+    if 2 * max_errors >= d {
         return Err(anyhow_error_and_log(
             "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
         ));
@@ -670,9 +670,9 @@ fn gao_decoding_common<F: Field>(
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
     // abort early if we have too many errors
-    if q0.deg() > max_errs {
+    if q0.deg() > max_errors {
         return Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.",
+            "Gao decoding failure: Allowed at most {max_errors} errors but xgcd factor degree indicates {}.",
             q0.deg()
         )));
     }
@@ -702,14 +702,14 @@ fn gao_decoding_common<F: Field>(
 /// - `values` holds the y-coordinates
 /// - `k` such that we apply error correction to a polynomial of degree < k
 ///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
-/// - `max_errs` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
+/// - `max_errors` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
 ///
 /// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
 pub fn gao_decoding<F: Field>(
     points: &[F],
     values: &[F],
     k: usize,
-    max_errs: usize,
+    max_errors: usize,
 ) -> anyhow::Result<Poly<F>> {
     // in the literature we find (n, k, d) codes
     // parameter k is called v in the NIST doc (the RS dimension)
@@ -737,7 +737,7 @@ pub fn gao_decoding<F: Field>(
         g = g * fi;
     }
 
-    gao_decoding_common(n, k, max_errs, r, g)
+    gao_decoding_common(n, k, max_errors, r, g)
 }
 
 /// Like [`gao_decoding`] but reuses precomputed Lagrange polynomials and the vanishing polynomial
@@ -749,7 +749,7 @@ pub fn gao_decoding_with_field_hints<F: Field>(
     points: &[F],
     values: &[F],
     k: usize,
-    max_errs: usize,
+    max_errors: usize,
     lagrange_polys: &[Poly<F>],
     vanishing_poly: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
@@ -767,7 +767,7 @@ pub fn gao_decoding_with_field_hints<F: Field>(
     // G = vanishing polynomial (precomputed).
     let g = vanishing_poly.clone();
 
-    gao_decoding_common(n, k, max_errs, r, g)
+    gao_decoding_common(n, k, max_errors, r, g)
 }
 
 #[cfg(test)]

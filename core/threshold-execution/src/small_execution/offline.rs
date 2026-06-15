@@ -305,7 +305,7 @@ where
                     .map(|(cur_role, cur_values)| Share::new(*cur_role, cur_values[i]))
                     .collect_vec();
                 ShamirSharings::create(shares)
-                    .err_reconstruct_with_hints(degree, max_errors, &hints)
+                    .error_reconstruct_with_hints(degree, max_errors, &hints)
                     .ok()
             })
             .collect::<Vec<_>>()
@@ -600,7 +600,7 @@ mod test {
                         .unwrap_or_else(|_| Share::new(*role, Z::ZERO)),
                 );
             }
-            let random = shares.err_reconstruct(params.threshold, num_malicious);
+            let random = shares.error_reconstruct(params.threshold, num_malicious);
             assert!(random.is_ok(), "Failed to reconstruct random: {random:?}");
             reconstructed_randoms.push(random.unwrap());
         }
@@ -636,9 +636,9 @@ mod test {
                 shares_z.add_share(z);
             }
             let (x, y, z) = (
-                shares_x.err_reconstruct(params.threshold, num_malicious),
-                shares_y.err_reconstruct(params.threshold, num_malicious),
-                shares_z.err_reconstruct(params.threshold, num_malicious),
+                shares_x.error_reconstruct(params.threshold, num_malicious),
+                shares_y.error_reconstruct(params.threshold, num_malicious),
+                shares_z.error_reconstruct(params.threshold, num_malicious),
             );
             assert!(
                 x.is_ok(),

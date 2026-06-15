@@ -384,9 +384,9 @@ macro_rules! impl_field_level {
                 fn error_correct(
                     sharing: &ShamirSharings<$name>,
                     threshold: usize,
-                    max_errs: usize,
+                    max_errorsors: usize,
                 ) -> anyhow::Result<Poly<$name>> {
-                    error_correction(sharing.shares.clone(), threshold, max_errs)
+                    error_correction(sharing.shares.clone(), threshold, max_errorsors)
                 }
             }
             }
@@ -408,7 +408,7 @@ impl ErrorCorrect for LevelKsw {
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         threshold: usize,
-        max_errs: usize,
+        max_errorsors: usize,
     ) -> anyhow::Result<Poly<Self>> {
         //Apply CRT decomposition to all the shares
         let crt_shares = sharing
@@ -423,7 +423,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_r))
                 .collect_vec(),
         };
-        let mut res_level_r = FieldR::error_correct(&shamir_level_r, threshold, max_errs)?;
+        let mut res_level_r = FieldR::error_correct(&shamir_level_r, threshold, max_errorsors)?;
 
         let shamir_level_one = ShamirSharings {
             shares: crt_shares
@@ -431,7 +431,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_one))
                 .collect_vec(),
         };
-        let mut res_level_one = FieldOne::error_correct(&shamir_level_one, threshold, max_errs)?;
+        let mut res_level_one =
+            FieldOne::error_correct(&shamir_level_one, threshold, max_errorsors)?;
 
         let shamir_level_two = ShamirSharings {
             shares: crt_shares
@@ -439,7 +440,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_two))
                 .collect_vec(),
         };
-        let mut res_level_two = FieldTwo::error_correct(&shamir_level_two, threshold, max_errs)?;
+        let mut res_level_two =
+            FieldTwo::error_correct(&shamir_level_two, threshold, max_errorsors)?;
 
         let shamir_level_three = ShamirSharings {
             shares: crt_shares
@@ -448,7 +450,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_three =
-            FieldThree::error_correct(&shamir_level_three, threshold, max_errs)?;
+            FieldThree::error_correct(&shamir_level_three, threshold, max_errorsors)?;
 
         let shamir_level_four = ShamirSharings {
             shares: crt_shares
@@ -456,7 +458,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_four))
                 .collect_vec(),
         };
-        let mut res_level_four = FieldFour::error_correct(&shamir_level_four, threshold, max_errs)?;
+        let mut res_level_four =
+            FieldFour::error_correct(&shamir_level_four, threshold, max_errorsors)?;
 
         let shamir_level_five = ShamirSharings {
             shares: crt_shares
@@ -464,7 +467,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_five))
                 .collect_vec(),
         };
-        let mut res_level_five = FieldFive::error_correct(&shamir_level_five, threshold, max_errs)?;
+        let mut res_level_five =
+            FieldFive::error_correct(&shamir_level_five, threshold, max_errorsors)?;
 
         let shamir_level_six = ShamirSharings {
             shares: crt_shares
@@ -472,7 +476,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_six))
                 .collect_vec(),
         };
-        let mut res_level_six = FieldSix::error_correct(&shamir_level_six, threshold, max_errs)?;
+        let mut res_level_six =
+            FieldSix::error_correct(&shamir_level_six, threshold, max_errorsors)?;
 
         let shamir_level_seven = ShamirSharings {
             shares: crt_shares
@@ -481,7 +486,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_seven =
-            FieldSeven::error_correct(&shamir_level_seven, threshold, max_errs)?;
+            FieldSeven::error_correct(&shamir_level_seven, threshold, max_errorsors)?;
 
         let shamir_level_eight = ShamirSharings {
             shares: crt_shares
@@ -490,7 +495,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_eight =
-            FieldEight::error_correct(&shamir_level_eight, threshold, max_errs)?;
+            FieldEight::error_correct(&shamir_level_eight, threshold, max_errorsors)?;
 
         let shamir_level_nine = ShamirSharings {
             shares: crt_shares
@@ -498,7 +503,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_nine))
                 .collect_vec(),
         };
-        let mut res_level_nine = FieldNine::error_correct(&shamir_level_nine, threshold, max_errs)?;
+        let mut res_level_nine =
+            FieldNine::error_correct(&shamir_level_nine, threshold, max_errorsors)?;
 
         let shamir_level_ten = ShamirSharings {
             shares: crt_shares
@@ -506,7 +512,8 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_ten))
                 .collect_vec(),
         };
-        let mut res_level_ten = FieldTen::error_correct(&shamir_level_ten, threshold, max_errs)?;
+        let mut res_level_ten =
+            FieldTen::error_correct(&shamir_level_ten, threshold, max_errorsors)?;
 
         let shamir_level_eleven = ShamirSharings {
             shares: crt_shares
@@ -515,7 +522,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_eleven =
-            FieldEleven::error_correct(&shamir_level_eleven, threshold, max_errs)?;
+            FieldEleven::error_correct(&shamir_level_eleven, threshold, max_errorsors)?;
 
         let shamir_level_twelve = ShamirSharings {
             shares: crt_shares
@@ -524,7 +531,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_twelve =
-            FieldTwelve::error_correct(&shamir_level_twelve, threshold, max_errs)?;
+            FieldTwelve::error_correct(&shamir_level_twelve, threshold, max_errorsors)?;
 
         let shamir_level_thirteen = ShamirSharings {
             shares: crt_shares
@@ -533,7 +540,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_thirteen =
-            FieldThirteen::error_correct(&shamir_level_thirteen, threshold, max_errs)?;
+            FieldThirteen::error_correct(&shamir_level_thirteen, threshold, max_errorsors)?;
 
         let shamir_level_fourteen = ShamirSharings {
             shares: crt_shares
@@ -542,7 +549,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_fourteen =
-            FieldFourteen::error_correct(&shamir_level_fourteen, threshold, max_errs)?;
+            FieldFourteen::error_correct(&shamir_level_fourteen, threshold, max_errorsors)?;
 
         let shamir_level_fifteen = ShamirSharings {
             shares: crt_shares
@@ -551,7 +558,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_fifteen =
-            FieldFifteen::error_correct(&shamir_level_fifteen, threshold, max_errs)?;
+            FieldFifteen::error_correct(&shamir_level_fifteen, threshold, max_errorsors)?;
 
         //All the level polynomial have max degree threshold, so we will crt reconstruct a polynomial of degree threshold
         let mut coefs: Vec<Self> = Vec::new();
@@ -1533,7 +1540,7 @@ mod tests {
 
         let num_parties = 7;
         let threshold = f.coefs().len() - 1; // = 2 here
-        let max_err = (num_parties - threshold) / 2; // = 2 here
+        let max_errors = (num_parties - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)
             .map(|x| {
@@ -1547,7 +1554,7 @@ mod tests {
         shares[1] += LevelOne::from_u128(10);
         shares[2] += LevelOne::from_u128(254);
 
-        let secret_poly = error_correction(shares, threshold, max_err).unwrap();
+        let secret_poly = error_correction(shares, threshold, max_errors).unwrap();
         assert_eq!(secret_poly, f);
     }
 
@@ -1557,9 +1564,9 @@ mod tests {
         let secret = LevelOne::from_u128(2345);
         let num_parties = 8;
         let threshold = 2;
-        let max_err = 0;
+        let max_errors = 0;
         let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
-        let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+        let f_zero = sharing.error_reconstruct(threshold, max_errors).unwrap();
         assert_eq!(f_zero, secret);
     }
 
@@ -1569,9 +1576,9 @@ mod tests {
         let secret = LevelKsw::sample(&mut rng);
         let num_parties = 8;
         let threshold = 2;
-        let max_err = 0;
+        let max_errors = 0;
         let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
-        let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+        let f_zero = sharing.error_reconstruct(threshold, max_errors).unwrap();
         assert_eq!(f_zero, secret);
     }
 
@@ -1584,7 +1591,7 @@ mod tests {
         let mut sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
         sharing.shares[0] = Share::new(sharing.shares[0].owner(), LevelKsw::sample(&mut rng));
         sharing.shares[3] = Share::new(sharing.shares[3].owner(), LevelKsw::sample(&mut rng));
-        let f_zero = sharing.err_reconstruct(threshold, threshold).unwrap();
+        let f_zero = sharing.error_reconstruct(threshold, threshold).unwrap();
         assert_eq!(f_zero, secret);
     }
 

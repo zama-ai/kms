@@ -251,7 +251,7 @@ where
 fn shamir_error_correct<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
     degree: usize,
-    max_errs: usize,
+    max_errorsors: usize,
     #[cfg(test)] err_indices: Option<&mut Vec<(threshold_types::role::Role, usize)>>,
 ) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>
 where
@@ -296,7 +296,7 @@ where
         let num_new_bot = initial_length - binary_shares.len();
 
         // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
-        let fi_mod2 = error_correction(binary_shares, degree, max_errs - num_new_bot)?;
+        let fi_mod2 = error_correction(binary_shares, degree, max_errorsors - num_new_bot)?;
 
         let _evicted = apply_bit_correction(
             &mut shares_with_validity,
@@ -325,7 +325,7 @@ where
 fn shamir_error_correct_with_hints<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
     degree: usize,
-    max_errs: usize,
+    max_errorsors: usize,
     hints: &ReconstructionHints<ResiduePoly<Z, EXTENSION_DEGREE>>,
 ) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>
 where
@@ -371,7 +371,7 @@ where
             error_correction_with_field_hints(
                 binary_shares,
                 degree,
-                max_errs - num_new_bot,
+                max_errorsors - num_new_bot,
                 &hints.field_hints,
             )?
         } else {
@@ -387,7 +387,7 @@ where
             error_correction_with_field_hints(
                 binary_shares,
                 degree,
-                max_errs - num_new_bot,
+                max_errorsors - num_new_bot,
                 fallback_field_hints.as_ref().unwrap(),
             )?
         };
@@ -427,38 +427,38 @@ where
     ///
     /// - sharing is the set of shares we try to reconstruct the secret from
     /// - degree is the degree of the sharing polynomial (either threshold or `2*threshold`)
-    /// - max_errs is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is `2*threshold`)
+    /// - max_errorsors is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is `2*threshold`)
     ///
     /// __NOTE__ : We assume values coming from known malicious parties have been excluded by the caller (i.e. values denoted Bot in NIST doc)
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         degree: usize,
-        max_errs: usize,
+        max_errorsors: usize,
     ) -> anyhow::Result<Poly<Self>> {
         #[cfg(not(test))]
         {
-            shamir_error_correct(sharing, degree, max_errs)
+            shamir_error_correct(sharing, degree, max_errorsors)
         }
         #[cfg(test)]
         {
-            shamir_error_correct(sharing, degree, max_errs, None)
+            shamir_error_correct(sharing, degree, max_errorsors, None)
         }
     }
 
     fn error_correct_with_hints(
         sharing: &ShamirSharings<Self>,
         degree: usize,
-        max_errs: usize,
+        max_errorsors: usize,
         hints: &ReconstructionHints<Self>,
     ) -> anyhow::Result<Poly<Self>> {
-        shamir_error_correct_with_hints(sharing, degree, max_errs, hints)
+        shamir_error_correct_with_hints(sharing, degree, max_errorsors, hints)
     }
 }
 
 pub fn error_correction<F: Field>(
     shares: Vec<Share<F>>,
     degree: usize,
-    max_errs: usize,
+    max_errorsors: usize,
 ) -> anyhow::Result<ShamirFieldPoly<F>> {
     let xs: Vec<F> = shares
         .iter()
@@ -467,7 +467,7 @@ pub fn error_correction<F: Field>(
     let ys: Vec<F> = shares.into_iter().map(|s| s.take_value()).collect();
 
     // call Gao decoding with the shares as points/values, set Gao parameter k = v = degree+1
-    gao_decoding(&xs, &ys, degree + 1, max_errs)
+    gao_decoding(&xs, &ys, degree + 1, max_errorsors)
 }
 
 /// Like [`error_correction`] but reuses precomputed [`FieldHints`] to avoid redundant
@@ -477,7 +477,7 @@ pub fn error_correction<F: Field>(
 pub fn error_correction_with_field_hints<F: Field>(
     shares: Vec<Share<F>>,
     degree: usize,
-    max_errs: usize,
+    max_errorsors: usize,
     field_hints: &FieldHints<F>,
 ) -> anyhow::Result<ShamirFieldPoly<F>> {
     let ys: Vec<F> = shares.into_iter().map(|s| s.take_value()).collect();
@@ -486,7 +486,7 @@ pub fn error_correction_with_field_hints<F: Field>(
         &field_hints.embedded_points,
         &ys,
         degree + 1,
-        max_errs,
+        max_errorsors,
         &field_hints.lagrange_polys,
         &field_hints.vanishing_poly,
     )
@@ -640,7 +640,7 @@ mod tests {
 
         let num_parties = 7;
         let threshold = f.coefs().len() - 1; // = 2 here
-        let max_err = (num_parties - threshold) / 2; // = 2 here
+        let max_errors = (num_parties - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)
             .map(|x| {
@@ -654,13 +654,13 @@ mod tests {
         shares[1] += BaseField::from_u128(9);
         shares[2] += BaseField::from_u128(254);
 
-        let secret_poly = error_correction(shares.clone(), threshold, max_err).unwrap();
+        let secret_poly = error_correction(shares.clone(), threshold, max_errors).unwrap();
         assert_eq!(secret_poly, f);
 
         let parties = shares.iter().map(|s| s.owner()).collect::<Vec<_>>();
         let hints = FieldHints::new(&parties).unwrap();
         let secret_poly_with_hints =
-            error_correction_with_field_hints(shares, threshold, max_err, &hints).unwrap();
+            error_correction_with_field_hints(shares, threshold, max_errors, &hints).unwrap();
         assert_eq!(secret_poly_with_hints, f);
     }
 }
