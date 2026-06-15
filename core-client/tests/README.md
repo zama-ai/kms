@@ -5,7 +5,7 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features slow_tests` |
+| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features slow_tests -- threshold` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
 | **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
