@@ -221,7 +221,8 @@ More specifically the following steps must be done:
 
 WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
 
-Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
+The recoveyr procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
+However, the procedure is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
 
 Assuming the TOML file has been appropriately modified to allow custodian-based backup, as discussed above, then the steps needed are as follows:
 
