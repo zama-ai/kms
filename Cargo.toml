@@ -199,6 +199,7 @@ test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual main
 # NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
 tfhe = "=1.6.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
 tfhe-csprng = "=0.9.1"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-safe-serialize = "=0.1.1" # TFHE safe serialization - LOW RISK: Zama
 tfhe-versionable = "=0.8.0"  # TFHE versioning support - LOW RISK: Zama
 tfhe-zk-pok = "=0.8.2"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads

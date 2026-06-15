@@ -1924,8 +1924,10 @@ async fn run_threshold_compressed_keygen_from_existing(
     // from keygen_id_1 (migration semantics), not the one obtained by decompressing the
     // newly-generated CompressedXofKeySet.
     {
-        use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
+        use crate::engine::base::DSEP_PUBDATA_KEY;
         use crate::vault::storage::crypto_material::CryptoMaterialReader;
+        use hashing::hash_versioned;
+
         let expected_tag: tfhe::Tag = keygen_id_1.into();
         for (&party_id, storage) in &pub_storage_map {
             let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
@@ -1956,12 +1958,9 @@ async fn run_threshold_compressed_keygen_from_existing(
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_1).await?;
 
             // CompactPublicKey does not implement PartialEq, so compare via digests.
-            let digest_stored_new =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &stored_pk_new).unwrap();
-            let digest_stored_old =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &stored_pk_old).unwrap();
-            let digest_derived_from_new_keyset =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
+            let digest_stored_new = hash_versioned(&DSEP_PUBDATA_KEY, &stored_pk_new).unwrap();
+            let digest_stored_old = hash_versioned(&DSEP_PUBDATA_KEY, &stored_pk_old).unwrap();
+            let digest_derived_from_new_keyset = hash_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
 
             assert_eq!(
                 digest_stored_new, digest_stored_old,

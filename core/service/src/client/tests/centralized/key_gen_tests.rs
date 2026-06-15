@@ -4,11 +4,14 @@ use crate::client::tests::common::keygen_config;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
+use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::derive_request_id;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::StorageReaderExt;
 use crate::vault::storage::{StorageType, file::FileStorage};
+
 use alloy_dyn_abi::Eip712Domain;
+use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -18,9 +21,8 @@ use kms_grpc::{ContextId, RequestId};
 use std::path::Path;
 use std::str::FromStr;
 use tfhe::prelude::Tagged;
-use tonic::transport::Channel;
-
 use threshold_execution::tfhe_internals::test_feature::run_decompression_test;
+use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_key_gen_centralized() -> anyhow::Result<()> {
@@ -329,16 +331,8 @@ pub async fn run_key_gen_centralized(
             // from the compressed keyset (migration flow would differ, but this test path is
             // always a fresh keygen). CompactPublicKey does not implement PartialEq, so we
             // compare via domain-separated digests.
-            let stored_digest = crate::engine::base::safe_serialize_hash_element_versioned(
-                &crate::engine::base::DSEP_PUBDATA_KEY,
-                &stored_public_key,
-            )
-            .unwrap();
-            let derived_digest = crate::engine::base::safe_serialize_hash_element_versioned(
-                &crate::engine::base::DSEP_PUBDATA_KEY,
-                &derived_public_key,
-            )
-            .unwrap();
+            let stored_digest = hash_versioned(&DSEP_PUBDATA_KEY, &stored_public_key).unwrap();
+            let derived_digest = hash_versioned(&DSEP_PUBDATA_KEY, &derived_public_key).unwrap();
             assert_eq!(stored_digest, derived_digest);
             (server_key, stored_public_key)
         } else {

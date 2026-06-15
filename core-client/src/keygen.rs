@@ -5,6 +5,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
+use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -13,7 +14,7 @@ use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
+use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::util::key_setup::test_tools::{
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
@@ -524,8 +525,8 @@ pub(crate) fn check_uncompressed_keyset_ext_signature(
     extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
-    let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
-    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+    let server_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, server_key)?;
+    let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
     tracing::info!(
         "Checking external signature for standard keyset: key_id={},preproc_id={},server_key_digest={},public_key_digest={}",
@@ -566,9 +567,8 @@ pub(crate) fn check_compressed_keyset_ext_signature(
     extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
-    let keyset_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
-    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+    let keyset_digest = hash_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
+    let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
     tracing::info!(
         "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={},public_key_digest={}",
@@ -923,9 +923,8 @@ mod tests {
 
         // === compressed keyset signatures ===
         let compressed_keyset_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
-        let public_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compact_public_key).unwrap();
+            hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
+        let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &compact_public_key).unwrap();
         let compressed_sol_struct = KeygenVerification::new_compressed(
             prep_id,
             key_id,
