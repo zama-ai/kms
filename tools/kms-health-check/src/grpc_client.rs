@@ -1,10 +1,12 @@
 use crate::config::HealthCheckConfig;
 use anyhow::{Context, Result};
 use kms_grpc::kms::v1::{
-    Empty, HealthStatusResponse, KeyMaterialAvailabilityResponse, OperatorPublicKey,
+    BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, Empty, HealthStatusResponse,
+    KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::time::{Duration, Instant};
+use tonic::Request;
 use tonic::transport::Channel;
 
 // Global timeout configuration
@@ -100,6 +102,21 @@ impl GrpcHealthClient {
 
         let mut client = CoreServiceEndpointClient::new(channel.clone());
         let response = client.get_health_status(Empty {}).await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn run_bandwidth_benchmark(
+        &self,
+        request: BandwidthBenchmarkRequest,
+        duration: std::time::Duration,
+    ) -> Result<BandwidthBenchmarkResponse> {
+        let channel = Channel::from_shared(self.endpoint.clone())?
+            .timeout(duration + self.timeouts.request_timeout) // Set timeout to benchmark duration + buffer
+            .connect()
+            .await?;
+
+        let mut client = CoreServiceEndpointClient::new(channel.clone());
+        let response = client.bandwidth_benchmark(Request::new(request)).await?;
         Ok(response.into_inner())
     }
 }

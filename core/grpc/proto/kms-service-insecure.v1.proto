@@ -73,4 +73,6 @@ service CoreServiceEndpoint {
   rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
 
   rpc GetHealthStatus(kms.v1.Empty) returns (kms.v1.HealthStatusResponse);
+
+    rpc BandwidthBenchmark(kms.v1.BandwidthBenchmarkRequest) returns (kms.v1.BandwidthBenchmarkResponse);
 }
