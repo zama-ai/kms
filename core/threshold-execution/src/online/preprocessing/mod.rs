@@ -89,7 +89,9 @@ mock! {
 
 pub trait BitPreprocessing<Z: Clone>: Send + Sync {
     fn append_bits(&mut self, bits: Vec<Share<Z>>);
+    /// Must return an error if there are no bits available
     fn next_bit(&mut self) -> anyhow::Result<Share<Z>>;
+    /// Must return an error if there are not enough bits available
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>>;
     fn bits_len(&self) -> usize;
 }
