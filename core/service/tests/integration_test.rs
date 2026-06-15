@@ -619,9 +619,12 @@ mod kms_custodian_binary_tests {
             let ct = ct_map.get(&custodian_role).unwrap();
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
-        let recovery_request =
-            InternalRecoveryRequest::new(ephemeral_pub_key.clone(), verification_key, ciphertexts)
-                .unwrap();
+        let recovery_request = InternalRecoveryRequest::new(
+            ephemeral_pub_key.clone(),
+            verification_key.clone(),
+            ciphertexts,
+        )
+        .unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
             .await
             .unwrap();
