@@ -67,6 +67,13 @@ struct SignedRequest {
     handles: Vec<String>,
     #[serde(rename = "userAddress")]
     user_address: String,
+    // RFC-021 typed Solana auth fields (no longer packed into extraData; extraData is context-only).
+    #[serde(rename = "solanaUserIdentity")]
+    solana_user_identity: String,
+    #[serde(rename = "solanaNonce")]
+    solana_nonce: String,
+    #[serde(rename = "solanaAllowedAclDomainKeys")]
+    solana_allowed_acl_domain_keys: Vec<String>,
 }
 
 /// Shells out to the js-sdk signer (`buildSolanaUserDecryptRequest`) to produce the canonical V2
@@ -151,8 +158,8 @@ async fn solana_user_decrypt_live() {
     let handle = alloy_primitives::hex::decode(handle_hex.trim_start_matches("0x")).unwrap();
     let handle32: [u8; 32] = handle.try_into().expect("handle must be 32 bytes");
 
-    // context_id (32-byte BE): the KMS context the connector validates + routes to. Carried inside
-    // the 0x03 Solana extraData blob the SDK builds.
+    // context_id (32-byte BE): the KMS context the connector validates + routes to. Carried in the
+    // context-only `extraData` (v0x01) the SDK builds; the ed25519 auth fields travel as typed fields.
     let context_u256 = U256::from_str_radix(
         &env_or(
             "SOLANA_UD_CONTEXT_ID",
@@ -209,7 +216,7 @@ async fn solana_user_decrypt_live() {
     };
 
     // The v3 envelope carries EVM-shaped address fields the connector ignores on the Solana arm
-    // (it derives the subject from the signed extraData identity). They must still parse as 20-byte
+    // (it derives the subject from the typed `solanaUserIdentity`). They must still parse as 20-byte
     // addresses; use the SDK-derived client id (keccak(identity)[12..]).
     let user_address = signed.user_address.clone();
     let body = serde_json::json!({
@@ -223,14 +230,19 @@ async fn solana_user_decrypt_live() {
                 "ownerAddress": user_address,
             }],
             "userAddress": user_address,
-            // Solana scope lives in the signed extraData, so allowedContracts is empty.
+            // Solana ACL scope travels as the typed `solanaAllowedAclDomainKeys`, so EVM
+            // `allowedContracts` is empty.
             "allowedContracts": [],
             "requestValidity": {
                 "startTimestamp": start_ts.to_string(),
                 "durationSeconds": duration_seconds.to_string(),
             },
             "publicKey": public_key_field,
+            // extraData is context-only (v0x01); the ed25519 auth fields are typed below (RFC-021).
             "extraData": signed.extra_data,
+            "solanaUserIdentity": signed.solana_user_identity,
+            "solanaNonce": signed.solana_nonce,
+            "solanaAllowedAclDomainKeys": signed.solana_allowed_acl_domain_keys,
         },
         "signature": signed.signature,
     });
