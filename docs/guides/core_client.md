@@ -178,9 +178,9 @@ After `backup-restore` has been executed the KMS server must be rebooted for the
 
 ### Custodian-based backup
 
-#### Setup
+#### Configuration
 
-To set up a custodian-based approach. A backup storage must be set up similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as follows, using the local file system:
+To configure custodian-based approach. A backup storage must be set up similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as follows, using the local file system:
 ```{toml}
 [backup_vault.storage.file]
 path = "./backup_vault"
@@ -205,6 +205,18 @@ path = "./backup_vault"
 [backup_vault.keychain.secret_sharing]
 ```
 
+#### Setup
+
+For the custodian backup approach to work, and start doing backups, a custodian context first needs to be setup. To setup this, first a set of custodians must be selected. Each of this must complete an initialization step resulting in each of them holding a *seed phrase* and some public key material. 
+The key material of each custodian must then be communicated with operators (which happens during custodian context construction). Once this is done, the operators will automatically backup private key material in a secret-shared manner, signcrypted under the custodians' public keys.
+More specifically the following steps must be done:
+
+1. Set up custodians.
+  This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool.
+  This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
+1. Add a new custodian context.
+  After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).
+
 #### Recovery
 
 WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
@@ -213,27 +225,23 @@ Recovery with custodians is rather complex and requires multiple steps and manua
 
 Assuming the TOML file has been appropriately modified to allow custodian-based backup, as discussed above, then the steps needed are as follows:
 
-1. Set up custodians.
-  This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool.
-  This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
-2. Add a new custodian context.
-  After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will eventually happen through the gateway but can also be executed with the CLI tool as detailed in [this section](#Custodian-context).
-3. Initiate the recovery.
+
+1. Initiate the recovery.
   After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt this is done with the following command:
   ```{bash}
   $ cargo run -- -f <path-to-toml-config-file> custodian-recovery-init [-o <bool>] -r <dir to store recovery info from operator 1> -r <dir to store recovery info from operator 2> ...
   ```
-  That is, an optional boolean expressing whether to allow overwriting any potential existing ephemeral key (default is false) followed by an ordered list of arguments must be given; one for each of the KMS nodes. In monotonically increasing order of each of the KMS nodes' IDs. These directories will express where the result of the initiation of each the servers will be stored, which must then be communicated with the custodians to proceed with the recovery.
+  That is, an optional boolean expressing whether to allow overwriting any potential existing ephemeral key (default is false, and expanded paramter is `overwrite-ephemeral-key`) followed by an ordered list of arguments must be given; one for each of the KMS nodes. In monotonically increasing order of each of the KMS nodes' IDs. These directories will express where the result of the initiation of each the servers will be stored, which must then be communicated with the custodians to proceed with the recovery.
 
   As a concrete example of a command for a setup with 4 servers is the following:
   ```{bash}
   $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
   ```
   As output, the custodian context/backup ID is printed.
-4. Custodians do partial decryption.
+1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
   Using the recovery information from the operators, each custodian can use the KMS Custodian CLI tool to prepare the partially decrypted response to the KMS nodes. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The results from the custodians must then be consolidated at the KMS operators.
-5. KMS nodes recover the backup decryption key.
+1. KMS nodes recover the backup decryption key.
   After the custodians have completed the partial decryption the results are communicated _individually_ to each of the KMS nodes. I.e. custodian `i` communicates the reencryption of the backup decryption key for KMS node `j` only to KMS node `j`.
   Afterwards the KMS nodes can recover the decryption key, which can then be used to recover from the backup. The recovery of the decryption key can be done with the following command:
   ```{bash}
@@ -248,7 +256,7 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   ```{bash}
   $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3
   ```
-6. Recover the backup.
+1. Recover the backup.
   With the backup decryption key recovered in RAM, it is now possible for the KMS nodes to decrypt the backup. This is done with the following command, similar to the import/export approach above:
   ```{bash}
   $ cargo run -- -f <path-to-toml-config-file> backup-restore
@@ -261,6 +269,9 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   ```{bash}
   $ cargo run -- -f config/client_local_threshold_backup_custodian.toml backup-restore
   ```
+
+#### Rotating the custodian context
+TODO
 
 ### Concrete e2e example for custodian backup
 

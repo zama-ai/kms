@@ -2,6 +2,7 @@ use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::consts::DEFAULT_EPOCH_ID;
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
@@ -102,6 +103,7 @@ where
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
+        let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;
@@ -123,6 +125,7 @@ where
         )?;
         let recovery_request = RecoveryRequest {
             ephem_op_enc_key: serialized_pub_key,
+            operator_verf_key,
             cts: grpc_cts,
         };
         tracing::info!(

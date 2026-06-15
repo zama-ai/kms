@@ -1773,6 +1773,7 @@ mod tests {
         .unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
+            server_verf_key,
             recovery_material.payload.cts,
         )
         .unwrap();

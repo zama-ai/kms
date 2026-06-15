@@ -670,7 +670,7 @@ message CustodianRecoveryOutput {
 // which is sent to the KMS to recover the private backup master decryption key
 message CustodianRecoveryRequest {
   RequestId custodian_context_id = 1;
-  repeated CustodianRecoveryOutput custodian_recovery_outputs = 2;
+  repeated CustodianRecoveryOutput custodian_recovery_outputs = 3;
 }
 
 // The data constructed by a given operator towards a given custodian after it has constructed a recovery request
@@ -693,8 +693,10 @@ enum SigningSchemeType {
 message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes ephem_op_enc_key = 1;
+  // The public verification key of the KNS server. MUST be manually validated by custodian
+  bytes operator_verf_key = 2; 
   /// The ciphertexts that are the backup. Indexed by the custodian role.
-  map<uint64, OperatorBackupOutput> cts = 2;
+  map<uint64, OperatorBackupOutput> cts = 3;
 }
 
 // Response containing available key material information
