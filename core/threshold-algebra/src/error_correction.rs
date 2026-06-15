@@ -473,7 +473,7 @@ pub fn error_correction<F: Field>(
 /// Like [`error_correction`] but reuses precomputed [`FieldHints`] to avoid redundant
 /// embedding, Lagrange polynomial, and vanishing polynomial computations.
 ///
-/// `field_hints` must have been built from the same set of parties that own the `shares`.
+/// `field_hints` must have been built from the same __ordered list__ of parties that own the `shares`.
 pub fn error_correction_with_field_hints<F: Field>(
     shares: Vec<Share<F>>,
     degree: usize,
