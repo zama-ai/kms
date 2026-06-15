@@ -106,6 +106,13 @@ pub async fn key_gen_impl<
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
+    //
+    // Unlike the threshold KMS, the centralized KMS draws no distinction between
+    // secure and insecure preprocessing: both `key_gen_preproc` and
+    // `insecure_key_gen_preproc` store an identical dummy entry in the same
+    // `preprocessing_meta_store`. We therefore retrieve by ID without checking
+    // how the preprocessing was produced, so either a normal or an insecure
+    // keygen can consume either kind of preprocessing.
     let (params, permit) = {
         let preproc = retrieve_from_meta_store(
             service.preprocessing_meta_store.read().await,

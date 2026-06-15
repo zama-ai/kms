@@ -569,18 +569,24 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             ));
         }
 
+        // The kind of result requested must match the kind of preprocessing
+        // stored: the insecure endpoint must not return real material, and the
+        // secure endpoint must not return insecure (dummy) material.
         #[cfg(feature = "insecure")]
-        if op_tag == OP_INSECURE_KEYGEN_PREPROC_RESULT
-            && !matches!(preproc_data.preprocessing_store, PreprocMaterial::Insecure)
         {
-            return Err(MetricedError::new(
-                op_tag,
-                Some(request_id),
-                anyhow::anyhow!(
-                    "Insecure preprocessing result requested for real preprocessing ID {request_id}"
-                ),
-                tonic::Code::FailedPrecondition,
-            ));
+            let is_insecure_tag = op_tag == OP_INSECURE_KEYGEN_PREPROC_RESULT;
+            let is_insecure_store =
+                matches!(preproc_data.preprocessing_store, PreprocMaterial::Insecure);
+            if is_insecure_tag != is_insecure_store {
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "Preprocessing kind mismatch for ID {request_id}: is_insecure_tag={is_insecure_tag} != is_insecure_store={is_insecure_store}",
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ));
+            }
         }
 
         Ok(Response::new(KeyGenPreprocResult {

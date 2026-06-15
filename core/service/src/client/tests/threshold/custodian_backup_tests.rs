@@ -4,6 +4,7 @@ use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
+use crate::client::tests::threshold::common::run_insecure_preproc;
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
@@ -391,6 +392,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 
     // Generate a key
     let (keyset_config, keyset_added_info) = keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -556,6 +560,9 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 
     // Generate a key so we have FHE material to delete + recover.
     let (keyset_config, keyset_added_info) = keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -689,6 +696,9 @@ async fn test_keygen_backup_presence_threshold() {
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -741,6 +751,9 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -911,6 +924,9 @@ async fn test_backup_after_reshare_threshold() {
 
     // Generate a key (so we have material to reshare)
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let (keyset, _) = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),

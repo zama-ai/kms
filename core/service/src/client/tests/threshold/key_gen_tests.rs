@@ -183,6 +183,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
     let preproc_id = derive_request_id(&format!(
         "test_insecure_compressed_dkg_preproc_{amount_parties}_{TEST_PARAM:?}"
     ))?;
+    run_insecure_preproc(&kms_clients, &preproc_id, FheParameter::Test).await?;
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
@@ -230,6 +231,9 @@ async fn secure_threshold_compressed_keygen_test() {
     .await;
 }
 
+/// Runs only the (secure or insecure) key generation step. The matching
+/// preprocessing — `run_preproc` for secure, `run_insecure_preproc` for
+/// insecure — must already have been run for `preproc_req_id` by the caller.
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_threshold_keygen(
     parameter: FheParameter,
@@ -244,12 +248,6 @@ pub(crate) async fn run_threshold_keygen(
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
-
-    if insecure {
-        run_insecure_preproc(kms_clients, preproc_req_id, parameter)
-            .await
-            .unwrap();
-    }
 
     let req_keygen = internal_client
         .key_gen_request(
@@ -493,7 +491,11 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let test_path = material_dir.path();
 
-    if !insecure {
+    if insecure {
+        run_insecure_preproc(&kms_clients, &preproc_id_1, parameter)
+            .await
+            .unwrap();
+    } else {
         run_preproc(
             amount_parties,
             parameter,
@@ -524,7 +526,11 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .0;
     let (client_key_1, _public_key_1, server_key_1) = keys1.get_uncompressed();
 
-    if !insecure {
+    if insecure {
+        run_insecure_preproc(&kms_clients, &preproc_id_2, parameter)
+            .await
+            .unwrap();
+    } else {
         run_preproc(
             amount_parties,
             parameter,
@@ -555,9 +561,11 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .0;
     let (client_key_2, _public_key_2, _server_key_2) = keys2.get_uncompressed();
 
-    // For the insecure variant the (dummy) preprocessing
-    // is run by `run_threshold_keygen` itself
-    if !insecure {
+    if insecure {
+        run_insecure_preproc(&kms_clients, &preproc_id_3, parameter)
+            .await
+            .unwrap();
+    } else {
         run_preproc(
             amount_parties,
             parameter,
@@ -732,17 +740,23 @@ pub(crate) async fn preproc_and_keygen(
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
                 async move {
-                    run_preproc(
-                        amount_parties,
-                        parameter,
-                        &clients_clone,
-                        &internalclient_clone,
-                        &preproc_id,
-                        None,
-                        expected_num_parties_crashed,
-                        partial_preproc,
-                    )
-                    .await
+                    if insecure_key_gen {
+                        run_insecure_preproc(&clients_clone, &preproc_id, parameter)
+                            .await
+                            .unwrap();
+                    } else {
+                        run_preproc(
+                            amount_parties,
+                            parameter,
+                            &clients_clone,
+                            &internalclient_clone,
+                            &preproc_id,
+                            None,
+                            expected_num_parties_crashed,
+                            partial_preproc,
+                        )
+                        .await
+                    }
                 }
             });
         }
@@ -774,7 +788,6 @@ pub(crate) async fn preproc_and_keygen(
                 let internalclient_clone = Arc::clone(&arc_internalclient);
                 let path_clone = test_path.clone();
                 async move {
-                    // todo proper use of insecure to skip preproc
                     (
                         key_id,
                         run_threshold_keygen(
@@ -826,17 +839,23 @@ pub(crate) async fn preproc_and_keygen(
         tracing::info!("Finished concurrent preproc and keygen");
     } else {
         for preproc_id in preproc_ids.iter() {
-            run_preproc(
-                amount_parties,
-                parameter,
-                &kms_clients,
-                &internal_client,
-                preproc_id,
-                None,
-                expected_num_parties_crashed,
-                partial_preproc,
-            )
-            .await;
+            if insecure_key_gen {
+                run_insecure_preproc(&kms_clients, preproc_id, parameter)
+                    .await
+                    .unwrap();
+            } else {
+                run_preproc(
+                    amount_parties,
+                    parameter,
+                    &kms_clients,
+                    &internal_client,
+                    preproc_id,
+                    None,
+                    expected_num_parties_crashed,
+                    partial_preproc,
+                )
+                .await;
+            }
         }
         expected_num_parties_crashed += crash_parties_for_keygen(
             party_ids_to_crash_keygen,

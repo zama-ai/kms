@@ -880,6 +880,10 @@ pub struct KeyGenPreprocParameters {
 /// (testing/development only). No keyset configuration is taken because the
 /// insecure preprocessing generates no material; it only records the request
 /// ID so it can be consumed by a subsequent insecure key generation.
+///
+/// Unlike `KeyGenPreprocParameters`, there are no arguments for `uncompressed`
+/// or `from_existing_shares` because the insecure preprocessing endpoint does
+/// not use them.
 #[derive(Debug, Parser, Clone, Default)]
 pub struct InsecureKeyGenPreprocParameters {
     /// Optionally specify the context ID to use for the preprocessing.
