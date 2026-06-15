@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_CRS;
-use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
+
 use alloy_sol_types::Eip712Domain;
+use hashing::hash_versioned;
 use kms_grpc::ContextId;
 use kms_grpc::EpochId;
 use kms_grpc::RequestId;
@@ -107,7 +108,7 @@ impl Client {
             }
 
             // check the digest
-            let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+            let actual_digest = hash_versioned(&DSEP_PUBDATA_CRS, &pp)?;
             if result.crs_digest != actual_digest {
                 tracing::warn!(
                     "crs_handle {} does not match the computed digest {}; discarding the CRS",
@@ -204,7 +205,7 @@ impl Client {
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         let pp = self.get_crs(&request_id, storage).await?;
-        let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+        let actual_digest = hash_versioned(&DSEP_PUBDATA_CRS, &pp)?;
         if actual_digest != crs_gen_result.crs_digest {
             tracing::warn!(
                 "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
@@ -341,7 +342,7 @@ pub(crate) mod tests {
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
 
         // Create a CrsGenResult with an invalid signature
-        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
         let result = CrsGenResult {
             request_id: Some(request_id.into()),
             crs_digest: crs_digest.clone(),

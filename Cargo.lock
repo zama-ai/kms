@@ -7676,6 +7676,8 @@ dependencies = [
  "bc2wrap",
  "serde",
  "sha3",
+ "tfhe-safe-serialize",
+ "tfhe-versionable",
 ]
 
 [[package]]

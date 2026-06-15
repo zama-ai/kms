@@ -38,9 +38,8 @@ use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test
-use kms_lib::engine::base::{
-    DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned,
-};
+use hashing::hash_versioned;
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
@@ -3088,10 +3087,8 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await;
 
-    let compressed_keyset_digest = hex::encode(safe_serialize_hash_element_versioned(
-        &DSEP_PUBDATA_KEY,
-        &compressed_keyset,
-    )?);
+    let compressed_keyset_digest =
+        hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
 
     let _ids =
         fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
@@ -3105,10 +3102,7 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await;
 
-    let crs_digest = hex::encode(safe_serialize_hash_element_versioned(
-        &DSEP_PUBDATA_CRS,
-        &crs,
-    )?);
+    let crs_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_CRS, &crs)?);
 
     // Step 8: Execute resharing (must use a NEW epoch ID, different from the one created in Step 3)
     let new_epoch_id = derive_request_id("EPOCH_RESHARE_NEW")?.into();
