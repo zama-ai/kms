@@ -500,6 +500,7 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
+    use crate::error_correction::{FieldHints, error_correction_with_field_hints};
     use crate::galois_fields::gf8::GF8;
     use crate::galois_fields::gf32::GF32;
     use crate::galois_fields::gf64::GF64;
@@ -653,7 +654,13 @@ mod tests {
         shares[1] += BaseField::from_u128(9);
         shares[2] += BaseField::from_u128(254);
 
-        let secret_poly = error_correction(shares, threshold, max_err).unwrap();
+        let secret_poly = error_correction(shares.clone(), threshold, max_err).unwrap();
         assert_eq!(secret_poly, f);
+
+        let parties = shares.iter().map(|s| s.owner()).collect::<Vec<_>>();
+        let hints = FieldHints::new(&parties).unwrap();
+        let secret_poly_with_hints =
+            error_correction_with_field_hints(shares, threshold, max_err, &hints).unwrap();
+        assert_eq!(secret_poly_with_hints, f);
     }
 }

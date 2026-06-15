@@ -773,11 +773,12 @@ pub fn gao_decoding_with_field_hints<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error_correction::MemoizedExceptionals;
+    use crate::error_correction::{FieldHints, MemoizedExceptionals};
     use crate::galois_fields::gf16::GF16;
     use crate::galois_rings::degree_4::ResiduePolyF4Z128;
     use proptest::prelude::*;
     use rstest::rstest;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_lagrange_mod2() {
@@ -855,15 +856,21 @@ mod tests {
         let f = Poly {
             coefs: vec![GF16::from(7), GF16::from(13), GF16::from(2)],
         };
-        let xs = vec![
-            GF16::from(2),
-            GF16::from(3),
-            GF16::from(4),
-            GF16::from(5),
-            GF16::from(6),
-            GF16::from(7),
-            GF16::from(8),
+        let roles = vec![
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+            Role::indexed_from_one(4),
+            Role::indexed_from_one(5),
+            Role::indexed_from_one(6),
+            Role::indexed_from_one(7),
+            Role::indexed_from_one(8),
         ];
+
+        let xs = roles
+            .iter()
+            .map(|r| GF16::from(r.one_based() as u8))
+            .collect::<Vec<_>>();
+
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
 
         tracing::debug!(
@@ -879,6 +886,18 @@ mod tests {
         ys[1] += GF16::from(4);
         let polynomial = gao_decoding(&xs, &ys, f.coefs.len(), 2).unwrap();
         assert_eq!(polynomial.eval(&GF16::from(0)), GF16::from(7));
+
+        let field_hint = FieldHints::new(&roles).unwrap();
+        let polynomial_with_hint = gao_decoding_with_field_hints(
+            &xs,
+            &ys,
+            f.coefs.len(),
+            2,
+            &field_hint.lagrange_polys,
+            &field_hint.vanishing_poly,
+        )
+        .unwrap();
+        assert_eq!(polynomial_with_hint.eval(&GF16::from(0)), GF16::from(7));
     }
 
     #[test]
@@ -886,20 +905,41 @@ mod tests {
         let f = Poly {
             coefs: vec![GF16::from(7), GF16::from(3), GF16::from(8)],
         };
-        let xs = vec![
-            GF16::from(2),
-            GF16::from(3),
-            GF16::from(4),
-            GF16::from(5),
-            GF16::from(6),
-            GF16::from(7),
+        let roles = vec![
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+            Role::indexed_from_one(4),
+            Role::indexed_from_one(5),
+            Role::indexed_from_one(6),
+            Role::indexed_from_one(7),
         ];
+
+        let xs = roles
+            .iter()
+            .map(|r| GF16::from(r.one_based() as u8))
+            .collect::<Vec<_>>();
+
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
         // adding two errors
         ys[0] += GF16::from(2);
         ys[1] += GF16::from(5);
         let r = gao_decoding(&xs, &ys, 3, 1).unwrap_err().to_string();
         assert!(r.contains(
+            "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
+        ));
+
+        let field_hint = FieldHints::new(&roles).unwrap();
+        let r_with_hint = gao_decoding_with_field_hints(
+            &xs,
+            &ys,
+            3,
+            1,
+            &field_hint.lagrange_polys,
+            &field_hint.vanishing_poly,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(r_with_hint.contains(
             "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
         ));
     }
