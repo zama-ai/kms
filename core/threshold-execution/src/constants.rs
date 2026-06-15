@@ -25,19 +25,19 @@ cfg_if::cfg_if! {
         /// Reads a `usize` tuning value from environment variable `name`, falling
         /// back to `default` when unset or unparseable.
         fn env_usize(name: &str, default: usize) -> usize {
-            match std::env::var(name) {
+            let value = match std::env::var(name) {
                 Ok(raw) => {
-                    let parsed = raw.trim().parse::<usize>().unwrap_or_else(|_| {
+                    raw.trim().parse::<usize>().unwrap_or_else(|_| {
                         tracing::warn!(
                             "Invalid usize value {raw:?} for env var {name}; using default {default}"
                         );
                         default
-                    });
-                    tracing::info!("Using tuning value {parsed} from env var {name} ");
-                    parsed
+                    })
                 },
                 Err(_) => default,
-            }
+            };
+            tracing::info!("Using tuning value {value} from env var {name} ");
+            value
         }
 
         /// Amount of triples generated in one batch by the orchestrator.
