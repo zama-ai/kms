@@ -14,7 +14,7 @@ KMS uses TOML configuration files with different sections for various components
 ### Configuration References
 
 - **Complete Examples**: See `charts/kms-core/values*.yaml` for production-ready configurations
-- **Template Files**: Use `config/` directory templates for different environments
+- **Template Files**: Use the sample files in `core/service/config/` as starting points
 - **Validation**: Use `kms-health-check config --file config.toml` for syntax validation
 
 ## Configuration Sections
@@ -45,35 +45,36 @@ KMS uses TOML configuration files with different sections for various components
 
 ### Configuration Examples
 
-- **Basic Setup**: See `config/` directory for template files
-- **Production**: Use `charts/kms-core/values-production.yaml` as reference
+- **Basic Setup**: See `core/service/config/` for sample files
+- **Production**: Use `charts/kms-core/values.yaml` as reference
 - **Development**: Use `charts/kms-core/values-example-local.yaml` for local testing
 
 ## Environment-Specific Configurations
 
 ### Configuration Templates
 
+The repository ships sample configurations in `core/service/config/`:
+
+- `default_centralized.toml` — centralized mode with local file storage
+- `default_1.toml` … `default_4.toml` — threshold parties 1–4 with local file storage
+- `compose_centralized.toml`, `compose_1.toml` … `compose_6.toml` — variants used by the docker-compose harness
+- `default_centralized_enclave.toml` — centralized mode inside an AWS Nitro Enclave
+
 **Development Environment**:
 - Local file storage for simplicity
 - Minimal security requirements
 - Local metrics and tracing endpoints
-- **Reference**: `config/development.toml` template
+- **Reference**: `core/service/config/default_centralized.toml` or `default_1.toml` … `default_4.toml`
 
-**Staging Environment**:
-- S3 storage with staging buckets
-- TLS enabled with staging certificates
-- External tracing and monitoring
-- **Reference**: `config/staging.toml` template
-
-**Production Environment**:
+**Staging / Production Environments**:
 - Encrypted S3 storage with KMS keys
-- Full TLS configuration with production certificates
-- Production-grade timeouts and batch settings
-- **Reference**: `config/production.toml` template
+- Full TLS configuration with proper certificates
+- External tracing and monitoring, production-grade timeouts and batch settings
+- **Reference**: no dedicated TOML template ships with the repository — start from a default template and enable S3 storage and TLS; for Kubernetes use `charts/kms-core/values.yaml` as reference
 
 ### Configuration Management
 
-- **Template Files**: Use `config/` directory templates as starting points
+- **Template Files**: Use the `core/service/config/` samples as starting points
 - **Environment Variables**: Substitute environment-specific values
 - **Helm Values**: Use `charts/kms-core/values-*.yaml` for Kubernetes deployments
 - **Validation**: Always validate configurations before deployment

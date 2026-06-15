@@ -210,7 +210,7 @@ mod tests {
     };
     use threshold_types::network::NetworkMode;
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn test_dkg(
         results: &mut Vec<(PublicKey<LevelEll, LevelKsw, N65536>, Vec<LevelOne>)>,
         plaintext_mod: u64,

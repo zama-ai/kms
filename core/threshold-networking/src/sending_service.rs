@@ -170,7 +170,7 @@ impl GrpcSendingService {
                     domain_name
                 );
 
-                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
                 let endpoint = Channel::builder(endpoint)
@@ -190,7 +190,7 @@ impl GrpcSendingService {
             }
             None => {
                 tracing::warn!("Building channel to {:?} without TLS", endpoint);
-                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
                 Channel::builder(endpoint)
@@ -492,7 +492,16 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             (Instant::now() + self.conf.get_max_waiting_time_for_message_queue()).into(),
             self.conf.get_max_waiting_time_for_message_queue(),
         );
-        let mut local_packet = loop {
+        let mut returned_packet = loop {
+            // packet : Option<Option<NetworkRoundValue>>
+            // Outer Option layer is to signal whether we received something from the channel
+            // Inner Option layer is to signal whether the channel is closed
+            // i.e:
+            // - None: we keep waiting for messages (and log a warn)
+            // - Some(None): the channel is closed, we return an error
+            // - Some(Some(packet)): we received a packet, we break the loop and process it
+            // Note: if we know a sender has completed its session, we assume the connection with
+            // it is synchronous, and thus we wait for the timeout time to ensure there is no more messages lingering, before returning an error
             let packet = tokio::select! {
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
@@ -503,9 +512,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                                     return Err(anyhow_error_and_log(format!("Session {} has been aborted with {}", self.session_id, sender.get_role_kind())));
                                 }
                                 local_packet = rx.recv() => Some(local_packet)
-                            };
+                            }
+                        } else {
+                            None
                         }
-                        None
                     },
                     local_packet = rx.recv() => Some(local_packet)
             };
@@ -520,21 +530,21 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         }
         // drop old messages
         let network_round = *counter_lock;
-        while local_packet.round_counter < network_round {
-            let val_len = local_packet.value.len();
+        while returned_packet.round_counter < network_round {
+            let val_len = returned_packet.value.len();
             tracing::debug!(
                 "@ round {} - dropped value {:?} from round {}",
                 network_round,
-                local_packet.value[..if val_len < 16 { val_len } else { 16 }].to_vec(),
-                local_packet.round_counter
+                returned_packet.value[..if val_len < 16 { val_len } else { 16 }].to_vec(),
+                returned_packet.round_counter
             );
-            local_packet = rx
+            returned_packet = rx
                 .recv()
                 .await
                 .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
         }
 
-        Ok(local_packet.value)
+        Ok(returned_packet.value)
     }
 
     /// Increase the round counter
@@ -653,7 +663,8 @@ mod tests {
 
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
-        MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
+        CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
+        TlsExtensionGetter,
     };
     use crate::sending_service::NetworkSession;
     use std::collections::HashMap;
@@ -1243,5 +1254,136 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    /// Build a [`CoreToCoreNetworkConfig`] identical to the defaults, except for a configurable
+    /// `max_waiting_time_for_message_queue` so that tests don't have to wait the default 60s.
+    fn test_config(max_waiting_time_secs: u64) -> CoreToCoreNetworkConfig {
+        CoreToCoreNetworkConfig {
+            message_limit: 70,
+            multiplier: 1.1,
+            max_interval: 60,
+            max_elapsed_time: Some(60),
+            initial_interval_ms: Some(100),
+            network_timeout: 120,
+            network_timeout_bk: 300,
+            network_timeout_bk_sns: 1200,
+            max_en_decode_message_size: 2 * 1024 * 1024 * 1024,
+            session_update_interval_secs: Some(60),
+            session_cleanup_interval_secs: Some(86400),
+            discard_inactive_sessions_interval: Some(15 * 60),
+            max_waiting_time_for_message_queue: Some(max_waiting_time_secs),
+            max_opened_inactive_sessions_per_party: Some(2000),
+        }
+    }
+
+    /// Regression test for the bug fixed in PR #624.
+    ///
+    /// Scenario (2 parties, role 1 is receiver, role 2 is sender):
+    /// 1. Role 2 is marked as a `completed_parties`.
+    /// 2. Role 1 calls `receive` for role 2. No message is in the queue yet, so the `tick_interval`
+    ///    fires and we enter the "grace period".
+    /// 3. While we are inside that grace-period, Role 2 sends a message
+    ///
+    /// Before the fix, that message was received from the channel but the branch evaluated to
+    /// `None`, so the packet was silently discarded and the loop kept spinning until the
+    /// session was aborted. After the fix, the in-flight message is
+    /// returned.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_message_not_dropped_during_completed_grace_period() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity::new(format!("{ip_addr}"), port_1, None);
+        let role_2 = Role::indexed_from_one(2);
+        let id_2 = Identity::new(format!("{ip_addr}"), port_2, None);
+
+        let role_assignment = {
+            let mut role_assignment = RoleAssignment::default();
+            role_assignment.insert(role_1, id_1.clone());
+            role_assignment.insert(role_2, id_2.clone());
+            role_assignment
+        };
+
+        let channel_size_limit = 1000;
+        let dummy_session_tracker = Arc::new(DashMap::new());
+        let message_store = {
+            let channel_maps = DashMap::new();
+            let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
+            let tx = Arc::new(tx);
+            channel_maps.insert(
+                id_2.mpc_identity(),
+                (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+            );
+            let mut out = MessageQueueStore::new_uninitialized(channel_maps);
+
+            let mut others = role_assignment.clone();
+            others.remove(&role_1);
+            out.init(
+                channel_size_limit,
+                &others,
+                Arc::clone(&dummy_session_tracker),
+            );
+            out
+        };
+
+        // Get handle on the mpsc Sender channel to send the message on behalf of Role 2
+        // (don't go through the gRPC API for simplicity)
+        let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
+
+        // Mark role 2 as a completed party: this is the precondition that activates the buggy
+        // grace-period branch in `receive`.
+        let completed_parties = Arc::new(DashSet::new());
+        completed_parties.insert(role_2.get_role_kind());
+
+        // Use a 1s waiting time.
+        let wait = Duration::from_secs(1);
+        let session = NetworkSession {
+            owner: id_1,
+            session_id: SessionId::from(0),
+            sending_channels: HashMap::new(),
+            receiving_channels: message_store,
+            completed_parties,
+            round_counter: tokio::sync::RwLock::new(0),
+            num_byte_sent: RwLock::new(0),
+            network_mode: NetworkMode::Async,
+            conf: OptionConfigWrapper {
+                conf: Some(test_config(1)),
+            },
+            init_time: OnceLock::new(),
+            last_rec_activity_time: RwLock::new(Instant::now().into()),
+            current_network_timeout: RwLock::new(wait),
+            next_network_timeout: RwLock::new(wait),
+            max_elapsed_time: RwLock::new(Duration::from_secs(0)),
+        };
+
+        let expected = vec![42u8; 8];
+        let expected_clone = expected.clone();
+        // Send the message *after* the first tick has fired (1s) but before the grace-period
+        // sleep (another 1s) elapses,
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            tx_2.send(NetworkRoundValue {
+                round_counter: 0,
+                value: expected_clone,
+            })
+            .await
+            .unwrap();
+        });
+
+        // Bound the whole receive so a regression times out.
+        let actual = tokio::time::timeout(Duration::from_secs(10), session.receive(&role_2))
+            .await
+            .expect("receive should not time out; a timeout means the message was dropped")
+            .expect("receive should return the in-flight message, not an abort error");
+
+        assert_eq!(
+            actual, expected,
+            "the message that arrived during the completed-party grace period must be delivered"
+        );
     }
 }

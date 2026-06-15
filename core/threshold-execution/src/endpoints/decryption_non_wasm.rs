@@ -280,10 +280,10 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 ///
 /// # Arguments
 /// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `server_key` - The server key, used together with `ck` for switch&squash
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -297,7 +297,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 /// 3. The decryption is executed
 /// 4. The results are returned
 ///
-#[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(sid, my_role))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>(
     noiseflood_session: &mut P,
@@ -371,16 +370,14 @@ where
 /// This is the entry point of the User decryption protocol.
 ///
 /// # Arguments
-/// * `parameters` - The parameters object that contains the required session information
 /// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `server_key` - The server key, used together with `ck` for switch&squash
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
-/// * A tuple containing the results of the partial decryption and the time it took to execute
+/// * A tuple containing the results of the partial decryption, the packing factor of the ciphertext blocks, and the time it took to execute
 /// * The results of the partial decryption are a hashmap containing the session id and the partially decrypted ciphertexts
 /// * The time it took to execute the partial decryption
 ///
@@ -393,7 +390,7 @@ where
 ///
 /// There is no "online" phase for partial decryption because all computation is local,
 /// that's why there are no traits similar to [OnlineNoiseFloodDecryption].
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[instrument(skip_all, fields(sid, my_role))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     noiseflood_session: &mut P,
@@ -483,7 +480,6 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -496,7 +492,6 @@ where
 /// 2. The decryption protocol is executed
 /// 3. The results are returned
 ///
-#[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
@@ -546,8 +541,6 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
-/// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the partial decryption and the time it took to execute
@@ -560,7 +553,7 @@ where
 /// 2. The partial interactive decryption is executed, without opening the result in the last step
 /// 4. The results are returned
 ///
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 #[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
@@ -1310,7 +1303,9 @@ mod tests {
     use crate::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
     use crate::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
-    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
+    use crate::tfhe_internals::test_feature::{
+        ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
+    };
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
         runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
@@ -1340,8 +1335,8 @@ mod tests {
         let parties = 5;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let shares = keygen_all_party_shares_from_keyset::<_, 4>(
-            &keyset,
+        let shares = keygen_all_party_shares_from_client_key::<_, 4>(
+            &keyset.client_key,
             params,
             &mut AesRng::seed_from_u64(0),
             parties,
@@ -1365,8 +1360,8 @@ mod tests {
         let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
-            keyset
-                .get_raw_glwe_client_sns_key()
+            ClientKeyView::new(&keyset.client_key)
+                .raw_glwe_client_sns_key()
                 .unwrap()
                 .into_container()[0],
             inner_rec.0
@@ -1418,9 +1413,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
@@ -1505,9 +1505,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
@@ -1587,9 +1592,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
@@ -1685,9 +1695,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 

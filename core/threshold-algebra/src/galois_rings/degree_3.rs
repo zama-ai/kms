@@ -26,7 +26,7 @@ use super::{
     utils::karatsuba_3,
 };
 
-/// This defines a degree 4 extension based on the irreducible polynomial
+/// This defines a degree 3 extension based on the irreducible polynomial
 /// F = X^3 + X + 1
 pub type ResiduePolyF3<Z> = ResiduePoly<Z, 3>;
 pub type ResiduePolyF3Z128 = ResiduePolyF3<Z128>;

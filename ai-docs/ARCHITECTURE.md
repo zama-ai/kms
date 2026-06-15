@@ -41,13 +41,13 @@ The repository is a Cargo workspace. The members are declared in
 
 | Crate | Path | Responsibility |
 |---|---|---|
-| `threshold-fhe` | [core/threshold/](core/threshold/) | Threshold FHE protocol: DKG, preprocessing, online protocols |
 | `threshold-algebra` | [core/threshold-algebra/](core/threshold-algebra/) | Finite-field and group primitives used by the MPC protocols |
-| `threshold-execution` | [core/threshold-execution/](core/threshold-execution/) | Execution / orchestration layer for distributed computations |
+| `threshold-execution` | [core/threshold-execution/](core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols |
+| `threshold-bgv` | [core/threshold-bgv/](core/threshold-bgv/) | Experimental BGV/BFV schemes with distributed keygen and threshold decryption |
 | `threshold-networking` | [core/threshold-networking/](core/threshold-networking/) | Inter-party gRPC transport and choreography |
 | `threshold-hashing` | [core/threshold-hashing/](core/threshold-hashing/) | Hashing primitives used across the MPC stack |
 | `threshold-types` | [core/threshold-types/](core/threshold-types/) | Shared types and constants |
-| `threshold-experimental` | [core/threshold-experimental/](core/threshold-experimental/) | Experimental protocol components (e.g. homomorphic PRF keygen) |
+| `experiments` | [core/experiments/](core/experiments/) | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](docs/guides/threshold-benchmark.md)) |
 
 ### Service layer
 
@@ -128,7 +128,7 @@ metastore status types in
 The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 
 - **Key generation** — `KeyGenPreproc` / `KeyGenPreprocResult` (threshold
-  preprocessing), `KeyGen`, and `NewEpoch` for key rotation. Multiple keyset
+  preprocessing), `KeyGen`, and `NewMpcEpoch` for key rotation. Multiple keyset
   configurations are supported (standard, decompression-only, compressed
   variants).
   Standard threshold keygen persists a dedicated OPRF LWE secret-key share in
@@ -139,11 +139,12 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   public keys.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated).
-- **CRS** — `CRSGen` for ZK-proof common reference strings.
-- **Reshare** — `Reshare` to rotate parties / refresh secret shares. When
-  resharing legacy key material that has no dedicated OPRF secret-key share,
-  the OPRF sub-protocol is skipped and the reshared private keyset keeps that
-  field absent.
+- **CRS** — `CrsGen` for ZK-proof common reference strings.
+- **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
+  refreshes secret shares as part of epoch creation; the outcome is fetched
+  via `GetEpochResult`. When resharing legacy key material that has no
+  dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and the
+  reshared private keyset keeps that field absent.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -152,7 +153,8 @@ the server and in-browser verifiers via the `validation_wasm` build.
 
 ## Deployment modes
 
-Mode is selected in the server TOML config (`[kms_mode]`); see the sample
+Mode is selected in the server TOML config — a party runs in threshold mode
+when the optional `[threshold]` section is present; see the sample
 files in `core/service/config/` (`default_centralized.toml`,
 `default_1.toml`..`default_4.toml`, and the compose-specific variants).
 
@@ -248,7 +250,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 
 - **Unit tests** live alongside the source (`#[cfg(test)]`).
 - **Integration tests** live in each crate's `tests/` directory, notably
-  `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
+  `core/service/tests/` and `core/experiments/tests/integration_redis.rs`.
 - **Backward-compatibility tests** live under
   [backward-compatibility/](backward-compatibility/); per-version generator
   crates produce frozen test vectors that current-version loaders must
@@ -267,7 +269,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Latest stable Rust (`rust-toolchain`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
+- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.94.0`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.

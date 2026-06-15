@@ -871,7 +871,7 @@ mod test {
     // We first push all the Z64 keys in the same vector and all the Z128 keys in another vector, then we open them separately and concatenate the results.
     // This way when we open before and after and concatenate the result, we should have equality
     // because the test first switch all the keys that can live in Z64 to Z64, then lift all of them to Z128, so the order of the keys in the vectors is the same before and after lifting.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn private_key_to_vecs<const EXTENSION_DEGREE: usize>(
         key: PrivateKeySet<EXTENSION_DEGREE>,
     ) -> (

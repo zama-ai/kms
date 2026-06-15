@@ -665,7 +665,6 @@ mod tests {
                     }
                     for j in 0..amount {
                         let mut to_recon = Vec::new();
-                        #[allow(clippy::needless_range_loop)]
                         for i in 0..parties {
                             to_recon.push(temp[i][j]);
                         }

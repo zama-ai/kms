@@ -21,6 +21,7 @@ use backward_compatibility::{
     tests::{TestedModule, run_all_tests},
 };
 use common::{load_and_unversionize, load_and_unversionize_auxiliary};
+use hashing::hash_versioned;
 use kms_grpc::{
     RequestId,
     kms::v1::TypedPlaintext,
@@ -53,10 +54,7 @@ use kms_lib::{
         },
     },
     engine::{
-        base::{
-            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
-            safe_serialize_hash_element_versioned,
-        },
+        base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
         context::{ContextInfo, NodeInfo, SoftwareVersion},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
@@ -197,10 +195,8 @@ fn test_key_gen_metadata(
 
     let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
     let mut new_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
-    let pub_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let server_key_digest = hash_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest = hash_versioned(b"TESTTEST", &pretend_public_key).unwrap();
     let sol_type = KeygenVerificationQ126::new_standard(
         &preprocessing_id,
         &key_id,
@@ -355,10 +351,8 @@ fn test_key_gen_metadata_with_extra_data(
 
     let extra_data = test.extra_data.to_vec();
     let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
-    let pub_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let server_key_digest = hash_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest = hash_versioned(b"TESTTEST", &pretend_public_key).unwrap();
     let sol_type = KeygenVerification::new_uncompressed(
         &preprocessing_id,
         &key_id,
@@ -851,9 +845,7 @@ fn test_recovery_material(
             operator_pk: operator_pk.clone(),
             shares: Vec::new(),
         };
-        let msg_digest =
-            safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                .unwrap();
+        let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
         commitments.insert(cus_role, msg_digest);
         let mut payload = [0_u8; 32];
         rng.fill_bytes(&mut payload);

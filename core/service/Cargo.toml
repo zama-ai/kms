@@ -171,6 +171,7 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
+    "dep:tempfile",
     "dep:test-utils",
     "dep:thread-handles",
     "dep:tokio",
@@ -190,4 +191,5 @@ insecure = [
     "kms-grpc/insecure",
     "threshold-networking/testing",
     "dep:nsm-nitro-enclave-utils",
+    "threshold-execution/testing",
 ]

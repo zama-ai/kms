@@ -248,7 +248,7 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// - degree as the degree of the sharing (usually either t or 2t)
 /// - threshold as the threshold of maximum corruptions
 /// - num_bots as the number of known Bot (known wrong/empty values) contributions
-/// - indexed_shares as the indexed shares of the parties
+/// - sharing as the indexed shares of the parties
 ///
 /// Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
@@ -299,7 +299,7 @@ where
 /// - degree as the degree of the sharing (i.e. the corruption threshold)
 /// - threshold as the threshold of maximum corruptions
 /// - num_bots as the number of known Bot contributions
-/// - indexed_shares as the indexed shares of the parties
+/// - sharing as the indexed shares of the parties
 ///
 ///  Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant

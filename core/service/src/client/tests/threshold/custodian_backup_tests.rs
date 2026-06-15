@@ -19,10 +19,7 @@ use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
-use crate::engine::base::{
-    CrsGenMetadata, DSEP_PUBDATA_KEY, INSECURE_PREPROCESSING_ID,
-    safe_serialize_hash_element_versioned,
-};
+use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY, INSECURE_PREPROCESSING_ID};
 use crate::engine::context::ContextInfo;
 use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
@@ -38,8 +35,10 @@ use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::read_context_at_id;
 use crate::vault::storage::read_versioned_at_request_and_epoch_id;
 use crate::vault::storage::read_versioned_at_request_id;
+
 use aes_prng::AesRng;
 use alloy_primitives::Address;
+use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{
     CrsInfo, CustodianRecoveryInitRequest, CustodianRecoveryOutput, CustodianRecoveryRequest,
@@ -914,10 +913,8 @@ async fn test_backup_after_reshare_threshold() {
 
     // Compute key digests needed for the reshare request
     let (_, public_key, server_key) = keyset.get_uncompressed();
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
-    let public_key_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+    let server_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
+    let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
 
     // Generate CRS (so we have CRS to reshare)
     let crs_info_vec = run_crs(
@@ -1067,7 +1064,7 @@ async fn shutdown_servers(kms_servers: HashMap<u32, ServerHandle>) {
         kms_server.assert_shutdown().await;
     }
 }
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 async fn run_full_custodian_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     operator_verf_keys: &HashMap<u32, PublicSigKey>,

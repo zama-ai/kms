@@ -394,7 +394,7 @@ pub mod tests {
         LweSecretKeyOwned::from_container(lwe_key)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn read_secret_key_shares_from_file<const EXTENSION_DEGREE: usize>(
         parties: usize,
         params: DKGParams,

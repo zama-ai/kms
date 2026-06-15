@@ -187,7 +187,7 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
 ///
 /// Observe that the validation is limited to checking the structure of the request and parsing data into the correct types,
 /// and does not check the existence of any of the referenced IDs (like request_id or key_id) or the consistency between them.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub(crate) fn validate_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
@@ -215,7 +215,7 @@ pub(crate) fn validate_user_decrypt_req(
     })
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 fn unpack_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
@@ -296,7 +296,7 @@ fn unpack_user_decrypt_req(
 /// the ciphertext, FheType, digest, key_id and request_id if it is valid.
 ///
 /// Observe that validation is limited to checking the structure of the request and unpacking parameters into their correct structs.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub(crate) fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
 ) -> Result<
@@ -321,7 +321,7 @@ pub(crate) fn validate_public_decrypt_req(
     })
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 fn unpack_public_decrypt_req(
     req: &PublicDecryptionRequest,
 ) -> Result<
@@ -689,7 +689,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub(crate) fn validate_preproc_request(
     req: KeyGenPreprocRequest,
 ) -> Result<
@@ -714,7 +714,7 @@ pub(crate) fn validate_preproc_request(
     })
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 fn unpack_preproc_request(
     req: KeyGenPreprocRequest,
 ) -> anyhow::Result<(
@@ -763,7 +763,7 @@ fn unpack_preproc_request(
     ))
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub(crate) fn validate_key_gen_request(
     req: KeyGenRequest,
     op_tag: &'static str,
@@ -790,7 +790,7 @@ pub(crate) fn validate_key_gen_request(
     })
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 fn unpack_key_gen_request(
     req: KeyGenRequest,
 ) -> anyhow::Result<(
