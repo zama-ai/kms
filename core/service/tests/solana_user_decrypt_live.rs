@@ -23,7 +23,6 @@ use std::process::Command;
 
 use aes_prng::AesRng;
 use alloy_primitives::{Address, U256};
-use ed25519_dalek::SigningKey;
 use kms_grpc::kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::client::user_decryption_wasm::{CiphertextHandle, ParsedUserDecryptionRequest};
@@ -37,16 +36,15 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 /// Reads a Solana CLI keypair file (`[u8; 64]` JSON: 32-byte seed || 32-byte pubkey).
+///
+/// The seed↔pubkey consistency is verified downstream by the js-sdk signer
+/// (`buildSolanaUserDecryptRequest` derives the pubkey from the seed and rejects a mismatch), so no
+/// ed25519 derivation is done here — this keeps the harness off `ed25519-dalek`/`bs58`.
 fn load_solana_keypair(path: &str) -> ([u8; 32], [u8; 32]) {
     let bytes: Vec<u8> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(bytes.len(), 64, "solana keypair must be 64 bytes");
     let seed: [u8; 32] = bytes[..32].try_into().unwrap();
     let pubkey: [u8; 32] = bytes[32..].try_into().unwrap();
-    assert_eq!(
-        SigningKey::from_bytes(&seed).verifying_key().to_bytes(),
-        pubkey,
-        "keypair seed/pubkey mismatch"
-    );
     (seed, pubkey)
 }
 

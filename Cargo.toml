@@ -124,7 +124,6 @@ backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual mai
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.2", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
-bs58 = "=0.5.1"  # Base58 (Solana addresses) - LOW RISK: RustCrypto-adjacent; RFC-021 user-decrypt client (test-only)
 bytes = "=1.11.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
 cargo_metadata = "=0.23.1"  # Workspace metadata extraction - LOW RISK: oli-obk (rust-lang member) + community, 60M+ downloads, test-only dependency
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
@@ -138,7 +137,6 @@ criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking f
 crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }  # Big integer operations for crypto - LOW RISK: RustCrypto org
 dashmap = "=6.1.0"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 derive_more = { version = "=2.0.1", features = ["display"] }  # Derive macros for common traits - HIGH RISK: Individual maintainer (JelteF), despite 180M+ downloads
-ed25519-dalek = "=2.2.0"  # Ed25519 signatures (Solana signMessage auth) - LOW RISK: dalek-cryptography org; RFC-021 user-decrypt client (test-only)
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
 futures = "=0.3.31"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.31"  # Futures utilities - LOW RISK: rust-lang team
