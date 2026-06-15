@@ -26,15 +26,16 @@ cfg_if::cfg_if! {
         /// back to `default` when unset or unparseable.
         fn env_usize(name: &str, default: usize) -> usize {
             match std::env::var(name) {
-                Ok(raw) =>{ let parsed = raw.trim().parse::<usize>().unwrap_or_else(|_| {
-                    tracing::warn!(
-                        "Invalid usize value {raw:?} for env var {name}; using default {default}"
-                    );
-                    default
-                });
-                tracing::info!("Using tuning value {parsed} from env var {name} ");
-                parsed
-            },
+                Ok(raw) => {
+                    let parsed = raw.trim().parse::<usize>().unwrap_or_else(|_| {
+                        tracing::warn!(
+                            "Invalid usize value {raw:?} for env var {name}; using default {default}"
+                        );
+                        default
+                    });
+                    tracing::info!("Using tuning value {parsed} from env var {name} ");
+                    parsed
+                },
                 Err(_) => default,
             }
         }
@@ -73,7 +74,7 @@ cfg_if::cfg_if! {
         /// Env: `MPC_PRSS_PAR_MIN_CHUNK` (default 1024).
         pub(crate) static PRSS_GEN_PAR_MIN_CHUNK: std::sync::LazyLock<usize> =
             std::sync::LazyLock::new(|| env_usize("MPC_PRSS_PAR_MIN_CHUNK", 1024));
-        /// d-value reconstruction in triple/square generation: heavy per item
+        /// d-value reconstruction in triple/square generation (nsmall offline) : heavy per item
         /// (a Shamir reconstruction).
         /// Env: `MPC_D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK` (default 256).
         pub(crate) static D_VALUE_RECONSTRUCTION_PAR_MIN_CHUNK: std::sync::LazyLock<usize> =
