@@ -133,20 +133,25 @@ async fn solana_user_decrypt_live() {
         "SOLANA_UD_SDK_DIR",
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fhevm/sdk/js-sdk"),
     );
-    let keypair_path =
-        env_or("SOLANA_UD_KEYPAIR", &format!("{}/.config/solana/id.json", env_or("HOME", "")));
-    let handle_hex = env::var("SOLANA_UD_HANDLE").expect("SOLANA_UD_HANDLE (0x..32 bytes) required");
+    let keypair_path = env_or(
+        "SOLANA_UD_KEYPAIR",
+        &format!("{}/.config/solana/id.json", env_or("HOME", "")),
+    );
+    let handle_hex =
+        env::var("SOLANA_UD_HANDLE").expect("SOLANA_UD_HANDLE (0x..32 bytes) required");
     let expected: u64 = env_or("SOLANA_UD_EXPECTED", "0").parse().unwrap();
     // The connector reads the host chain id from the handle bytes; the signed preimage must commit
     // to that same chain id.
-    let contracts_chain_id: u64 =
-        env_or("SOLANA_UD_CHAIN_ID", "9223372036854788153").parse().unwrap();
+    let contracts_chain_id: u64 = env_or("SOLANA_UD_CHAIN_ID", "9223372036854788153")
+        .parse()
+        .unwrap();
 
     // 1. ML-KEM ephemeral keypair (non-wasm path). The serialized public key is the request's
     //    `publicKey`; kms-core validates it via `UnifiedPublicEncKey::deserialize_and_validate`.
     let mut rng = AesRng::from_entropy();
-    let (unified_sk, unified_pk) =
-        Encryption::new(PkeSchemeType::MlKem512, &mut rng).keygen().unwrap();
+    let (unified_sk, unified_pk) = Encryption::new(PkeSchemeType::MlKem512, &mut rng)
+        .keygen()
+        .unwrap();
     let mut pk_bytes = Vec::new();
     tfhe::safe_serialization::safe_serialize(&unified_pk, &mut pk_bytes, SAFE_SER_SIZE_LIMIT)
         .unwrap();
@@ -203,13 +208,19 @@ async fn solana_user_decrypt_live() {
     // NO plaintext is re-encrypted to the attacker key. We assert the job never returns shares.
     let attack = env::var("SOLANA_UD_ATTACK").ok();
     let public_key_field = if attack.as_deref() == Some("pubkey_substitution") {
-        let (_atk_sk, atk_pk) =
-            Encryption::new(PkeSchemeType::MlKem512, &mut rng).keygen().unwrap();
+        let (_atk_sk, atk_pk) = Encryption::new(PkeSchemeType::MlKem512, &mut rng)
+            .keygen()
+            .unwrap();
         let mut atk_bytes = Vec::new();
         tfhe::safe_serialization::safe_serialize(&atk_pk, &mut atk_bytes, SAFE_SER_SIZE_LIMIT)
             .unwrap();
-        assert_ne!(atk_bytes, pk_bytes, "attacker key must differ from the signed key");
-        println!("[L4-a] swapping publicKey AFTER signing (signature still binds the original key)");
+        assert_ne!(
+            atk_bytes, pk_bytes,
+            "attacker key must differ from the signed key"
+        );
+        println!(
+            "[L4-a] swapping publicKey AFTER signing (signature still binds the original key)"
+        );
         hex0x(&atk_bytes)
     } else {
         signed.public_key.clone()
@@ -248,19 +259,34 @@ async fn solana_user_decrypt_live() {
     });
 
     let http = reqwest::Client::new();
-    let post = http.post(format!("{relayer}/v3/user-decrypt")).json(&body).send().await.unwrap();
+    let post = http
+        .post(format!("{relayer}/v3/user-decrypt"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
     let post_status = post.status();
     let post_json: serde_json::Value = post.json().await.unwrap();
     println!("POST {post_status}: {post_json}");
-    assert!(post_status.is_success(), "relayer rejected the request: {post_json}");
-    let job_id = post_json["result"]["jobId"].as_str().expect("jobId").to_string();
+    assert!(
+        post_status.is_success(),
+        "relayer rejected the request: {post_json}"
+    );
+    let job_id = post_json["result"]["jobId"]
+        .as_str()
+        .expect("jobId")
+        .to_string();
 
     // Adversarial L4 (a): the connector rejects the publicKey-substituted request, so the job must
     // NOT succeed. A `failed` status (or a timeout with no shares) both prove the request was
     // rejected and no plaintext was returned. A `succeeded` here would be the security failure.
     if attack.as_deref() == Some("pubkey_substitution") {
         for _ in 0..45 {
-            let r = http.get(format!("{relayer}/v3/user-decrypt/{job_id}")).send().await.unwrap();
+            let r = http
+                .get(format!("{relayer}/v3/user-decrypt/{job_id}"))
+                .send()
+                .await
+                .unwrap();
             let j: serde_json::Value = r.json().await.unwrap();
             match j["status"].as_str() {
                 Some("succeeded") => panic!(
@@ -283,7 +309,11 @@ async fn solana_user_decrypt_live() {
     // 4. Poll for the response.
     let mut response_json = serde_json::Value::Null;
     for _ in 0..60 {
-        let r = http.get(format!("{relayer}/v3/user-decrypt/{job_id}")).send().await.unwrap();
+        let r = http
+            .get(format!("{relayer}/v3/user-decrypt/{job_id}"))
+            .send()
+            .await
+            .unwrap();
         let j: serde_json::Value = r.json().await.unwrap();
         match j["status"].as_str() {
             Some("succeeded") => {
@@ -294,7 +324,10 @@ async fn solana_user_decrypt_live() {
             _ => tokio::time::sleep(std::time::Duration::from_secs(2)).await,
         }
     }
-    assert!(!response_json.is_null(), "timed out waiting for user-decrypt result");
+    assert!(
+        !response_json.is_null(),
+        "timed out waiting for user-decrypt result"
+    );
     println!("result: {response_json}");
 
     // 5. Parse the aggregated shares -> UserDecryptionResponse (external EIP-712 signature +
@@ -306,11 +339,17 @@ async fn solana_user_decrypt_live() {
     let mut kms_pk: Option<PublicSigKey> = None;
     for share in shares {
         let external_signature = alloy_primitives::hex::decode(
-            share["signature"].as_str().unwrap_or("").trim_start_matches("0x"),
+            share["signature"]
+                .as_str()
+                .unwrap_or("")
+                .trim_start_matches("0x"),
         )
         .unwrap();
         let payload_bytes = alloy_primitives::hex::decode(
-            share["payload"].as_str().unwrap_or("").trim_start_matches("0x"),
+            share["payload"]
+                .as_str()
+                .unwrap_or("")
+                .trim_start_matches("0x"),
         )
         .unwrap();
         let payload: UserDecryptionResponsePayload =
@@ -329,7 +368,10 @@ async fn solana_user_decrypt_live() {
     // 6. Build a client bound to the KMS verification key and de-signcrypt.
     let derived = Address::from_slice(&alloy_primitives::keccak256(pubkey)[12..]);
     let mut server_pks = HashMap::new();
-    server_pks.insert(1u32, kms_pk.expect("KMS verification key in response payload"));
+    server_pks.insert(
+        1u32,
+        kms_pk.expect("KMS verification key in response payload"),
+    );
     let client = Client::new(server_pks, derived, None, DEFAULT_PARAM, None);
     let request = ParsedUserDecryptionRequest::new(
         None,

@@ -255,8 +255,12 @@ impl Client {
                 h
             })
             .collect();
-        let link =
-            compute_link_solana(&request.enc_key, &handles, solana_user_pubkey, host_chain_id);
+        let link = compute_link_solana(
+            &request.enc_key,
+            &handles,
+            solana_user_pubkey,
+            host_chain_id,
+        );
         if link != payload.digest {
             return Err(anyhow_error_and_log(format!(
                 "solana link mismatch ({} != {})",

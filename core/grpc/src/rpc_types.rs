@@ -602,12 +602,18 @@ mod solana_link_tests {
         let base = compute_link_solana(&enc_key, &handles, &pubkey, chain_id);
         assert_eq!(base.len(), 32, "keccak256 output is 32 bytes");
         // Deterministic.
-        assert_eq!(base, compute_link_solana(&enc_key, &handles, &pubkey, chain_id));
+        assert_eq!(
+            base,
+            compute_link_solana(&enc_key, &handles, &pubkey, chain_id)
+        );
 
         // Sensitive to every bound field.
         let mut other_pubkey = pubkey;
         other_pubkey[0] ^= 0xff;
-        assert_ne!(base, compute_link_solana(&enc_key, &handles, &other_pubkey, chain_id));
+        assert_ne!(
+            base,
+            compute_link_solana(&enc_key, &handles, &other_pubkey, chain_id)
+        );
         assert_ne!(
             base,
             compute_link_solana(&enc_key, &[[1u8; 32]], &pubkey, chain_id),
@@ -618,7 +624,10 @@ mod solana_link_tests {
             compute_link_solana(&[7u8; 799], &handles, &pubkey, chain_id),
             "a different enc_key must change the link"
         );
-        assert_ne!(base, compute_link_solana(&enc_key, &handles, &pubkey, chain_id + 1));
+        assert_ne!(
+            base,
+            compute_link_solana(&enc_key, &handles, &pubkey, chain_id + 1)
+        );
     }
 
     #[test]
