@@ -471,7 +471,7 @@ impl<
             match handle_res(handle, &preproc_id).await {
                 Ok(_) => {
                     tracing::info!(
-                        "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                        "Successfully deleted preprocessing ID {preproc_id} before running keygen for request ID {req_id}"
                     );
                 }
                 Err(e) => {
