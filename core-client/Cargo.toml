@@ -98,10 +98,10 @@ ignored = ["kms", "strum"]
 # (see core/service, core/threshold-execution). CI opts in via `-F slow_tests`.
 #
 # This flag only gates code/tests; it does NOT generate key material by itself.
-# The gated tests use Default params, which require pre-generated material in
+# Some gated tests use Default params, which require pre-generated material in
 # `test-material/default` (run
 # `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13`);
-# missing PRSS is a hard error.
+# missing Default material is a hard error.
 # Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
 slow_tests = ["testing"]
 # Enable tests that require a running Kind/Kubernetes cluster.
