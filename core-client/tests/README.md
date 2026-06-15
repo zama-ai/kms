@@ -30,7 +30,7 @@
 
 ### Pre-generated material
 
-- PRSS-based keygen tests require pre-generated material: **PRSS** (generated at server startup via `ensure_default_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`). This applies to both the per-PR threshold tests and the `slow_tests`-gated ones.
+- PRSS-based keygen tests require PRSS to be available at server startup (`ensure_default_prss=true` ensures it is generated/reused) and, for `nightly_full_gen_tests_default_*`, pre-generated keygen preprocessing material (offline DKG phase).
 - For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
 - Some tests generate PRSS live during the test (via `new_prss`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
 - Generate the production-like required secure material (aka "default") with:
