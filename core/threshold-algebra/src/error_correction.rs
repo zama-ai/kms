@@ -339,6 +339,21 @@ where
         From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
     BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
 {
+    if hints.degree != degree {
+        return Err(anyhow_error_and_log(format!(
+            "ReconstructionHints degree {} does not match the provided degree {}",
+            hints.degree, degree
+        )));
+    }
+
+    let sharing_parties: Vec<Role> = sharing.shares.iter().map(|s| s.owner()).collect();
+    if hints.parties != sharing_parties {
+        return Err(anyhow_error_and_log(format!(
+            "ReconstructionHints parties {:?} do not match the sharing's owner set {:?}",
+            hints.parties, sharing_parties
+        )));
+    }
+
     let ring_size: usize = Z::BIT_LENGTH;
 
     let mut shares_with_validity = sharing
@@ -500,12 +515,17 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
-    use crate::error_correction::{FieldHints, error_correction_with_field_hints};
+    use crate::error_correction::{
+        FieldHints, ReconstructionHints, error_correction_with_field_hints,
+        shamir_error_correct_with_hints,
+    };
     use crate::galois_fields::gf8::GF8;
     use crate::galois_fields::gf32::GF32;
     use crate::galois_fields::gf64::GF64;
     use crate::galois_fields::gf128::GF128;
     use crate::galois_fields::gf256::GF256;
+    use crate::galois_rings::degree_3::ResiduePolyF3Z128;
+    use crate::structure_traits::Sample;
     use crate::{
         base_ring::Z64,
         error_correction::{error_correction, shamir_error_correct},
@@ -662,5 +682,53 @@ mod tests {
         let secret_poly_with_hints =
             error_correction_with_field_hints(shares, threshold, max_errors, &hints).unwrap();
         assert_eq!(secret_poly_with_hints, f);
+    }
+
+    #[test]
+    fn test_error_correction_with_hints() {
+        let num_parties = 4;
+        let mut rng = AesRng::seed_from_u64(0);
+        let secret = ResiduePolyF3Z128::sample(&mut rng);
+        let threshold = 1;
+        let sharings =
+            ShamirSharings::share(&mut rng, secret.clone(), num_parties, threshold).unwrap();
+
+        let hint = ReconstructionHints::new(&sharings, threshold).unwrap();
+
+        let result =
+            shamir_error_correct_with_hints(&sharings, threshold, threshold, &hint).unwrap();
+        assert_eq!(result.eval(&ResiduePolyF3Z128::ZERO), secret);
+    }
+
+    // Test that error correction with hints fails when hint is wrong
+    // Using polynomial over ResiduePolyZ128F4
+    #[test]
+    fn test_error_correction_with_wrong_hints() {
+        let num_parties = 4;
+        let mut rng = AesRng::seed_from_u64(0);
+        let secret = ResiduePolyF3Z128::sample(&mut rng);
+        let threshold = 1;
+        let sharings = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
+
+        let hint_wrong_degree = ReconstructionHints::new(&sharings, 2).unwrap();
+
+        let result =
+            shamir_error_correct_with_hints(&sharings, threshold, threshold, &hint_wrong_degree);
+        assert!(result.is_err());
+
+        let mut parties = sharings
+            .shares
+            .iter()
+            .map(|s| s.owner())
+            .collect::<Vec<_>>();
+
+        // Remove a party to create a wrong hint
+        parties.pop();
+
+        let hint_wrong_parties = ReconstructionHints::from_parties(parties, threshold).unwrap();
+
+        let result =
+            shamir_error_correct_with_hints(&sharings, threshold, threshold, &hint_wrong_parties);
+        assert!(result.is_err());
     }
 }
