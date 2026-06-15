@@ -690,8 +690,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePolyF3Z128::sample(&mut rng);
         let threshold = 1;
-        let sharings =
-            ShamirSharings::share(&mut rng, secret.clone(), num_parties, threshold).unwrap();
+        let sharings = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
         let hint = ReconstructionHints::new(&sharings, threshold).unwrap();
 

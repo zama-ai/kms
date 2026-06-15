@@ -34,7 +34,10 @@ cfg_if::cfg_if! {
                         default
                     })
                 },
-                Err(_) => default,
+                Err(_) => {
+                    tracing::warn!("Env var {name} not set; using default {default}");
+                    default
+                },
             };
             tracing::info!("Using tuning value {value} from env var {name} ");
             value
