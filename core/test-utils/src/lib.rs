@@ -1,7 +1,7 @@
 pub mod random_free_port;
 pub mod test_logging;
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::{fs::File, path::Path};
 
 /// Helper method to write a generic element to a file for tests or benchmarks.
@@ -19,9 +19,7 @@ pub fn write_element<T: serde::Serialize, P: AsRef<Path>>(
 }
 
 /// Helper method to read a generic element from a file for tests or benchmarks.
-pub fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
-    file_path: P,
-) -> anyhow::Result<T> {
+pub fn read_element<T: DeserializeOwned, P: AsRef<Path>>(file_path: P) -> anyhow::Result<T> {
     Ok(bc2wrap::deserialize_from(File::open(file_path)?)?)
 }
 
