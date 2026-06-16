@@ -830,3 +830,49 @@ message EpochResultResponse {
 message DestroyMpcEpochRequest {
   RequestId epoch_id = 1;
 }
+
+enum BandwidthKind {
+  Duration = 0;
+  Once = 1;
+}
+
+message BandwidthBenchmarkRequest {
+  // The KMS context for which to perform the benchmark
+  RequestId context_id = 1;
+  // How long we keep sending bytes (s)
+  uint64 duration = 2;
+  // Number of sessions trying to send bytes in parallel
+  uint32 number_sessions = 3;
+  // Size of the payload each session will send at a time
+  uint32 payload_size_per_session = 4;
+  BandwidthKind kind = 5;
+}
+
+// All latency info are in ms
+message LatencyInfo {
+  uint64 average = 1;
+  uint64 p50 = 2;
+  uint64 p90 = 3;
+  uint64 p99 = 4;
+  uint64 slowest = 5;
+  uint64 fastest = 6;
+}
+
+message PeerBandwidthInfo {
+  // Peer party ID
+  uint32 peer_id = 1;
+  // Peer endpoint address
+  string endpoint = 2;
+  // Number of bytes sent to this peer
+  uint64 bytes_sent = 3;
+  // Effective time spent averaged over all sessions
+  // (may differ from requested duration because we don't stop the experiment abruptly)
+  uint64 duration = 4;
+  // Some measure of latency over all messages sent
+  LatencyInfo latency = 5;
+}
+
+message BandwidthBenchmarkResponse {
+  // Benchmark result for each of the peers
+  repeated PeerBandwidthInfo peers_info = 1;
+}

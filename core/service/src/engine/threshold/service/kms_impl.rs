@@ -415,12 +415,52 @@ impl std::fmt::Debug for ThresholdFheKeys {
     }
 }
 
+/// Entry of the preprocessing meta store, produced by the key generation
+/// preprocessing endpoints and consumed (deleted) by key generation.
 #[derive(Clone)]
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
-    pub(crate) preprocessing_store: Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+    pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
+}
+
+/// The preprocessing material backing a [`BucketMetaStore`] entry.
+///
+/// `Real` holds the actual correlated randomness produced by the secure
+/// preprocessing endpoint. `Insecure` is a marker stored by the insecure
+/// preprocessing endpoint: no material exists and the entry may only be
+/// consumed by the insecure key generation, mirroring the dummy
+/// preprocessing of the centralized KMS.
+#[derive(Clone)]
+pub enum PreprocMaterial {
+    Real(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>),
+    #[cfg(feature = "insecure")]
+    Insecure,
+}
+
+/// Build the meta-store entry stored by the insecure (dummy) preprocessing:
+/// no material is generated, only the external signature is computed.
+#[cfg(feature = "insecure")]
+pub(crate) fn new_insecure_preproc_bucket(
+    sk: &crate::cryptography::signatures::PrivateSigKey,
+    preprocessing_id: RequestId,
+    dkg_param: DKGParams,
+    domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<BucketMetaStore> {
+    let external_signature = crate::engine::base::compute_external_signature_preprocessing(
+        sk,
+        &preprocessing_id,
+        domain,
+        extra_data,
+    )?;
+    Ok(BucketMetaStore {
+        preprocessing_id,
+        external_signature,
+        preprocessing_store: PreprocMaterial::Insecure,
+        dkg_param,
+    })
 }
 
 #[cfg(not(feature = "insecure"))]

@@ -1357,7 +1357,7 @@ mod tests {
             ));
         });
         let first_bit_sharing = ShamirSharings::create(first_bit_shares);
-        let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
+        let rec = first_bit_sharing.error_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
             ClientKeyView::new(&keyset.client_key)
