@@ -1858,12 +1858,11 @@ async fn custodian_reencrypt(
     temp_dir: &Path,
     amount_operators: usize,
     custodian_count: usize,
-    backup_id: RequestId,
     mpc_context_id: ContextId,
     seeds: &[String],
     operator_recovery_resps: &[String],
 ) -> Result<Vec<String>> {
-    let mut response_paths = Vec::new();
+    let mut cus_rec_resps = Vec::new();
     let kms_custodian_cmd = escargot::CargoBuild::new()
         .package("kms")
         .bin("kms-custodian")

@@ -672,8 +672,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
-    use crate::engine::base::{KeyGenMetadataInner, safe_serialize_hash_element_versioned};
+    use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
+    use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
