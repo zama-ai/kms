@@ -454,7 +454,7 @@ pub(crate) mod tests {
 
         // at this point the key is generated (compressed by default)
         // We execute in the secure mode, i.e. pretending that the preprocessing is done
-        test_standard_keygen(&kms, key_id, &preproc_id, false).await;
+        test_standard_keygen(&kms, key_id, Some(&preproc_id), false).await;
 
         // Read compressed keyset and decompress to get pk + server key
         let compressed_keyset: CompressedXofKeySet = {

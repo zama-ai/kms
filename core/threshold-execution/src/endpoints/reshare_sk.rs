@@ -772,7 +772,9 @@ mod tests {
         execute_protocol_small, execute_protocol_two_sets,
     };
     use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
-    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
+    use crate::tfhe_internals::test_feature::{
+        ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
+    };
     use crate::{
         constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
@@ -1073,7 +1075,9 @@ mod tests {
             let mut keyset: KeySet =
                 read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
             truncate_client_keys(&mut keyset, new_params);
-            let oprf_key_present = keyset.get_raw_oprf_client_key().is_some();
+            let oprf_key_present = ClientKeyView::new(&keyset.client_key)
+                .raw_oprf_client_key()
+                .is_some();
             let (mut party_keyshare, expected_sk, _key_shares) =
                 if let Some(session_set_1) = session_set_1.as_ref() {
                     let (key_shares, expected_sk) = generate_key_with_error_in_s1(
@@ -1429,7 +1433,7 @@ mod tests {
             });
             let first_bit_sharing = ShamirSharings::create(bit_shares);
             let rec = first_bit_sharing
-                .err_reconstruct(threshold, max_errors)
+                .error_reconstruct(threshold, max_errors)
                 .unwrap();
             let inner_rec = rec.to_scalar().unwrap();
             out.push(inner_rec)
@@ -1551,8 +1555,8 @@ mod tests {
     {
         // generate the key shares
         let mut rng = AesRng::seed_from_u64(4242);
-        let mut key_shares = keygen_all_party_shares_from_keyset(
-            &keyset,
+        let mut key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
             params
                 .get_params_basics_handle()
                 .to_classic_pbs_parameters(),
@@ -1640,14 +1644,16 @@ mod tests {
             }
         }
         // sanity check that we can still reconstruct
-        let expected_sk = (
-            keyset
-                .get_raw_glwe_client_sns_key_as_lwe()
-                .unwrap()
-                .into_container(),
-            keyset.get_raw_lwe_client_key().to_owned().into_container(),
-            keyset.get_raw_glwe_client_key().to_owned().into_container(),
-        );
+        let expected_sk = {
+            let eck = ClientKeyView::new(&keyset.client_key);
+            (
+                eck.raw_glwe_client_sns_key_as_lwe()
+                    .unwrap()
+                    .into_container(),
+                eck.raw_lwe_client_key().to_owned().into_container(),
+                eck.raw_glwe_client_key().to_owned().into_container(),
+            )
+        };
         // We have at most 1 error, the one we just added
         let rec_sk = reconstruct_sk(key_shares.clone(), threshold, 1);
         assert_eq!(rec_sk, expected_sk);
