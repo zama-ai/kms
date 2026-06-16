@@ -339,7 +339,7 @@ pub(crate) mod tests {
             }
             let shamir_sharing = ShamirSharings::create(res_vec);
             //Expect max 1 error coming from dropout
-            let res = shamir_sharing.err_reconstruct(threshold, 1);
+            let res = shamir_sharing.error_reconstruct(threshold, 1);
             assert!(res.is_ok());
         }
     }

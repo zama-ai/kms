@@ -1433,7 +1433,7 @@ mod tests {
             });
             let first_bit_sharing = ShamirSharings::create(bit_shares);
             let rec = first_bit_sharing
-                .err_reconstruct(threshold, max_errors)
+                .error_reconstruct(threshold, max_errors)
                 .unwrap();
             let inner_rec = rec.to_scalar().unwrap();
             out.push(inner_rec)

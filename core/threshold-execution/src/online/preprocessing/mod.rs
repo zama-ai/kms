@@ -89,7 +89,9 @@ mock! {
 
 pub trait BitPreprocessing<Z: Clone>: Send + Sync {
     fn append_bits(&mut self, bits: Vec<Share<Z>>);
+    /// Must return an error if there are no bits available
     fn next_bit(&mut self) -> anyhow::Result<Share<Z>>;
+    /// Must return an error if there are not enough bits available
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>>;
     fn bits_len(&self) -> usize;
 }
@@ -409,7 +411,6 @@ where
     redis_factory::<EXTENSION_DEGREE>(key_prefix, redis_conf)
 }
 
-pub mod constants;
 pub mod dummy;
 pub mod memory;
 pub mod orchestration;

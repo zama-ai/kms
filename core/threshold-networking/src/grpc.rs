@@ -1016,7 +1016,7 @@ impl Gnetworking for NetworkingImpl {
         )
         .map_err(|e| *e)?;
 
-        tracing::info!("Received a HealthPing from {}", health_tag.sender);
+        tracing::debug!("Received a HealthPing from {}", health_tag.sender);
         Ok(tonic::Response::new(HealthCheckResponse::default()))
     }
 

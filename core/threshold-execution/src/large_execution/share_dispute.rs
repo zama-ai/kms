@@ -772,7 +772,7 @@ pub(crate) mod tests {
         let sham = ShamirSharings::create(points);
         // Reconstruct the message and check it is as expected
         let ref_msg = sham
-            .err_reconstruct(threshold, dispute_ids.len())
+            .error_reconstruct(threshold, dispute_ids.len())
             .unwrap()
             .coefs[0];
         assert_eq!(msg, ref_msg.0);
