@@ -1008,7 +1008,7 @@ mod tests {
         rpc_types::{KMSType, PrivDataType, PubDataType},
     };
     use rand::{SeedableRng, rngs::OsRng};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
     use tokio::sync::Mutex;
     use tonic::Request;
 
@@ -1578,10 +1578,7 @@ mod tests {
                 custodian_role: Role::indexed_from_one(custodian_index),
                 name: format!("Custodian-{}", custodian_index),
                 random_value: [2u8; 32],
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                timestamp: SystemTime::now(),
                 public_enc_key: pk_enc_key,
                 public_verf_key: verf_key,
             };
@@ -1831,10 +1828,7 @@ mod tests {
                 custodian_role: Role::indexed_from_one(custodian_index),
                 name: format!("Custodian-{}", custodian_index),
                 random_value: [2u8; 32],
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                timestamp: SystemTime::now(),
                 public_enc_key: pk_enc_key,
                 public_verf_key: verf_key,
             };

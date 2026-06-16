@@ -1088,10 +1088,7 @@ mod tests {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
-    use std::{
-        collections::BTreeMap,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::{collections::BTreeMap, time::SystemTime};
 
     fn make_unencrypted_vault() -> Vault {
         Vault {
@@ -1121,10 +1118,7 @@ mod tests {
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [4_u8; 32],
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: SystemTime::now(),
             public_enc_key: enc_key.clone(),
             verification_key: verf_key.clone(),
         };

@@ -770,7 +770,7 @@ pub(crate) fn validate_key_gen_request(
 ) -> Result<
     (
         RequestId,
-        RequestId,
+        Option<RequestId>,
         ContextId,
         EpochId,
         DKGParams,
@@ -795,7 +795,7 @@ fn unpack_key_gen_request(
     req: KeyGenRequest,
 ) -> anyhow::Result<(
     RequestId,
-    RequestId,
+    Option<RequestId>,
     ContextId,
     EpochId,
     DKGParams,
@@ -805,8 +805,13 @@ fn unpack_key_gen_request(
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
-    let preproc_id =
-        parse_optional_grpc_request_id(&req.preproc_id, RequestIdParsingErr::PreprocRequest)?;
+    // Presence of the preprocessing ID is enforced by the caller; only the
+    // format is validated here.
+    let preproc_id = req
+        .preproc_id
+        .as_ref()
+        .map(|id| parse_grpc_request_id(id, RequestIdParsingErr::PreprocRequest))
+        .transpose()?;
 
     tracing::info!(
         request_id = ?req_id,

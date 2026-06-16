@@ -3,15 +3,14 @@ use std::io::Cursor;
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_KEY;
-use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
+
 use alloy_sol_types::Eip712Domain;
-use hashing::SAFE_SER_SIZE_LIMIT;
-use hashing::hash_element;
+use hashing::{SAFE_SER_SIZE_LIMIT, hash_element, hash_versioned};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
@@ -395,7 +394,7 @@ impl Client {
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         let key: S = self.get_key(&request_id, key_type, storage).await?;
-        let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &key)?;
+        let actual_digest = hash_versioned(&DSEP_PUBDATA_KEY, &key)?;
 
         if actual_digest != *key_digest.digest {
             return Err(anyhow::anyhow!(

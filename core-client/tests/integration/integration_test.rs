@@ -35,14 +35,14 @@ use kms_grpc::{ContextId, RequestId};
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::engine::base::derive_request_id;
 use std::fs::create_dir_all;
-use std::process::{Command, Output};
+use std::process::Output;
 use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test (only needed with threshold_tests feature)
 #[cfg(feature = "threshold_tests")]
-use kms_lib::engine::base::{
-    DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned,
-};
+use hashing::hash_versioned;
+#[cfg(feature = "threshold_tests")]
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 #[cfg(feature = "threshold_tests")]
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
@@ -1001,15 +1001,36 @@ fn cipher_params(
     }
 }
 
-/// Helper to run insecure key generation via CLI (isolated version)
+/// Helper to run insecure preprocessing and key generation via CLI.
 async fn insecure_key_gen(
     config_path: &Path,
     test_path: &Path,
     uncompressed: bool,
 ) -> Result<String> {
-    let config = cmd_config(
+    insecure_preproc_and_keygen(config_path, test_path, uncompressed).await
+}
+
+/// Helper to run the insecure (dummy) preprocessing and insecure key generation
+/// via CLI (isolated version), exercising the explicit `--preproc-id` flow.
+async fn insecure_preproc_and_keygen(
+    config_path: &Path,
+    test_path: &Path,
+    uncompressed: bool,
+) -> Result<String> {
+    let preproc_config = cmd_config(
+        config_path,
+        CCCommand::InsecurePreprocKeyGen(InsecureKeyGenPreprocParameters {
+            context_id: None,
+            epoch_id: None,
+        }),
+        200,
+    );
+    let preproc_id = run_cmd(&preproc_config, test_path, "insecure preprocessing").await?;
+
+    let keygen_config = cmd_config(
         config_path,
         CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            preproc_id,
             shared_args: SharedKeyGenParameters {
                 uncompressed,
                 ..Default::default()
@@ -1017,8 +1038,8 @@ async fn insecure_key_gen(
         }),
         200,
     );
-    let id = run_cmd(&config, test_path, "insecure key-gen").await?;
-    Ok(id.to_string())
+    let key_id = run_cmd(&keygen_config, test_path, "insecure key-gen").await?;
+    Ok(key_id.to_string())
 }
 
 // ============================================================================
@@ -1747,33 +1768,17 @@ async fn new_custodian_context(
 /// Native implementation: Generate custodian keys using kms-custodian binary directly
 async fn generate_custodian_keys_to_file(
     temp_dir: &Path,
-    amount_custodians: usize,
-) -> (Vec<String>, Vec<PathBuf>) {
+    custodian_count: usize,
+) -> Result<(Vec<String>, Vec<PathBuf>)> {
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
+    let kms_custodian_cmd = escargot::CargoBuild::new()
+        .package("kms")
+        .bin("kms-custodian")
+        .args(["--profile", "test"])
+        .run()?;
 
-    // TODO(dp): use `escargot` (or similar) to build the binary on demand.
-    // `kms-custodian` lives in the `kms` package while this test is in
-    // `kms-core-client`, so cargo's `[[bin]]` autobuild doesn't reach it
-    // and CI has to do an explicit `cargo build -p kms --bin kms-custodian`
-    // step. `escargot::CargoBuild::new().bin("kms-custodian").package("kms").run()?`
-    // would handle build + path lookup cleanly.
-    // Find the kms-custodian binary
-    let custodian_bin = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("kms-custodian");
-
-    assert!(
-        custodian_bin.exists(),
-        "kms-custodian binary not found at {:?}. Run: cargo build --bin kms-custodian",
-        custodian_bin
-    );
-
-    for cus_idx in 1..=amount_custodians {
+    for cus_idx in 1..=custodian_count {
         let cur_setup_path = temp_dir
             .join("CUSTODIAN")
             .join("setup-msg")
@@ -1782,21 +1787,21 @@ async fn generate_custodian_keys_to_file(
         // Ensure the dir exists
         create_dir_all(cur_setup_path.parent().unwrap()).unwrap();
 
-        // Call kms-custodian binary directly (no Docker)
-        let args = [
-            "generate",
-            "--randomness",
-            "123456",
-            "--custodian-role",
-            &cus_idx.to_string(),
-            "--custodian-name",
-            &format!("skynet-{cus_idx}"),
-            "--path",
-            cur_setup_path.to_str().unwrap(),
-        ];
-
-        let cmd_output = Command::new(&custodian_bin).args(args).output().unwrap();
-
+        // Build&run the kms-custodian binary directly. First time is slow.
+        let cmd_output = kms_custodian_cmd
+            .command()
+            .args([
+                "generate",
+                "--randomness",
+                "123456",
+                "--custodian-role",
+                &cus_idx.to_string(),
+                "--custodian-name",
+                &format!("skynet-{cus_idx}"),
+                "--path",
+                cur_setup_path.to_str().unwrap(),
+            ])
+            .output()?;
         assert!(
             cmd_output.status.success(),
             "kms-custodian generate failed: {}",
@@ -1808,7 +1813,7 @@ async fn generate_custodian_keys_to_file(
         setup_msgs_paths.push(cur_setup_path);
     }
 
-    (seeds, setup_msgs_paths)
+    Ok((seeds, setup_msgs_paths))
 }
 
 fn extract_seed_phrase(out: Output) -> String {
@@ -1852,30 +1857,18 @@ async fn custodian_backup_init(config_path: &Path, test_path: &Path) -> Vec<Stri
 async fn custodian_reencrypt(
     temp_dir: &Path,
     amount_operators: usize,
-    amount_custodians: usize,
+    custodian_count: usize,
+    backup_id: RequestId,
     mpc_context_id: ContextId,
     seeds: &[String],
     operator_recovery_resps: &[String],
-) -> Vec<String> {
-    let mut cus_rec_resps = Vec::new();
-
-    // TODO(dp): same autobuild concern as `generate_custodian_keys_to_file` —
-    // see that fn's TODO. Both call sites should switch to `escargot` (or
-    // similar) once we factor this out.
-    // Find the kms-custodian binary
-    let custodian_bin = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("kms-custodian");
-
-    assert!(
-        custodian_bin.exists(),
-        "kms-custodian binary not found at {:?}",
-        custodian_bin
-    );
+) -> Result<Vec<String>> {
+    let mut response_paths = Vec::new();
+    let kms_custodian_cmd = escargot::CargoBuild::new()
+        .package("kms")
+        .bin("kms-custodian")
+        .args(["--profile", "test"])
+        .run()?;
 
     for operator_index in 1..=amount_operators {
         let pub_prefix = if amount_operators == 1 {
@@ -1886,28 +1879,29 @@ async fn custodian_reencrypt(
 
         let cur_recovery_resp = &operator_recovery_resps[operator_index - 1];
 
-        for custodian_index in 1..=amount_custodians {
+        for custodian_index in 1..=custodian_count {
             let verf_path = temp_dir
                 .join(&pub_prefix)
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
 
-            // Call kms-custodian binary directly (no Docker)
-            let args = [
-                "decrypt",
-                "--seed-phrase",
-                &seeds[custodian_index - 1],
-                "--custodian-role",
-                &custodian_index.to_string(),
-                "--operator-verf-key",
-                verf_path.to_str().unwrap(),
-                "--mpc-context-id",
-                &mpc_context_id.to_string(),
-                "-b",
-                cur_recovery_resp,
-            ];
-
-            let cmd_output = Command::new(&custodian_bin).args(args).output().unwrap();
+            // Build&run the kms-custodian binary. First time is slow.
+            let cmd_output = kms_custodian_cmd
+                .command()
+                .args([
+                    "decrypt",
+                    "--seed-phrase",
+                    &seeds[custodian_index - 1],
+                    "--custodian-role",
+                    &custodian_index.to_string(),
+                    "--operator-verf-key",
+                    verf_path.to_str().unwrap(),
+                    "--mpc-context-id",
+                    &mpc_context_id.to_string(),
+                    "-b",
+                    cur_recovery_resp,
+                ])
+                .output()?;
 
             assert!(
                 cmd_output.status.success(),
@@ -1920,7 +1914,7 @@ async fn custodian_reencrypt(
             ));
         }
     }
-    cus_rec_resps
+    Ok(cus_rec_resps)
 }
 
 /// Native implementation: Recover custodian backup using isolated config
@@ -2082,7 +2076,7 @@ async fn test_centralized_insecure_default_keygen() -> Result<()> {
         setup_isolated_centralized_cli_test("centralized_insecure_default_keygen").await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
@@ -2181,7 +2175,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 
     // Generate custodian keys using native kms-custodian binary
     let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(temp_path, amount_custodians).await;
+        generate_custodian_keys_to_file(temp_path, amount_custodians).await?;
 
     // Create custodian context
     let cus_backup_id = new_custodian_context(
@@ -2204,7 +2198,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
         &seeds,
         &operator_recovery_resp,
     )
-    .await;
+    .await?;
 
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery(
@@ -2401,7 +2395,7 @@ async fn test_threshold_insecure_default_keygen() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss("threshold_insecure_default_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
@@ -2559,7 +2553,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 
     // Generate custodian keys using native kms-custodian binary
     let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(temp_path, amount_custodians).await;
+        generate_custodian_keys_to_file(temp_path, amount_custodians).await?;
 
     // Create custodian context
     let cus_backup_id = new_custodian_context(
@@ -2582,7 +2576,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
         &seeds,
         &operator_recovery_resps,
     )
-    .await;
+    .await?;
 
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery(
@@ -3066,10 +3060,8 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await;
 
-    let compressed_keyset_digest = hex::encode(safe_serialize_hash_element_versioned(
-        &DSEP_PUBDATA_KEY,
-        &compressed_keyset,
-    )?);
+    let compressed_keyset_digest =
+        hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
 
     let _ids =
         fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
@@ -3083,10 +3075,7 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await;
 
-    let crs_digest = hex::encode(safe_serialize_hash_element_versioned(
-        &DSEP_PUBDATA_CRS,
-        &crs,
-    )?);
+    let crs_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_CRS, &crs)?);
 
     // Step 8: Execute resharing (must use a NEW epoch ID, different from the one created in Step 3)
     let new_epoch_id = derive_request_id("EPOCH_RESHARE_NEW")?.into();

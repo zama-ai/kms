@@ -12,7 +12,6 @@ use crate::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
     },
-    engine::base::safe_serialize_hash_element_versioned,
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
@@ -29,7 +28,7 @@ use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
     sharing::{shamir::ShamirSharings, share::Share},
 };
-use hashing::DomainSep;
+use hashing::{DomainSep, hash_versioned};
 use kms_grpc::{
     ContextId, RequestId,
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
@@ -39,7 +38,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
-    time::{SystemTime, UNIX_EPOCH},
+    ops::{Add, Sub},
+    time::{Duration, SystemTime},
 };
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -47,7 +47,7 @@ use threshold_types::role::Role;
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
-const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
+const TIMESTAMP_VALIDATION_WINDOW: Duration = Duration::from_hours(24);
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalRecoveryRequestVersions {
@@ -606,9 +606,8 @@ impl Operator {
             // we simply use the digest as the commitment
             // since the share should have enough entropy
             // is simply a sha3 hash with some metadata of the share
-            let msg_digest =
-                safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                    .map_err(|e| BackupError::OperatorError(e.to_string()))?;
+            let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
+                .map_err(|e| BackupError::OperatorError(e.to_string()))?;
 
             // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
             ct_shares.insert(role_j, InnerOperatorBackupOutput { signcryption });
@@ -712,14 +711,13 @@ impl Operator {
             return Err(e);
         }
         let actual_commitment =
-            safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                .map_err(|e| {
-                    tracing::warn!(
-                        "Could not hash BackupMaterial for commitment check (role {}): {e}",
-                        output.custodian_role
-                    );
-                    RecoverySkipReason::ParseError
-                })?;
+            hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).map_err(|e| {
+                tracing::warn!(
+                    "Could not hash BackupMaterial for commitment check (role {}): {e}",
+                    output.custodian_role
+                );
+                RecoverySkipReason::ParseError
+            })?;
         let expected_commitment = recovery_material.get(&output.custodian_role).map_err(|_| {
             tracing::warn!(
                 "No stored commitment for custodian role {}",
@@ -866,18 +864,18 @@ fn validate_custodian_messages(
 
         if validate_timestamps {
             tracing::debug!(
-                "Validating timestamp {} in custodian setup message from custodian {}",
+                "Validating timestamp {:?} in custodian setup message from custodian {}",
                 timestamp,
                 custodian_role
             );
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            if !(now.saturating_sub(TIMESTAMP_VALIDATION_WINDOW_SECS) < timestamp
-                && timestamp < now.saturating_add(TIMESTAMP_VALIDATION_WINDOW_SECS))
+            let now = SystemTime::now();
+            if !(now.sub(TIMESTAMP_VALIDATION_WINDOW) < timestamp
+                && timestamp < now.add(TIMESTAMP_VALIDATION_WINDOW))
             {
                 tracing::warn!(
-                    "Invalid timestamp in custodian setup message from custodian {}: expected within {} seconds of now, but got {}",
+                    "Invalid timestamp in custodian setup message from custodian {}: expected within {:?} of now, but got {:?}",
                     custodian_role,
-                    TIMESTAMP_VALIDATION_WINDOW_SECS,
+                    TIMESTAMP_VALIDATION_WINDOW,
                     timestamp
                 );
                 skip_reasons.push(SetupSkipReason::InvalidTimestamp);
@@ -963,7 +961,7 @@ mod tests {
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [4_u8; 32],
-            timestamp: 0,
+            timestamp: SystemTime::now(),
             public_enc_key: enc_key.clone(),
             verification_key: verf_key.clone(),
         };
@@ -1026,10 +1024,7 @@ mod tests {
             header: HEADER.to_owned(),
             custodian_role: role,
             random_value: [9_u8; 32],
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: SystemTime::now(),
             name: format!("custodian_{}", role.one_based()),
             public_enc_key: enc_key,
             public_verf_key: verf_key,
@@ -1129,7 +1124,7 @@ mod tests {
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg1.timestamp = 0; // too far in the past
+        msg1.timestamp = SystemTime::now() - Duration::from_hours(666); // too far in the past
         let msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =
@@ -1157,11 +1152,8 @@ mod tests {
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        let present = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        msg1.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        let present = SystemTime::now();
+        msg1.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =
@@ -1187,19 +1179,16 @@ mod tests {
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
-        let present = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let present = SystemTime::now();
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg1.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        msg1.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let mut msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
-        msg2.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        msg2.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let mut msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
-        msg3.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        msg3.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, false).unwrap();
         assert_eq!(result.keys.len(), 3);
         assert!(

@@ -219,6 +219,23 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         storage_ok
     }
 
+    /// Drop all cached FHE keys for the given epoch, returning the number of
+    /// entries removed. Cache-only — deleting the on-disk material is the
+    /// caller's job (see `destroy_epoch`).
+    pub(crate) async fn purge_epoch_from_cache(&self, epoch_id: &EpochId) -> usize {
+        let mut guarded_fhe_keys = self.fhe_keys.write().await;
+        let before = guarded_fhe_keys.len();
+        guarded_fhe_keys.retain(|(_, cached_epoch_id), _| cached_epoch_id != epoch_id);
+        before.saturating_sub(guarded_fhe_keys.len())
+    }
+
+    /// Number of cached FHE key entries (feeds the `fhe_key_cache_size` gauge).
+    /// Non-blocking: returns `None` when the lock is contended, so the metrics
+    /// loop observes the cache without ever waiting on it.
+    pub(crate) fn cached_fhe_key_count(&self) -> Option<usize> {
+        self.fhe_keys.try_read().ok().map(|cache| cache.len())
+    }
+
     /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the
     /// compressed keyset under `new_key_id`, this function copies it to `old_key_id`
     /// and replaces the `ThresholdFheKeys` at `(old_key_id, old_epoch_id)` with the

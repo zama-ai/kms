@@ -26,7 +26,7 @@ use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use proptest::prelude::*;
 use rand::{SeedableRng, rngs::OsRng};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 use threshold_types::role::Role;
 
 #[test]
@@ -76,7 +76,7 @@ fn operator_setup() {
     // use the wrong timestamp, setup should not fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[1].timestamp += 24 * 3700;
+        wrong_custodian_messages[1].timestamp += Duration::from_secs(24 * 3700);
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new_for_sharing(

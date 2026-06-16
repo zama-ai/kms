@@ -677,7 +677,9 @@ mod tests {
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
+
     use aes_prng::AesRng;
+    use hashing::hash_versioned;
     use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
     use rand::SeedableRng;
     use std::collections::{BTreeMap, HashMap};
@@ -1302,16 +1304,10 @@ mod tests {
         let server_key = client_key.generate_server_key();
         let public_key = tfhe::CompactPublicKey::new(&client_key);
 
-        let server_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &server_key,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &public_key,
-        )
-        .unwrap();
+        let server_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
 
         store_versioned_at_request_id(
             storage,
@@ -1370,16 +1366,10 @@ mod tests {
             .into_raw_parts()
             .0;
 
-        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compressed_keyset,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compact_public_key,
-        )
-        .unwrap();
+        let compressed_keyset_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compact_public_key).unwrap();
 
         store_versioned_at_request_id(
             storage,
