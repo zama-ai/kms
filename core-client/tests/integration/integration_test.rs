@@ -1833,15 +1833,10 @@ fn extract_seed_phrase(out: Output) -> String {
 }
 
 /// Native implementation: Initialize custodian backup using isolated config.
-async fn custodian_backup_init(
-    config_path: &Path,
-    test_path: &Path,
-    operator_recovery_resp_paths: Vec<PathBuf>,
-) {
+async fn custodian_backup_init(config_path: &Path, test_path: &Path) -> Vec<String> {
     let config = cmd_config(
         config_path,
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
-            operator_recovery_resp_paths,
             overwrite_ephemeral_key: false,
         }),
         200,
@@ -1850,6 +1845,7 @@ async fn custodian_backup_init(
         .await
         .expect("backup init: execute_cmd failed");
     assert_eq!(results.len(), 1, "backup init: expected 1 result");
+    results.into_iter().map(|res| res.1).collect()
 }
 
 /// Native implementation: Re-encrypt custodian backups using kms-custodian binary directly
@@ -1857,12 +1853,11 @@ async fn custodian_reencrypt(
     temp_dir: &Path,
     amount_operators: usize,
     amount_custodians: usize,
-    backup_id: RequestId,
     mpc_context_id: ContextId,
     seeds: &[String],
-    recovery_paths: &[PathBuf],
-) -> Vec<PathBuf> {
-    let mut response_paths = Vec::new();
+    operator_recovery_resps: &[String],
+) -> Vec<String> {
+    let mut cus_rec_resps = Vec::new();
 
     // TODO(dp): same autobuild concern as `generate_custodian_keys_to_file` —
     // see that fn's TODO. Both call sites should switch to `escargot` (or
@@ -1889,20 +1884,9 @@ async fn custodian_reencrypt(
             format!("PUB-p{}", operator_index)
         };
 
-        let cur_recovery_path = &recovery_paths[operator_index - 1];
+        let cur_recovery_resp = &operator_recovery_resps[operator_index - 1];
 
         for custodian_index in 1..=amount_custodians {
-            let cur_response_path = temp_dir
-                .join("CUSTODIAN")
-                .join("response")
-                .join(backup_id.to_string())
-                .join(format!(
-                    "recovery-response-{}-{}",
-                    operator_index, custodian_index,
-                ));
-
-            create_dir_all(cur_response_path.parent().unwrap()).unwrap();
-
             let verf_path = temp_dir
                 .join(&pub_prefix)
                 .join(PubDataType::VerfKey.to_string())
@@ -1920,9 +1904,7 @@ async fn custodian_reencrypt(
                 "--mpc-context-id",
                 &mpc_context_id.to_string(),
                 "-b",
-                cur_recovery_path.to_str().unwrap(),
-                "-o",
-                cur_response_path.to_str().unwrap(),
+                cur_recovery_resp,
             ];
 
             let cmd_output = Command::new(&custodian_bin).args(args).output().unwrap();
@@ -1933,17 +1915,19 @@ async fn custodian_reencrypt(
                 String::from_utf8_lossy(&cmd_output.stderr)
             );
 
-            response_paths.push(cur_response_path);
+            cus_rec_resps.push(extract_custodian_decryption_payload(
+                &String::from_utf8_lossy(&cmd_output.stdout),
+            ));
         }
     }
-    response_paths
+    cus_rec_resps
 }
 
 /// Native implementation: Recover custodian backup using isolated config
 async fn custodian_backup_recovery(
     config_path: &Path,
     test_path: &Path,
-    custodian_recovery_outputs: Vec<PathBuf>,
+    custodian_recovery_outputs: Vec<String>,
     backup_id: RequestId,
 ) -> String {
     let config = cmd_config(
@@ -1958,6 +1942,19 @@ async fn custodian_backup_recovery(
         .await
         .unwrap()
         .to_string()
+}
+
+fn extract_custodian_decryption_payload(output_string: &str) -> String {
+    let str_to_find = "Decryption payload is the following:\n";
+    let start_idx = output_string
+        .find(str_to_find)
+        .expect("A successful decryption will output a response");
+    let front_trimmed_str = output_string.split_at(start_idx + str_to_find.len()).1;
+    // Now find the index of the last part
+    let end_idx = front_trimmed_str
+        .find("MANUALLY VALIDATE THE")
+        .expect("String expected after successful decryption");
+    front_trimmed_str.split_at(end_idx).0.trim().to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -2195,32 +2192,17 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     )
     .await;
 
-    let operator_recovery_resp_path = temp_path
-        .join("CUSTODIAN")
-        .join("recovery")
-        .join(&cus_backup_id)
-        .join("central");
-
-    // Ensure the dir exists
-    create_dir_all(operator_recovery_resp_path.parent().unwrap())?;
-
     // Initialize custodian backup
-    custodian_backup_init(
-        &config_path,
-        temp_path,
-        vec![operator_recovery_resp_path.clone()],
-    )
-    .await;
+    let operator_recovery_resp = custodian_backup_init(&config_path, temp_path).await;
 
     // Re-encrypt with custodian keys
-    let recovery_output_paths = custodian_reencrypt(
+    let custodian_recovery_output = custodian_reencrypt(
         temp_path,
         1,
         amount_custodians,
-        RequestId::from_str(&cus_backup_id)?,
         *DEFAULT_MPC_CONTEXT,
         &seeds,
-        &[operator_recovery_resp_path],
+        &operator_recovery_resp,
     )
     .await;
 
@@ -2228,7 +2210,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     let recovery_backup_id = custodian_backup_recovery(
         &config_path,
         temp_path,
-        recovery_output_paths,
+        custodian_recovery_output,
         RequestId::from_str(&cus_backup_id)?,
     )
     .await;
@@ -2587,36 +2569,18 @@ async fn test_threshold_custodian_backup() -> Result<()> {
         setup_msg_paths,
     )
     .await;
-    // Paths to where the results of the backup init will be stored
-    let mut operator_recovery_resp_paths = Vec::new();
-    for cur_op_idx in 1..=amount_operators {
-        let cur_resp_path = temp_path
-            .join("CUSTODIAN")
-            .join("recovery")
-            .join(&cus_backup_id)
-            .join(cur_op_idx.to_string());
-        // Ensure the dir exists locally
-        assert!(create_dir_all(cur_resp_path.parent().unwrap()).is_ok());
-        operator_recovery_resp_paths.push(cur_resp_path);
-    }
 
     // Initialize custodian backup
-    custodian_backup_init(
-        &config_path,
-        temp_path,
-        operator_recovery_resp_paths.clone(),
-    )
-    .await;
+    let operator_recovery_resps = custodian_backup_init(&config_path, temp_path).await;
 
     // Re-encrypt with custodian keys
     let recovery_output_paths = custodian_reencrypt(
         temp_path,
         amount_operators,
         amount_custodians,
-        RequestId::from_str(&cus_backup_id)?,
         *DEFAULT_MPC_CONTEXT,
         &seeds,
-        &operator_recovery_resp_paths,
+        &operator_recovery_resps,
     )
     .await;
 

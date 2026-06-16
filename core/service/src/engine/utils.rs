@@ -1,5 +1,7 @@
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata};
 use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
+use aws_smithy_types::base64;
 use hashing::hash_element;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
@@ -9,8 +11,11 @@ use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
 };
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Display;
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tonic::Status;
 
 pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
@@ -640,6 +645,28 @@ impl From<MetricedError> for Status {
 #[cfg(test)]
 thread_local! {
     static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Serialize an element to a base64 string using safe serialization.
+pub fn base64_serialize<T>(element: &T) -> anyhow::Result<String>
+where
+    T: Serialize + tfhe::Versionize + tfhe::named::Named,
+{
+    let mut serialized_data = Vec::new();
+    safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT).unwrap();
+    Ok(base64::encode(&serialized_data))
+}
+
+/// Deserialize an element from a base64 string using safe deserialization.
+pub fn base64_deserialize<T>(element: &str) -> anyhow::Result<T>
+where
+    T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named,
+{
+    let decoded_data = base64::decode(element)?;
+    let mut cursor = std::io::Cursor::new(decoded_data);
+    let deserialized: T = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Deserialization failed: {e:?}"))?;
+    Ok(deserialized)
 }
 
 #[cfg(test)]

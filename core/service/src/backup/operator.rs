@@ -124,6 +124,10 @@ impl InternalRecoveryRequest {
         &self.ephem_op_enc_key
     }
 
+    pub fn operator_verf_key(&self) -> &PublicSigKey {
+        &self.operator_verf_key
+    }
+
     pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
         self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
@@ -946,6 +950,10 @@ mod tests {
 
     #[test]
     fn validate_recovery_validation_material() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
