@@ -1,3 +1,5 @@
+// TODO(dp): is this really "utility" code?
+
 use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
 use anyhow::bail;
 use async_cell::sync::AsyncCell;

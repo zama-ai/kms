@@ -56,6 +56,7 @@ tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tracing.workspace = true
 zeroize.workspace = true
 tempfile = { workspace = true, optional = true }
+utils = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-std.workspace = true
@@ -64,9 +65,9 @@ futures.workspace = true
 paste.workspace = true
 rstest.workspace = true
 sha3.workspace = true
-test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
+utils.workspace = true
 
 
 [features]
@@ -79,6 +80,15 @@ non-wasm = [
     "dep:tokio",
     "dep:tonic",
 ]
-testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile", "dep:sha3"]
+testing = [
+	"non-wasm",
+	"dep:tokio",
+	"dep:futures-util",
+	"dep:futures",
+	"dep:sha3",
+	"dep:test-utils",
+	"dep:tempfile",
+	"dep:utils",
+]
 slow_tests = ["testing"]
 malicious_strategies = ["testing"]

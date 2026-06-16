@@ -128,6 +128,7 @@ validator.workspace = true
 wasm-bindgen.workspace = true
 x509-parser = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
+utils.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
@@ -153,7 +154,7 @@ walkdir = { workspace = true }
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile"]
+testing = ["dep:tempfile", "dep:test-utils"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",
@@ -171,7 +172,6 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
-    "dep:test-utils",
     "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-util",

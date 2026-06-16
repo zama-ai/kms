@@ -1,3 +1,4 @@
+// TODO(dp) Is this used outside core/service? If yes, move to `utils` crate. If not, is it test-only? If yes, move to test-utils-service.
 use crate::engine::utils::MetricedError;
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,

@@ -11,12 +11,12 @@ use kms_lib::{
     },
     consts::RND_SIZE,
     cryptography::signatures::PublicSigKey,
-    util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
 use rand::{RngCore, SeedableRng};
 use std::path::PathBuf;
 use threshold_types::role::Role;
+use utils::{safe_read_element_versioned, safe_write_element_versioned};
 
 const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
 

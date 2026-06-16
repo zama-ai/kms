@@ -1,3 +1,4 @@
+// TODO(dp) Is this used outside core/service? If yes, move to `utils` crate. If not, is it test-only? If yes, move to test-utils-service.
 use std::{error::Error, fmt};
 
 /// The maximum number of iterations before terminating a loop that is expected to only iterate a couple of times.

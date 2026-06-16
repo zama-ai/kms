@@ -7,7 +7,6 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
-use test_utils::read_element;
 use tfhe::{FheUint8, set_server_key};
 use threshold_execution::{
     constants::REAL_KEY_PATH,
@@ -20,6 +19,7 @@ use threshold_execution::{
     },
 };
 use threshold_types::network::NetworkMode;
+use utils::read_element;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

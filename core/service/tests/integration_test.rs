@@ -336,12 +336,12 @@ mod kms_custodian_binary_tests {
             signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
-        util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
     };
     use rand::SeedableRng;
     use std::path::MAIN_SEPARATOR;
     use std::{collections::BTreeMap, path::Path, thread};
     use threshold_types::role::Role;
+    use utils::{safe_read_element_versioned, safe_write_element_versioned};
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
         test_utils::test_logging::init_test_logging();

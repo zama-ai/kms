@@ -56,7 +56,7 @@ mod tests {
         },
     };
     use algebra::base_ring::Z128;
-    use test_utils::read_element;
+    use utils::read_element;
 
     /// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta.
     /// The function assumes padding will be used.

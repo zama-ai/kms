@@ -789,7 +789,6 @@ mod tests {
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fmt::Display;
-    use test_utils::read_element;
     use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
     use tfhe::shortint::PBSParameters;
@@ -801,6 +800,7 @@ mod tests {
     use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
     use threshold_types::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
+    use utils::read_element;
 
     #[tokio::test]
     async fn reshare_no_error_f4() -> anyhow::Result<()> {

@@ -1,3 +1,4 @@
+// TODO(dp) Is this code used outside core/service? If yes, move to `utils` crate. If not, is it test-only? If yes, move to test-utils-service.
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         pub mod test_tools;

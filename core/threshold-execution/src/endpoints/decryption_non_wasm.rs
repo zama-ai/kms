@@ -1321,11 +1321,11 @@ mod tests {
     };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
-    use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{FheUint8, prelude::FheEncrypt};
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
+    use utils::read_element;
 
     #[test]
     fn reconstruct_key() {

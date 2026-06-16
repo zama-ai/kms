@@ -6,7 +6,6 @@ pub mod consts;
 
 #[cfg(feature = "non-wasm")]
 pub mod util {
-    pub mod file_handling;
     pub mod key_setup;
     pub mod meta_store;
     pub mod rate_limiter;

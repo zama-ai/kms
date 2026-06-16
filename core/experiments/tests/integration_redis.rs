@@ -252,13 +252,13 @@ fn test_dkg_orchestrator_large(
 ) {
     use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
     use itertools::Itertools;
-    use test_utils::write_element;
     use thread_handles::OsThreadGroup;
     use threshold_execution::{
         endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
         online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
     };
     use threshold_types::network::NetworkMode;
+    use utils::write_element;
 
     redis_tidy();
 

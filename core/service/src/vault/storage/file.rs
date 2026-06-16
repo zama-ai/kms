@@ -1,8 +1,5 @@
 use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::consts::KEY_PATH_PREFIX;
-use crate::util::file_handling::{
-    safe_read_element_versioned, safe_write_element_versioned, write_bytes,
-};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::vault::storage_prefix_safety;
 use crate::{anyhow_error_and_log, some_or_err};
@@ -16,6 +13,7 @@ use std::{
     str::FromStr,
 };
 use tfhe::{Unversionize, Versionize, named::Named};
+use utils::{safe_read_element_versioned, safe_write_element_versioned, write_bytes};
 
 #[derive(Default, Clone, Debug)]
 pub struct FileStorage {

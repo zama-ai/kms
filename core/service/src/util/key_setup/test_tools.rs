@@ -1,9 +1,10 @@
 //! This module will be deprecated and replaced
 //! by ./core/service/src/testing/utils.rs
 
+// TODO(dp): if the comment above is correct, then we can get rid of all of this. If not, move test-only stuff to `test-utils`.
+
 use crate::backup::BackupCiphertext;
 use crate::conf::{self, Keychain};
-use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
@@ -28,6 +29,7 @@ use tfhe::{
     ServerKey, Unversionize, Versionize,
 };
 use threshold_execution::tfhe_internals::utils::expanded_encrypt;
+use utils::safe_read_element_versioned;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,

@@ -1051,7 +1051,6 @@ pub mod tests {
     };
     use itertools::Itertools;
     use std::path::Path;
-    use test_utils::{read_element, write_element};
     use tfhe::{
         CompressedCiphertextListBuilder, FheUint8, FheUint32, FheUint64, ReRandomizationContext,
         core_crypto::{
@@ -1083,6 +1082,7 @@ pub mod tests {
     };
     use tfhe_csprng::seeders::Seeder;
     use threshold_types::network::NetworkMode;
+    use utils::{read_element, write_element};
 
     #[cfg(feature = "slow_tests")]
     use tokio::time::Duration;
@@ -1748,7 +1748,7 @@ pub mod tests {
                 glwe_key::GlweSecretKeyShare, test_feature::gen_uncompressed_key_set,
             },
         };
-        use test_utils::{read_element, write_element};
+        use utils::{read_element, write_element};
 
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;

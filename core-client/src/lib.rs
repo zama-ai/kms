@@ -36,9 +36,6 @@ use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::util::file_handling::{
-    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
-};
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
     test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
@@ -60,6 +57,9 @@ use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
+use utils::{
+    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
+};
 use validator::{Validate, ValidationError};
 
 // time to sleep between retries of requests in milliseconds
@@ -1258,7 +1258,8 @@ impl FromStr for PreviousKeyInfo {
 pub async fn fetch_ctxt_from_file(
     input_path: PathBuf,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
-    let cipher_with_params: CipherWithParams = read_element(input_path).await?;
+    // let cipher_with_params: CipherWithParams = read_element(input_path).await?;
+    let cipher_with_params: CipherWithParams = read_element(input_path)?;
     let ptxt = TypedPlaintext {
         bytes: parse_hex(cipher_with_params.params.to_encrypt.as_str())?,
         fhe_type: cipher_with_params.params.data_type as i32,
@@ -1374,7 +1375,7 @@ pub async fn encrypt(
             params: cipher_params.clone(),
             ct_format: ct_format.as_str_name().to_string(),
         };
-        write_element(path, &cipher_w_params).await?;
+        write_element(path, &cipher_w_params)?;
     }
 
     Ok(EncryptionResult::new(

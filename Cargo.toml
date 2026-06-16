@@ -19,6 +19,7 @@ members = [
     "observability",
     "tools/kms-health-check",
     "tools/generate-test-material",
+    "utils",
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
@@ -93,6 +94,7 @@ test-utils = { path = "./core/test-utils" }
 experiments = { path = "./core/experiments/", default-features = false }  # Threshold FHE experiments
 threshold-types = { path = "./core/threshold-types" } # Types share across the KMS
 thread-handles = { path = "./core/thread-handles" }
+utils = { path = "./utils" }
 
 # External dependencies (alphabetically sorted)
 aes = "=0.8.4"  # AES encryption - LOW RISK: RustCrypto org, very popular (135M+ downloads), actively maintained
@@ -200,6 +202,7 @@ test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual main
 tfhe = "=1.6.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
 tfhe-csprng = "=0.9.1"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-versionable = "=0.8.0"  # TFHE versioning support - LOW RISK: Zama
+tfhe-safe-serialize = "=0.1.1"  # TFHE versioning support - LOW RISK: Zama
 tfhe-zk-pok = "=0.8.2"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard

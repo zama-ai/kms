@@ -69,8 +69,8 @@ pprof.workspace = true
 rayon.workspace = true
 redis.workspace = true
 thread-handles.workspace = true
-test-utils.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
+utils.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true

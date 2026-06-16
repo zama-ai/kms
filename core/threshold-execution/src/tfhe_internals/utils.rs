@@ -300,9 +300,9 @@ pub mod tests {
     use itertools::Itertools;
     use std::collections::HashMap;
     use std::path::Path;
-    use test_utils::read_element;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
+    use utils::read_element;
 
     use super::reconstruct_bit_vec;
     use threshold_types::role::Role;

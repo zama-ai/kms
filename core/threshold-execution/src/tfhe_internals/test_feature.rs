@@ -1434,7 +1434,7 @@ mod tests {
         constants::REAL_KEY_PATH, tests::ensure_real_keys_setup,
         tfhe_internals::test_feature::KeySet,
     };
-    use test_utils::read_element;
+    use utils::read_element;
 
     // TODO does not work with test key. Enable if test keys get updated
     // // #[test]

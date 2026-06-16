@@ -246,9 +246,9 @@ mod tests {
         tfhe_internals::test_feature::KeySet,
     };
     use algebra::base_ring::Z128;
-    use test_utils::read_element;
     use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
+    use utils::read_element;
 
     #[tokio::test]
     async fn test_box_sending() {
