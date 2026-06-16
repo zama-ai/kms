@@ -295,8 +295,11 @@ impl MetaStoreStatusServiceImpl {
             0
         };
 
-        let max_results = max_results.unwrap_or(100) as usize; // Kept small for early store_guard lock release
-        let end_index = std::cmp::min(start_index + max_results, request_ids.len());
+        // Reject a negative max_results (would become ~usize::MAX when cast) and saturate the
+        // addition: release builds have no overflow-checks, so `start_index + max_results`
+        // could otherwise wrap and produce an inverted slice range below.
+        let max_results = max_results.filter(|n| *n >= 0).unwrap_or(100) as usize; // Kept small for early store_guard lock release
+        let end_index = std::cmp::min(start_index.saturating_add(max_results), request_ids.len());
 
         // Monitor pagination bounds
         tracing::debug!(
@@ -308,18 +311,17 @@ impl MetaStoreStatusServiceImpl {
             max_results
         );
 
-        let paginated_ids = if start_index < request_ids.len() {
-            &request_ids[start_index..end_index]
-        } else {
-            // Edge case: pagination goes beyond available data
+        // `get` yields None for any out-of-range or inverted (start > end) range, so a page
+        // token past the end returns an empty slice instead of panicking.
+        let paginated_ids = request_ids.get(start_index..end_index).unwrap_or_else(|| {
             tracing::warn!(
-                "Pagination start_index ({}) >= total requests ({}) for {:?} store - returning empty slice",
+                "Pagination start_index ({}) beyond total requests ({}) for {:?} store - returning empty slice",
                 start_index,
                 request_ids.len(),
                 store_type
             );
             &[]
-        };
+        });
 
         // Batch collect all request data while holding lock once
         let mut request_data = Vec::new();
