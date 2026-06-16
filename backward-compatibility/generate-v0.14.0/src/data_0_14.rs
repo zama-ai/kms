@@ -123,6 +123,13 @@ macro_rules! store_versioned_auxiliary {
     };
 }
 
+/// Fixed timestamp (≈50 years after the Unix epoch) used when generating the custodian
+/// fixtures. Using a constant instead of `SystemTime::now()` keeps the generated v0.14.0
+/// data byte-for-byte reproducible, so re-running the generator never churns the LFS objects.
+fn fixed_fixture_timestamp() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
+}
+
 fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
     DKGParamsSnS {
         regular_params: convert_dkg_params_regular(value.regular_params),
@@ -1064,7 +1071,7 @@ impl KmsV0_14_0 {
         let payload = CustodianSetupMessagePayload {
             header: "header".to_string(),
             random_value: [4_u8; 32],
-            timestamp: std::time::SystemTime::now(),
+            timestamp: fixed_fixture_timestamp(),
             public_enc_key: enc_key.clone(),
             verification_key: cus_pk.clone(),
         };
@@ -1149,7 +1156,7 @@ impl KmsV0_14_0 {
                 custodian_role: cus_role,
                 name: format!("role{role_j}"),
                 random_value: rnd,
-                timestamp: std::time::SystemTime::now(),
+                timestamp: fixed_fixture_timestamp(),
                 public_enc_key: cus_enc_key,
                 public_verf_key: custodian_verf_key,
             };
@@ -1365,9 +1372,11 @@ impl KmsV0_14_0 {
             private_key,
         )
         .unwrap();
-        let custodian_setup_message = custodian
-            .generate_setup_message(&mut rng, "custodian-1".to_string())
-            .unwrap();
+        let custodian_setup_message = custodian.generate_setup_message_with_timestamp(
+            &mut rng,
+            "custodian-1".to_string(),
+            fixed_fixture_timestamp(),
+        );
         store_versioned_test!(
             &custodian_setup_message,
             dir,

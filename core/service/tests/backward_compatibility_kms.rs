@@ -915,27 +915,19 @@ fn test_internal_recovery_request(
     }
 }
 
+/// Fixed timestamp used by the v0.14.0 generator for the custodian fixtures. Must match
+/// `fixed_fixture_timestamp` in `backward-compatibility/generate-v0.14.0/src/data_0_14.rs`
+/// so that regenerated, deterministic fixtures compare equal to what we rebuild here.
+fn fixed_fixture_timestamp() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
+}
+
 fn test_internal_custodian_context(
     dir: &Path,
     test: &InternalCustodianContextTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let mut original_versionized: InternalCustodianContext =
-        load_and_unversionize(dir, test, format)?;
-
-    // Grab a copy of the on-disk fixture timestamp.
-    let orig_timestamp = original_versionized
-        .custodian_nodes
-        .first_key_value()
-        .expect("at least one entry in the on-disk fixture")
-        .1
-        .timestamp;
-    // Use the on-disk timestamp from the first entry for all `InternalCustodianSetupMessage`s
-    // so we can compare "expected" to "new" below.
-    original_versionized
-        .custodian_nodes
-        .values_mut()
-        .for_each(|node| node.timestamp = orig_timestamp);
+    let original_versionized: InternalCustodianContext = load_and_unversionize(dir, test, format)?;
 
     let enc_key: UnifiedPublicEncKey =
         load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
@@ -954,7 +946,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: orig_timestamp, // Use the timestamp from the fixture
+            timestamp: fixed_fixture_timestamp(),
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };
@@ -1156,11 +1148,10 @@ fn test_internal_custodian_message(
     let (dec_key, enc_key) = enc.keygen().unwrap();
     let custodian =
         Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
-    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
-
-    // the timestamp will never match, so we modify it manually
-    // the timestamp also affects the signature, so modify it as well
-    new_custodian_setup_message.timestamp = original_custodian_setup_message.timestamp;
+    // Use the same fixed timestamp the generator uses so the rebuilt message matches the
+    // deterministic on-disk fixture exactly.
+    let new_custodian_setup_message =
+        custodian.generate_setup_message_with_timestamp(&mut rng, name, fixed_fixture_timestamp());
 
     if original_custodian_setup_message != new_custodian_setup_message {
         Err(test.failure(
