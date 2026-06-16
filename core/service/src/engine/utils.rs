@@ -672,7 +672,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::engine::base::{KeyGenMetadataInner, safe_serialize_hash_element_versioned};
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
@@ -719,6 +719,31 @@ mod tests {
             after,
             before + 1,
             "Drop should have called handle_error exactly once"
+        );
+    }
+
+    #[test]
+    fn test_base64_serialize_deserialize_roundtrip() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (pk, _sk) = gen_sig_keys(&mut rng);
+
+        let serialized = base64_serialize(&pk).expect("serialization should succeed");
+        // The output must be valid base64 (decodable on its own).
+        base64::decode(&serialized).expect("output should be valid base64");
+
+        let deserialized: PublicSigKey =
+            base64_deserialize(&serialized).expect("deserialization should succeed");
+        assert_eq!(pk, deserialized, "roundtrip should preserve the value");
+    }
+
+    #[test]
+    fn test_base64_deserialize_rejects_invalid_base64() {
+        // '!' is not part of the base64 alphabet.
+        let err = base64_deserialize::<PublicSigKey>("not valid base64!!").unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("base64")
+                || err.downcast_ref::<base64::DecodeError>().is_some(),
+            "expected a base64 decode error, got: {err}"
         );
     }
 
