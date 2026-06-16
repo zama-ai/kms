@@ -18,6 +18,8 @@ use crate::client::key_gen::tests::check_conformance;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
 #[cfg(feature = "slow_tests")]
+use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+#[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::common::threshold_secure_key_gen;
@@ -1014,30 +1016,29 @@ async fn poll_key_gen_preproc_result(
     max_iter: usize,
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
-    for client in kms_clients.values() {
-        let mut client = client.clone();
+    for (party_id, client) in kms_clients.iter() {
+        let client = client.clone();
+        let party_id = *party_id;
         let req_id_clone = request.request_id.as_ref().unwrap().clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete preprocessing
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
-                .await;
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for preprocessing after {max_iter} retries");
-                }
-                ctr += 1;
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-            }
+            // Sleep initially to give the server some time to complete
+            // preprocessing, then poll every 500ms for up to `max_iter` tries.
+            let response = poll_result_with_retries(
+                client,
+                party_id,
+                req_id_clone.clone(),
+                "preprocessing result",
+                PollConfig {
+                    initial_delay: tokio::time::Duration::from_millis(500),
+                    retry_delay: tokio::time::Duration::from_millis(500),
+                    max_retries: max_iter,
+                },
+                |client, request| {
+                    Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+                },
+            )
+            .await;
 
             (req_id_clone, response.unwrap().into_inner())
         });
@@ -1583,18 +1584,18 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete on all parties
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-                .await;
-        }
-        result?;
+    for (party_id, client) in env.clients.iter() {
+        poll_result_with_retries(
+            client.clone(),
+            *party_id,
+            preproc_id.into(),
+            "preprocessing result",
+            PollConfig::default(),
+            |client, request| {
+                Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+            },
+        )
+        .await?;
     }
 
     // Simulate crash: Run keygen WITHOUT party 2
@@ -1624,18 +1625,16 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     }
 
     // Verify key generation completed on active parties (not crashed party)
-    for client in env.all_clients_except(crashed_party) {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-                .await;
-        }
-        result?;
+    for (party_id, client) in env.clients_except(crashed_party) {
+        poll_result_with_retries(
+            client,
+            party_id,
+            keygen_id.into(),
+            "key gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+        )
+        .await?;
     }
 
     for server in env.into_servers() {
@@ -1695,18 +1694,18 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete on active parties
-    for client in env.all_clients_except(crashed_party) {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-                .await;
-        }
-        result?;
+    for (party_id, client) in env.clients_except(crashed_party) {
+        poll_result_with_retries(
+            client,
+            party_id,
+            preproc_id.into(),
+            "preprocessing result",
+            PollConfig::default(),
+            |client, request| {
+                Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+            },
+        )
+        .await?;
     }
 
     // Run keygen with same active parties (crashed party stays crashed)
@@ -1733,18 +1732,16 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     }
 
     // Verify key generation completed on active parties
-    for client in env.all_clients_except(crashed_party) {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-                .await;
-        }
-        result?;
+    for (party_id, client) in env.clients_except(crashed_party) {
+        poll_result_with_retries(
+            client,
+            party_id,
+            keygen_id.into(),
+            "key gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+        )
+        .await?;
     }
 
     for server in env.into_servers() {
@@ -2368,18 +2365,18 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id_3.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_preproc_result(tonic::Request::new(preproc_id_3.into()))
-                .await;
-        }
-        result?;
+    for (party_id, client) in env.clients.iter() {
+        poll_result_with_retries(
+            client.clone(),
+            *party_id,
+            preproc_id_3.into(),
+            "preprocessing result",
+            PollConfig::default(),
+            |client, request| {
+                Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+            },
+        )
+        .await?;
     }
 
     // Generate decompression key with proper configuration
@@ -2416,17 +2413,16 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Wait for decompression key generation to complete and collect the result
     let mut keygen_result_3 = None;
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_result(tonic::Request::new(key_id_3.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_result(tonic::Request::new(key_id_3.into()))
-                .await;
-        }
+    for (party_id, client) in env.clients.iter() {
+        let result = poll_result_with_retries(
+            client.clone(),
+            *party_id,
+            key_id_3.into(),
+            "key gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+        )
+        .await;
         // Only need one result to retrieve the decompression key from pub storage
         if keygen_result_3.is_none() {
             keygen_result_3 = Some(result?.into_inner());

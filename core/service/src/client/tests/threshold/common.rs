@@ -1,6 +1,8 @@
 use core::future::Future;
 
-use crate::client::tests::common::default_isolated_extra_data;
+use crate::client::tests::common::{
+    PollConfig, default_isolated_extra_data, poll_result_with_retries,
+};
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MAX_TRIES};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -16,33 +18,6 @@ use tonic::{Request, Response, Status};
 
 /// RequestIds as they are represented in the current version of the ProtoBuf API.
 type ProtoRequestId = kms_grpc::kms::v1::RequestId;
-
-async fn poll_result_with_retries<R: Send>(
-    mut client: CoreServiceEndpointClient<Channel>,
-    party_id: u32,
-    request_id: ProtoRequestId,
-    operation: &'static str,
-    poll_fn: impl for<'a> Fn(
-        &'a mut CoreServiceEndpointClient<Channel>,
-        Request<ProtoRequestId>,
-    )
-        -> Pin<Box<dyn Future<Output = Result<Response<R>, Status>> + Send + 'a>>,
-) -> Result<Response<R>, Status> {
-    let mut result = poll_fn(&mut client, Request::new(request_id.clone())).await;
-    let mut retries = 0_usize;
-    while matches!(result.as_ref(), Err(status) if status.code() == tonic::Code::Unavailable) {
-        if retries >= MAX_TRIES {
-            return Err(Status::deadline_exceeded(format!(
-                "timeout while waiting for {operation} from party {party_id} for request {} after {MAX_TRIES} retries",
-                request_id.request_id
-            )));
-        }
-        retries += 1;
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        result = poll_fn(&mut client, Request::new(request_id.clone())).await;
-    }
-    result
-}
 
 // =============================================================================
 // ISOLATED TEST HELPERS
@@ -102,6 +77,7 @@ pub(crate) async fn run_insecure_preproc(
             *party_id,
             (*preproc_id).into(),
             "insecure preprocessing result",
+            PollConfig::default(),
             |client, request| {
                 Box::pin(async move { client.get_insecure_key_gen_preproc_result(request).await })
             },
@@ -182,6 +158,7 @@ pub async fn threshold_insecure_key_gen(
             *party_id,
             (*request_id).into(),
             "insecure keygen result",
+            PollConfig::default(),
             |client, request| {
                 Box::pin(async move { client.get_insecure_key_gen_result(request).await })
             },
@@ -265,6 +242,7 @@ pub async fn threshold_secure_key_gen(
             *party_id,
             (*preproc_id).into(),
             "preprocessing result",
+            PollConfig::default(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -303,6 +281,7 @@ pub async fn threshold_secure_key_gen(
             *party_id,
             (*keygen_id).into(),
             "keygen result",
+            PollConfig::default(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;

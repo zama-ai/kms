@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
+use crate::client::tests::common::{PollConfig, poll_result_with_retries};
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -401,37 +402,31 @@ pub async fn run_decryption_threshold_optionally_fail(
         if party_ids_to_crash.contains(&(*i as usize)) {
             continue;
         }
+        let party_id = *i;
         for req in &reqs {
-            let mut cur_client = kms_clients.get(i).unwrap().clone();
+            let cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
-                // Sleep to give the server some time to complete decryption
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    100 * bits * parallelism as u64,
-                ))
+                // Sleep initially to give the server time to complete decryption,
+                // then poll every 4*bits ms (clamped to [100ms, 1s]) for up to 600
+                // tries (~10 minutes for large types).
+                let response = poll_result_with_retries(
+                    cur_client,
+                    party_id,
+                    req_id_clone.clone(),
+                    "public decryption result",
+                    PollConfig {
+                        initial_delay: tokio::time::Duration::from_millis(
+                            100 * bits * parallelism as u64,
+                        ),
+                        retry_delay: tokio::time::Duration::from_millis(4 * bits.clamp(100, 1000)),
+                        max_retries: 600,
+                    },
+                    |client, request| {
+                        Box::pin(async move { client.get_public_decryption_result(request).await })
+                    },
+                )
                 .await;
-
-                let mut response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-                let mut ctr = 0u64;
-                while response.is_err()
-                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                {
-                    // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        4 * bits.clamp(100, 1000),
-                    ))
-                    .await;
-                    // do at most 600 retries (stop after max. 10 minutes for large types)
-                    if ctr >= 600 {
-                        panic!("timeout while waiting for decryption");
-                    }
-                    ctr += 1;
-                    response = cur_client
-                        .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                }
                 (req_id_clone, response.unwrap().into_inner())
             });
         }

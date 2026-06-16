@@ -1,6 +1,7 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
+use crate::client::tests::common::{PollConfig, poll_result_with_retries};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
@@ -178,16 +179,17 @@ async fn preproc_centralized(
         .unwrap();
     assert_eq!(preproc_response.into_inner(), Empty {});
 
-    let mut response = kms_client
-        .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
-        .await;
-    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete preprocessing
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        response = kms_client
-            .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
-            .await;
-    }
+    let response = poll_result_with_retries(
+        kms_client.clone(),
+        1,
+        (*preproc_id).into(),
+        "key gen preprocessing result",
+        PollConfig::default(),
+        |client, request| {
+            Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+        },
+    )
+    .await;
     let inner_resp = response.unwrap().into_inner();
     assert_eq!(inner_resp.preprocessing_id, Some((*preproc_id).into()));
 }
@@ -281,16 +283,15 @@ pub async fn run_key_gen_centralized(
         .await
         .unwrap();
     assert_eq!(gen_response.into_inner(), Empty {});
-    let mut response = kms_client
-        .get_key_gen_result(tonic::Request::new((*key_req_id).into()))
-        .await;
-    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete key generation
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        response = kms_client
-            .get_key_gen_result(tonic::Request::new((*key_req_id).into()))
-            .await;
-    }
+    let response = poll_result_with_retries(
+        kms_client.clone(),
+        1,
+        (*key_req_id).into(),
+        "key gen result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+    )
+    .await;
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let priv_storage = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();

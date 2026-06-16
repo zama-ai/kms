@@ -20,7 +20,7 @@ use crate::{
     client::{
         client_wasm::Client,
         tests::{
-            common::keygen_config,
+            common::{PollConfig, keygen_config, poll_result_with_retries},
             threshold::{
                 crs_gen_tests::run_crs,
                 key_gen_tests::{
@@ -548,30 +548,26 @@ async fn poll_new_epoch_result(
     let mut resp_tasks = JoinSet::new();
 
     for (party_idx, client) in kms_clients.iter() {
-        let mut client = client.clone();
+        let client = client.clone();
 
         let reshare_request_id = *new_epoch_id;
         let party_idx = *party_idx;
         resp_tasks.spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            let mut response = client
-                .get_epoch_result(tonic::Request::new(reshare_request_id.into()))
-                .await;
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for resharing after {max_iter} retries");
-                }
-                ctr += 1;
-                response = client
-                    .get_epoch_result(tonic::Request::new(reshare_request_id.into()))
-                    .await;
-            }
+            // Sleep initially to give the server time to complete resharing, then
+            // poll every 500ms for up to `max_iter` tries.
+            let response = poll_result_with_retries(
+                client,
+                party_idx,
+                reshare_request_id.into(),
+                "resharing result",
+                PollConfig {
+                    initial_delay: tokio::time::Duration::from_millis(500),
+                    retry_delay: tokio::time::Duration::from_millis(500),
+                    max_retries: max_iter,
+                },
+                |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
+            )
+            .await;
             (party_idx, reshare_request_id, response)
         });
     }
