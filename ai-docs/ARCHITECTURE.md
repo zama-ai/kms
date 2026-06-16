@@ -130,7 +130,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 - **Key generation** — `KeyGenPreproc` / `KeyGenPreprocResult` (threshold
   preprocessing), `KeyGen`, and `NewMpcEpoch` for key rotation. Multiple keyset
   configurations are supported (standard, decompression-only, compressed
-  variants).
+  variants). Insecure key generation still requires an explicit preprocessing
+  ID for both the centralized and threshold cases.
   Standard threshold keygen persists a dedicated OPRF LWE secret-key share in
   each party's private key material and includes the corresponding OPRF server
   key in the generated TFHE server key. Legacy private keysets that predate this

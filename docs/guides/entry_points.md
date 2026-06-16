@@ -67,7 +67,7 @@ The KMS Cores will post the result of the key generation to a public storage sys
 The key generation process is slow and may take a couple of hours, even when running on strong machines.
 
 #### Insecure mode
-To support a fast setup in test situations, the Zama KMS supports an "insecure" mode for key generation, where preprocessing is not required and where the key generation itself only takes a few seconds. However, as the name suggests, this mode is _not_ threshold secure. I.e. it should only be used for testing purposes.
+To support a fast setup in test situations, the Zama KMS supports an "insecure" mode for key generation, where only a dummy insecure preprocessing request is required and where the key generation itself only takes a few seconds. However, as the name suggests, this mode is _not_ threshold secure. I.e. it should only be used for testing purposes.
 
 ### CRS generation
 CRS generation allows the generation of a Common Reference String (CRS) in a distributed secure manner. The CRS is what is known as "powers-of-tau". Amongst other things, it can be used to do zero-knowledge proofs of plaintext knowledge for FHE encrypted messages. See [this paper](https://eprint.iacr.org/2023/800.pdf) for more information.

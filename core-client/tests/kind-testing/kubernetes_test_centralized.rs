@@ -113,8 +113,22 @@ impl K8sTestContext {
         info!("[K8S-CENTRALIZED] Executing InsecureKeyGen...");
         let start = std::time::Instant::now();
 
+        let preproc_results = self
+            .execute(CCCommand::InsecurePreprocKeyGen(
+                InsecureKeyGenPreprocParameters {
+                    context_id: None,
+                    epoch_id: None,
+                },
+            ))
+            .await;
+        let preproc_id = *preproc_results
+            .first()
+            .and_then(|(id, _)| id.as_ref())
+            .expect("InsecurePreprocKeyGen must return a preprocessing ID");
+
         let results = self
             .execute(CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+                preproc_id,
                 shared_args: SharedKeyGenParameters::default(),
             }))
             .await;
