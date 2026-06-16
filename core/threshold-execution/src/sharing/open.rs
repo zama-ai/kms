@@ -15,11 +15,12 @@ use crate::{
             generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
             send_to_all,
         },
-        online::preprocessing::constants::BATCH_SIZE_BITS,
+        constants::ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK,
         runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     },
 };
 use algebra::{
+    error_correction::ReconstructionHints,
     sharing::{
         shamir::{
             ShamirSharings, fill_indexed_shares, reconstruct_w_errors_async,
@@ -427,7 +428,9 @@ type ReconsFunc<Z> = fn(
     threshold: usize,
     num_bots: usize,
     sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>;
+
 /// Helper function of robust reconstructions which collect the shares and tries to reconstruct
 ///
 /// Takes as input:
@@ -458,27 +461,27 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     //Start awaiting on receive jobs to retrieve the shares
     while let Some(v) = jobs.join_next().await {
         let sharings = sharings.clone();
-        let joined_result = if let Ok(v) = v {
+        let opening_contribution = if let Ok(v) = v {
             v
         } else {
             tracing::warn!("(Share reconstruction) A receive job failed during reconstruction.");
             num_bots += 1;
             continue;
         };
-        match joined_result {
-            Ok((party_id, data)) => {
-                if let Ok(values) = data {
+        match opening_contribution {
+            Ok((contributor, partial_openings)) => {
+                if let Ok(partial_openings) = partial_openings {
                     fill_indexed_shares(
                         &mut sharings
                             .lock()
                             .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
-                        values,
-                        party_id,
+                        partial_openings,
+                        contributor,
                     );
                     collected_shares += 1;
-                } else if let Err(e) = data {
+                } else if let Err(e) = partial_openings {
                     tracing::warn!(
-                        "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
+                        "(Share reconstruction) Received malformed data from {contributor}:  {:?}",
                         e
                     );
                     num_bots += 1;
@@ -505,20 +508,39 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
 
             // Spawn a task on rayon.
             let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
+                let locked_sharings = sharings
+                    .lock()
+                    .map_err(|_| anyhow_error_and_log("Poisoned lock"))?;
+
+                // Build reconstruction hints once from the current owner set.
+                // All sharings in the batch have the same owners (filled identically).
+                let hints = if let Some(first) = locked_sharings.first() {
+                    ReconstructionHints::new(first, degree)?
+                } else {
+                    // If there's not even a single sharing, we can return directly
+                    return Ok(Some(vec![]));
+                };
+
                 //Note: here we keep waiting on new shares until we have all of the values opened.
                 // Here we want to use par_iter for opening the huge batches
                 // present in DKG, but we want to avoid using it for
                 // other tasks.
-                Ok(sharings
-                    .lock()
-                    .map_err(|_| anyhow_error_and_log("Poisoned lock"))?
+                let result: Option<Vec<_>> = locked_sharings
                     .par_iter()
-                    .with_min_len(2 * BATCH_SIZE_BITS)
+                    .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
                     .map(|sharing| {
-                        reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                            .unwrap_or_default()
+                        reconstruct_fn(
+                            num_parties,
+                            degree,
+                            threshold as usize,
+                            num_bots,
+                            sharing,
+                            &hints,
+                        )
+                        .unwrap_or_default()
                     })
-                    .collect())
+                    .collect();
+                Ok(result)
             })
             .await??;
 
