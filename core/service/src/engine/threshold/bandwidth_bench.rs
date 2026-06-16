@@ -16,6 +16,12 @@ use crate::engine::{
     validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
 };
 
+/// Max per-session payload a caller may request. Bounds the `vec![0; payload_size]`
+/// allocation in `run_bandwidth_benchmark`: an unbounded value aborts the process on OOM.
+const MAX_BANDWIDTH_PAYLOAD_BYTES: u32 = 1 << 30; // 1 GiB
+/// Max benchmark sessions a caller may request, bounding the task fan-out below.
+const MAX_BANDWIDTH_SESSIONS: u32 = 1024;
+
 pub(crate) async fn run_bandwidth_benchmark(
     request: Request<BandwidthBenchmarkRequest>,
     session_maker: ImmutableSessionMaker,
@@ -24,6 +30,20 @@ pub(crate) async fn run_bandwidth_benchmark(
     tracing::info!("Received bandwidth benchmark request: {:?}", request);
     let context_id: ContextId =
         parse_optional_grpc_request_id(&request.context_id, RequestIdParsingErr::Context)?;
+    // Bound both fields before casting: they are untrusted u64s that drive an allocation
+    // and a task-spawn loop, so a crafted request could otherwise exhaust memory/tasks.
+    if request.payload_size_per_session > MAX_BANDWIDTH_PAYLOAD_BYTES {
+        return Err(Status::invalid_argument(format!(
+            "payload_size_per_session {} exceeds the maximum of {} bytes",
+            request.payload_size_per_session, MAX_BANDWIDTH_PAYLOAD_BYTES
+        )));
+    }
+    if request.number_sessions == 0 || request.number_sessions > MAX_BANDWIDTH_SESSIONS {
+        return Err(Status::invalid_argument(format!(
+            "number_sessions {} must be in 1..={}",
+            request.number_sessions, MAX_BANDWIDTH_SESSIONS
+        )));
+    }
     let payload_size = request.payload_size_per_session as usize;
     let num_sessions = request.number_sessions as usize;
     let kind: BandwidthKind = request.kind.try_into().map_err(|e| {
