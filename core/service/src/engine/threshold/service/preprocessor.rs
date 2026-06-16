@@ -8,6 +8,10 @@ use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
 };
+#[cfg(feature = "insecure")]
+use observability::metrics_names::{
+    OP_INSECURE_KEYGEN_PREPROC_REQUEST, OP_INSECURE_KEYGEN_PREPROC_RESULT,
+};
 use observability::{
     metrics::{DurationGuard, METRICS},
     metrics_names::{
@@ -51,8 +55,11 @@ use crate::{
     },
 };
 
+#[cfg(feature = "insecure")]
+use crate::util::meta_store::update_req_in_meta_store;
+
 // === Current Module Imports ===
-use super::BucketMetaStore;
+use super::{BucketMetaStore, PreprocMaterial};
 
 pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
 {
@@ -338,7 +345,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             handle_update.clone().map(|inner| BucketMetaStore {
                 external_signature,
                 preprocessing_id: *req_id,
-                preprocessing_store: inner,
+                preprocessing_store: PreprocMaterial::Real(inner),
                 dkg_param: params,
             }),
         );
@@ -433,6 +440,160 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             )?;
         Ok(Response::new(Empty {}))
     }
+
+    /// Insecure (dummy) preprocessing: no preprocessing material is generated,
+    /// only the preprocessing ID, the external signature and the DKG parameters
+    /// are stored in the meta store, mirroring the centralized KMS preprocessing.
+    /// The stored entry can only be consumed by the insecure key generation.
+    #[cfg(feature = "insecure")]
+    async fn inner_insecure_key_gen_preproc(
+        &self,
+        request: KeyGenPreprocRequest,
+    ) -> Result<Response<Empty>, MetricedError> {
+        let _permit = self.rate_limiter.start_preproc().await?;
+        let mut timer = METRICS
+            .time_operation(OP_INSECURE_KEYGEN_PREPROC_REQUEST)
+            .start();
+
+        let (
+            request_id,
+            context_id,
+            epoch_id,
+            dkg_params,
+            _keyset_config,
+            eip712_domain,
+            extra_data,
+        ) = validate_preproc_request(request)?;
+        let my_role = validate_context_and_epoch(
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+            &self.session_maker,
+            Some(request_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
+        timer.tags(vec![(TAG_PARTY_ID, my_role.to_string())]);
+
+        // Add preprocessing to metastore and fail in case it is already present
+        add_req_to_meta_store(
+            &mut self.preproc_buckets.write().await,
+            &request_id,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+        )?;
+
+        let sk = self.base_kms.sig_key().map_err(|e| {
+            MetricedError::new(
+                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                e,
+                tonic::Code::FailedPrecondition,
+            )
+        })?;
+        let preproc_bucket = super::new_insecure_preproc_bucket(
+            &sk,
+            request_id,
+            dkg_params,
+            &eip712_domain,
+            extra_data,
+        )
+        .map_err(|e| e.to_string());
+        let preproc_error = preproc_bucket.as_ref().err().cloned();
+
+        if !update_req_in_meta_store(
+            &mut self.preproc_buckets.write().await,
+            &request_id,
+            preproc_bucket,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+        ) {
+            return Err(MetricedError::new(
+                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Failed to store insecure preprocessing result for Request ID {request_id}"
+                ),
+                tonic::Code::Internal,
+            ));
+        }
+        if let Some(error) = preproc_error {
+            return Err(MetricedError::new(
+                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Failed to build insecure preprocessing bucket for Request ID {request_id}: {error}"
+                ),
+                tonic::Code::Internal,
+            ));
+        }
+        tracing::warn!(
+            "Stored insecure (dummy) preprocessing for Request ID {} - no preprocessing material was generated",
+            request_id
+        );
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn inner_get_result(
+        &self,
+        request: Request<v1::RequestId>,
+        op_tag: &'static str,
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+        let request_id =
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
+                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
+
+        tracing::info!(
+            "Polling preproc result for request {} (waiting up to {}s)",
+            request_id,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        );
+
+        let preproc_data = retrieve_from_meta_store_with_timeout(
+            self.preproc_buckets.read().await,
+            &request_id,
+            op_tag,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        )
+        .await?;
+
+        tracing::info!("Preproc result ready for request {}", request_id);
+
+        if preproc_data.preprocessing_id != request_id {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
+                    request_id,
+                    preproc_data.preprocessing_id
+                ),
+                tonic::Code::Internal,
+            ));
+        }
+
+        // The kind of result requested must match the kind of preprocessing
+        // stored: the insecure endpoint must not return real material, and the
+        // secure endpoint must not return insecure (dummy) material.
+        #[cfg(feature = "insecure")]
+        {
+            let is_insecure_tag = op_tag == OP_INSECURE_KEYGEN_PREPROC_RESULT;
+            let is_insecure_store =
+                matches!(preproc_data.preprocessing_store, PreprocMaterial::Insecure);
+            if is_insecure_tag != is_insecure_store {
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "Preprocessing kind mismatch for ID {request_id}: is_insecure_tag={is_insecure_tag} != is_insecure_store={is_insecure_store}",
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ));
+            }
+        }
+
+        Ok(Response::new(KeyGenPreprocResult {
+            preprocessing_id: Some(request_id.into()),
+            external_signature: preproc_data.external_signature,
+        }))
+    }
 }
 
 #[tonic::async_trait]
@@ -469,54 +630,30 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             .await
     }
 
+    #[cfg(feature = "insecure")]
+    async fn insecure_key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.inner_insecure_key_gen_preproc(request.into_inner())
+            .await
+    }
+
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
-        let request_id =
-            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_KEYGEN_PREPROC_RESULT,
-                        None,
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })?;
+        self.inner_get_result(request, OP_KEYGEN_PREPROC_RESULT)
+            .await
+    }
 
-        tracing::info!(
-            "Polling preproc result for request {} (waiting up to {}s)",
-            request_id,
-            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-        );
-
-        let preproc_data = retrieve_from_meta_store_with_timeout(
-            self.preproc_buckets.read().await,
-            &request_id,
-            OP_KEYGEN_PREPROC_RESULT,
-            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-        )
-        .await?;
-
-        tracing::info!("Preproc result ready for request {}", request_id);
-
-        if preproc_data.preprocessing_id != request_id {
-            return Err(MetricedError::new(
-                OP_KEYGEN_PREPROC_RESULT,
-                Some(request_id),
-                anyhow::anyhow!(
-                    "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
-                    request_id,
-                    preproc_data.preprocessing_id
-                ),
-                tonic::Code::Internal,
-            ));
-        }
-
-        Ok(Response::new(KeyGenPreprocResult {
-            preprocessing_id: Some(request_id.into()),
-            external_signature: preproc_data.external_signature,
-        }))
+    #[cfg(feature = "insecure")]
+    async fn get_insecure_result(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
+        self.inner_get_result(request, OP_INSECURE_KEYGEN_PREPROC_RESULT)
+            .await
     }
 
     async fn abort_key_gen_preproc(
@@ -926,6 +1063,123 @@ mod tests {
         prep.get_result(tonic::Request::new(req_id.into()))
             .await
             .unwrap();
+    }
+
+    #[cfg(feature = "insecure")]
+    fn insecure_preproc_request(req_id: RequestId) -> tonic::Request<KeyGenPreprocRequest> {
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        tonic::Request::new(KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+            extra_data: vec![],
+        })
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_sunshine() {
+        use kms_grpc::solidity_types::PrepKeygenVerification;
+
+        use crate::cryptography::signatures::recover_address_from_ext_signature;
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let verf_key = prep.base_kms.verf_key();
+
+        let req_id = RequestId::new_random(&mut rng);
+        prep.insecure_key_gen_preproc(insecure_preproc_request(req_id))
+            .await
+            .unwrap();
+
+        // The insecure preprocessing is instant, so the result is available right away
+        let inner_res = prep
+            .get_insecure_result(tonic::Request::new(req_id.into()))
+            .await
+            .unwrap()
+            .into_inner();
+
+        // Check that the external signature is valid
+        let sol_struct = PrepKeygenVerification::new(
+            &inner_res.preprocessing_id.unwrap().try_into().unwrap(),
+            vec![],
+        );
+        assert_eq!(
+            recover_address_from_ext_signature(
+                &sol_struct,
+                &dummy_domain(),
+                &inner_res.external_signature
+            )
+            .unwrap(),
+            verf_key.address()
+        );
+
+        // The stored bucket must hold no preprocessing material
+        let bucket = retrieve_from_meta_store_with_timeout(
+            prep.preproc_buckets.read().await,
+            &req_id,
+            "test",
+            1,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            bucket.preprocessing_store,
+            super::PreprocMaterial::Insecure
+        ));
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_result_rejects_real_preproc() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let req_id = RequestId::new_random(&mut rng);
+
+        prep.key_gen_preproc(insecure_preproc_request(req_id))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prep.get_insecure_result(tonic::Request::new(req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition
+        );
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_already_exists() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let req_id = RequestId::new_random(&mut rng);
+
+        prep.insecure_key_gen_preproc(insecure_preproc_request(req_id))
+            .await
+            .unwrap();
+
+        // a second request with the same ID must be rejected
+        assert_eq!(
+            prep.insecure_key_gen_preproc(insecure_preproc_request(req_id))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+
+        // it must also be rejected by the secure preprocessing endpoint
+        assert_eq!(
+            prep.key_gen_preproc(insecure_preproc_request(req_id))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
     }
 
     #[tokio::test]

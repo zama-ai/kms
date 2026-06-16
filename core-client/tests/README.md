@@ -60,7 +60,7 @@ The client binary accepts these commands (passed as `CCCommand` in tests via `ex
 
 | Command | Description | Requires epoch | Requires PRSS |
 |---------|-------------|----------------|---------------|
-| `InsecureKeyGen` | Threshold DKG, no preprocessing (insecure) | ✅ | ❌ |
+| `InsecureKeyGen` | Threshold DKG with dummy preprocessing (insecure) | ✅ | ❌ |
 | `KeyGen` | Threshold DKG with preprocessing (secure) | ✅ | ✅ |
 | `PreprocKeyGen` | Offline preprocessing phase for DKG | ✅ | ✅ |
 | `CrsGen` | Generate CRS (ZK ceremony, secure) | ✅ | ✅ |
@@ -158,7 +158,7 @@ async fn k8s_test_keygen_and_crs() {
 | Method | Description |
 |--------|-------------|
 | `new(name)` | Create context, print test header |
-| `insecure_keygen()` | Run `InsecureKeyGen`, return key ID |
+| `insecure_keygen()` | Run `InsecurePreprocKeyGen` then `InsecureKeyGen`, return key ID |
 | `crs_gen()` | Run `CrsGen`, return CRS ID |
 | `encrypt(key_id, plaintext, FheType)` | Fetch public FHE key from cluster, encrypt locally, write ciphertext to workspace; returns `EncryptionResult` (path + original plaintext + type) |
 | `public_decrypt_from_file(enc)` | Send ciphertext from `EncryptionResult` to threshold parties, verify result matches original — panics on mismatch; returns `DecryptionResult` (party response count) |
