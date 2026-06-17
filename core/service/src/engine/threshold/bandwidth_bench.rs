@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::AddAssign, time::Duration};
+use std::{collections::HashMap, ops::AddAssign, sync::Arc, time::Duration};
 
 use itertools::Itertools;
 use kms_grpc::{
@@ -9,6 +9,7 @@ use kms_grpc::{
     },
 };
 use threshold_networking::health_check::{BenchKind, HealthCheckStatus};
+use tokio::sync::Semaphore;
 use tonic::{Request, Response, Status};
 
 use crate::engine::{
@@ -31,10 +32,26 @@ const MAX_BANDWIDTH_TOTAL_BYTES: u64 = 1 << 30; // 1 GiB
 /// it, an untrusted u64 drives a sustained per-peer send loop for up to the whole server
 /// request timeout, turning the endpoint into a network-flood primitive.
 const MAX_BANDWIDTH_DURATION_SECS: u64 = 60;
+/// Max bandwidth benchmark runs allowed to execute concurrently on a node. The per-request input
+/// is already bounded, but nothing bounds the number of *concurrent* requests: each run spawns up
+/// to `MAX_BANDWIDTH_SESSIONS` sessions, every one allocating a payload the networking layer clones
+/// per peer, so N in-flight requests multiply peak memory and outbound peer traffic by N — a DoS /
+/// amplification primitive against peer nodes. Unlike the other expensive endpoints this one takes
+/// no rate-limiter permit, so we bound it here instead. It is a diagnostic, so serializing runs is
+/// acceptable.
+const MAX_CONCURRENT_BANDWIDTH_BENCHMARKS: usize = 1;
+
+/// Creates the permit pool that bounds concurrent [`run_bandwidth_benchmark`] executions. One pool
+/// is held per server instance (not a process-global), so multiple in-process nodes (e.g. in tests)
+/// stay independent.
+pub(crate) fn new_bandwidth_bench_limiter() -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(MAX_CONCURRENT_BANDWIDTH_BENCHMARKS))
+}
 
 pub(crate) async fn run_bandwidth_benchmark(
     request: Request<BandwidthBenchmarkRequest>,
     session_maker: ImmutableSessionMaker,
+    bandwidth_bench_limiter: Arc<Semaphore>,
 ) -> Result<Response<BandwidthBenchmarkResponse>, Status> {
     let request = request.into_inner();
     tracing::info!("Received bandwidth benchmark request: {:?}", request);
@@ -86,6 +103,18 @@ pub(crate) async fn run_bandwidth_benchmark(
             BenchKind::Duration(Duration::from_secs(request.duration))
         }
     };
+
+    // Bound concurrent benchmark runs. Acquired after the input validation above so that
+    // non-retryable `InvalidArgument` errors take precedence, then held for the rest of the
+    // handler so the heavy work below (session creation, per-session payload allocation, and the
+    // per-peer send loop) cannot be multiplied by an unbounded number of in-flight requests.
+    // Reject rather than queue once the small pool is exhausted, mirroring how the other expensive
+    // endpoints surface back-pressure via the rate limiter.
+    let _permit = bandwidth_bench_limiter.try_acquire_owned().map_err(|_| {
+        Status::resource_exhausted(
+            "too many concurrent bandwidth benchmark requests in flight; retry later",
+        )
+    })?;
 
     let mut join_set = tokio::task::JoinSet::new();
     for _ in 0..num_sessions {
@@ -190,4 +219,35 @@ fn make_latency(status: Vec<HealthCheckStatus>) -> Result<LatencyInfo, String> {
         slowest,
         fastest,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bandwidth_bench_limiter_bounds_concurrency() {
+        let limiter = new_bandwidth_bench_limiter();
+        // The pool is intentionally small so concurrent runs are bounded.
+        assert_eq!(
+            limiter.available_permits(),
+            MAX_CONCURRENT_BANDWIDTH_BENCHMARKS
+        );
+
+        // Hold every permit, then a further acquisition must be rejected rather than queued,
+        // which is what makes `run_bandwidth_benchmark` return `ResourceExhausted` under load.
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_BANDWIDTH_BENCHMARKS {
+            held.push(
+                Arc::clone(&limiter)
+                    .try_acquire_owned()
+                    .expect("a permit should be available"),
+            );
+        }
+        assert!(Arc::clone(&limiter).try_acquire_owned().is_err());
+
+        // Releasing a permit frees capacity for the next run.
+        held.pop();
+        assert!(Arc::clone(&limiter).try_acquire_owned().is_ok());
+    }
 }

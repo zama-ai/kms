@@ -436,7 +436,11 @@ impl_endpoint! {
             &self,
             request: Request<kms_grpc::kms::v1::BandwidthBenchmarkRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::BandwidthBenchmarkResponse>, Status> {
-            run_bandwidth_benchmark(request, self.session_maker.clone()).await
+            run_bandwidth_benchmark(
+                request,
+                self.session_maker.clone(),
+                std::sync::Arc::clone(&self.bandwidth_bench_limiter),
+            ).await
         }
     }
 }
