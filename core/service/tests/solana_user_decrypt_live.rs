@@ -261,6 +261,12 @@ async fn solana_user_decrypt_live() {
             duration_seconds,
         );
         assert_eq!(signed.attestation_type, "solana-ed25519-user-decrypt-v1");
+        // The signer must echo back the publicKey it signed — the swap below changes it AFTER this.
+        assert_eq!(
+            signed.public_key,
+            hex0x(&pk_bytes),
+            "signer must return the publicKey it was given"
+        );
         let (_atk_sk, atk_pk) = Encryption::new(PkeSchemeType::MlKem512, &mut rng)
             .keygen()
             .unwrap();
@@ -271,7 +277,9 @@ async fn solana_user_decrypt_live() {
             atk_bytes, pk_bytes,
             "attacker key must differ from the signed key"
         );
-        println!("[L4-a] swapping publicKey AFTER signing (signature still binds the original key)");
+        println!(
+            "[L4-a] swapping publicKey AFTER signing (signature still binds the original key)"
+        );
         let user_address = signed.user_address.clone();
         let body = serde_json::json!({
             "attestationType": signed.attestation_type,
@@ -346,7 +354,10 @@ async fn solana_user_decrypt_live() {
     // ML-KEM key pair (passing its public key to the launcher) and de-signcrypts the shares below.
     let launcher_dir = env_or(
         "SOLANA_UD_LAUNCHER_DIR",
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fhevm/test-suite/fhevm"),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fhevm/test-suite/fhevm"
+        ),
     );
     let launcher_out = run_solana_launcher(
         &launcher_dir,
