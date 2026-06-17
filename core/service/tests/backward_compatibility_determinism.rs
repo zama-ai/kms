@@ -14,11 +14,11 @@ use kms_lib::cryptography::signatures::gen_sig_keys;
 use kms_lib::engine::base::{KeyGenMetadata, KeyGenMetadataInner};
 use rand::SeedableRng;
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 use tfhe_versionable::Versionize;
 use threshold_types::role::Role;
 
 const REPEATS: usize = 10;
-const FIXED_TIMESTAMP: u64 = 1_700_000_000;
 const SEED: u64 = 0xdeadbeef;
 
 fn encode_versioned<T: Versionize>(value: &T) -> Vec<u8> {
@@ -76,6 +76,7 @@ fn key_gen_metadata_inner_serialization_is_deterministic() {
 
 #[test]
 fn internal_custodian_setup_message_serialization_is_deterministic() {
+    let fixed_timestamp = SystemTime::now();
     let runs: Vec<Vec<u8>> = (0..REPEATS)
         .map(|_| {
             let mut rng = AesRng::seed_from_u64(SEED);
@@ -92,7 +93,7 @@ fn internal_custodian_setup_message_serialization_is_deterministic() {
             let setup_message = custodian.generate_setup_message_with_timestamp(
                 &mut rng,
                 "custodian-1".to_string(),
-                FIXED_TIMESTAMP,
+                fixed_timestamp,
             );
             encode_versioned(&setup_message)
         })
