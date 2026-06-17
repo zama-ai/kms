@@ -2,6 +2,11 @@ name: test-reporter
 
 on:
   workflow_call:
+    inputs:
+      initial-workflow:
+        description: "The name of the initial workflow that called this one"
+        required: true
+        type: string
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -75,12 +80,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           report-path: '/tmp/junit/**/*.xml'
-          title: 'Consolidated Tests Results ${{ env.TIMESTAMP }}'
-          # Kept false: two reporters (main + parallel-testing) post here, and
-          # overwrite-comment would make them clobber each other's comment. The
-          # trade-off is that comments accumulate across pushes on a PR; the
-          # timestamped title disambiguates the latest one.
-          overwrite-comment: false
+          title: 'Consolidated Tests Results ${{ env.TIMESTAMP }} from ${{ inputs.initial-workflow }}'
+          overwrite-comment: true
           summary-report: false
           github-report: true
           pull-request-report: true

@@ -547,6 +547,8 @@ jobs:
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs: [test-matrix]
     uses: ./.github/workflows/test-reporter.yml
+    with:
+      initial-workflow: 'parallel-testing'
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry
