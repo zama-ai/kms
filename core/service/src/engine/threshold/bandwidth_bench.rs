@@ -22,10 +22,15 @@ use crate::engine::{
 const MAX_BANDWIDTH_PAYLOAD_BYTES: u32 = 1 << 28; // 256 MiB
 /// Max benchmark sessions a caller may request, bounding the task fan-out below.
 const MAX_BANDWIDTH_SESSIONS: u32 = 256;
-/// Max combined base allocation (payload × sessions) across all concurrent sessions. The
-/// networking layer further clones each payload per peer, so this caps the aggregate before
-/// that amplification rather than relying on the per-field limits alone.
+/// Max combined base allocation (payload × sessions) across all concurrent sessions. This
+/// bounds the *base* aggregate only; the networking layer additionally clones each payload
+/// per peer, so true peak memory is roughly this × committee size (a deployment-fixed factor,
+/// not attacker-controlled). Lower it if a deployment's committee size makes the peak too high.
 const MAX_BANDWIDTH_TOTAL_BYTES: u64 = 1 << 30; // 1 GiB
+/// Max benchmark duration a caller may request (only applies to the `Duration` kind). Without
+/// it, an untrusted u64 drives a sustained per-peer send loop for up to the whole server
+/// request timeout, turning the endpoint into a network-flood primitive.
+const MAX_BANDWIDTH_DURATION_SECS: u64 = 60;
 
 pub(crate) async fn run_bandwidth_benchmark(
     request: Request<BandwidthBenchmarkRequest>,
@@ -69,7 +74,17 @@ pub(crate) async fn run_bandwidth_benchmark(
     })?;
     let duration = match kind {
         BandwidthKind::Once => BenchKind::Once,
-        BandwidthKind::Duration => BenchKind::Duration(Duration::from_secs(request.duration)),
+        BandwidthKind::Duration => {
+            // Bound the (untrusted) duration: it drives a sustained send loop per peer, so an
+            // unbounded value floods peers for the whole server request timeout.
+            if request.duration > MAX_BANDWIDTH_DURATION_SECS {
+                return Err(Status::invalid_argument(format!(
+                    "duration {} exceeds the maximum of {} seconds",
+                    request.duration, MAX_BANDWIDTH_DURATION_SECS
+                )));
+            }
+            BenchKind::Duration(Duration::from_secs(request.duration))
+        }
     };
 
     let mut join_set = tokio::task::JoinSet::new();
