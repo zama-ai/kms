@@ -17,10 +17,15 @@ use crate::engine::{
 };
 
 /// Max per-session payload a caller may request. Bounds the `vec![0; payload_size]`
-/// allocation in `run_bandwidth_benchmark`: an unbounded value aborts the process on OOM.
-const MAX_BANDWIDTH_PAYLOAD_BYTES: u32 = 1 << 30; // 1 GiB
+/// allocation in `run_bandwidth_benchmark` (which is then cloned per peer): an unbounded
+/// value aborts the process on OOM.
+const MAX_BANDWIDTH_PAYLOAD_BYTES: u32 = 1 << 28; // 256 MiB
 /// Max benchmark sessions a caller may request, bounding the task fan-out below.
-const MAX_BANDWIDTH_SESSIONS: u32 = 1024;
+const MAX_BANDWIDTH_SESSIONS: u32 = 256;
+/// Max combined base allocation (payload × sessions) across all concurrent sessions. The
+/// networking layer further clones each payload per peer, so this caps the aggregate before
+/// that amplification rather than relying on the per-field limits alone.
+const MAX_BANDWIDTH_TOTAL_BYTES: u64 = 1 << 30; // 1 GiB
 
 pub(crate) async fn run_bandwidth_benchmark(
     request: Request<BandwidthBenchmarkRequest>,
@@ -30,8 +35,9 @@ pub(crate) async fn run_bandwidth_benchmark(
     tracing::info!("Received bandwidth benchmark request: {:?}", request);
     let context_id: ContextId =
         parse_optional_grpc_request_id(&request.context_id, RequestIdParsingErr::Context)?;
-    // Bound both fields before casting: they are untrusted u64s that drive an allocation
-    // and a task-spawn loop, so a crafted request could otherwise exhaust memory/tasks.
+    // Bound these fields before casting: they are untrusted u32s that drive a per-session
+    // `vec![0; payload_size]` allocation (cloned per peer) and a task-spawn loop, so a crafted
+    // request could otherwise exhaust memory/tasks.
     if request.payload_size_per_session > MAX_BANDWIDTH_PAYLOAD_BYTES {
         return Err(Status::invalid_argument(format!(
             "payload_size_per_session {} exceeds the maximum of {} bytes",
@@ -42,6 +48,15 @@ pub(crate) async fn run_bandwidth_benchmark(
         return Err(Status::invalid_argument(format!(
             "number_sessions {} must be in 1..={}",
             request.number_sessions, MAX_BANDWIDTH_SESSIONS
+        )));
+    }
+    // Cap the aggregate base allocation across sessions (product can't overflow u64: both
+    // operands are already bounded u32s above).
+    let total_bytes =
+        u64::from(request.payload_size_per_session) * u64::from(request.number_sessions);
+    if total_bytes > MAX_BANDWIDTH_TOTAL_BYTES {
+        return Err(Status::invalid_argument(format!(
+            "payload_size_per_session * number_sessions ({total_bytes} bytes) exceeds the maximum of {MAX_BANDWIDTH_TOTAL_BYTES} bytes"
         )));
     }
     let payload_size = request.payload_size_per_session as usize;
