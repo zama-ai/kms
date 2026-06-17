@@ -185,9 +185,7 @@ async fn preproc_centralized(
         (*preproc_id).into(),
         "key gen preprocessing result",
         PollConfig::default(),
-        |client, request| {
-            Box::pin(async move { client.get_key_gen_preproc_result(request).await })
-        },
+        |client, request| Box::pin(async move { client.get_key_gen_preproc_result(request).await }),
     )
     .await;
     let inner_resp = response.unwrap().into_inner();

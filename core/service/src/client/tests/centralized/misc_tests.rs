@@ -2,9 +2,9 @@
 //!
 //! These tests run in isolated temporary directories with pre-generated cryptographic material.
 
-use crate::client::tests::common::{get_pub_dec_resp, send_dec_reqs};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{get_pub_dec_resp, send_dec_reqs};
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::testing::prelude::*;

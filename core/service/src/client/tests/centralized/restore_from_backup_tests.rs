@@ -54,9 +54,7 @@ async fn key_gen(
         preproc_id.into(),
         "key gen preprocessing result",
         PollConfig::default(),
-        |client, request| {
-            Box::pin(async move { client.get_key_gen_preproc_result(request).await })
-        },
+        |client, request| Box::pin(async move { client.get_key_gen_preproc_result(request).await }),
     )
     .await?;
 
