@@ -295,12 +295,19 @@ impl MetaStoreStatusServiceImpl {
             0
         };
 
-        // Reject a non-positive max_results, falling back to the default: a negative value
-        // would become ~usize::MAX when cast, and 0 would return an empty page while still
-        // emitting a non-advancing next_page_token (a token-following client would loop
-        // forever). Also saturate the addition: release builds have no overflow-checks, so
-        // `start_index + max_results` could otherwise wrap into an inverted slice range below.
-        let max_results = max_results.filter(|n| *n > 0).unwrap_or(100) as usize; // Kept small for early store_guard lock release
+        // Normalize the page size. Reject non-positive values (a negative would become
+        // ~usize::MAX when cast; 0 would return an empty page while still emitting a
+        // non-advancing next_page_token, looping a token-following client forever) and clamp
+        // the positive side so a single request can't force the whole store to be materialized
+        // under the read lock. Saturate the addition too: release builds have no
+        // overflow-checks, so the raw `start_index + max_results` could otherwise wrap into an
+        // inverted slice range below.
+        const DEFAULT_PAGE_SIZE: usize = 100;
+        const MAX_PAGE_SIZE: usize = 1000;
+        let max_results = max_results
+            .filter(|n| *n > 0)
+            .map(|n| (n as usize).min(MAX_PAGE_SIZE))
+            .unwrap_or(DEFAULT_PAGE_SIZE);
         let end_index = std::cmp::min(start_index.saturating_add(max_results), request_ids.len());
 
         // Monitor pagination bounds

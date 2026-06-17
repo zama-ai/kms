@@ -145,6 +145,26 @@ async fn test_list_requests_zero_max_results_does_not_stall_pagination() {
 }
 
 #[tokio::test]
+async fn test_list_requests_huge_max_results_is_clamped_and_safe() {
+    // A huge positive max_results must not panic and must stay bounded (clamped page size).
+    // With fewer entries than the clamp, all are returned in one page.
+    let service = populated_key_gen_service(10).await;
+
+    let request = tonic::Request::new(ListRequestsRequest {
+        meta_store_type: MetaStoreType::KeyGeneration as i32,
+        max_results: Some(i32::MAX),
+        page_token: Some(String::new()),
+        status_filter: None,
+    });
+
+    let response = service.list_requests(request).await;
+    assert!(response.is_ok());
+    let response = response.unwrap().into_inner();
+    assert_eq!(response.requests.len(), 10);
+    assert!(response.next_page_token.is_none());
+}
+
+#[tokio::test]
 async fn test_list_requests_page_token_past_end_returns_empty() {
     // A page token beyond the end must yield an empty page, not an out-of-range slice panic.
     let service = populated_key_gen_service(10).await;
