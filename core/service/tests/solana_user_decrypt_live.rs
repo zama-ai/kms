@@ -123,6 +123,63 @@ fn sdk_sign_request(
     serde_json::from_str(line.trim()).unwrap_or_else(|e| panic!("bad signer JSON ({e}): {line}"))
 }
 
+/// Runs the full Solana user-decrypt REQUEST half through the PUBLIC `@fhevm/sdk/solana` client
+/// (build the ed25519-signed v3 request, POST to `/v3/user-decrypt`, return the aggregated KMS
+/// signcrypted shares). The launcher prints `{ "shares": [{signature,payload,extraData}, ...] }` on
+/// stdout; de-signcryption stays here (the SDK's TKMS WASM does not expose the Solana keccak-link
+/// path yet, so this caller owns the ML-KEM key pair and passes its public key in via UD_PUBLIC_KEY).
+#[allow(clippy::too_many_arguments)]
+fn run_solana_launcher(
+    launcher_dir: &str,
+    relayer: &str,
+    contracts_chain_id: u64,
+    public_key: &[u8],
+    handle: &[u8; 32],
+    secret_key: &[u8; 32],
+    context_id: &[u8; 32],
+    nonce: &[u8; 32],
+    allowed_domain_keys: &[[u8; 32]],
+    start_timestamp: u64,
+    duration_seconds: u64,
+) -> serde_json::Value {
+    let domain_keys_csv = allowed_domain_keys
+        .iter()
+        .map(|k| hex0x(k))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let output = Command::new("bun")
+        .args(["run", "solana-userdecrypt.ts"])
+        .current_dir(launcher_dir)
+        .env("UD_RELAYER_URL", relayer)
+        .env("UD_CONTRACTS_CHAIN_ID", contracts_chain_id.to_string())
+        .env("UD_PUBLIC_KEY", hex0x(public_key))
+        .env("UD_HANDLE", hex0x(handle))
+        .env("UD_SECRET_KEY", hex0x(secret_key))
+        .env("UD_CONTEXT_ID", hex0x(context_id))
+        .env("UD_NONCE", hex0x(nonce))
+        .env("UD_ALLOWED_DOMAIN_KEYS", domain_keys_csv)
+        .env("UD_START_TIMESTAMP", start_timestamp.to_string())
+        .env("UD_DURATION_SECONDS", duration_seconds.to_string())
+        .output()
+        .expect("failed to spawn the @fhevm/sdk/solana launcher (bun run solana-userdecrypt.ts)");
+
+    assert!(
+        output.status.success(),
+        "solana launcher failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    // The launcher prints the JSON result as the last `{...}` line on stdout.
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))
+        .unwrap_or_else(|| panic!("no JSON line in launcher stdout: {stdout}"));
+    serde_json::from_str(line.trim()).unwrap_or_else(|e| panic!("bad launcher JSON ({e}): {line}"))
+}
+
 #[tokio::test]
 #[ignore = "requires a running fhevm-cli stack with the Solana V2 user-decrypt path + a granted handle"]
 async fn solana_user_decrypt_live() {
@@ -181,31 +238,29 @@ async fn solana_user_decrypt_live() {
     let start_ts = now - 60; // small buffer so startTimestamp <= block time
     let duration_seconds = 30u64 * 24 * 3600;
 
-    // 3. Sign the canonical V2 preimage via the js-sdk and assemble the v3 envelope.
-    let signed = sdk_sign_request(
-        &sdk_dir,
-        contracts_chain_id,
-        &pk_bytes,
-        &handle32,
-        &pubkey,
-        &seed,
-        &context_id,
-        &nonce,
-        &[pubkey], // allowed ACL domain keys = [identity] (compute leg's acl_domain_key)
-        start_ts,
-        duration_seconds,
-    );
-    assert_eq!(
-        signed.attestation_type, "solana-ed25519-user-decrypt-v1",
-        "SDK must produce the Solana V2 attestation type"
-    );
-
-    // Adversarial L4 (a): publicKey-substitution / relayer-bypass. After the user signs (committing
-    // to `pk_bytes`), an attacker swaps in a DIFFERENT re-encryption key. The ed25519 signature no
-    // longer binds the supplied publicKey, so the kms-connector's per-party verify rejects it and
-    // NO plaintext is re-encrypted to the attacker key. We assert the job never returns shares.
+    // 3. Run the user-decrypt request half.
     let attack = env::var("SOLANA_UD_ATTACK").ok();
-    let public_key_field = if attack.as_deref() == Some("pubkey_substitution") {
+
+    // Adversarial L4 (a): publicKey-substitution / relayer-bypass. The public @fhevm/sdk/solana
+    // client signs and POSTs atomically — it cannot desync the signed key from the posted key (that
+    // is the security property), so the attack cannot route through it. Sign via the low-level
+    // js-sdk signer, then POST a body whose `publicKey` was swapped AFTER signing: the ed25519
+    // signature no longer binds it, the kms-connector rejects it, and NO plaintext is returned.
+    if attack.as_deref() == Some("pubkey_substitution") {
+        let signed = sdk_sign_request(
+            &sdk_dir,
+            contracts_chain_id,
+            &pk_bytes,
+            &handle32,
+            &pubkey,
+            &seed,
+            &context_id,
+            &nonce,
+            &[pubkey],
+            start_ts,
+            duration_seconds,
+        );
+        assert_eq!(signed.attestation_type, "solana-ed25519-user-decrypt-v1");
         let (_atk_sk, atk_pk) = Encryption::new(PkeSchemeType::MlKem512, &mut rng)
             .keygen()
             .unwrap();
@@ -216,69 +271,50 @@ async fn solana_user_decrypt_live() {
             atk_bytes, pk_bytes,
             "attacker key must differ from the signed key"
         );
-        println!(
-            "[L4-a] swapping publicKey AFTER signing (signature still binds the original key)"
-        );
-        hex0x(&atk_bytes)
-    } else {
-        signed.public_key.clone()
-    };
-
-    // The v3 envelope carries EVM-shaped address fields the connector ignores on the Solana arm
-    // (it derives the subject from the typed `solanaUserIdentity`). They must still parse as 20-byte
-    // addresses; use the SDK-derived client id (keccak(identity)[12..]).
-    let user_address = signed.user_address.clone();
-    let body = serde_json::json!({
-        "attestationType": signed.attestation_type,
-        "attestedPayload": {
-            "version": "2.0",
-            "type": "user_decryption",
-            "handles": [{
-                "ctHandle": signed.handles[0],
-                "contractAddress": user_address,
-                "ownerAddress": user_address,
-            }],
-            "userAddress": user_address,
-            // Solana ACL scope travels as the typed `solanaAllowedAclDomainKeys`, so EVM
-            // `allowedContracts` is empty.
-            "allowedContracts": [],
-            "requestValidity": {
-                "startTimestamp": start_ts.to_string(),
-                "durationSeconds": duration_seconds.to_string(),
+        println!("[L4-a] swapping publicKey AFTER signing (signature still binds the original key)");
+        let user_address = signed.user_address.clone();
+        let body = serde_json::json!({
+            "attestationType": signed.attestation_type,
+            "attestedPayload": {
+                "version": "2.0",
+                "type": "user_decryption",
+                "handles": [{
+                    "ctHandle": signed.handles[0],
+                    "contractAddress": user_address,
+                    "ownerAddress": user_address,
+                }],
+                "userAddress": user_address,
+                "allowedContracts": [],
+                "requestValidity": {
+                    "startTimestamp": start_ts.to_string(),
+                    "durationSeconds": duration_seconds.to_string(),
+                },
+                "publicKey": hex0x(&atk_bytes),
+                "extraData": signed.extra_data,
+                "solanaUserIdentity": signed.solana_user_identity,
+                "solanaNonce": signed.solana_nonce,
+                "solanaAllowedAclDomainKeys": signed.solana_allowed_acl_domain_keys,
             },
-            "publicKey": public_key_field,
-            // extraData is context-only (v0x01); the ed25519 auth fields are typed below (RFC-021).
-            "extraData": signed.extra_data,
-            "solanaUserIdentity": signed.solana_user_identity,
-            "solanaNonce": signed.solana_nonce,
-            "solanaAllowedAclDomainKeys": signed.solana_allowed_acl_domain_keys,
-        },
-        "signature": signed.signature,
-    });
-
-    let http = reqwest::Client::new();
-    let post = http
-        .post(format!("{relayer}/v3/user-decrypt"))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    let post_status = post.status();
-    let post_json: serde_json::Value = post.json().await.unwrap();
-    println!("POST {post_status}: {post_json}");
-    assert!(
-        post_status.is_success(),
-        "relayer rejected the request: {post_json}"
-    );
-    let job_id = post_json["result"]["jobId"]
-        .as_str()
-        .expect("jobId")
-        .to_string();
-
-    // Adversarial L4 (a): the connector rejects the publicKey-substituted request, so the job must
-    // NOT succeed. A `failed` status (or a timeout with no shares) both prove the request was
-    // rejected and no plaintext was returned. A `succeeded` here would be the security failure.
-    if attack.as_deref() == Some("pubkey_substitution") {
+            "signature": signed.signature,
+        });
+        let http = reqwest::Client::new();
+        let post = http
+            .post(format!("{relayer}/v3/user-decrypt"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let post_status = post.status();
+        let post_json: serde_json::Value = post.json().await.unwrap();
+        println!("POST {post_status}: {post_json}");
+        assert!(
+            post_status.is_success(),
+            "relayer rejected the request: {post_json}"
+        );
+        let job_id = post_json["result"]["jobId"]
+            .as_str()
+            .expect("jobId")
+            .to_string();
         for _ in 0..45 {
             let r = http
                 .get(format!("{relayer}/v3/user-decrypt/{job_id}"))
@@ -304,35 +340,34 @@ async fn solana_user_decrypt_live() {
         return;
     }
 
-    // 4. Poll for the response.
-    let mut response_json = serde_json::Value::Null;
-    for _ in 0..60 {
-        let r = http
-            .get(format!("{relayer}/v3/user-decrypt/{job_id}"))
-            .send()
-            .await
-            .unwrap();
-        let j: serde_json::Value = r.json().await.unwrap();
-        match j["status"].as_str() {
-            Some("succeeded") => {
-                response_json = j;
-                break;
-            }
-            Some("failed") => panic!("user-decrypt failed: {j}"),
-            _ => tokio::time::sleep(std::time::Duration::from_secs(2)).await,
-        }
-    }
-    assert!(
-        !response_json.is_null(),
-        "timed out waiting for user-decrypt result"
+    // Happy path: route the request through the PUBLIC @fhevm/sdk/solana client (build the v3
+    // request, POST to /v3/user-decrypt, return the aggregated KMS signcrypted shares). The SDK's
+    // TKMS WASM does not expose the Solana keccak-link de-signcryption yet, so this caller owns the
+    // ML-KEM key pair (passing its public key to the launcher) and de-signcrypts the shares below.
+    let launcher_dir = env_or(
+        "SOLANA_UD_LAUNCHER_DIR",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fhevm/test-suite/fhevm"),
     );
-    println!("result: {response_json}");
+    let launcher_out = run_solana_launcher(
+        &launcher_dir,
+        &relayer,
+        contracts_chain_id,
+        &pk_bytes,
+        &handle32,
+        &seed,
+        &context_id,
+        &nonce,
+        &[pubkey],
+        start_ts,
+        duration_seconds,
+    );
+    println!("launcher result: {launcher_out}");
 
     // 5. Parse the aggregated shares -> UserDecryptionResponse (external EIP-712 signature +
     //    bincode-serialized payload), then de-signcrypt via the Solana path.
-    let shares = response_json["result"]["result"]
+    let shares = launcher_out["shares"]
         .as_array()
-        .expect("relayer response result.result[] array");
+        .expect("launcher shares[] array");
     let mut agg_resp = Vec::new();
     let mut kms_pk: Option<PublicSigKey> = None;
     for share in shares {
