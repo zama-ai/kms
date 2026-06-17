@@ -295,7 +295,7 @@ impl MetaStoreStatusServiceImpl {
             0
         };
 
-        // Normalize the page size. Reject non-positive values (a negative would become
+        // Normalize the page size. Treat non-positive values as unset (a negative would become
         // ~usize::MAX when cast; 0 would return an empty page while still emitting a
         // non-advancing next_page_token, looping a token-following client forever) and clamp
         // the positive side so a single request can't force the whole store to be materialized
