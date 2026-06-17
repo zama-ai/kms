@@ -324,10 +324,22 @@ impl SessionMaker {
                     info.context_id()
                 ));
             }
-            role_assignment_map.insert(
-                Role::indexed_from_one(party_id),
-                Identity::new(hostname.to_string(), port, Some(node.mpc_identity.clone())),
-            );
+            // A duplicate (in-range) party_id would silently overwrite a prior entry, yielding
+            // a role assignment with fewer parties than nodes. verify() rejects duplicates
+            // upstream; reject here too so this stays safe if a caller skips verify().
+            if role_assignment_map
+                .insert(
+                    Role::indexed_from_one(party_id),
+                    Identity::new(hostname.to_string(), port, Some(node.mpc_identity.clone())),
+                )
+                .is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "duplicate party_id {} in context {}",
+                    node.party_id,
+                    info.context_id()
+                ));
+            }
 
             if let Some(ca_cert) = &node.ca_cert {
                 let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
