@@ -295,10 +295,12 @@ impl MetaStoreStatusServiceImpl {
             0
         };
 
-        // Reject a negative max_results (would become ~usize::MAX when cast) and saturate the
-        // addition: release builds have no overflow-checks, so `start_index + max_results`
-        // could otherwise wrap and produce an inverted slice range below.
-        let max_results = max_results.filter(|n| *n >= 0).unwrap_or(100) as usize; // Kept small for early store_guard lock release
+        // Reject a non-positive max_results, falling back to the default: a negative value
+        // would become ~usize::MAX when cast, and 0 would return an empty page while still
+        // emitting a non-advancing next_page_token (a token-following client would loop
+        // forever). Also saturate the addition: release builds have no overflow-checks, so
+        // `start_index + max_results` could otherwise wrap into an inverted slice range below.
+        let max_results = max_results.filter(|n| *n > 0).unwrap_or(100) as usize; // Kept small for early store_guard lock release
         let end_index = std::cmp::min(start_index.saturating_add(max_results), request_ids.len());
 
         // Monitor pagination bounds

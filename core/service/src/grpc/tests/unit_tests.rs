@@ -123,6 +123,28 @@ async fn test_list_requests_negative_max_results_does_not_panic() {
 }
 
 #[tokio::test]
+async fn test_list_requests_zero_max_results_does_not_stall_pagination() {
+    // Regression: max_results == 0 returned an empty page while still emitting a
+    // next_page_token equal to start_index (non-advancing), so a token-following client
+    // looped forever. It must now fall back to the default and advance.
+    let service = populated_key_gen_service(10).await;
+
+    let request = tonic::Request::new(ListRequestsRequest {
+        meta_store_type: MetaStoreType::KeyGeneration as i32,
+        max_results: Some(0),
+        page_token: Some(String::new()),
+        status_filter: None,
+    });
+
+    let response = service.list_requests(request).await;
+    assert!(response.is_ok());
+    let response = response.unwrap().into_inner();
+    // Default (100) applies, so all 10 entries are returned and there is no next page.
+    assert_eq!(response.requests.len(), 10);
+    assert!(response.next_page_token.is_none());
+}
+
+#[tokio::test]
 async fn test_list_requests_page_token_past_end_returns_empty() {
     // A page token beyond the end must yield an empty page, not an out-of-range slice panic.
     let service = populated_key_gen_service(10).await;
