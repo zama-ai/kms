@@ -759,7 +759,7 @@ impl TypedPlaintext {
     pub fn as_bool(&self) -> bool {
         if self.fhe_type != FheTypes::Bool as i32 {
             tracing::warn!(
-                "Plaintext is not of type Bool or has more than 1 Byte. Returning the least significant bit as Bool"
+                "Plaintext is not of type Bool. Returning the least significant bit as Bool"
             );
         }
         let first = self.bytes.first().copied().unwrap_or(0);
@@ -792,7 +792,7 @@ impl TypedPlaintext {
         }
         if self.bytes.len() != 1 {
             tracing::warn!(
-                "U8 Plaintext should have 1 Byte, but was bigger ({} Bytes). Returning the least significant Byte",
+                "U8 Plaintext should have exactly 1 Byte, but had {} Bytes. Returning the first Byte (or 0 if empty)",
                 self.bytes.len()
             );
         }
