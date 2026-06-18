@@ -145,6 +145,17 @@ impl BitwisePoly {
             self.coefs[idx] = value;
         }
     }
+
+    /// Overwrite the coefficients from `poly`, reusing this buffer's existing allocation.
+    ///
+    /// Each field coefficient is reduced to its byte representation — the same value the
+    /// `From<Poly<GFx>>` impls produce (those map `coef.0`; `Into<u8>` is the identity on the
+    /// stored byte) — but `clear` + `extend` keeps the `Vec`'s capacity, so the hot reconstruction
+    /// loop reuses one buffer across all bits instead of allocating a fresh `BitwisePoly` per bit.
+    pub fn overwrite_from_poly<F: Into<u8> + Copy>(&mut self, poly: &Poly<F>) {
+        self.coefs.clear();
+        self.coefs.extend(poly.coefs().iter().map(|c| (*c).into()));
+    }
 }
 
 impl<Z> Poly<Z>
@@ -622,7 +633,7 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
     let mut coefs = vec![F::ZERO; lagrange_polys.len()];
     for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
         for (acc, lc) in coefs.iter_mut().zip(li.coefs.iter()) {
-            *acc = *acc + *lc * *vi;
+            *acc += *lc * *vi;
         }
     }
     Ok(Poly::from_coefs(coefs))
