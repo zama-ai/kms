@@ -4,7 +4,7 @@ use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::client::tests::common::{
-    PollConfig, keygen_config, poll_result_with_retries, uncompressed_keygen_config,
+    PollConfig, keygen_config, retrying_poll, uncompressed_keygen_config,
 };
 use crate::client::tests::threshold::common::run_insecure_preproc;
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
@@ -1029,7 +1029,7 @@ async fn test_backup_after_reshare_threshold() {
     let new_epoch_req_id: RequestId = new_epoch_id.into();
     for (party_id, client) in env.kms_clients().iter() {
         // Poll every 500ms for up to 50 tries before giving up.
-        if let Err(e) = poll_result_with_retries(
+        if let Err(e) = retrying_poll(
             client.clone(),
             *party_id,
             new_epoch_req_id.into(),

@@ -9,7 +9,7 @@
 //! - CRS backup and restore flow
 
 use crate::client::tests::common::wait_for_storage;
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -356,7 +356,7 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
 
     // Wait for CRS generation to complete
     for (party_id, client) in clients.iter() {
-        poll_result_with_retries(
+        retrying_poll(
             client.clone(),
             *party_id,
             req_id.into(),

@@ -55,7 +55,7 @@ where
 /// RequestIds as they are represented in the current version of the ProtoBuf API.
 type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
-/// Timing knobs for [`poll_result_with_retries`].
+/// Timing knobs for [`retrying_poll`].
 pub(crate) struct PollConfig {
     /// How long to wait before the very first poll attempt.
     pub initial_delay: Duration,
@@ -85,7 +85,7 @@ impl Default for PollConfig {
 /// keeps replying `Unavailable`. On exhaustion this returns
 /// `Status::deadline_exceeded`; any non-`Unavailable` result (success or error)
 /// is returned as-is.
-pub(crate) async fn poll_result_with_retries<R: Send>(
+pub(crate) async fn retrying_poll<R: Send>(
     mut client: CoreServiceEndpointClient<Channel>,
     party_id: u32,
     request_id: ProtoRequestId,

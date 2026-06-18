@@ -1,8 +1,6 @@
 use core::future::Future;
 
-use crate::client::tests::common::{
-    PollConfig, default_isolated_extra_data, poll_result_with_retries,
-};
+use crate::client::tests::common::{PollConfig, default_isolated_extra_data, retrying_poll};
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MAX_TRIES};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -72,7 +70,7 @@ pub(crate) async fn run_insecure_preproc(
 
     // Wait for the (instant) insecure preprocessing to be ready on all parties
     for (party_id, client) in clients.iter() {
-        poll_result_with_retries(
+        retrying_poll(
             client.clone(),
             *party_id,
             (*preproc_id).into(),
@@ -153,7 +151,7 @@ pub async fn threshold_insecure_key_gen(
     // Wait for key generation to complete on all parties and collect responses
     let mut responses = Vec::new();
     for (party_id, client) in clients.iter() {
-        let result = poll_result_with_retries(
+        let result = retrying_poll(
             client.clone(),
             *party_id,
             (*request_id).into(),
@@ -237,7 +235,7 @@ pub async fn threshold_secure_key_gen(
 
     // Wait for preprocessing to complete
     for (party_id, client) in clients.iter() {
-        poll_result_with_retries(
+        retrying_poll(
             client.clone(),
             *party_id,
             (*preproc_id).into(),
@@ -276,7 +274,7 @@ pub async fn threshold_secure_key_gen(
     // Wait for key generation to complete and collect responses
     let mut responses = Vec::new();
     for (party_id, client) in clients.iter() {
-        let result = poll_result_with_retries(
+        let result = retrying_poll(
             client.clone(),
             *party_id,
             (*keygen_id).into(),

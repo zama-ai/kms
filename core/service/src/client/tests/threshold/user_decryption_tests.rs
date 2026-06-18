@@ -1,5 +1,5 @@
 use crate::client::client_wasm::{Client, ServerIdentities};
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
@@ -458,7 +458,7 @@ pub(crate) async fn user_decryption_threshold(
                 // Sleep initially to give the server time to complete user
                 // decryption, then poll every 4*bits ms (clamped to [100ms, 1s])
                 // for up to 600 tries (~10 minutes for large types).
-                let response = poll_result_with_retries(
+                let response = retrying_poll(
                     cur_client,
                     i,
                     req_id_clone.clone(),

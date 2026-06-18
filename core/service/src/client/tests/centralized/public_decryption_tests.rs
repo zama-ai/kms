@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::common::{PollConfig, assert_plaintext, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, assert_plaintext, retrying_poll};
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
@@ -243,7 +243,7 @@ pub(crate) async fn run_decryption_centralized(
             // Retry while decryption is not finished: poll after an initial delay,
             // then every 50ms for up to 1000 tries (~50s, covers slow profiles and
             // big ciphertexts).
-            let response = poll_result_with_retries(
+            let response = retrying_poll(
                 cur_client,
                 1,
                 req_id_clone.clone(),

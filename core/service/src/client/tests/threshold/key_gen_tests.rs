@@ -18,7 +18,7 @@ use crate::client::key_gen::tests::check_conformance;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
 #[cfg(feature = "slow_tests")]
@@ -1024,7 +1024,7 @@ async fn poll_key_gen_preproc_result(
         resp_tasks.spawn(async move {
             // Sleep initially to give the server some time to complete
             // preprocessing, then poll every 500ms for up to `max_iter` tries.
-            let response = poll_result_with_retries(
+            let response = retrying_poll(
                 client,
                 party_id,
                 req_id_clone.clone(),
@@ -1585,7 +1585,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
 
     // Wait for preprocessing to complete on all parties
     for (party_id, client) in env.clients.iter() {
-        poll_result_with_retries(
+        retrying_poll(
             client.clone(),
             *party_id,
             preproc_id.into(),
@@ -1626,7 +1626,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
 
     // Verify key generation completed on active parties (not crashed party)
     for (party_id, client) in env.clients_except(crashed_party) {
-        poll_result_with_retries(
+        retrying_poll(
             client,
             party_id,
             keygen_id.into(),
@@ -1695,7 +1695,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 
     // Wait for preprocessing to complete on active parties
     for (party_id, client) in env.clients_except(crashed_party) {
-        poll_result_with_retries(
+        retrying_poll(
             client,
             party_id,
             preproc_id.into(),
@@ -1733,7 +1733,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 
     // Verify key generation completed on active parties
     for (party_id, client) in env.clients_except(crashed_party) {
-        poll_result_with_retries(
+        retrying_poll(
             client,
             party_id,
             keygen_id.into(),
@@ -2366,7 +2366,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Wait for preprocessing to complete
     for (party_id, client) in env.clients.iter() {
-        poll_result_with_retries(
+        retrying_poll(
             client.clone(),
             *party_id,
             preproc_id_3.into(),
@@ -2414,7 +2414,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     // Wait for decompression key generation to complete and collect the result
     let mut keygen_result_3 = None;
     for (party_id, client) in env.clients.iter() {
-        let result = poll_result_with_retries(
+        let result = retrying_poll(
             client.clone(),
             *party_id,
             key_id_3.into(),

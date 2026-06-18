@@ -20,7 +20,7 @@ use crate::{
     client::{
         client_wasm::Client,
         tests::{
-            common::{PollConfig, keygen_config, poll_result_with_retries},
+            common::{PollConfig, keygen_config, retrying_poll},
             threshold::{
                 crs_gen_tests::run_crs,
                 key_gen_tests::{
@@ -555,7 +555,7 @@ async fn poll_new_epoch_result(
         resp_tasks.spawn(async move {
             // Sleep initially to give the server time to complete resharing, then
             // poll every 500ms for up to `max_iter` tries.
-            let response = poll_result_with_retries(
+            let response = retrying_poll(
                 client,
                 party_idx,
                 reshare_request_id.into(),

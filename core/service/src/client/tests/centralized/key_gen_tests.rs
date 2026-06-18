@@ -1,7 +1,7 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
@@ -179,7 +179,7 @@ async fn preproc_centralized(
         .unwrap();
     assert_eq!(preproc_response.into_inner(), Empty {});
 
-    let response = poll_result_with_retries(
+    let response = retrying_poll(
         kms_client.clone(),
         1,
         (*preproc_id).into(),
@@ -281,7 +281,7 @@ pub async fn run_key_gen_centralized(
         .await
         .unwrap();
     assert_eq!(gen_response.into_inner(), Empty {});
-    let response = poll_result_with_retries(
+    let response = retrying_poll(
         kms_client.clone(),
         1,
         (*key_req_id).into(),

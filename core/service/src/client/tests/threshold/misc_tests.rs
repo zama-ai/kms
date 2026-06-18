@@ -7,7 +7,7 @@ use crate::client::test_tools::{
 };
 use crate::client::tests::common::send_dec_reqs;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::threshold::service::RealThresholdKms;
@@ -520,7 +520,7 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             let party_id = *i;
             resp_tasks.spawn(async move {
-                let response = poll_result_with_retries(
+                let response = retrying_poll(
                     cur_client,
                     party_id,
                     req_id_clone.clone(),
@@ -594,7 +594,7 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             let party_id = *i;
             resp_tasks.spawn(async move {
-                let response = poll_result_with_retries(
+                let response = retrying_poll(
                     cur_client,
                     party_id,
                     req_id_clone.clone(),

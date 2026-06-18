@@ -8,7 +8,7 @@
 //! - Auto-backup after server restart
 //! - CRS backup and restore flow (nightly)
 
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, default_extra_data};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -48,7 +48,7 @@ async fn key_gen(
     assert_eq!(preproc_resp.into_inner(), Empty {});
 
     // Wait for preprocessing to complete
-    poll_result_with_retries(
+    retrying_poll(
         client.clone(),
         1,
         preproc_id.into(),
@@ -75,7 +75,7 @@ async fn key_gen(
     assert_eq!(keygen_resp.into_inner(), Empty {});
 
     // Wait for key generation to complete
-    let inner_resp = poll_result_with_retries(
+    let inner_resp = retrying_poll(
         client.clone(),
         1,
         (*request_id).into(),
@@ -306,7 +306,7 @@ async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
     assert_eq!(resp.into_inner(), Empty {});
 
     // Wait for CRS generation to complete
-    let inner_resp = poll_result_with_retries(
+    let inner_resp = retrying_poll(
         client.clone(),
         1,
         req_id.into(),

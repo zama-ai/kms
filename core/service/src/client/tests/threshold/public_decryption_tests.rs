@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::client::tests::common::{PollConfig, poll_result_with_retries};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -410,7 +410,7 @@ pub async fn run_decryption_threshold_optionally_fail(
                 // Sleep initially to give the server time to complete decryption,
                 // then poll every 4*bits ms (clamped to [100ms, 1s]) for up to 600
                 // tries (~10 minutes for large types).
-                let response = poll_result_with_retries(
+                let response = retrying_poll(
                     cur_client,
                     party_id,
                     req_id_clone.clone(),
