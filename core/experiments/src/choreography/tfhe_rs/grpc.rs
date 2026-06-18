@@ -764,7 +764,7 @@ where
                 )
             })?;
 
-        match (dkg_params.sns().is_some(), session_type) {
+        match (dkg_params.supports_sns(), session_type) {
             (false, SessionType::Small) => {
                 let prss_setup = self
                     .data
@@ -986,7 +986,7 @@ where
             })?;
 
         let key_store = self.data.key_store.clone();
-        match (dkg_params.sns().is_some(), preproc_sid) {
+        match (dkg_params.supports_sns(), preproc_sid) {
             (false, Some(id)) => {
                 let (_, (params, mut preproc)) =
                     self.data.dkg_preproc_store_regular.remove(&id).ok_or_else(|| {

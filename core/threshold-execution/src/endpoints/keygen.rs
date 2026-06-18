@@ -304,7 +304,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
     {
         // Messages exchanged are big so we deserialize them on Rayon
         session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
-        if Z::BIT_LENGTH == 64 && params.sns().is_some() {
+        if Z::BIT_LENGTH == 64 && params.supports_sns() {
             return Err(anyhow_error_and_log(
                 "Can not generate Switch and Squash key with in Z64".to_string(),
             ));
@@ -737,7 +737,7 @@ where
     };
 
     // If needed, compute the sns compression keys
-    let sns_compression_key = match (params.sns().is_some(), params.sns_compression_params()) {
+    let sns_compression_key = match (params.supports_sns(), params.sns_compression_params()) {
         (true, Some(comp_params)) => Some(
             generate_compressed_sns_compression_keys(
                 &private_key_set

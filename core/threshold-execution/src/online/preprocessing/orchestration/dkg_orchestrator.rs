@@ -117,7 +117,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         params: DKGParams,
         keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
-        if params.sns().is_some() {
+        if params.supports_sns() {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
@@ -154,7 +154,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         keyset_config: KeySetConfig,
         percentage_offline: usize,
     ) -> anyhow::Result<Self> {
-        if params.sns().is_some() {
+        if params.supports_sns() {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
@@ -194,7 +194,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         params: DKGParams,
         keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
-        if params.sns().is_none() {
+        if !params.supports_sns() {
             return Err(anyhow_error_and_log(
                 "Should not have no SNS with ResiduePolyF8Z128",
             ));
@@ -233,7 +233,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         keyset_config: KeySetConfig,
         percentage_offline: usize,
     ) -> anyhow::Result<Self> {
-        if params.sns().is_none() {
+        if !params.supports_sns() {
             return Err(anyhow_error_and_log(
                 "Should not have no SNS with ResiduePolyF8Z128",
             ));

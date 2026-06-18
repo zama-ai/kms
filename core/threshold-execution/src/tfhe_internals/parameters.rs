@@ -503,7 +503,7 @@ impl DKGParams {
             "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_{}_compression_{}_{}",
             self.message_modulus().0,
             self.carry_modulus().0,
-            self.sns().is_some(),
+            self.supports_sns(),
             self.compression().is_some(),
             hash
         ))
@@ -1081,6 +1081,11 @@ impl DKGParams {
             sns_params: nsp.parameters,
             sns_compression_params: nsp.compression_parameters,
         })
+    }
+
+    /// Whether this parameter set carries noise-squashing (SnS) parameters.
+    pub fn supports_sns(&self) -> bool {
+        self.meta.noise_squashing_parameters.is_some()
     }
 }
 
@@ -2061,7 +2066,7 @@ mod tests {
                 );
             } else {
                 assert!(
-                    new.sns().is_none(),
+                    !new.supports_sns(),
                     "WithoutSnS must map to no SnS view for {label}"
                 );
             }
