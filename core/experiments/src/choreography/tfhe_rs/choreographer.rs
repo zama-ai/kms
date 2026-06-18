@@ -431,7 +431,7 @@ impl ChoreoRuntime {
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let witness_dim =
-            compute_witness_dim(&dkg_params.to_param().get_compact_pk_enc_params(), None)? as u128;
+            compute_witness_dim(&dkg_params.to_param().compact_pk_enc_params(), None)? as u128;
         let crs_gen_params = bc2wrap::serialize(&CrsGenParams {
             session_id,
             witness_dim,

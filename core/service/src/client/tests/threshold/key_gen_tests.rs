@@ -1160,7 +1160,7 @@ fn try_reconstruct_shares(
         })
         .collect::<HashMap<_, _>>();
     let sns_compression_private_key =
-        if let Some(sns_compression_params) = dkg_sns_param.get_sns_compression_params() {
+        if let Some(sns_compression_params) = dkg_sns_param.sns_compression_params() {
             let sns_compression_key_bits = reconstruct_bit_vec(
                 sns_compression_key_shares,
                 dkg_sns_param.sns_compression_sk_num_bits(),

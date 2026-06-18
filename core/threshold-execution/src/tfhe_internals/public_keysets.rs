@@ -68,7 +68,7 @@ impl RawCompressedPubKeySet {
         params: DKGParams,
         tag: tfhe::Tag,
     ) -> tfhe::CompressedCompactPublicKey {
-        let params = params.get_compact_pk_enc_params();
+        let params = params.compact_pk_enc_params();
         to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params, tag)
     }
 
@@ -81,10 +81,8 @@ impl RawCompressedPubKeySet {
             modulus_switch_noise_reduction_key: self.msnrk.clone(),
         };
 
-        let max_noise_level = MaxNoiseLevel::from_msg_carry_modulus(
-            params.get_message_modulus(),
-            params.get_carry_modulus(),
-        );
+        let max_noise_level =
+            MaxNoiseLevel::from_msg_carry_modulus(params.message_modulus(), params.carry_modulus());
 
         let atomic_pattern = CompressedStandardAtomicPatternServerKey::from_raw_parts(
             self.ksk.clone(),
@@ -94,12 +92,9 @@ impl RawCompressedPubKeySet {
 
         tfhe::shortint::CompressedServerKey::from_raw_parts(
             CompressedAtomicPatternServerKey::Standard(atomic_pattern),
-            params.get_message_modulus(),
-            params.get_carry_modulus(),
-            MaxDegree::from_msg_carry_modulus(
-                params.get_message_modulus(),
-                params.get_carry_modulus(),
-            ),
+            params.message_modulus(),
+            params.carry_modulus(),
+            MaxDegree::from_msg_carry_modulus(params.message_modulus(), params.carry_modulus()),
             max_noise_level,
         )
     }
@@ -116,7 +111,7 @@ impl RawCompressedPubKeySet {
                 pksk.clone(),
                 params.pksk_rshift(),
                 params
-                    .get_pksk_destination()
+                    .pksk_destination()
                     .unwrap(),
                     KeySwitchingKeyDestinationAtomicPattern::Standard,
             ))

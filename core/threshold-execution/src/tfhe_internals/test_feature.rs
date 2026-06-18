@@ -331,10 +331,10 @@ where
 {
     let config = params.to_tfhe_config();
     let seed_bytes = Seed(rng.r#gen()).0.to_le_bytes().to_vec();
-    let security_bits = params.get_sec() as u32;
+    let security_bits = params.sec() as u32;
 
     // If pmax is not set (e.g. test parameters), use 1.0 to allow any HW.
-    let pmax = params.get_sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
+    let pmax = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
     let max_norm_hwt = NormalizedHammingWeightBound::new(pmax)
         .ok_or_else(|| anyhow!("Invalid Hamming Weight bound, range must be ]0.5,1.0]"))?;
 
@@ -408,7 +408,7 @@ fn extract_key_containers(
     if let Some(ck) = &client_key
         && ck.raw_compression_client_key().is_none()
         && params_basic_handle
-            .get_compression_decompression_params()
+            .compression_decompression_params()
             .is_some()
     {
         anyhow::bail!("Compression client key is missing when parameter is available")
@@ -417,7 +417,7 @@ fn extract_key_containers(
     let compression_sk_container64: Option<Vec<u64>> = match &client_key {
         Some(ck) => {
             if params_basic_handle
-                .get_compression_decompression_params()
+                .compression_decompression_params()
                 .is_none()
             {
                 None
@@ -427,7 +427,7 @@ fn extract_key_containers(
         }
         None => {
             if params_basic_handle
-                .get_compression_decompression_params()
+                .compression_decompression_params()
                 .is_none()
             {
                 None
@@ -442,7 +442,7 @@ fn extract_key_containers(
 
     let sns_compression_sk_container128: Option<Vec<u128>> = match &client_key {
         Some(ck) => {
-            if params_basic_handle.get_sns_compression_params().is_none() {
+            if params_basic_handle.sns_compression_params().is_none() {
                 None
             } else {
                 ck.raw_sns_compression_client_key()
@@ -452,7 +452,7 @@ fn extract_key_containers(
         None => {
             if let Some(params_sns) = params.sns() {
                 params_sns
-                    .get_sns_compression_params()
+                    .sns_compression_params()
                     .map(|_sns_compression_params| {
                         vec![Numeric::ZERO; params_sns.sns_compression_sk_num_bits()]
                     })
@@ -664,7 +664,7 @@ where
     tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
 
     let glwe_secret_key_share_compression = params_basic_handle
-        .get_compression_decompression_params()
+        .compression_decompression_params()
         .map(|compression_params| {
             let params = compression_params.raw_compression_parameters;
             CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
@@ -678,7 +678,7 @@ where
 
     let glwe_sns_compression_key_as_lwe =
         params_basic_handle
-            .get_sns_compression_params()
+            .sns_compression_params()
             .map(|_sns_compression_params| LweSecretKeyShare {
                 data: glwe_sns_compression_key_shares128,
             });
@@ -721,10 +721,10 @@ where
     let params_basic_handle = params;
 
     // This only supports Z128 DKG for now
-    if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
+    if params_basic_handle.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.get_dkg_mode()
+            params_basic_handle.dkg_mode()
         );
     }
 
@@ -770,10 +770,10 @@ where
     let params_basic_handle = params;
 
     // This only supports Z128 DKG for now
-    if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
+    if params_basic_handle.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.get_dkg_mode()
+            params_basic_handle.dkg_mode()
         );
     }
 
@@ -789,7 +789,7 @@ where
         // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
         // and use a pmax=1 which should allow for any HW.
         let max_norm_hwt = params_basic_handle
-            .get_sk_deviations()
+            .sk_deviations()
             .map(|d| d.pmax)
             .unwrap_or(1.0);
         let max_norm_hwt =
@@ -801,7 +801,7 @@ where
         let (client_key, compressed_xof_keyset) = tfhe::xof_key_set::CompressedXofKeySet::generate(
             config,
             private_seed_bytes,
-            params_basic_handle.get_sec() as u32,
+            params_basic_handle.sec() as u32,
             max_norm_hwt,
             tag,
         )
@@ -912,10 +912,10 @@ where
     let params_basic_handle = params;
 
     // This only supports Z128 DKG for now
-    if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
+    if params_basic_handle.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.get_dkg_mode()
+            params_basic_handle.dkg_mode()
         );
     }
 
@@ -934,7 +934,7 @@ where
             "Compressed keyset re-generated from existing key by input party {}",
             session.my_role()
         );
-        let security_bits = params_basic_handle.get_sec() as u32;
+        let security_bits = params_basic_handle.sec() as u32;
 
         // Same domain separators as `CompressedXofKeySet::generate`; the public seed is drawn
         // from the private seed exactly as `generate_with_separators` does. We skip the client
@@ -1074,7 +1074,7 @@ where
     };
     let sns_compression_secret_key = match (
         sns_compression_bits,
-        sns_params.and_then(|p| p.get_sns_compression_params()),
+        sns_params.and_then(|p| p.sns_compression_params()),
     ) {
         (Some(bits), Some(sns_compression_params)) => {
             Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
@@ -1281,10 +1281,9 @@ pub fn to_hl_client_key(
 
     //If necessary generate a dedicated compact private key
     let dedicated_compact_private_key =
-        if let (Some(dedicated_compact_private_key), Some(pk_params)) = (
-            dedicated_compact_private_key,
-            params.get_dedicated_pk_params(),
-        ) {
+        if let (Some(dedicated_compact_private_key), Some(pk_params)) =
+            (dedicated_compact_private_key, params.dedicated_pk_params())
+        {
             Some((
                 tfhe::integer::CompactPrivateKey::from_raw_parts(
                     tfhe::shortint::CompactPrivateKey::from_raw_parts(
@@ -1299,10 +1298,9 @@ pub fn to_hl_client_key(
         };
 
     //If necessary generate a dedicated compression private key
-    let compression_key = if let (Some(compression_private_key), Some(params)) = (
-        compression_key,
-        params.get_compression_decompression_params(),
-    ) {
+    let compression_key = if let (Some(compression_private_key), Some(params)) =
+        (compression_key, params.compression_decompression_params())
+    {
         let polynomial_size = compression_private_key.polynomial_size();
         Some(
             tfhe::integer::compression_keys::CompressionPrivateKeys::from_raw_parts(
@@ -1355,7 +1353,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        params.get_rerand_params().map(Into::into),
+        params.rerand_params().map(Into::into),
         oprf_private_key,
         tag,
     ))
@@ -1689,7 +1687,7 @@ pub fn combine_and_run_sns_compression_test(
 
     let (sns_params, sns_compression_params) = match params.sns() {
         None => panic!("SNS compression test requires DKGParams with SnS"),
-        Some(sns) => (sns.sns_params(), sns.get_sns_compression_params().unwrap()),
+        Some(sns) => (sns.sns_params(), sns.sns_compression_params().unwrap()),
     };
     assert!(sns_compression_key.is_conformant(&(sns_params, sns_compression_params).into()));
     let int_sns_compression_key =

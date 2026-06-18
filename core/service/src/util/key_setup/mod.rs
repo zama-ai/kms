@@ -1339,7 +1339,7 @@ where
 
     // Generate the public parameters - foundation for the entire cryptographic system
     // PANICS: If parameter generation fails - cannot proceed with insecure parameters
-    let pke_params = dkg_params.get_compact_pk_enc_params();
+    let pke_params = dkg_params.compact_pk_enc_params();
 
     // Any sid will work for testing
     let sid = SessionId::from(0u128);

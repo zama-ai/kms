@@ -687,7 +687,7 @@ where
             .as_ref()
             .map(|lwe_key| -> anyhow::Result<_> {
                 let sns_comp_params = params.sns()
-                .and_then(|sns| sns.get_sns_compression_params())
+                .and_then(|sns| sns.sns_compression_params())
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "PrivateKeySet has SNS compression key but DKGParams has no SNS compression params"

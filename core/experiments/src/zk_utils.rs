@@ -61,7 +61,7 @@ pub fn nist_seeded_rng(domain: [u8; 8]) -> RandomGenerator<SoftwareRandomGenerat
 
 /// Derive ZK PKE parameters from a [`DKGParams`] instance.
 pub fn nist_pke_params_from_dkg(params: DKGParams) -> PkeZkParams {
-    let pke_params = params.get_compact_pk_enc_params();
+    let pke_params = params.compact_pk_enc_params();
     let lwe_dim = pke_params.encryption_lwe_dimension;
     let noise_distribution = pke_params.encryption_noise_distribution;
     let max_num_cleartexts = max_num_messages(&pke_params, ZK_DEFAULT_MAX_NUM_BITS).unwrap();

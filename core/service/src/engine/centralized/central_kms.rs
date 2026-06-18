@@ -255,12 +255,12 @@ pub(crate) fn generate_fhe_keys(
             seeder.seed().0.to_le_bytes().to_vec()
         }
     };
-    let security_bits = params.get_sec() as u32;
+    let security_bits = params.sec() as u32;
     let tag = key_id.into();
 
     // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
     // and use a pmax=1 which should allow for any HW.
-    let max_norm_hwt = params.get_sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
+    let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
 
     // unwrap is ok here because parameters should always have a correct pmax
     let max_norm_hwt = tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt)
@@ -375,12 +375,12 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 ) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
     let sid = req_id.derive_session_id()?;
     let internal_pp = public_parameters_by_trusted_setup(
-        &params.get_compact_pk_enc_params(),
+        &params.compact_pk_enc_params(),
         max_num_bits.map(|x| x as usize),
         sid,
         &mut rng,
     )?;
-    let pke_params = params.get_compact_pk_enc_params();
+    let pke_params = params.compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
     let crs_info = crate::engine::base::compute_info_crs(
         sk,

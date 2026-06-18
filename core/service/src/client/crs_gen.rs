@@ -272,7 +272,7 @@ pub(crate) mod tests {
         let pk = if dkg_params_handle.has_dedicated_compact_pk_params() {
             // Generate the secret key PKE encrypts to
             let compact_private_key = tfhe::integer::public_key::CompactPrivateKey::new(
-                dkg_params_handle.get_compact_pk_enc_params(),
+                dkg_params_handle.compact_pk_enc_params(),
             );
             // Generate the corresponding public key
             let pk = tfhe::integer::public_key::CompactPublicKey::new(&compact_private_key);
@@ -287,7 +287,7 @@ pub(crate) mod tests {
 
         let max_msg_len = pp.max_num_messages().0;
         let msgs = (0..max_msg_len)
-            .map(|i| i as u64 % dkg_params_handle.get_message_modulus().0)
+            .map(|i| i as u64 % dkg_params_handle.message_modulus().0)
             .collect::<Vec<_>>();
 
         let metadata = vec![23_u8, 42];
@@ -309,9 +309,7 @@ pub(crate) mod tests {
         let params_h = dkg_params;
 
         let config = tfhe::ConfigBuilder::with_custom_parameters(params_h.classic_pbs())
-            .use_dedicated_compact_public_key_parameters(
-                params_h.get_dedicated_pk_params().unwrap(),
-            )
+            .use_dedicated_compact_public_key_parameters(params_h.dedicated_pk_params().unwrap())
             .build();
 
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
@@ -333,9 +331,7 @@ pub(crate) mod tests {
         let dkg_params = TEST_PARAM;
         let params_h = dkg_params;
         let config = tfhe::ConfigBuilder::with_custom_parameters(params_h.classic_pbs())
-            .use_dedicated_compact_public_key_parameters(
-                params_h.get_dedicated_pk_params().unwrap(),
-            )
+            .use_dedicated_compact_public_key_parameters(params_h.dedicated_pk_params().unwrap())
             .build();
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
 

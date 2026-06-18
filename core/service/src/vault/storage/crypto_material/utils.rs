@@ -310,16 +310,14 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     let params_basics = dkg_params;
 
     // Try to calculate max_messages, but fall back to default if it fails
-    let max_messages = match max_num_messages(
-        &params_basics.get_compact_pk_enc_params(),
-        DEFAULT_MAX_NUM_BITS,
-    ) {
-        Ok(messages) => messages,
-        Err(e) => {
-            tracing::error!("Failed to calculate max_num_messages: {}", e);
-            return FALLBACK_BITS;
-        }
-    };
+    let max_messages =
+        match max_num_messages(&params_basics.compact_pk_enc_params(), DEFAULT_MAX_NUM_BITS) {
+            Ok(messages) => messages,
+            Err(e) => {
+                tracing::error!("Failed to calculate max_num_messages: {}", e);
+                return FALLBACK_BITS;
+            }
+        };
 
     if params_basics.lwe_dimension().0 < max_messages.0 {
         tracing::warn!(

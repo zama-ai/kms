@@ -309,7 +309,7 @@ mod test {
             ConfigBuilder::with_custom_parameters(PARAMS_TEST_BK_SNS.classic_pbs())
                 .enable_compression(PARAMS_TEST_BK_SNS.compression().unwrap())
                 .use_dedicated_compact_public_key_parameters(
-                    PARAMS_TEST_BK_SNS.get_dedicated_pk_params().unwrap(),
+                    PARAMS_TEST_BK_SNS.dedicated_pk_params().unwrap(),
                 )
                 .build()
         };

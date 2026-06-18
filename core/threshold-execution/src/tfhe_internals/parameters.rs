@@ -21,7 +21,7 @@
 //!    than per call.
 //!
 //! 3. **`SnS ⇒ Z128` is enforced, not coerced.** The legacy
-//!    `DKGParamsSnS::get_dkg_mode()` ignored the stored mode and always returned
+//!    `DKGParamsSnS::dkg_mode()` ignored the stored mode and always returned
 //!    `Z128`, which can hide a malformed value. Here the real `dkg_mode` is
 //!    stored and the invariant is checked explicitly in
 //!    [`DKGParams::check_conformance`].
@@ -272,10 +272,13 @@ impl DKGParams {
         }
     }
 
-    fn get_dedicated_compact_pk_parameters(&self) -> Option<DedicatedCompactPublicKeyParameters> {
+    fn dedicated_compact_pk_parameters(&self) -> Option<DedicatedCompactPublicKeyParameters> {
         self.meta.dedicated_compact_public_key_parameters
     }
 
+    /// The raw tfhe-rs regular compression parameters (`None` if compression is
+    /// disabled). For the distributed-keygen budget form, see
+    /// [`Self::compression_decompression_params`].
     pub fn compression(&self) -> Option<CompressionParameters> {
         self.meta.compression_parameters
     }
@@ -294,7 +297,7 @@ impl DKGParams {
 
     /// If there is no dedicated CPK, `lwe_hat` is `lwe`.
     pub fn lwe_hat_dimension(&self) -> LweDimension {
-        self.get_dedicated_compact_pk_parameters()
+        self.dedicated_compact_pk_parameters()
             .map_or(self.lwe_dimension(), |d| {
                 d.pke_params.encryption_lwe_dimension
             })
@@ -312,7 +315,7 @@ impl DKGParams {
     }
 
     pub fn lwe_hat_tuniform_bound(&self) -> TUniformBound {
-        self.get_dedicated_compact_pk_parameters()
+        self.dedicated_compact_pk_parameters()
             .map_or(self.lwe_tuniform_bound(), |d| {
                 match d.pke_params.encryption_noise_distribution {
                     DynamicDistribution::TUniform(n) => TUniformBound(n.bound_log2() as usize),
@@ -337,36 +340,36 @@ impl DKGParams {
     }
 
     pub fn decomposition_level_count_pksk(&self) -> DecompositionLevelCount {
-        self.get_dedicated_compact_pk_parameters()
+        self.dedicated_compact_pk_parameters()
             .map_or(DecompositionLevelCount(0), |d| d.ksk_params.ks_level)
     }
 
     pub fn decomposition_level_count_rerand_ksk(&self) -> DecompositionLevelCount {
-        self.get_rerand_params()
+        self.rerand_params()
             .map_or(DecompositionLevelCount(0), |p| p.ks_level)
     }
 
-    pub fn get_pksk_destination(&self) -> Option<EncryptionKeyChoice> {
-        self.get_dedicated_compact_pk_parameters()
+    pub fn pksk_destination(&self) -> Option<EncryptionKeyChoice> {
+        self.dedicated_compact_pk_parameters()
             .map(|d| d.ksk_params.destination_key)
     }
 
     pub fn has_dedicated_compact_pk_params(&self) -> bool {
-        self.get_dedicated_compact_pk_parameters().is_some()
+        self.dedicated_compact_pk_parameters().is_some()
     }
 
-    pub fn get_dedicated_pk_params(
+    pub fn dedicated_pk_params(
         &self,
     ) -> Option<(
         CompactPublicKeyEncryptionParameters,
         ShortintKeySwitchingParameters,
     )> {
-        self.get_dedicated_compact_pk_parameters()
+        self.dedicated_compact_pk_parameters()
             .map(|d| (d.pke_params, d.ksk_params))
     }
 
-    pub fn get_rerand_params(&self) -> Option<ShortintKeySwitchingParameters> {
-        self.get_dedicated_compact_pk_parameters()
+    pub fn rerand_params(&self) -> Option<ShortintKeySwitchingParameters> {
+        self.dedicated_compact_pk_parameters()
             .and_then(|d| d.re_randomization_parameters)
     }
 
@@ -374,8 +377,8 @@ impl DKGParams {
     /// fresh noise) exactly when the two key-switching parameters are equal.
     pub fn rerand_ksk_reuses_pksk(&self) -> bool {
         match (
-            self.get_rerand_params(),
-            self.get_dedicated_pk_params().map(|(_, p)| p),
+            self.rerand_params(),
+            self.dedicated_pk_params().map(|(_, p)| p),
         ) {
             (Some(rerand), Some(pksk)) => rerand == pksk,
             _ => false,
@@ -400,13 +403,13 @@ impl DKGParams {
         }
     }
 
-    pub fn get_sk_deviations(&self) -> Option<SecretKeyDeviations> {
+    pub fn sk_deviations(&self) -> Option<SecretKeyDeviations> {
         self.secret_key_deviations
     }
 
-    pub fn get_compact_pk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
+    pub fn compact_pk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
         //If we are using old style keys, there's no separate CompactPublicKeyEncryptionParameters
-        self.get_dedicated_compact_pk_parameters().map_or_else(
+        self.dedicated_compact_pk_parameters().map_or_else(
             || {
                 (<ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(
                     self.classic_pbs(),
@@ -442,23 +445,23 @@ impl DKGParams {
 // ---------------------------------------------------------------------------
 
 impl DKGParams {
-    pub fn get_dkg_mode(&self) -> DkgMode {
+    pub fn dkg_mode(&self) -> DkgMode {
         self.dkg_mode
     }
 
-    pub fn get_sec(&self) -> u64 {
+    pub fn sec(&self) -> u64 {
         self.sec
     }
 
-    pub fn get_message_modulus(&self) -> MessageModulus {
+    pub fn message_modulus(&self) -> MessageModulus {
         self.classic_pbs().message_modulus
     }
 
-    pub fn get_carry_modulus(&self) -> CarryModulus {
+    pub fn carry_modulus(&self) -> CarryModulus {
         self.classic_pbs().carry_modulus
     }
 
-    pub fn get_pmax(&self) -> Option<f64> {
+    pub fn pmax(&self) -> Option<f64> {
         self.secret_key_deviations.map(|dev| dev.pmax)
     }
 
@@ -476,7 +479,7 @@ impl DKGParams {
     ///
     /// __Any two sets of parameters that share these characteristics will have
     /// the same prefix path, which may result in a clash.__
-    pub fn get_prefix_path(&self) -> PathBuf {
+    pub fn prefix_path(&self) -> PathBuf {
         let mut h = std::hash::DefaultHasher::new();
         // `DKGParams` is not `Serialize`; its `Debug` representation is a
         // faithful, deterministic rendering of every field, which is enough to
@@ -485,8 +488,8 @@ impl DKGParams {
         let hash = h.finish();
         PathBuf::from(format!(
             "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_{}_compression_{}_{}",
-            self.get_message_modulus().0,
-            self.get_carry_modulus().0,
+            self.message_modulus().0,
+            self.carry_modulus().0,
             self.sns().is_some(),
             self.compression().is_some(),
             hash
@@ -498,12 +501,12 @@ impl DKGParams {
     }
 
     pub fn decomposition_base_log_pksk(&self) -> DecompositionBaseLog {
-        self.get_dedicated_compact_pk_parameters()
+        self.dedicated_compact_pk_parameters()
             .map_or(DecompositionBaseLog(0), |d| d.ksk_params.ks_base_log)
     }
 
     pub fn decomposition_base_log_rerand_ksk(&self) -> DecompositionBaseLog {
-        self.get_rerand_params()
+        self.rerand_params()
             .map_or(DecompositionBaseLog(0), |p| p.ks_base_log)
     }
 
@@ -511,7 +514,7 @@ impl DKGParams {
         self.classic_pbs().pbs_base_log
     }
 
-    pub fn get_ksk_params(&self) -> KSKParams {
+    pub fn ksk_params(&self) -> KSKParams {
         let NoiseInfo { amount, bound } = self.num_needed_noise_ksk();
         KSKParams {
             num_needed_noise: amount,
@@ -521,9 +524,9 @@ impl DKGParams {
         }
     }
 
-    pub fn get_pksk_params(&self) -> Option<KSKParams> {
+    pub fn pksk_params(&self) -> Option<KSKParams> {
         let NoiseInfo { amount, bound } = self.num_needed_noise_pksk();
-        self.get_pksk_destination().map(|_| KSKParams {
+        self.pksk_destination().map(|_| KSKParams {
             num_needed_noise: amount,
             noise_bound: bound,
             decomposition_base_log: self.decomposition_base_log_pksk(),
@@ -531,9 +534,9 @@ impl DKGParams {
         })
     }
 
-    pub fn get_rerand_ksk_params(&self) -> Option<KSKParams> {
+    pub fn rerand_ksk_params(&self) -> Option<KSKParams> {
         let NoiseInfo { amount, bound } = self.num_needed_noise_rerand_ksk();
-        match self.get_rerand_params() {
+        match self.rerand_params() {
             // Note: Having rerand params without pk parameter would be unusual,
             // but with transciphering we might someday need it.
             Some(rerand) => {
@@ -553,7 +556,7 @@ impl DKGParams {
         }
     }
 
-    pub fn get_bk_params(&self) -> BKParams {
+    pub fn bk_params(&self) -> BKParams {
         let NoiseInfo { amount, bound } = self.num_needed_noise_bk();
         BKParams {
             num_needed_noise: amount,
@@ -564,7 +567,7 @@ impl DKGParams {
         }
     }
 
-    pub fn get_msnrk_configuration(&self) -> MSNRKConfiguration {
+    pub fn msnrk_configuration(&self) -> MSNRKConfiguration {
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk();
         match self.classic_pbs().modulus_switch_noise_reduction_params {
             ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
@@ -581,7 +584,10 @@ impl DKGParams {
         }
     }
 
-    pub fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
+    /// Regular compression parameters in the distributed-keygen form
+    /// (`DistributedCompressionParameters`: raw params plus noise/BK budgets).
+    /// For the raw tfhe-rs params see [`Self::compression`].
+    pub fn compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
         let comp_params = self.compression()?;
         let CompressionParameters::Classic(classic_comp_params) = comp_params else {
             panic!("We only support classic compression parameters!")
@@ -606,17 +612,17 @@ impl DKGParams {
             ksk_num_noise,
             ksk_noisebound,
             bk_params,
-            pmax: self.get_pmax(),
+            pmax: self.pmax(),
         })
     }
 
     /// SnS compression parameters in the distributed-keygen form
     /// (`DistributedSnsCompressionParameters`). `None` when there is no SnS or
     /// no SnS compression. (The raw `NoiseSquashingCompressionParameters` are
-    /// available via `self.sns()?.get_sns_compression_params()`.)
-    pub fn get_sns_compression_params(&self) -> Option<DistributedSnsCompressionParameters> {
+    /// available via `self.sns()?.sns_compression_params()`.)
+    pub fn sns_compression_params(&self) -> Option<DistributedSnsCompressionParameters> {
         let sns = self.sns()?;
-        let comp_params = sns.get_sns_compression_params()?;
+        let comp_params = sns.sns_compression_params()?;
         let NoiseInfo {
             amount: ksk_num_noise,
             bound: ksk_noisebound,
@@ -625,16 +631,16 @@ impl DKGParams {
             raw_compression_parameters: comp_params,
             ksk_num_noise,
             ksk_noisebound,
-            pmax: self.get_pmax(),
+            pmax: self.pmax(),
         })
     }
 
     /// Difference between the output and input bitsize of the pksk.
     pub fn pksk_rshift(&self) -> i8 {
         let nb_bits_input = self
-            .get_dedicated_compact_pk_parameters()
+            .dedicated_compact_pk_parameters()
             .map(|d| (d.pke_params.carry_modulus.0 * d.pke_params.carry_modulus.0).ilog2());
-        let nb_bits_output = (self.get_carry_modulus().0 * self.get_carry_modulus().0).ilog2();
+        let nb_bits_output = (self.carry_modulus().0 * self.carry_modulus().0).ilog2();
         nb_bits_input
             .map(|nb_bits_input| (nb_bits_output - nb_bits_input) as i8)
             .unwrap_or(0)
@@ -643,10 +649,10 @@ impl DKGParams {
     /// Builds the tfhe-rs [`tfhe::Config`] for this parameter set.
     pub fn to_tfhe_config(&self) -> tfhe::Config {
         let pbs_params = self.classic_pbs();
-        let compression_params = self.get_compression_decompression_params();
+        let compression_params = self.compression_decompression_params();
 
         let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
-        let config = if let Some(dedicated_pk_params) = self.get_dedicated_pk_params() {
+        let config = if let Some(dedicated_pk_params) = self.dedicated_pk_params() {
             config.use_dedicated_compact_public_key_parameters(dedicated_pk_params)
         } else {
             config
@@ -669,7 +675,7 @@ impl DKGParams {
         } else {
             config
         };
-        let config = if let Some(rerand_params) = self.get_rerand_params() {
+        let config = if let Some(rerand_params) = self.rerand_params() {
             config.enable_ciphertext_re_randomization(rerand_params)
         } else {
             config
@@ -703,7 +709,7 @@ impl DKGParams {
     pub fn num_needed_noise_pksk(&self) -> NoiseInfo {
         let amount = self.lwe_hat_dimension().0 * self.decomposition_level_count_pksk().0;
         // The bound is irrelevant when the amount is 0.
-        let (amount, bound) = match self.get_pksk_destination() {
+        let (amount, bound) = match self.pksk_destination() {
             Some(EncryptionKeyChoice::Big) => {
                 (amount, NoiseBounds::GlweNoise(self.glwe_tuniform_bound()))
             }
@@ -1071,7 +1077,9 @@ impl SnsView<'_> {
         self.sns_params
     }
 
-    pub fn get_sns_compression_params(&self) -> Option<NoiseSquashingCompressionParameters> {
+    /// The raw tfhe-rs SnS compression parameters. For the distributed-keygen
+    /// form see [`DKGParams::sns_compression_params`].
+    pub fn sns_compression_params(&self) -> Option<NoiseSquashingCompressionParameters> {
         self.sns_compression_params
     }
 
@@ -1126,7 +1134,7 @@ impl SnsView<'_> {
         }
     }
 
-    pub fn get_bk_sns_params(&self) -> BKParams {
+    pub fn bk_sns_params(&self) -> BKParams {
         let NoiseInfo {
             amount: num_needed_noise,
             bound: noise_bound,
@@ -1140,7 +1148,7 @@ impl SnsView<'_> {
         }
     }
 
-    fn get_classic_sns_params(&self) -> NoiseSquashingClassicParameters {
+    fn classic_sns_params(&self) -> NoiseSquashingClassicParameters {
         match self.sns_params {
             NoiseSquashingParameters::Classic(c) => c,
             NoiseSquashingParameters::MultiBit(_) => {
@@ -1150,7 +1158,7 @@ impl SnsView<'_> {
     }
 
     pub fn num_needed_noise_msnrk_sns(&self) -> NoiseInfo {
-        let classic = self.get_classic_sns_params();
+        let classic = self.classic_sns_params();
         let amount = match classic.modulus_switch_noise_reduction_params {
             ModulusSwitchType::DriftTechniqueNoiseReduction(p) => p.modulus_switch_zeros_count.0,
             ModulusSwitchType::Standard | ModulusSwitchType::CenteredMeanNoiseReduction => 0,
@@ -1161,8 +1169,8 @@ impl SnsView<'_> {
         }
     }
 
-    pub fn get_msnrk_configuration_sns(&self) -> MSNRKConfiguration {
-        let classic_sns_params = self.get_classic_sns_params();
+    pub fn msnrk_configuration_sns(&self) -> MSNRKConfiguration {
+        let classic_sns_params = self.classic_sns_params();
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk_sns();
         match classic_sns_params.modulus_switch_noise_reduction_params {
             ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
@@ -1362,6 +1370,7 @@ impl DkgParamsAvailable {
     }
 }
 
+/// Production parameters. Selectable over the gRPC API via `FheParameter::Default`.
 pub const BC_PARAMS_SNS: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -1382,6 +1391,7 @@ pub const BC_PARAMS_SNS: DKGParams = DKGParams {
 // by the `new_consts_match_from_old` test below.
 // ---------------------------------------------------------------------------
 
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -1450,6 +1460,7 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams {
     secret_key_deviations: None,
 };
 
+/// Test-production parameters (small, deliberately insecure). Selectable over the gRPC API via `FheParameter::Test`.
 pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
     // SnS ⇒ Z128 (the legacy regular params were Z64, coerced by `from_regular`).
     dkg_mode: DkgMode::Z128,
@@ -1555,6 +1566,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
     secret_key_deviations: None,
 };
 
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -1583,6 +1595,7 @@ pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams {
     }),
 };
 
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const NIST_PARAMS_P32_SNS_LWE: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -1611,6 +1624,7 @@ pub const NIST_PARAMS_P32_SNS_LWE: DKGParams = DKGParams {
     }),
 };
 
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const NIST_PARAMS_P8_SNS_FGLWE: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -1643,6 +1657,7 @@ pub const NIST_PARAMS_P8_SNS_FGLWE: DKGParams = DKGParams {
     }),
 };
 
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -1689,15 +1704,21 @@ impl DKGParams {
 
 // Non-SnS counterparts, derived by stripping the SnS part off the SnS sets.
 // (PARAMS_TEST_BK has no non-SnS counterpart in the legacy params.)
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static BC_PARAMS_NO_SNS: LazyLock<DKGParams> = LazyLock::new(|| BC_PARAMS_SNS.strip_from_sns());
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static BC_PARAMS_NIGEL_NO_SNS: LazyLock<DKGParams> =
     LazyLock::new(|| BC_PARAMS_NIGEL_SNS.strip_from_sns());
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P8_NO_SNS_LWE: LazyLock<DKGParams> =
     LazyLock::new(|| NIST_PARAMS_P8_SNS_LWE.strip_from_sns());
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P32_NO_SNS_LWE: LazyLock<DKGParams> =
     LazyLock::new(|| NIST_PARAMS_P32_SNS_LWE.strip_from_sns());
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P8_NO_SNS_FGLWE: LazyLock<DKGParams> =
     LazyLock::new(|| NIST_PARAMS_P8_SNS_FGLWE.strip_from_sns());
+/// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P32_NO_SNS_FGLWE: LazyLock<DKGParams> =
     LazyLock::new(|| NIST_PARAMS_P32_SNS_FGLWE.strip_from_sns());
 

@@ -893,7 +893,7 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
     }
 
     let params = retrieve_parameters(Some(req.params))?;
-    let crs_params = params.get_compact_pk_enc_params();
+    let crs_params = params.compact_pk_enc_params();
 
     let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
 

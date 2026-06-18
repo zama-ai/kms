@@ -1018,7 +1018,7 @@ impl<
 
         let params_handle = params;
         let compression_params = params_handle
-            .get_compression_decompression_params()
+            .compression_decompression_params()
             .ok_or_else(|| anyhow::anyhow!("missing compression parameters"))?
             .raw_compression_parameters;
         let opt_decompression_key = match (opt_glwe_secret_key, opt_compression_secret_key) {

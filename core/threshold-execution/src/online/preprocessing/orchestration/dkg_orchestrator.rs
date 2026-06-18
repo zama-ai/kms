@@ -524,7 +524,7 @@ fn get_num_tuniform_raw_bits_required(
 
     if let Some(sns_params) = params.sns() {
         tuniform_productions.push(sns_params.all_bk_sns_noise());
-        if sns_params.get_sns_compression_params().is_some() {
+        if sns_params.sns_compression_params().is_some() {
             tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
         }
     }
