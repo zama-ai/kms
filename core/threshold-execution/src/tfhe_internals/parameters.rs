@@ -264,7 +264,9 @@ pub struct DistributedSnsCompressionParameters {
 
 impl DKGParams {
     /// The compute parameters as `ClassicPBSParameters`. KMS only supports the
-    /// classic PBS atomic pattern; other variants are rejected.
+    /// classic PBS atomic pattern; other variants **panic**. Callers must ensure
+    /// [`Self::check_conformance`] has passed first (it rejects non-classic
+    /// patterns), so this is infallible on validated parameters.
     pub fn classic_pbs(&self) -> ClassicPBSParameters {
         match self.meta.compute_parameters {
             AtomicPatternParameters::Standard(PBSParameters::PBS(p)) => p,
@@ -421,21 +423,35 @@ impl DKGParams {
         )
     }
 
-    /// Validates the KMS-level invariants that the enum used to encode
-    /// implicitly. Call at the parameter-entry boundary.
+    /// Validates the KMS-level invariants that
+    /// the accessors rely on (classic PBS via [`Self::classic_pbs`],
+    /// TUniform noise via the `*_tuniform_bound` helpers, classic compression /
+    /// noise-squashing). Call at the parameter-entry boundary so a malformed set
+    /// fails fast here rather than panicking deep inside an accessor later.
     ///
-    /// Note: deliberately does *not* call `MetaParameters::is_valid()`, which
-    /// would reject the intentionally-insecure `PARAMS_TEST_BK_SNS`.
+    /// Note: deliberately does *not* call `MetaParameters::validate()` — that
+    /// performs *security* validation, which would reject the intentionally
+    /// insecure `PARAMS_TEST_BK_SNS`. This is a structural check only.
     pub fn check_conformance(&self) -> anyhow::Result<()> {
-        if self.meta.noise_squashing_parameters.is_some() && self.dkg_mode != DkgMode::Z128 {
+        if self.supports_sns() && self.dkg_mode != DkgMode::Z128 {
             anyhow::bail!("SnS parameters require Z128 dkg_mode");
         }
-        if !matches!(
-            self.meta.compute_parameters,
-            AtomicPatternParameters::Standard(PBSParameters::PBS(_))
-        ) {
+
+        // Compute params must be classic PBS with TUniform noise.
+        let AtomicPatternParameters::Standard(PBSParameters::PBS(pbs)) =
+            self.meta.compute_parameters
+        else {
             anyhow::bail!("KMS only supports the classic PBS atomic pattern");
+        };
+        if !matches!(pbs.lwe_noise_distribution, DynamicDistribution::TUniform(_))
+            || !matches!(
+                pbs.glwe_noise_distribution,
+                DynamicDistribution::TUniform(_)
+            )
+        {
+            anyhow::bail!("KMS only supports the TUniform noise distribution");
         }
+
         // TODO: KMS currently only supports the legacy re-randomization configuration
         // (`LegacyDedicatedCompactPublicKeyWithKeySwitch`). Lift this restriction once
         // the other `ReRandomizationConfiguration` variants are wired through keygen.
@@ -443,12 +459,49 @@ impl DKGParams {
             && !matches!(
                 rerand,
                 tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch
+            )
+        {
+            anyhow::bail!(
+                "KMS only supports the legacy re-randomization configuration \
+                 (LegacyDedicatedCompactPublicKeyWithKeySwitch)"
+            );
+        }
+
+        // Compression, if present, must be classic with TUniform noise.
+        if let Some(compression) = self.meta.compression_parameters {
+            let CompressionParameters::Classic(c) = compression else {
+                anyhow::bail!("KMS only supports classic compression parameters");
+            };
+            if !matches!(
+                c.packing_ks_key_noise_distribution,
+                DynamicDistribution::TUniform(_)
             ) {
-                anyhow::bail!(
-                    "KMS only supports the legacy re-randomization configuration \
-                     (LegacyDedicatedCompactPublicKeyWithKeySwitch)"
-                );
+                anyhow::bail!("KMS only supports the TUniform noise distribution");
             }
+        }
+
+        // Noise squashing, if present, must be classic with TUniform noise
+        // (including its optional compression key).
+        if let Some(nsp) = self.meta.noise_squashing_parameters {
+            let NoiseSquashingParameters::Classic(sns) = nsp.parameters else {
+                anyhow::bail!("KMS only supports classic noise-squashing parameters");
+            };
+            if !matches!(
+                sns.glwe_noise_distribution,
+                DynamicDistribution::TUniform(_)
+            ) {
+                anyhow::bail!("KMS only supports the TUniform noise distribution");
+            }
+            if let Some(sns_comp) = nsp.compression_parameters
+                && !matches!(
+                    sns_comp.packing_ks_key_noise_distribution,
+                    DynamicDistribution::TUniform(_)
+                )
+            {
+                anyhow::bail!("KMS only supports the TUniform noise distribution");
+            }
+        }
+
         Ok(())
     }
 }
