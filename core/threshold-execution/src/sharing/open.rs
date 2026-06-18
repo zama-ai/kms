@@ -2,6 +2,7 @@ use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::HashMap,
+    mem,
     sync::{Arc, Mutex},
 };
 use tokio::{task::JoinSet, time::error::Elapsed};
@@ -140,29 +141,41 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         shares: Vec<Z>,
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>> {
-        //Might need to chunk the opening into multiple ones due to network limits
-        let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
-        let chunks: Vec<Vec<_>> = crate::hotpath_measure_block!("open::chunking", {
-            shares
-                .into_iter()
-                .chunks(chunk_size)
-                .into_iter()
-                .map(|chunk| chunk.collect())
-                .collect_vec()
-        });
-        let mut result = Vec::new();
-        for chunked_shares in chunks {
-            match crate::hotpath_measure_async!(
-                "open::execute_to_all",
-                self.execute(session, OpeningKind::ToAll(chunked_shares), degree)
-            )
-            .await?
-            {
-                Some(res) => result.extend(res),
-                None => return Ok(None),
+        crate::hotpath_measure_async!("open::robust_open_list_to_all", async move {
+            // Might need to chunk the opening into multiple ones due to network limits
+            let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
+            let mut shares = shares;
+            let mut result: Option<Vec<_>> = None;
+            while !shares.is_empty() {
+                // Typically we are well below the network limits, so we can avoid cloning for the common case by just taking (an O(1) swap).
+                let chunk = if shares.len() <= chunk_size {
+                    mem::take(&mut shares)
+                } else {
+                    let rest = shares.split_off(chunk_size);
+                    mem::replace(&mut shares, rest)
+                };
+
+                match crate::hotpath_measure_async!(
+                    "open::execute_to_all",
+                    self.execute(session, OpeningKind::ToAll(chunk), degree)
+                )
+                .await?
+                {
+                    Some(res) => match result.as_mut() {
+                        // If the openings fit into a single network send (the common case), then `result` is the initial
+                        // `None`, i.e. we're in the first iteration of the while-loop
+                        None => result = Some(res),
+                        // If we already used `result` to store data (i.e. we had to do multiple network sends), then we
+                        // have to `extend` (likely an allocation).
+                        Some(acc) => acc.extend(res),
+                    },
+                    None => return Ok(None),
+                }
             }
-        }
-        Ok(Some(result))
+
+            Ok(Some(result.unwrap_or_default()))
+        })
+        .await
     }
 
     /// Blanket implementation that relies on [`Self::execute`]
