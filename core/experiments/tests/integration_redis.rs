@@ -356,7 +356,7 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     // `PARAMS_TEST_BK_SNS` is Z128 (SnS forces it); its non-SnS form is Z64, which is
     // what this Z64 orchestrator/keygen test needs (matches the legacy
     // `get_params_without_sns()` behavior this replaced).
-    let mut params = PARAMS_TEST_BK_SNS.strip_from_sns();
+    let mut params = PARAMS_TEST_BK_SNS.remove_sns_parameters();
     params.dkg_mode = DkgMode::Z64;
     fs::create_dir_all(params.prefix_path().join("ORCHESTRATOR")).unwrap();
     let num_sessions = 10;

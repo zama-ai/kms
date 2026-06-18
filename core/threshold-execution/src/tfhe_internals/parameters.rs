@@ -436,6 +436,19 @@ impl DKGParams {
         ) {
             anyhow::bail!("KMS only supports the classic PBS atomic pattern");
         }
+        // TODO: KMS currently only supports the legacy re-randomization configuration
+        // (`LegacyDedicatedCompactPublicKeyWithKeySwitch`). Lift this restriction once
+        // the other `ReRandomizationConfiguration` variants are wired through keygen.
+        if let Some(rerand) = self.meta.rerand_configuration.as_ref()
+            && !matches!(
+                rerand,
+                tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch
+            ) {
+                anyhow::bail!(
+                    "KMS only supports the legacy re-randomization configuration \
+                     (LegacyDedicatedCompactPublicKeyWithKeySwitch)"
+                );
+            }
         Ok(())
     }
 }
@@ -1695,7 +1708,7 @@ impl DKGParams {
     /// removed, yielding the corresponding non-SnS parameter set. Everything
     /// else (compute params, dedicated CPK, compression, rerand, dkg_mode,
     /// secret-key deviations) is preserved.
-    pub fn strip_from_sns(&self) -> Self {
+    pub fn remove_sns_parameters(&self) -> Self {
         let mut stripped = *self;
         stripped.meta.noise_squashing_parameters = None;
         stripped
@@ -1705,22 +1718,23 @@ impl DKGParams {
 // Non-SnS counterparts, derived by stripping the SnS part off the SnS sets.
 // (PARAMS_TEST_BK has no non-SnS counterpart in the legacy params.)
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
-pub static BC_PARAMS_NO_SNS: LazyLock<DKGParams> = LazyLock::new(|| BC_PARAMS_SNS.strip_from_sns());
+pub static BC_PARAMS_NO_SNS: LazyLock<DKGParams> =
+    LazyLock::new(|| BC_PARAMS_SNS.remove_sns_parameters());
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static BC_PARAMS_NIGEL_NO_SNS: LazyLock<DKGParams> =
-    LazyLock::new(|| BC_PARAMS_NIGEL_SNS.strip_from_sns());
+    LazyLock::new(|| BC_PARAMS_NIGEL_SNS.remove_sns_parameters());
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P8_NO_SNS_LWE: LazyLock<DKGParams> =
-    LazyLock::new(|| NIST_PARAMS_P8_SNS_LWE.strip_from_sns());
+    LazyLock::new(|| NIST_PARAMS_P8_SNS_LWE.remove_sns_parameters());
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P32_NO_SNS_LWE: LazyLock<DKGParams> =
-    LazyLock::new(|| NIST_PARAMS_P32_SNS_LWE.strip_from_sns());
+    LazyLock::new(|| NIST_PARAMS_P32_SNS_LWE.remove_sns_parameters());
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P8_NO_SNS_FGLWE: LazyLock<DKGParams> =
-    LazyLock::new(|| NIST_PARAMS_P8_SNS_FGLWE.strip_from_sns());
+    LazyLock::new(|| NIST_PARAMS_P8_SNS_FGLWE.remove_sns_parameters());
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub static NIST_PARAMS_P32_NO_SNS_FGLWE: LazyLock<DKGParams> =
-    LazyLock::new(|| NIST_PARAMS_P32_SNS_FGLWE.strip_from_sns());
+    LazyLock::new(|| NIST_PARAMS_P32_SNS_FGLWE.remove_sns_parameters());
 
 // ---------------------------------------------------------------------------
 // Equivalence test: every budget/noise/sample count must match the legacy
@@ -1754,7 +1768,7 @@ mod tests {
     /// triples / bits / randomness / noise budgets as the legacy `DKGParams`,
     /// for every constant in `DkgParamsAvailable` and every `KeySetConfig`.
     /// Pins each hand-written `*` constant (and each `*_NO_SNS` derived
-    /// via `strip_from_sns`) to the authoritative `DKGParams::from(<legacy>)`
+    /// via `remove_sns_parameters`) to the authoritative `DKGParams::from(<legacy>)`
     /// translation, so any transcription error in the literals fails here with a
     /// precise diff rather than silently shipping wrong parameters.
     #[test]
@@ -1796,7 +1810,7 @@ mod tests {
             DKGParams::from(old::NIST_PARAMS_P32_SNS_FGLWE_OLD),
             "NIST_PARAMS_P32_SNS_FGLWE"
         );
-        // non-SnS sets (derived via strip_from_sns)
+        // non-SnS sets (derived via remove_sns_parameters)
         assert_eq!(
             *BC_PARAMS_NO_SNS,
             DKGParams::from(old::BC_PARAMS_NO_SNS_OLD),
