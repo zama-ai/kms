@@ -100,7 +100,7 @@ mod test {
         FheUint512, FheUint1024, FheUint2048,
     };
     use tfhe::{Unversionize, Versionize};
-    use threshold_execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
+    use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
     fn max_val(num_bits: usize) -> StaticUnsignedBigInt<1> {
         StaticUnsignedBigInt::from([(2_u128.pow(num_bits as u32) - 1) as u64; 1])
@@ -306,21 +306,10 @@ mod test {
                 .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
                 .build()
         } else {
-            let DKGParams::WithSnS(params) = PARAMS_TEST_BK_SNS else {
-                panic!("");
-            };
-            ConfigBuilder::with_custom_parameters(params.regular_params.ciphertext_parameters)
-                .enable_compression(
-                    params
-                        .regular_params
-                        .compression_decompression_parameters
-                        .unwrap(),
-                )
+            ConfigBuilder::with_custom_parameters(PARAMS_TEST_BK_SNS.classic_pbs())
+                .enable_compression(PARAMS_TEST_BK_SNS.compression().unwrap())
                 .use_dedicated_compact_public_key_parameters(
-                    params
-                        .regular_params
-                        .dedicated_compact_public_key_parameters
-                        .unwrap(),
+                    PARAMS_TEST_BK_SNS.get_dedicated_pk_params().unwrap(),
                 )
                 .build()
         };

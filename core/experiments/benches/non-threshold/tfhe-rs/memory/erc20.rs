@@ -86,11 +86,7 @@ fn main() {
     )| { transfer_overflow(from_amount, to_amount, amount, public_key) };
 
     for (name, params) in ALL_PARAMS {
-        if params
-            .get_params_basics_handle()
-            .get_rerand_params()
-            .is_none()
-        {
+        if params.get_rerand_params().is_none() {
             // Rerandomization is required for this bench
             continue;
         }

@@ -273,7 +273,6 @@ pub struct PrivateKeySetV2<const EXTENSION_DEGREE: usize> {
 #[cfg(any(test, feature = "testing"))]
 impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
     pub fn init_dummy(param: DKGParams) -> Self {
-        let params_basic_handle = param.get_params_basics_handle();
         Self {
             lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                 data: vec![],
@@ -286,10 +285,10 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             }),
             glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
                 data: vec![],
-                polynomial_size: params_basic_handle.polynomial_size(),
+                polynomial_size: param.polynomial_size(),
             }),
             glwe_secret_key_share_sns_as_lwe: None,
-            parameters: params_basic_handle.to_classic_pbs_parameters(),
+            parameters: param.classic_pbs(),
             glwe_secret_key_share_compression: None,
             glwe_sns_compression_key_as_lwe: None,
         }
@@ -614,8 +613,6 @@ where
         &self,
         params: DKGParams,
     ) -> anyhow::Result<GenericPrivateKeySet<Z128, EXTENSION_DEGREE>> {
-        let params_basics_handle = params.get_params_basics_handle();
-
         let lwe_encryption_secret_key_share = match &self.lwe_encryption_secret_key_share {
             LweSecretKeyShareEnum::Z128(key) => key.clone(),
             LweSecretKeyShareEnum::Z64(_) => {
@@ -662,9 +659,9 @@ where
             .glwe_secret_key_share_sns_as_lwe
             .as_ref()
             .map(|lwe_key| -> anyhow::Result<_> {
-                let sns_params = match &params {
-                    DKGParams::WithSnS(sns) => sns,
-                    DKGParams::WithoutSnS(_) => {
+                let sns_params = match params.sns() {
+                    Some(sns) => sns,
+                    None => {
                         anyhow::bail!("PrivateKeySet has SNS key but DKGParams is WithoutSnS")
                     }
                 };
@@ -689,8 +686,8 @@ where
             .glwe_sns_compression_key_as_lwe
             .as_ref()
             .map(|lwe_key| -> anyhow::Result<_> {
-                let sns_comp_params = params_basics_handle
-                    .get_sns_compression_params()
+                let sns_comp_params = params.sns()
+                .and_then(|sns| sns.get_sns_compression_params())
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "PrivateKeySet has SNS compression key but DKGParams has no SNS compression params"
@@ -698,8 +695,8 @@ where
                     })?;
                 Ok(SnsCompressionPrivateKeyShares::from_lwe_secret_key(
                     lwe_key.clone(),
-                    sns_comp_params.raw_compression_parameters.packing_ks_polynomial_size,
-                    sns_comp_params.raw_compression_parameters,
+                    sns_comp_params.packing_ks_polynomial_size,
+                    sns_comp_params,
                 ))
             })
             .transpose()?;
@@ -1062,17 +1059,17 @@ mod test {
 
         #[test]
         fn test_definalizable_z128_round_trip_no_sns() {
-            let keyset = PrivateKeySet::<4>::init_dummy(BC_PARAMS_NO_SNS);
-            let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
+            let keyset = PrivateKeySet::<4>::init_dummy(*BC_PARAMS_NO_SNS);
+            let params_handle = *BC_PARAMS_NO_SNS;
 
-            let generic = Definalizable::<Z128, 4>::to_generic(&keyset, BC_PARAMS_NO_SNS)
+            let generic = Definalizable::<Z128, 4>::to_generic(&keyset, *BC_PARAMS_NO_SNS)
                 .expect("to_generic should succeed for Z128 keys without SNS");
 
             assert!(generic.glwe_secret_key_share_sns.is_none());
             assert!(generic.glwe_secret_key_share_sns_compression.is_none());
             assert!(generic.oprf_secret_key_share.is_some());
 
-            let refinalized = generic.finalize_keyset(params_handle.to_classic_pbs_parameters());
+            let refinalized = generic.finalize_keyset(params_handle.classic_pbs());
             assert_eq!(keyset, refinalized);
         }
 
@@ -1089,14 +1086,14 @@ mod test {
             assert!(generic.glwe_secret_key_share_sns_compression.is_some());
             assert!(generic.oprf_secret_key_share.is_some());
 
-            let params_handle = PARAMS_TEST_BK_SNS.get_params_basics_handle();
-            let refinalized = generic.finalize_keyset(params_handle.to_classic_pbs_parameters());
+            let params_handle = PARAMS_TEST_BK_SNS;
+            let refinalized = generic.finalize_keyset(params_handle.classic_pbs());
             assert_eq!(keyset, refinalized);
         }
 
         #[test]
         fn test_definalizable_z128_rejects_z64_keys() {
-            let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
+            let params_handle = *BC_PARAMS_NO_SNS;
             let keyset = PrivateKeySet::<4> {
                 lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
                     data: vec![],
@@ -1112,10 +1109,10 @@ mod test {
                 oprf_secret_key_share: None,
                 glwe_secret_key_share_compression: None,
                 glwe_sns_compression_key_as_lwe: None,
-                parameters: params_handle.to_classic_pbs_parameters(),
+                parameters: params_handle.classic_pbs(),
             };
 
-            match Definalizable::<Z128, 4>::to_generic(&keyset, BC_PARAMS_NO_SNS) {
+            match Definalizable::<Z128, 4>::to_generic(&keyset, *BC_PARAMS_NO_SNS) {
                 Ok(_) => panic!("should fail for Z64 keys"),
                 Err(e) => {
                     let err_msg = e.to_string();
@@ -1129,10 +1126,10 @@ mod test {
 
         #[test]
         fn test_definalizable_z128_sns_key_with_wrong_params() {
-            let mut keyset = PrivateKeySet::<4>::init_dummy(BC_PARAMS_NO_SNS);
+            let mut keyset = PrivateKeySet::<4>::init_dummy(*BC_PARAMS_NO_SNS);
             keyset.glwe_secret_key_share_sns_as_lwe = Some(LweSecretKeyShare { data: vec![] });
 
-            match Definalizable::<Z128, 4>::to_generic(&keyset, BC_PARAMS_NO_SNS) {
+            match Definalizable::<Z128, 4>::to_generic(&keyset, *BC_PARAMS_NO_SNS) {
                 Ok(_) => panic!("should fail with WithoutSnS params"),
                 Err(e) => {
                     let err_msg = e.to_string();
@@ -1146,17 +1143,17 @@ mod test {
 
         #[test]
         fn test_definalizable_z64_round_trip() {
-            let keyset = PrivateKeySet::<4>::init_dummy(BC_PARAMS_NO_SNS);
+            let keyset = PrivateKeySet::<4>::init_dummy(*BC_PARAMS_NO_SNS);
 
-            let generic = Definalizable::<Z64, 4>::to_generic(&keyset, BC_PARAMS_NO_SNS)
+            let generic = Definalizable::<Z64, 4>::to_generic(&keyset, *BC_PARAMS_NO_SNS)
                 .expect("to_generic should succeed for Z64 conversion");
 
             assert!(generic.glwe_secret_key_share_sns.is_none());
             assert!(generic.glwe_secret_key_share_sns_compression.is_none());
             assert!(generic.oprf_secret_key_share.is_some());
 
-            let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
-            let refinalized = generic.finalize_keyset(params_handle.to_classic_pbs_parameters());
+            let params_handle = *BC_PARAMS_NO_SNS;
+            let refinalized = generic.finalize_keyset(params_handle.classic_pbs());
 
             // After Z64 round-trip, keys should be Z64
             assert!(matches!(
@@ -1175,10 +1172,10 @@ mod test {
 
         #[test]
         fn test_definalizable_z64_rejects_sns_keys() {
-            let mut keyset = PrivateKeySet::<4>::init_dummy(BC_PARAMS_NO_SNS);
+            let mut keyset = PrivateKeySet::<4>::init_dummy(*BC_PARAMS_NO_SNS);
             keyset.glwe_secret_key_share_sns_as_lwe = Some(LweSecretKeyShare { data: vec![] });
 
-            match Definalizable::<Z64, 4>::to_generic(&keyset, BC_PARAMS_NO_SNS) {
+            match Definalizable::<Z64, 4>::to_generic(&keyset, *BC_PARAMS_NO_SNS) {
                 Ok(_) => panic!("should fail with SNS keys"),
                 Err(e) => {
                     let err_msg = e.to_string();
@@ -1196,7 +1193,7 @@ mod test {
             let val = ResiduePolyF4Z128::from_scalar(Wrapping(42u128));
             let share = Share::new(role, val);
 
-            let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
+            let params_handle = *BC_PARAMS_NO_SNS;
             let keyset = PrivateKeySet::<4> {
                 lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                     data: vec![share],
@@ -1214,12 +1211,12 @@ mod test {
                 })),
                 glwe_secret_key_share_compression: None,
                 glwe_sns_compression_key_as_lwe: None,
-                parameters: params_handle.to_classic_pbs_parameters(),
+                parameters: params_handle.classic_pbs(),
             };
 
-            let generic = Definalizable::<Z128, 4>::to_generic(&keyset, BC_PARAMS_NO_SNS)
+            let generic = Definalizable::<Z128, 4>::to_generic(&keyset, *BC_PARAMS_NO_SNS)
                 .expect("to_generic should succeed with non-empty data");
-            let refinalized = generic.finalize_keyset(params_handle.to_classic_pbs_parameters());
+            let refinalized = generic.finalize_keyset(params_handle.classic_pbs());
             assert_eq!(keyset, refinalized);
         }
     }

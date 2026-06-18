@@ -12,7 +12,7 @@ use crate::{
         compression_decompression_key::CompressionPrivateKeyShares,
         glwe_key::GlweSecretKeyShare,
         lwe_key::LweSecretKeyShare,
-        parameters::{DKGParams, DKGParamsBasics, DkgMode},
+        parameters::{DKGParams, DkgMode},
         private_keysets::{
             CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
             PrivateKeySet,
@@ -47,11 +47,11 @@ impl ResharePreprocRequired {
         parameters: DKGParams,
         oprf_key_present: bool,
     ) -> Self {
-        let params = parameters.get_params_basics_handle();
+        let params = parameters;
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
 
-        match parameters.get_params_basics_handle().get_dkg_mode() {
+        match parameters.get_dkg_mode() {
             DkgMode::Z64 => {
                 num_randoms_64 += params.lwe_hat_dimension().0;
                 num_randoms_64 += params.lwe_dimension().0;
@@ -67,7 +67,7 @@ impl ResharePreprocRequired {
                     num_randoms_128 += params.lwe_dimension().0;
                 }
                 num_randoms_128 += params.glwe_sk_num_bits() + params.compression_sk_num_bits();
-                if let DKGParams::WithSnS(p) = parameters {
+                if let Some(p) = parameters.sns() {
                     num_randoms_128 += p.glwe_sk_num_bits_sns() + p.sns_compression_sk_num_bits();
                 }
             }
@@ -360,7 +360,7 @@ where
     let reshare = R::default();
     let mut input_share = input_share.into();
     // Reshare the GLWE sns key
-    let glwe_secret_key_share_sns_as_lwe = if let DKGParams::WithSnS(sns_params) = parameters {
+    let glwe_secret_key_share_sns_as_lwe = if let Some(sns_params) = parameters.sns() {
         let expected_key_size = sns_params.glwe_sk_num_bits_sns();
         let maybe_key = input_share.as_mut().and_then(|s| {
             s.glwe_secret_key_share_sns_as_lwe
@@ -380,11 +380,11 @@ where
         (false, None)
     };
 
-    let basic_params_handle = parameters.get_params_basics_handle();
+    let basic_params_handle = parameters;
 
     // Reshare the LWE compute key
     let expected_key_size = basic_params_handle.lwe_dimension().0;
-    let lwe_compute_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode() {
+    let lwe_compute_secret_key_share = match parameters.get_dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
@@ -432,8 +432,7 @@ where
     // Reshare the LWE PKe key
     let expected_key_size = basic_params_handle.lwe_hat_dimension().0;
     let polynomial_size = basic_params_handle.polynomial_size();
-    let lwe_encryption_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode()
-    {
+    let lwe_encryption_secret_key_share = match parameters.get_dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
@@ -481,7 +480,7 @@ where
     // Reshare the dedicated OPRF LWE key only when the old keyset has one.
     let oprf_secret_key_share = if oprf_key_present {
         let expected_key_size = basic_params_handle.lwe_dimension().0;
-        match parameters.get_params_basics_handle().get_dkg_mode() {
+        match parameters.get_dkg_mode() {
             DkgMode::Z64 => {
                 let maybe_key = input_share
                     .as_mut()
@@ -531,7 +530,7 @@ where
 
     // Reshare the GLWE compute key
     let expected_key_size = basic_params_handle.glwe_sk_num_bits();
-    let glwe_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode() {
+    let glwe_secret_key_share = match parameters.get_dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
@@ -594,7 +593,7 @@ where
         let expected_key_size = basic_params_handle.compression_sk_num_bits();
         (
             true,
-            match parameters.get_params_basics_handle().get_dkg_mode() {
+            match parameters.get_dkg_mode() {
                 DkgMode::Z64 => {
                     // Extract the GLWE secret key share for the compression scheme if any
                     let maybe_key = input_share
@@ -672,29 +671,36 @@ where
     };
 
     // Reshare the GLWE sns compression key
-    let glwe_sns_compression_key_as_lwe = match parameters {
-        DKGParams::WithoutSnS(_) => (false, None),
-        DKGParams::WithSnS(params_sns) => {
-            if params_sns.sns_compression_params.is_some() {
-                let expected_key_size = params_sns.compression_sk_num_bits();
-                let maybe_key = input_share.as_mut().and_then(|s| {
-                    s.glwe_sns_compression_key_as_lwe
-                        .as_mut()
-                        .map(|key| key.data.as_mut())
-                });
-                let data = reshare
-                    .execute(
-                        sessions,
-                        &mut preproc128,
-                        &mut R::MaybeExpectedInputShares::from(maybe_key),
-                        expected_key_size,
-                    )
-                    .await?;
-                (true, data.into().map(|data| LweSecretKeyShare { data }))
-            } else {
-                (false, None)
-            }
+    let glwe_sns_compression_key_as_lwe = if let Some(params_sns) = parameters.sns() {
+        if params_sns.get_sns_compression_params().is_some() {
+            // NOTE (bugfix): this reshares the SnS *compression* key, so it must
+            // be sized with the SnS compression key size. The legacy code used
+            // `compression_sk_num_bits()`, which on the old `DKGParamsSnS`
+            // delegated to the *regular* compression params — the wrong key size.
+            // It went unnoticed because the only parameter set ever resharded in
+            // tests (`PARAMS_TEST_BK_SNS`) has identical regular and SnS
+            // compression dimensions (256 == 256), masking the discrepancy.
+            // Fixed here to use the SnS compression key size.
+            let expected_key_size = params_sns.sns_compression_sk_num_bits();
+            let maybe_key = input_share.as_mut().and_then(|s| {
+                s.glwe_sns_compression_key_as_lwe
+                    .as_mut()
+                    .map(|key| key.data.as_mut())
+            });
+            let data = reshare
+                .execute(
+                    sessions,
+                    &mut preproc128,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            (true, data.into().map(|data| LweSecretKeyShare { data }))
+        } else {
+            (false, None)
         }
+    } else {
+        (false, None)
     };
 
     match (
@@ -743,7 +749,7 @@ where
                 oprf_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
-                parameters: basic_params_handle.to_classic_pbs_parameters(),
+                parameters: basic_params_handle.classic_pbs(),
                 glwe_secret_key_share_compression,
                 glwe_sns_compression_key_as_lwe,
             }))
@@ -771,7 +777,7 @@ mod tests {
     use crate::tests::helper::tests_and_benches::{
         execute_protocol_small, execute_protocol_two_sets,
     };
-    use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
+    use crate::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
     use crate::tfhe_internals::test_feature::{
         ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
     };
@@ -1247,8 +1253,8 @@ mod tests {
 
     // We return test params to use to truncate the keys
     fn get_truncated_client_keys_params(params: DKGParams) -> DKGParams {
-        let new_sns_params = if let DKGParams::WithSnS(sns_params) = params {
-            let mut new_sns_params = sns_params.sns_params;
+        let new_sns_params = if let Some(sns_params) = params.sns() {
+            let mut new_sns_params = sns_params.sns_params();
 
             let sns_private_key_len = 8;
             let sns_poly_size = tfhe::shortint::prelude::PolynomialSize(1);
@@ -1272,11 +1278,7 @@ mod tests {
         } else {
             None
         };
-        let params = PBSParameters::PBS(
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
-        );
+        let params = PBSParameters::PBS(params.classic_pbs());
         let test_lwe_dim = params.lwe_dimension().0.min(8);
         let test_glwe_dim = params.glwe_dimension().0.min(1);
         let test_poly_size = params.polynomial_size().0.min(10);
@@ -1301,31 +1303,32 @@ mod tests {
             modulus_switch_noise_reduction_params: ModulusSwitchType::Standard,
         };
 
-        let regular_params = DKGParamsRegular {
+        DKGParams {
             dkg_mode: DkgMode::Z128,
             sec: 128,
-            ciphertext_parameters: new_pbs_params,
-            dedicated_compact_public_key_parameters: None,
-            compression_decompression_parameters: None,
-            cpk_re_randomization_ksk_params: None,
+            meta: tfhe::shortint::parameters::MetaParameters {
+                backend: tfhe::shortint::parameters::Backend::Cpu,
+                compute_parameters: tfhe::shortint::parameters::AtomicPatternParameters::Standard(
+                    PBSParameters::PBS(new_pbs_params),
+                ),
+                dedicated_compact_public_key_parameters: None,
+                compression_parameters: None,
+                noise_squashing_parameters: new_sns_params.map(|parameters| {
+                    tfhe::shortint::parameters::MetaNoiseSquashingParameters {
+                        parameters,
+                        compression_parameters: None,
+                    }
+                }),
+                rerand_configuration: None,
+            },
             secret_key_deviations: None,
-        };
-
-        if let Some(new_sns_params) = new_sns_params {
-            DKGParams::WithSnS(DKGParamsSnS {
-                regular_params,
-                sns_params: new_sns_params,
-                sns_compression_params: None,
-            })
-        } else {
-            DKGParams::WithoutSnS(regular_params)
         }
     }
 
     // We truncate the keys in the keyset to make the test faster
     // to match the sizes in the target parameters
     fn truncate_client_keys(keyset: &mut KeySet, target_params: DKGParams) {
-        let new_sns_private_key = if let DKGParams::WithSnS(sns_params) = target_params {
+        let new_sns_private_key = if let Some(sns_params) = target_params.sns() {
             let (raw_sns_private_key, _) = keyset
                 .client_key
                 .clone()
@@ -1347,7 +1350,7 @@ mod tests {
                 tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                     NoiseSquashingPrivateKey::from_raw_parts(
                         new_raw_sns_private_key,
-                        sns_params.sns_params,
+                        sns_params.sns_params(),
                     ),
                 ),
             )
@@ -1371,8 +1374,6 @@ mod tests {
             }
         };
 
-        let target_params = target_params.get_params_basics_handle();
-
         let test_lwe_dim = target_params.lwe_dimension().0;
         let test_glwe_dim = target_params.glwe_dimension().0;
         let test_poly_size = target_params.polynomial_size().0;
@@ -1389,7 +1390,7 @@ mod tests {
         let sck = StandardAtomicPatternClientKey::from_raw_parts(
             new_glwe_raw,
             new_lwe_raw,
-            PBSParameters::PBS(target_params.to_classic_pbs_parameters()),
+            PBSParameters::PBS(target_params.classic_pbs()),
             None,
         );
         let sck = tfhe::shortint::ClientKey {
@@ -1557,9 +1558,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(4242);
         let mut key_shares = keygen_all_party_shares_from_client_key(
             &keyset.client_key,
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
+            params.classic_pbs(),
             &mut rng,
             num_parties,
             threshold,

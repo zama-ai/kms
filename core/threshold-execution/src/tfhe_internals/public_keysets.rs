@@ -68,9 +68,7 @@ impl RawCompressedPubKeySet {
         params: DKGParams,
         tag: tfhe::Tag,
     ) -> tfhe::CompressedCompactPublicKey {
-        let params = params
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params();
+        let params = params.get_compact_pk_enc_params();
         to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params, tag)
     }
 
@@ -78,31 +76,29 @@ impl RawCompressedPubKeySet {
         &self,
         params: DKGParams,
     ) -> tfhe::shortint::CompressedServerKey {
-        let regular_params = params.get_params_basics_handle();
-
         let pk_bk = ShortintCompressedBootstrappingKey::Classic {
             bsk: self.bk.clone(),
             modulus_switch_noise_reduction_key: self.msnrk.clone(),
         };
 
         let max_noise_level = MaxNoiseLevel::from_msg_carry_modulus(
-            regular_params.get_message_modulus(),
-            regular_params.get_carry_modulus(),
+            params.get_message_modulus(),
+            params.get_carry_modulus(),
         );
 
         let atomic_pattern = CompressedStandardAtomicPatternServerKey::from_raw_parts(
             self.ksk.clone(),
             pk_bk,
-            regular_params.pbs_order(),
+            params.pbs_order(),
         );
 
         tfhe::shortint::CompressedServerKey::from_raw_parts(
             CompressedAtomicPatternServerKey::Standard(atomic_pattern),
-            regular_params.get_message_modulus(),
-            regular_params.get_carry_modulus(),
+            params.get_message_modulus(),
+            params.get_carry_modulus(),
             MaxDegree::from_msg_carry_modulus(
-                regular_params.get_message_modulus(),
-                regular_params.get_carry_modulus(),
+                params.get_message_modulus(),
+                params.get_carry_modulus(),
             ),
             max_noise_level,
         )
@@ -118,9 +114,9 @@ impl RawCompressedPubKeySet {
         let cpk_key_switching_key_material = self.pksk.as_ref().map(|pksk| {
             tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts( tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
                 pksk.clone(),
-                params.get_params_basics_handle().pksk_rshift(),
+                params.pksk_rshift(),
                 params
-                    .get_params_basics_handle()
+                    
                     .get_pksk_destination()
                     .unwrap(),
                     KeySwitchingKeyDestinationAtomicPattern::Standard,
@@ -138,18 +134,18 @@ impl RawCompressedPubKeySet {
         let (noise_squashing_key, noise_squashing_compression_key) = match (
             self.bk_sns.as_ref(),
             self.msnrk_sns.as_ref(),
-            params,
+            params.sns(),
         ) {
-            (Some(bk_sns), Some(msnrk_sns), DKGParams::WithSnS(params_with_sns)) => {
+            (Some(bk_sns), Some(msnrk_sns), Some(params_with_sns)) => {
                 let noise_squashing_key = Some(
                     tfhe::integer::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts( tfhe::shortint::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts(
 CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatternNoiseSquashingKey::from_raw_parts(CompressedShortint128BootstrappingKey::Classic{
                             bsk : bk_sns.clone(),
                             modulus_switch_noise_reduction_key: msnrk_sns.clone()
                         })),
-                        params_with_sns.sns_params.message_modulus(),
-                        params_with_sns.sns_params.carry_modulus(),
-                        params_with_sns.sns_params.ciphertext_modulus(),
+                        params_with_sns.sns_params().message_modulus(),
+                        params_with_sns.sns_params().carry_modulus(),
+                        params_with_sns.sns_params().ciphertext_modulus(),
                     )));
                 match self.sns_compression_key.as_ref() {
                         Some(sns_compression_key) => (

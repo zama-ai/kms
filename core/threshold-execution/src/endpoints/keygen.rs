@@ -17,7 +17,7 @@ use crate::{
         lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
         modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
-        parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
+        parameters::{DKGParams, MSNRKConfiguration},
         private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
         public_keysets::{
             CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
@@ -274,11 +274,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
     {
         let private_key_set = generate_private_key_set(session, preprocessing, params)
             .await?
-            .finalize_keyset(
-                params
-                    .get_params_basics_handle()
-                    .to_classic_pbs_parameters(),
-            );
+            .finalize_keyset(params.classic_pbs());
         let compressed_xof_keyset = Self::compressed_keygen_from_existing_private_keyset(
             session,
             preprocessing,
@@ -306,13 +302,11 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
     {
-        let params_basics_handle = params.get_params_basics_handle();
+        let params_basics_handle = params;
 
         // Messages exchanged are big so we deserialize them on Rayon
         session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
-        if Z::BIT_LENGTH == 64
-            && let DKGParams::WithSnS(_) = params
-        {
+        if Z::BIT_LENGTH == 64 && params.sns().is_some() {
             return Err(anyhow_error_and_log(
                 "Can not generate Switch and Squash key with in Z64".to_string(),
             ));
@@ -366,7 +360,7 @@ async fn generate_private_key_set<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
     let my_role = session.my_role();
 
     // Generate the shared LWE hat secret key and corresponding public key share
@@ -428,14 +422,14 @@ where
     };
 
     // Generate SnS GLWE key and SNS compression private key if needed
-    let (glwe_secret_key_share_sns, glwe_secret_key_share_sns_compression) = match params {
-        DKGParams::WithSnS(sns_params) => {
+    let (glwe_secret_key_share_sns, glwe_secret_key_share_sns_compression) =
+        if let Some(sns_params) = params.sns() {
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Start");
             let glwe_secret_key_share_sns = GlweSecretKeyShare::new_from_preprocessing(
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-                sns_params.get_pmax(),
+                params.get_pmax(),
                 session,
             )
             .await?;
@@ -457,9 +451,9 @@ where
                 };
 
             (Some(glwe_secret_key_share_sns), sns_compression)
-        }
-        DKGParams::WithoutSnS(_) => (None, None),
-    };
+        } else {
+            (None, None)
+        };
 
     let oprf_secret_key_share = Some(
         LweSecretKeyShare::new_from_preprocessing(
@@ -503,7 +497,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     if private_key_set.oprf_secret_key_share.is_none() {
-        let params_basics_handle = params.get_params_basics_handle();
+        let params_basics_handle = params;
         private_key_set.oprf_secret_key_share = Some(
             crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z128(
                 LweSecretKeyShare::new_from_preprocessing(
@@ -553,7 +547,7 @@ async fn generate_all_compressed_public_keys<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
     let my_role = session.my_role();
 
     // Generate LWE public key from existing private key
@@ -655,8 +649,8 @@ where
     };
 
     //If needed, compute the SnS BK
-    let (bk_sns, msnrk_sns) = match params {
-        DKGParams::WithSnS(sns_params) => {
+    let (bk_sns, msnrk_sns) = if let Some(sns_params) = params.sns() {
+        {
             //Computing and opening BK SNS can take a while, so we increase the timeout
             session.network().set_timeout_for_bk_sns().await;
 
@@ -692,7 +686,8 @@ where
             tracing::info!("(Party {my_role}) Opening SnS BK...Done");
             (Some(bk_sns), Some(msnrk_sns))
         }
-        DKGParams::WithoutSnS(_) => (None, None),
+    } else {
+        (None, None)
     };
 
     //Compute the PKSK
@@ -760,8 +755,11 @@ where
     };
 
     // If needed, compute the sns compression keys
-    let sns_compression_key = match (params, params_basics_handle.get_sns_compression_params()) {
-        (DKGParams::WithSnS(_), Some(comp_params)) => Some(
+    let sns_compression_key = match (
+        params.sns().is_some(),
+        params_basics_handle.get_sns_compression_params(),
+    ) {
+        (true, Some(comp_params)) => Some(
             generate_compressed_sns_compression_keys(
                 &private_key_set
                     .glwe_secret_key_share_sns
@@ -833,7 +831,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
@@ -875,7 +873,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     // QU: Do we want to use the same DSEP as in the regualr KG?
@@ -918,7 +916,7 @@ async fn generate_compressed_oprf_bootstrap_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
 
     generate_compressed_bootstrap_key(
         glwe_secret_key_share,
@@ -1024,11 +1022,7 @@ pub mod tests {
         runtime::sessions::{
             large_session::LargeSession, session_parameters::GenericParameterHandles,
         },
-        tfhe_internals::{
-            parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
-            public_keysets::FhePubKeySet,
-            utils::expanded_encrypt,
-        },
+        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
     use crate::{
         random::{get_rng, seed_from_rng},
@@ -1162,7 +1156,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         run_keygen_test::<EXTENSION_DEGREE>(
-            NIST_PARAMS_P32_NO_SNS_FGLWE,
+            *NIST_PARAMS_P32_NO_SNS_FGLWE,
             5,
             1,
             KeygenTestConfig {
@@ -1204,7 +1198,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         run_keygen_test::<EXTENSION_DEGREE>(
-            NIST_PARAMS_P8_NO_SNS_FGLWE,
+            *NIST_PARAMS_P8_NO_SNS_FGLWE,
             5,
             1,
             KeygenTestConfig {
@@ -1246,7 +1240,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         run_keygen_test::<EXTENSION_DEGREE>(
-            NIST_PARAMS_P32_NO_SNS_LWE,
+            *NIST_PARAMS_P32_NO_SNS_LWE,
             5,
             1,
             KeygenTestConfig {
@@ -1288,7 +1282,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         run_keygen_test::<EXTENSION_DEGREE>(
-            NIST_PARAMS_P8_NO_SNS_LWE,
+            *NIST_PARAMS_P8_NO_SNS_LWE,
             5,
             1,
             KeygenTestConfig {
@@ -1405,15 +1399,9 @@ pub mod tests {
         )
         .await;
 
-        run_switch_and_squash(
-            temp_dir.path(),
-            params.try_into().unwrap(),
-            tag.clone(),
-            num_parties,
-            threshold,
-        );
+        run_switch_and_squash(temp_dir.path(), params, tag.clone(), num_parties, threshold);
 
-        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE>(
             temp_dir.path(),
             params,
             num_parties,
@@ -1545,7 +1533,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         run_keygen_test::<EXTENSION_DEGREE>(
-            BC_PARAMS_NO_SNS,
+            *BC_PARAMS_NO_SNS,
             5,
             1,
             KeygenTestConfig {
@@ -1607,35 +1595,16 @@ pub mod tests {
         .await;
 
         if config.run_switch_and_squash {
-            run_switch_and_squash(
-                temp_dir.path(),
-                params.try_into().unwrap(),
-                tag.clone(),
-                num_parties,
-                threshold,
-            );
+            run_switch_and_squash(temp_dir.path(), params, tag.clone(), num_parties, threshold);
         }
 
-        match params {
-            DKGParams::WithSnS(_) => {
-                run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-                    temp_dir.path(),
-                    params,
-                    num_parties,
-                    threshold,
-                    config.run_shortint_with_compact,
-                );
-            }
-            DKGParams::WithoutSnS(_) => {
-                run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-                    temp_dir.path(),
-                    params,
-                    num_parties,
-                    threshold,
-                    config.run_shortint_with_compact,
-                );
-            }
-        }
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE>(
+            temp_dir.path(),
+            params,
+            num_parties,
+            threshold,
+            config.run_shortint_with_compact,
+        );
 
         // Only run fheuint tests for parameter sets that are large enough
         if config.run_fheuint {
@@ -1705,7 +1674,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        let params_handle = params.get_params_basics_handle();
+        let params_handle = params;
         let batch_size = BatchParams {
             triples: params_handle.total_triples_required(keyset_config),
             randoms: params_handle.total_randomness_required(keyset_config),
@@ -1820,7 +1789,6 @@ pub mod tests {
                 },
                 params: CompressionParameters::Classic(
                     params
-                        .get_params_basics_handle()
                         .get_compression_decompression_params()
                         .unwrap()
                         .raw_compression_parameters,
@@ -2076,7 +2044,7 @@ pub mod tests {
 
     fn run_switch_and_squash<const EXTENSION_DEGREE: usize>(
         prefix_path: &Path,
-        params: DKGParamsSnS,
+        params: DKGParams,
         tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
@@ -2085,8 +2053,11 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let message = (params.get_message_modulus().0 - 1) as u8;
+        let sns = params
+            .sns()
+            .expect("run_switch_and_squash requires SnS parameters");
 
-        let sk_lwe = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE, _>(
+        let sk_lwe = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE>(
             num_parties,
             threshold,
             &params,
@@ -2096,13 +2067,13 @@ pub mod tests {
             reconstruct_glwe_secret_key_from_file::<EXTENSION_DEGREE>(
                 num_parties,
                 threshold,
-                DKGParams::WithSnS(params),
+                params,
                 prefix_path,
             );
 
         let sns_raw_private_key = GlweSecretKey::from_container(
             big_sk_glwe.clone().unwrap().into_container(),
-            params.sns_params.polynomial_size(),
+            sns.sns_params().polynomial_size(),
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
@@ -2113,7 +2084,7 @@ pub mod tests {
 
         let ddec_pk = pk.public_key;
         let ddec_sk = to_hl_client_key(
-            &DKGParams::WithSnS(params),
+            &params,
             tag,
             sk_lwe.clone(),
             sk_glwe,
@@ -2136,10 +2107,10 @@ pub mod tests {
 
         let mut bsk_out = LweBootstrapKey::new(
             0_u128,
-            params.glwe_dimension_sns().to_glwe_size(),
-            params.polynomial_size_sns(),
-            params.decomposition_base_log_bk_sns(),
-            params.decomposition_level_count_bk_sns(),
+            sns.glwe_dimension_sns().to_glwe_size(),
+            sns.polynomial_size_sns(),
+            sns.decomposition_base_log_bk_sns(),
+            sns.decomposition_level_count_bk_sns(),
             params.lwe_dimension(),
             CoreCiphertextModulus::<u128>::new_native(),
         );
@@ -2153,22 +2124,22 @@ pub mod tests {
 
         let big_sk_glwe = GlweSecretKey::from_container(
             big_sk_glwe.unwrap().into_container(),
-            params.polynomial_size_sns(),
+            sns.polynomial_size_sns(),
         );
 
         par_generate_lwe_bootstrap_key(
             &sk_lwe_lifted_128,
             &big_sk_glwe,
             &mut bsk_out,
-            DynamicDistribution::TUniform(TUniform::new(params.glwe_tuniform_bound_sns().0 as u32)),
+            DynamicDistribution::TUniform(TUniform::new(sns.glwe_tuniform_bound_sns().0 as u32)),
             &mut enc_rng,
         );
         let mut fbsk_out = Fourier128LweBootstrapKey::new(
             params.lwe_dimension(),
-            params.glwe_dimension_sns().to_glwe_size(),
-            params.polynomial_size_sns(),
-            params.decomposition_base_log_bk_sns(),
-            params.decomposition_level_count_bk_sns(),
+            sns.glwe_dimension_sns().to_glwe_size(),
+            sns.polynomial_size_sns(),
+            sns.decomposition_base_log_bk_sns(),
+            sns.decomposition_level_count_bk_sns(),
         );
 
         convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
@@ -2233,7 +2204,7 @@ pub mod tests {
     }
 
     ///Runs only the shortint computation
-    pub fn run_tfhe_computation_shortint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
+    pub fn run_tfhe_computation_shortint<const EXTENSION_DEGREE: usize>(
         prefix_path: &Path,
         params: DKGParams,
         num_parties: usize,
@@ -2392,9 +2363,9 @@ pub mod tests {
         use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
-        let params_basics = params.get_params_basics_handle();
+        let params_basics = params;
         let lwe_dim = params_basics.lwe_dimension().0;
-        let ciphertext_params = params_basics.to_classic_pbs_parameters();
+        let ciphertext_params = params_basics.classic_pbs();
         let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
         let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
 
@@ -2501,14 +2472,12 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params_tfhe_rs = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let params_tfhe_rs = params.classic_pbs();
 
-        let lwe_secret_key = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE, _>(
+        let lwe_secret_key = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE>(
             num_parties,
             threshold,
-            params.get_params_basics_handle(),
+            &params,
             prefix_path,
         );
         let (glwe_secret_key, _, _) = reconstruct_glwe_secret_key_from_file::<EXTENSION_DEGREE>(
@@ -2889,13 +2858,13 @@ pub mod tests {
 
         run_switch_and_squash::<EXTENSION_DEGREE>(
             temp_dir.path(),
-            params.try_into().unwrap(),
+            params,
             tag.clone(),
             num_parties,
             threshold,
         );
 
-        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE>(
             temp_dir.path(),
             params,
             num_parties,

@@ -1101,9 +1101,7 @@ where
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares_from_client_key(
         &keyset.client_key,
-        dkg_params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters(),
+        dkg_params.classic_pbs(),
         &mut rng,
         amount_parties,
         threshold,
@@ -1341,9 +1339,7 @@ where
 
     // Generate the public parameters - foundation for the entire cryptographic system
     // PANICS: If parameter generation fails - cannot proceed with insecure parameters
-    let pke_params = dkg_params
-        .get_params_basics_handle()
-        .get_compact_pk_enc_params();
+    let pke_params = dkg_params.get_compact_pk_enc_params();
 
     // Any sid will work for testing
     let sid = SessionId::from(0u128);

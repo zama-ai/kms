@@ -259,9 +259,7 @@ pub(crate) fn assert_plaintext(expected: &TestingPlaintext, plaintext: &TypedPla
 #[test]
 fn num_blocks_sunshine() {
     let params: DKGParams = TEST_PARAM;
-    let params = &params
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
+    let params = &params.classic_pbs();
     // 2 bits per block, using Ebool as internal representation
     assert_eq!(
         fhe_types_to_num_blocks(FheTypes::Bool, params, 1).unwrap(),

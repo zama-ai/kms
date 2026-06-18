@@ -263,9 +263,9 @@ pub(crate) mod tests {
     use threshold_execution::tfhe_internals::parameters::DKGParams;
 
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
-        let dkg_params_handle = dkg_params.get_params_basics_handle();
+        let dkg_params_handle = dkg_params;
 
-        let cks = tfhe::integer::ClientKey::new(dkg_params_handle.to_classic_pbs_parameters());
+        let cks = tfhe::integer::ClientKey::new(dkg_params_handle.classic_pbs());
 
         // If there is indeed a dedicated compact pk, we need to generate the corresponding
         // keys to expand when encrypting later on
@@ -306,14 +306,13 @@ pub(crate) mod tests {
         // We're using test parameters because they're unique to KMS
         // and have more constraints. The normal parameters should always be tested by tfhe-rs.
         let dkg_params = TEST_PARAM;
-        let params_h = dkg_params.get_params_basics_handle();
+        let params_h = dkg_params;
 
-        let config =
-            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
-                .use_dedicated_compact_public_key_parameters(
-                    params_h.get_dedicated_pk_params().unwrap(),
-                )
-                .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(params_h.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(
+                params_h.get_dedicated_pk_params().unwrap(),
+            )
+            .build();
 
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
         verify_pp(&dkg_params, &crs);
@@ -332,13 +331,12 @@ pub(crate) mod tests {
         let request_id = RequestId::default();
         let domain = Eip712Domain::default();
         let dkg_params = TEST_PARAM;
-        let params_h = dkg_params.get_params_basics_handle();
-        let config =
-            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
-                .use_dedicated_compact_public_key_parameters(
-                    params_h.get_dedicated_pk_params().unwrap(),
-                )
-                .build();
+        let params_h = dkg_params;
+        let config = tfhe::ConfigBuilder::with_custom_parameters(params_h.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(
+                params_h.get_dedicated_pk_params().unwrap(),
+            )
+            .build();
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
 
         // Create a CrsGenResult with an invalid signature

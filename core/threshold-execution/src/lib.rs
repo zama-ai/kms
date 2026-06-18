@@ -88,9 +88,7 @@ pub mod tfhe_internals {
     #[cfg(feature = "non-wasm")]
     pub mod modulus_switch_noise_reduction_key_generation;
     pub mod parameters;
-    /// Flattened, `MetaParameters`-backed reimplementation of `DKGParams`
-    /// (see `parameters.rs`). Work in progress; kept side-by-side for now.
-    pub mod parameters_new;
+    pub mod parameters_old;
     #[cfg(feature = "non-wasm")]
     pub mod private_keysets;
     #[cfg(feature = "non-wasm")]

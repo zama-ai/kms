@@ -330,7 +330,7 @@ fn test_backward_compatibility_threshold_fhe() {
 fn test_private_keyset_v2_upgrade_sets_missing_oprf_share_to_none() {
     use tfhe_versionable::Upgrade;
 
-    let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
+    let params_handle = *BC_PARAMS_NO_SNS;
     let legacy = PrivateKeySetV2::<4> {
         lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
             data: vec![],
@@ -345,7 +345,7 @@ fn test_private_keyset_v2_upgrade_sets_missing_oprf_share_to_none() {
         glwe_secret_key_share_sns_as_lwe: None,
         glwe_secret_key_share_compression: None,
         glwe_sns_compression_key_as_lwe: None,
-        parameters: params_handle.to_classic_pbs_parameters(),
+        parameters: params_handle.classic_pbs(),
     };
 
     let upgraded = legacy.upgrade().unwrap();

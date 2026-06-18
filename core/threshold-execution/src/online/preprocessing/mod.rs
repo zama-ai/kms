@@ -275,7 +275,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     preprocessing_base: &mut dyn BasePreprocessing<Z>,
     preprocessing_bits: &mut dyn BitPreprocessing<Z>,
 ) -> anyhow::Result<()> {
-    let params_basics_handles = params.get_params_basics_handle();
+    let params_basics_handles = params;
 
     //Generate noise needed for pksk (if needed) and the key switch key
     prep.append_noises(
@@ -304,25 +304,22 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     );
 
     //Generate noise needed for Switch and Squash bootstrap key if needed
-    if keyset_config.is_standard() {
-        match params {
-            DKGParams::WithSnS(sns_params) => {
-                prep.append_noises(
-                    RealSecretDistributions::from_noise_info(
-                        sns_params.all_bk_sns_noise(),
-                        preprocessing_bits,
-                    )?,
-                    NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
-                );
-            }
-            DKGParams::WithoutSnS(_) => (),
-        }
+    if keyset_config.is_standard()
+        && let Some(sns_params) = params.sns()
+    {
+        prep.append_noises(
+            RealSecretDistributions::from_noise_info(
+                sns_params.all_bk_sns_noise(),
+                preprocessing_bits,
+            )?,
+            NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
+        );
     }
 
     // Generate noise for sns compression key if needed
     match keyset_config {
-        KeySetConfig::Standard(_) => match params {
-            DKGParams::WithSnS(sns_params) => {
+        KeySetConfig::Standard(_) => {
+            if let Some(sns_params) = params.sns() {
                 let noise_info = sns_params.num_needed_noise_sns_compression_key();
                 let bound = noise_info.bound;
                 prep.append_noises(
@@ -330,8 +327,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
                     bound,
                 );
             }
-            DKGParams::WithoutSnS(_) => (),
-        },
+        }
         KeySetConfig::DecompressionOnly => {}
     }
 

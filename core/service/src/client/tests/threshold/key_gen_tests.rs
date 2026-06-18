@@ -1068,7 +1068,7 @@ fn try_reconstruct_shares(
         private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
     };
 
-    let param_handle = param.get_params_basics_handle();
+    let param_handle = param;
     // Cast to Z64 before reconstruction
     let lwe_shares = all_threshold_fhe_keys
         .iter()
@@ -1134,24 +1134,21 @@ fn try_reconstruct_shares(
             None => None,
         })
         .collect::<HashMap<_, _>>();
-    let dkg_sns_param = match param {
-        DKGParams::WithoutSnS(_) => panic!("missing sns param"),
-        DKGParams::WithSnS(sns_param) => sns_param,
-    };
+    let dkg_sns_param = param.sns().expect("missing sns param");
     let sns_glwe_sk = GlweSecretKeyOwned::from_container(
         reconstruct_bit_vec(
             sns_lwe_shares,
             dkg_sns_param
-                .sns_params
+                .sns_params()
                 .glwe_dimension()
-                .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size())
+                .to_equivalent_lwe_dimension(dkg_sns_param.sns_params().polynomial_size())
                 .0,
             threshold,
         )
         .into_iter()
         .map(|x| x as u128)
         .collect(),
-        dkg_sns_param.sns_params.polynomial_size(),
+        dkg_sns_param.sns_params().polynomial_size(),
     );
 
     let sns_compression_key_shares = all_threshold_fhe_keys
@@ -1163,7 +1160,7 @@ fn try_reconstruct_shares(
         })
         .collect::<HashMap<_, _>>();
     let sns_compression_private_key =
-        if let Some(sns_compression_params) = dkg_sns_param.sns_compression_params {
+        if let Some(sns_compression_params) = dkg_sns_param.get_sns_compression_params() {
             let sns_compression_key_bits = reconstruct_bit_vec(
                 sns_compression_key_shares,
                 dkg_sns_param.sns_compression_sk_num_bits(),

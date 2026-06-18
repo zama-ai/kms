@@ -117,7 +117,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         params: DKGParams,
         keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithSnS(_) = params {
+        if params.sns().is_some() {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
@@ -154,7 +154,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         keyset_config: KeySetConfig,
         percentage_offline: usize,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithSnS(_) = params {
+        if params.sns().is_some() {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
@@ -194,7 +194,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         params: DKGParams,
         keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithoutSnS(_) = params {
+        if params.sns().is_none() {
             return Err(anyhow_error_and_log(
                 "Should not have no SNS with ResiduePolyF8Z128",
             ));
@@ -233,7 +233,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         keyset_config: KeySetConfig,
         percentage_offline: usize,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithoutSnS(_) = params {
+        if params.sns().is_none() {
             return Err(anyhow_error_and_log(
                 "Should not have no SNS with ResiduePolyF8Z128",
             ));
@@ -472,7 +472,7 @@ fn get_num_correlated_randomness_required(
     keyset_config: KeySetConfig,
     #[cfg(feature = "testing")] percentage_offline: usize,
 ) -> (usize, usize, usize) {
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
 
     let num_bits = params_basics_handle.total_bits_required(keyset_config);
     let num_triples = params_basics_handle.total_triples_required(keyset_config) - num_bits;
@@ -516,20 +516,17 @@ fn get_num_tuniform_raw_bits_required(
     #[cfg(feature = "testing")] percentage_offline: usize,
 ) -> (Vec<NoiseInfo>, usize) {
     let mut tuniform_productions = Vec::new();
-    let params_basics_handle = params.get_params_basics_handle();
+    let params_basics_handle = params;
 
     tuniform_productions.push(params_basics_handle.all_lwe_noise(keyset_config));
     tuniform_productions.push(params_basics_handle.all_glwe_noise(keyset_config));
     tuniform_productions.push(params_basics_handle.all_compression_ksk_noise(keyset_config));
 
-    match params {
-        DKGParams::WithSnS(sns_params) => {
-            tuniform_productions.push(sns_params.all_bk_sns_noise());
-            if sns_params.sns_compression_params.is_some() {
-                tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
-            }
+    if let Some(sns_params) = params.sns() {
+        tuniform_productions.push(sns_params.all_bk_sns_noise());
+        if sns_params.get_sns_compression_params().is_some() {
+            tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
         }
-        DKGParams::WithoutSnS(_) => (),
     }
 
     tuniform_productions.push(params_basics_handle.all_lwe_hat_noise(keyset_config));

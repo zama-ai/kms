@@ -307,7 +307,7 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     const FALLBACK_BITS: usize = 16;
 
     // Cache the params_basics_handle to avoid calling it twice
-    let params_basics = dkg_params.get_params_basics_handle();
+    let params_basics = dkg_params;
 
     // Try to calculate max_messages, but fall back to default if it fails
     let max_messages = match max_num_messages(

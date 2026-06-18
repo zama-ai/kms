@@ -296,7 +296,7 @@ pub(crate) async fn generate_lwe_public_key_shared<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let basic_handle = params.get_params_basics_handle();
+    let basic_handle = params;
     let my_role = session.my_role();
 
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");

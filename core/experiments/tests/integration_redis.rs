@@ -262,7 +262,7 @@ fn test_dkg_orchestrator_large(
 
     redis_tidy();
 
-    let params_basics_handles = params.get_params_basics_handle();
+    let params_basics_handles = params;
 
     let roles = generate_fixed_roles(num_parties);
     //Executing offline, so require Sync network
@@ -359,14 +359,8 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
     let params = PARAMS_TEST_BK_SNS;
-    let params = params.get_params_without_sns();
-    fs::create_dir_all(
-        params
-            .get_params_basics_handle()
-            .get_prefix_path()
-            .join("ORCHESTRATOR"),
-    )
-    .unwrap();
+    let params = params.strip_from_sns();
+    fs::create_dir_all(params.get_prefix_path().join("ORCHESTRATOR")).unwrap();
     let num_sessions = 10;
     let num_parties = 5;
     let threshold = 1;

@@ -36,7 +36,6 @@ const EXPECTED_HASH_CTXT_MUL: &str =
 fn generate_keys(params: DKGParams) -> (ClientKey, CompressedXofKeySet) {
     let config = params.to_tfhe_config();
     let max_norm_hwt = params
-        .get_params_basics_handle()
         .get_sk_deviations()
         .expect("Expect to have pmax params")
         .pmax;

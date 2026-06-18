@@ -57,7 +57,7 @@ use error_utils::anyhow_error_and_log;
 use threshold_types::role::Role;
 
 use super::{
-    parameters::{DKGParams, DKGParamsBasics},
+    parameters::DKGParams,
     private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
     public_keysets::FhePubKeySet,
 };
@@ -331,14 +331,10 @@ where
 {
     let config = params.to_tfhe_config();
     let seed_bytes = Seed(rng.r#gen()).0.to_le_bytes().to_vec();
-    let security_bits = params.get_params_basics_handle().get_sec() as u32;
+    let security_bits = params.get_sec() as u32;
 
     // If pmax is not set (e.g. test parameters), use 1.0 to allow any HW.
-    let pmax = params
-        .get_params_basics_handle()
-        .get_sk_deviations()
-        .map(|x| x.pmax)
-        .unwrap_or(1.0);
+    let pmax = params.get_sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
     let max_norm_hwt = NormalizedHammingWeightBound::new(pmax)
         .ok_or_else(|| anyhow!("Invalid Hamming Weight bound, range must be ]0.5,1.0]"))?;
 
@@ -383,7 +379,7 @@ fn extract_key_containers(
     client_key: Option<&tfhe::ClientKey>,
     params: DKGParams,
 ) -> anyhow::Result<RawKeyContainers> {
-    let params_basic_handle = params.get_params_basics_handle();
+    let params_basic_handle = params;
     let client_key = client_key.map(ClientKeyView::new);
 
     let lwe_sk_container64: Vec<u64> = client_key
@@ -401,16 +397,12 @@ fn extract_key_containers(
         .map(|ck| ck.raw_glwe_client_key().into_container())
         .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.glwe_sk_num_bits()]);
 
-    let sns_sk_container128: Option<Vec<u128>> = if let DKGParams::WithSnS(params_sns) = params {
-        Some(
-            client_key
-                .as_ref()
-                .and_then(|ck| ck.raw_glwe_client_sns_key().map(|x| x.into_container()))
-                .unwrap_or_else(|| vec![Numeric::ZERO; params_sns.glwe_sk_num_bits_sns()]),
-        )
-    } else {
-        None
-    };
+    let sns_sk_container128: Option<Vec<u128>> = params.sns().map(|params_sns| {
+        client_key
+            .as_ref()
+            .and_then(|ck| ck.raw_glwe_client_sns_key().map(|x| x.into_container()))
+            .unwrap_or_else(|| vec![Numeric::ZERO; params_sns.glwe_sk_num_bits_sns()])
+    });
 
     // Check compression key consistency
     if let Some(ck) = &client_key
@@ -458,9 +450,9 @@ fn extract_key_containers(
             }
         }
         None => {
-            if let DKGParams::WithSnS(params_sns) = params {
+            if let Some(params_sns) = params.sns() {
                 params_sns
-                    .sns_compression_params
+                    .get_sns_compression_params()
                     .map(|_sns_compression_params| {
                         vec![Numeric::ZERO; params_sns.sns_compression_sk_num_bits()]
                     })
@@ -500,7 +492,7 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params.get_params_basics_handle();
+    let params_basic_handle = params;
     let own_role = session.my_role();
     let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
 
@@ -706,7 +698,7 @@ where
             polynomial_size: params_basic_handle.polynomial_size(),
         }),
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
-        parameters: params_basic_handle.to_classic_pbs_parameters(),
+        parameters: params_basic_handle.classic_pbs(),
         glwe_secret_key_share_compression,
         glwe_sns_compression_key_as_lwe,
     })
@@ -726,7 +718,7 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params.get_params_basics_handle();
+    let params_basic_handle = params;
 
     // This only supports Z128 DKG for now
     if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
@@ -775,7 +767,7 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params.get_params_basics_handle();
+    let params_basic_handle = params;
 
     // This only supports Z128 DKG for now
     if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
@@ -917,7 +909,7 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basic_handle = params.get_params_basics_handle();
+    let params_basic_handle = params;
 
     // This only supports Z128 DKG for now
     if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
@@ -1012,10 +1004,7 @@ where
                     inner.post_packing_ks_key.polynomial_size
                 }
             });
-    let sns_params = match params {
-        DKGParams::WithSnS(p) => Some(p),
-        DKGParams::WithoutSnS(_) => None,
-    };
+    let sns_params = params.sns();
 
     // Open every component to party 1, in a fixed order (identical across parties).
     let lwe_bits = insecure_open_lwe_enum_to(
@@ -1085,7 +1074,7 @@ where
     };
     let sns_compression_secret_key = match (
         sns_compression_bits,
-        sns_params.and_then(|p| p.sns_compression_params),
+        sns_params.and_then(|p| p.get_sns_compression_params()),
     ) {
         (Some(bits), Some(sns_compression_params)) => {
             Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
@@ -1107,10 +1096,7 @@ where
         None => {
             let seed: u128 = session.rng().r#gen();
             let mut secret_generator = secret_rng_from_seed(seed);
-            LweSecretKey::generate_new_binary(
-                params.get_params_basics_handle().lwe_dimension(),
-                &mut secret_generator,
-            )
+            LweSecretKey::generate_new_binary(params.lwe_dimension(), &mut secret_generator)
         }
     });
 
@@ -1281,11 +1267,7 @@ pub fn to_hl_client_key(
     sns_compression_secret_key: Option<NoiseSquashingCompressionPrivateKey>,
     oprf_private_lwe_sk: Option<LweSecretKey<Vec<u64>>>,
 ) -> anyhow::Result<tfhe::ClientKey> {
-    let regular_params = match params {
-        DKGParams::WithSnS(p) => p.regular_params,
-        DKGParams::WithoutSnS(p) => *p,
-    };
-    let ciphertext_params = regular_params.ciphertext_parameters;
+    let ciphertext_params = params.classic_pbs();
 
     let sck = StandardAtomicPatternClientKey::from_raw_parts(
         glwe_secret_key,
@@ -1301,7 +1283,7 @@ pub fn to_hl_client_key(
     let dedicated_compact_private_key =
         if let (Some(dedicated_compact_private_key), Some(pk_params)) = (
             dedicated_compact_private_key,
-            regular_params.get_dedicated_pk_params(),
+            params.get_dedicated_pk_params(),
         ) {
             Some((
                 tfhe::integer::CompactPrivateKey::from_raw_parts(
@@ -1319,7 +1301,7 @@ pub fn to_hl_client_key(
     //If necessary generate a dedicated compression private key
     let compression_key = if let (Some(compression_private_key), Some(params)) = (
         compression_key,
-        regular_params.get_compression_decompression_params(),
+        params.get_compression_decompression_params(),
     ) {
         let polynomial_size = compression_private_key.polynomial_size();
         Some(
@@ -1338,19 +1320,19 @@ pub fn to_hl_client_key(
     };
 
     // If necessary generate a dedicated noise squashing private key
-    let noise_squashing_key = match (sns_secret_key, params) {
-        (None, DKGParams::WithoutSnS(_)) => None,
-        (None, DKGParams::WithSnS(_)) => {
+    let noise_squashing_key = match (sns_secret_key, params.sns()) {
+        (None, None) => None,
+        (None, Some(_)) => {
             anyhow::bail!("missing noise squashing secret key")
         }
-        (Some(_), DKGParams::WithoutSnS(_)) => {
+        (Some(_), None) => {
             anyhow::bail!("missing noise squashing parameters")
         }
-        (Some(sns_sk), DKGParams::WithSnS(sns_params)) => Some(
+        (Some(sns_sk), Some(sns_params)) => Some(
             tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                 tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                     sns_sk,
-                    sns_params.sns_params,
+                    sns_params.sns_params(),
                 ),
             ),
         ),
@@ -1373,7 +1355,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        regular_params.get_rerand_params().map(Into::into),
+        params.get_rerand_params().map(Into::into),
         oprf_private_key,
         tag,
     ))
@@ -1705,12 +1687,9 @@ pub fn combine_and_run_sns_compression_test(
         None => new_client_key.generate_server_key(),
     };
 
-    let (sns_params, sns_compression_params) = match params {
-        DKGParams::WithoutSnS(_) => panic!("SNS compression test requires DKGParams with SnS"),
-        DKGParams::WithSnS(dkgparams_sn_s) => (
-            dkgparams_sn_s.sns_params,
-            dkgparams_sn_s.sns_compression_params.unwrap(),
-        ),
+    let (sns_params, sns_compression_params) = match params.sns() {
+        None => panic!("SNS compression test requires DKGParams with SnS"),
+        Some(sns) => (sns.sns_params(), sns.get_sns_compression_params().unwrap()),
     };
     assert!(sns_compression_key.is_conformant(&(sns_params, sns_compression_params).into()));
     let int_sns_compression_key =
