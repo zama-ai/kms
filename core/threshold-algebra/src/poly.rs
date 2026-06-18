@@ -613,12 +613,19 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
                 .to_string(),
         ));
     }
-    let mut res = Poly::zero();
+
+    // res = Σ_i lagrange_polys[i] * values[i], accumulated coefficient-wise into a single buffer. This function runs
+    // once per bit, ring_size times per opened value, so this is a hot spot for reconstruction.
+    //
+    // Each Lagrange basis poly over these `n` points has degree exactly n-1 (n coefficients), so the interpolant has at
+    // most `n` coefficients.
+    let mut coefs = vec![F::ZERO; lagrange_polys.len()];
     for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
-        let term = li * vi;
-        res = res + term;
+        for (acc, lc) in coefs.iter_mut().zip(li.coefs.iter()) {
+            *acc = *acc + *lc * *vi;
+        }
     }
-    Ok(res)
+    Ok(Poly::from_coefs(coefs))
 }
 
 /// computes the extended Euclidean algorithm for a and b and stops when r1 reaches the stop degree or higher

@@ -377,6 +377,7 @@ where
         FieldHints<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
     > = None;
 
+    // Loop over each bit (64 or 128, depending on the Ring)
     for bit_idx in 0..ring_size {
         let binary_shares = compute_binary_shares(&shares_with_validity, bit_idx);
         let num_new_bot = initial_length - binary_shares.len();
