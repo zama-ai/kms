@@ -1341,6 +1341,27 @@ pub enum DkgParamsAvailable {
     PARAMS_TEST_BK_SNS,
 }
 
+impl DkgParamsAvailable {
+    /// Maps a CLI-selected parameter set to its flattened [`DKGParams`].
+    pub fn to_param(&self) -> DKGParams {
+        match self {
+            DkgParamsAvailable::NIST_PARAMS_P32_NO_SNS_FGLWE => *NIST_PARAMS_P32_NO_SNS_FGLWE,
+            DkgParamsAvailable::NIST_PARAMS_P32_SNS_FGLWE => NIST_PARAMS_P32_SNS_FGLWE,
+            DkgParamsAvailable::NIST_PARAMS_P8_NO_SNS_FGLWE => *NIST_PARAMS_P8_NO_SNS_FGLWE,
+            DkgParamsAvailable::NIST_PARAMS_P8_SNS_FGLWE => NIST_PARAMS_P8_SNS_FGLWE,
+            DkgParamsAvailable::NIST_PARAMS_P32_NO_SNS_LWE => *NIST_PARAMS_P32_NO_SNS_LWE,
+            DkgParamsAvailable::NIST_PARAMS_P32_SNS_LWE => NIST_PARAMS_P32_SNS_LWE,
+            DkgParamsAvailable::NIST_PARAMS_P8_NO_SNS_LWE => *NIST_PARAMS_P8_NO_SNS_LWE,
+            DkgParamsAvailable::NIST_PARAMS_P8_SNS_LWE => NIST_PARAMS_P8_SNS_LWE,
+            DkgParamsAvailable::BC_PARAMS_NO_SNS => *BC_PARAMS_NO_SNS,
+            DkgParamsAvailable::BC_PARAMS_SNS => BC_PARAMS_SNS,
+            DkgParamsAvailable::BC_PARAMS_NIGEL_NO_SNS => *BC_PARAMS_NIGEL_NO_SNS,
+            DkgParamsAvailable::BC_PARAMS_NIGEL_SNS => BC_PARAMS_NIGEL_SNS,
+            DkgParamsAvailable::PARAMS_TEST_BK_SNS => PARAMS_TEST_BK_SNS,
+        }
+    }
+}
+
 pub const BC_PARAMS_SNS: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,

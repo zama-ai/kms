@@ -3,7 +3,7 @@
 //! It is a trusted entity and should not be used with production kms-core.
 use super::requests::CrsGenParams;
 use threshold_execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use threshold_execution::tfhe_internals::parameters::{DKGParams, DkgParamsAvailable};
+use threshold_execution::tfhe_internals::parameters::DkgParamsAvailable;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::compute_witness_dim;
 
@@ -105,7 +105,7 @@ impl ChoreoRuntime {
             session_type,
             session_id,
             percentage_offline,
-            dkg_params: dkg_params.to_old_version().into(),
+            dkg_params: dkg_params.to_param(),
             num_sessions,
         })?;
 
@@ -158,7 +158,7 @@ impl ChoreoRuntime {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let threshold_keygen_params = bc2wrap::serialize(&ThresholdKeyGenParams {
             session_id,
-            dkg_params: dkg_params.to_old_version().into(),
+            dkg_params: dkg_params.to_param(),
             session_id_preproc,
         })?;
 
@@ -212,7 +212,7 @@ impl ChoreoRuntime {
 
         let threshold_keygen_result_params = bc2wrap::serialize(&ThresholdKeyGenResultParams {
             session_id,
-            dkg_params: dkg_params.map_or_else(|| None, |v| Some(v.to_old_version().into())),
+            dkg_params: dkg_params.map_or_else(|| None, |v| Some(v.to_param())),
         })?;
 
         let mut join_set = JoinSet::new();
@@ -430,10 +430,8 @@ impl ChoreoRuntime {
         malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
-        let witness_dim = compute_witness_dim(
-            &DKGParams::from(dkg_params.to_old_version()).get_compact_pk_enc_params(),
-            None,
-        )? as u128;
+        let witness_dim =
+            compute_witness_dim(&dkg_params.to_param().get_compact_pk_enc_params(), None)? as u128;
         let crs_gen_params = bc2wrap::serialize(&CrsGenParams {
             session_id,
             witness_dim,
