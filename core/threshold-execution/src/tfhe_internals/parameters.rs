@@ -1822,6 +1822,72 @@ mod tests {
         ]
     }
 
+    /// Independently sums the noise bits that `total_bits_required` folds in, so
+    /// the invariant test below cross-checks `num_raw_bits` against
+    /// `total_bits_required` without re-deriving the raw-key accounting.
+    fn expected_noise_bits(p: &DKGParams, keyset_config: KeySetConfig) -> usize {
+        match keyset_config {
+            KeySetConfig::DecompressionOnly => {
+                p.num_needed_noise_decompression_key().num_bits_needed()
+            }
+            KeySetConfig::Standard(_) => {
+                let mut n = p.num_needed_noise_pk().num_bits_needed()
+                    + p.num_needed_noise_ksk().num_bits_needed()
+                    + p.num_needed_noise_bk().num_bits_needed()
+                    + p.num_needed_noise_bk().num_bits_needed() // dedicated OPRF bk
+                    + p.num_needed_noise_pksk().num_bits_needed()
+                    + p.num_needed_noise_compression_key().num_bits_needed()
+                    + p.num_needed_noise_msnrk().num_bits_needed()
+                    + p.num_needed_noise_decompression_key().num_bits_needed()
+                    + p.num_needed_noise_rerand_ksk().num_bits_needed();
+                if let Some(sns) = p.sns() {
+                    n += sns.all_bk_sns_noise().num_bits_needed()
+                        + sns.num_needed_noise_msnrk_sns().num_bits_needed()
+                        + sns.num_needed_noise_sns_compression_key().num_bits_needed();
+                }
+                n
+            }
+        }
+    }
+
+    /// Regression test for a `num_raw_bits` accounting bug: the invariant
+    /// `total_bits_required == num_raw_bits + Σ(noise bits)` must hold. An earlier
+    /// `num_raw_bits` counted the SnS keys as raw bits (no rejection-sampling
+    /// overhead) while `total_bits_required` counted them with overhead, which
+    /// broke this invariant for SnS parameter sets carrying `secret_key_deviations`
+    /// (the NIST sets). The two accounting paths must stay consistent.
+    #[test]
+    fn regression_num_raw_bits_total_bits_invariant() {
+        for variant in DkgParamsAvailable::iter() {
+            let p = variant.to_param();
+            for (keyset_config, label) in all_keyset_configs() {
+                assert_eq!(
+                    p.total_bits_required(keyset_config),
+                    p.num_raw_bits(keyset_config) + expected_noise_bits(&p, keyset_config),
+                    "total_bits_required != num_raw_bits + noise for {variant:?} / {label}"
+                );
+            }
+        }
+    }
+
+    /// `check_conformance` accepts every shipped parameter set and rejects the
+    /// SnS-implies-Z128 invariant violation.
+    #[test]
+    fn check_conformance_accepts_shipped_rejects_sns_z64() {
+        for variant in DkgParamsAvailable::iter() {
+            let p = variant.to_param();
+            p.check_conformance()
+                .unwrap_or_else(|e| panic!("{variant:?} should be conformant: {e}"));
+        }
+        // SnS parameters require Z128; forcing Z64 must be rejected.
+        let mut bad = PARAMS_TEST_BK_SNS;
+        bad.dkg_mode = DkgMode::Z64;
+        assert!(
+            bad.check_conformance().is_err(),
+            "SnS parameters with Z64 dkg_mode must be rejected"
+        );
+    }
+
     /// Asserts that the flattened `DKGParams` produces byte-for-byte the same
     /// triples / bits / randomness / noise budgets as the legacy `DKGParams`,
     /// for every constant in `DkgParamsAvailable` and every `KeySetConfig`.
