@@ -12,46 +12,26 @@ use threshold_networking::health_check::{BenchKind, HealthCheckStatus};
 use tokio::sync::Semaphore;
 use tonic::{Request, Response, Status};
 
-use crate::engine::{
-    threshold::service::session::ImmutableSessionMaker,
-    validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
+use crate::{
+    conf::BandwidthBenchmarkConfig,
+    engine::{
+        threshold::service::session::ImmutableSessionMaker,
+        validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
+    },
 };
 
-/// Max per-session payload a caller may request. Bounds the `vec![0; payload_size]`
-/// allocation in `run_bandwidth_benchmark` (which is then cloned per peer): an unbounded
-/// value aborts the process on OOM.
-const MAX_BANDWIDTH_PAYLOAD_BYTES: u32 = 1 << 28; // 256 MiB
-/// Max benchmark sessions a caller may request, bounding the task fan-out below.
-const MAX_BANDWIDTH_SESSIONS: u32 = 256;
-/// Max combined base allocation (payload × sessions) across all concurrent sessions. This
-/// bounds the *base* aggregate only; the networking layer additionally clones each payload
-/// per peer, so true peak memory is roughly this × committee size (a deployment-fixed factor,
-/// not attacker-controlled). Lower it if a deployment's committee size makes the peak too high.
-const MAX_BANDWIDTH_TOTAL_BYTES: u64 = 1 << 30; // 1 GiB
-/// Max benchmark duration a caller may request (only applies to the `Duration` kind). Without
-/// it, an untrusted u64 drives a sustained per-peer send loop for up to the whole server
-/// request timeout, turning the endpoint into a network-flood primitive.
-const MAX_BANDWIDTH_DURATION_SECS: u64 = 60;
-/// Max bandwidth benchmark runs allowed to execute concurrently on a node. The per-request input
-/// is already bounded, but nothing bounds the number of *concurrent* requests: each run spawns up
-/// to `MAX_BANDWIDTH_SESSIONS` sessions, every one allocating a payload the networking layer clones
-/// per peer, so N in-flight requests multiply peak memory and outbound peer traffic by N — a DoS /
-/// amplification primitive against peer nodes. Unlike the other expensive endpoints this one takes
-/// no rate-limiter permit, so we bound it here instead. It is a diagnostic, so serializing runs is
-/// acceptable.
-const MAX_CONCURRENT_BANDWIDTH_BENCHMARKS: usize = 1;
-
-/// Creates the permit pool that bounds concurrent [`run_bandwidth_benchmark`] executions. One pool
-/// is held per server instance (not a process-global), so multiple in-process nodes (e.g. in tests)
-/// stay independent.
-pub(crate) fn new_bandwidth_bench_limiter() -> Arc<Semaphore> {
-    Arc::new(Semaphore::new(MAX_CONCURRENT_BANDWIDTH_BENCHMARKS))
+/// Creates the permit pool that bounds concurrent [`run_bandwidth_benchmark`] executions to
+/// `max_concurrent_runs`. One pool is held per server instance (not a process-global), so multiple
+/// in-process nodes (e.g. in tests) stay independent.
+pub(crate) fn new_bandwidth_bench_limiter(max_concurrent_runs: usize) -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(max_concurrent_runs))
 }
 
 pub(crate) async fn run_bandwidth_benchmark(
     request: Request<BandwidthBenchmarkRequest>,
     session_maker: ImmutableSessionMaker,
     bandwidth_bench_limiter: Arc<Semaphore>,
+    config: &BandwidthBenchmarkConfig,
 ) -> Result<Response<BandwidthBenchmarkResponse>, Status> {
     let request = request.into_inner();
     tracing::info!("Received bandwidth benchmark request: {:?}", request);
@@ -60,25 +40,26 @@ pub(crate) async fn run_bandwidth_benchmark(
     // Bound these fields before casting: they are untrusted u32s that drive a per-session
     // `vec![0; payload_size]` allocation (cloned per peer) and a task-spawn loop, so a crafted
     // request could otherwise exhaust memory/tasks.
-    if request.payload_size_per_session > MAX_BANDWIDTH_PAYLOAD_BYTES {
+    if request.payload_size_per_session > config.max_payload_bytes {
         return Err(Status::invalid_argument(format!(
             "payload_size_per_session {} exceeds the maximum of {} bytes",
-            request.payload_size_per_session, MAX_BANDWIDTH_PAYLOAD_BYTES
+            request.payload_size_per_session, config.max_payload_bytes
         )));
     }
-    if request.number_sessions == 0 || request.number_sessions > MAX_BANDWIDTH_SESSIONS {
+    if request.number_sessions == 0 || request.number_sessions > config.max_sessions {
         return Err(Status::invalid_argument(format!(
             "number_sessions {} must be in 1..={}",
-            request.number_sessions, MAX_BANDWIDTH_SESSIONS
+            request.number_sessions, config.max_sessions
         )));
     }
     // Cap the aggregate base allocation across sessions (product can't overflow u64: both
     // operands are already bounded u32s above).
     let total_bytes =
         u64::from(request.payload_size_per_session) * u64::from(request.number_sessions);
-    if total_bytes > MAX_BANDWIDTH_TOTAL_BYTES {
+    if total_bytes > config.max_total_bytes {
         return Err(Status::invalid_argument(format!(
-            "payload_size_per_session * number_sessions ({total_bytes} bytes) exceeds the maximum of {MAX_BANDWIDTH_TOTAL_BYTES} bytes"
+            "payload_size_per_session * number_sessions ({total_bytes} bytes) exceeds the maximum of {} bytes",
+            config.max_total_bytes
         )));
     }
     let payload_size = request.payload_size_per_session as usize;
@@ -94,10 +75,10 @@ pub(crate) async fn run_bandwidth_benchmark(
         BandwidthKind::Duration => {
             // Bound the (untrusted) duration: it drives a sustained send loop per peer, so an
             // unbounded value floods peers for the whole server request timeout.
-            if request.duration > MAX_BANDWIDTH_DURATION_SECS {
+            if request.duration > config.max_duration_secs {
                 return Err(Status::invalid_argument(format!(
                     "duration {} exceeds the maximum of {} seconds",
-                    request.duration, MAX_BANDWIDTH_DURATION_SECS
+                    request.duration, config.max_duration_secs
                 )));
             }
             BenchKind::Duration(Duration::from_secs(request.duration))
@@ -227,17 +208,15 @@ mod tests {
 
     #[test]
     fn bandwidth_bench_limiter_bounds_concurrency() {
-        let limiter = new_bandwidth_bench_limiter();
+        let max_concurrent_runs = BandwidthBenchmarkConfig::default().max_concurrent_runs;
+        let limiter = new_bandwidth_bench_limiter(max_concurrent_runs);
         // The pool is intentionally small so concurrent runs are bounded.
-        assert_eq!(
-            limiter.available_permits(),
-            MAX_CONCURRENT_BANDWIDTH_BENCHMARKS
-        );
+        assert_eq!(limiter.available_permits(), max_concurrent_runs);
 
         // Hold every permit, then a further acquisition must be rejected rather than queued,
         // which is what makes `run_bandwidth_benchmark` return `ResourceExhausted` under load.
         let mut held = Vec::new();
-        for _ in 0..MAX_CONCURRENT_BANDWIDTH_BENCHMARKS {
+        for _ in 0..max_concurrent_runs {
             held.push(
                 Arc::clone(&limiter)
                     .try_acquire_owned()

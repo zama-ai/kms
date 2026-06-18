@@ -1,3 +1,4 @@
+use crate::conf::BandwidthBenchmarkConfig;
 use crate::engine::Shutdown;
 use crate::engine::threshold::bandwidth_bench::new_bandwidth_bench_limiter;
 use crate::engine::threshold::service::session::ImmutableSessionMaker;
@@ -36,6 +37,8 @@ pub struct ThresholdKms<
     pub(crate) session_maker: ImmutableSessionMaker,
     /// Bounds concurrent `bandwidth_benchmark` runs (the endpoint takes no rate-limiter permit).
     pub(crate) bandwidth_bench_limiter: Arc<Semaphore>,
+    /// Caller-input bounds enforced by the `bandwidth_benchmark` endpoint.
+    pub(crate) bandwidth_bench_config: BandwidthBenchmarkConfig,
     tracker: Arc<TaskTracker>,
     health_reporter: HealthReporter,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -69,6 +72,7 @@ impl<
         backup_operator: BO,
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
+        bandwidth_bench_config: BandwidthBenchmarkConfig,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
@@ -85,7 +89,10 @@ impl<
             backup_operator,
             tracker,
             session_maker,
-            bandwidth_bench_limiter: new_bandwidth_bench_limiter(),
+            bandwidth_bench_limiter: new_bandwidth_bench_limiter(
+                bandwidth_bench_config.max_concurrent_runs,
+            ),
+            bandwidth_bench_config,
             health_reporter,
             mpc_abort_handle,
         }
@@ -180,6 +187,7 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
         backup_operator: BO,
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
+        bandwidth_bench_config: BandwidthBenchmarkConfig,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
@@ -194,7 +202,10 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
             backup_operator,
             tracker,
             session_maker,
-            bandwidth_bench_limiter: new_bandwidth_bench_limiter(),
+            bandwidth_bench_limiter: new_bandwidth_bench_limiter(
+                bandwidth_bench_config.max_concurrent_runs,
+            ),
+            bandwidth_bench_config,
             health_reporter,
             mpc_abort_handle,
         }

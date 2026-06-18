@@ -440,6 +440,7 @@ impl_endpoint! {
                 request,
                 self.session_maker.clone(),
                 std::sync::Arc::clone(&self.bandwidth_bench_limiter),
+                &self.bandwidth_bench_config,
             ).await
         }
     }
