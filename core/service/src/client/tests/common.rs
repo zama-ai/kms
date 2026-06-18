@@ -22,7 +22,7 @@ use std::pin::Pin;
 use tfhe::FheTypes;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
-use tokio::time::{Duration, Instant, sleep};
+use tokio::time::{Duration, Instant};
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
 
@@ -47,7 +47,7 @@ where
         {
             return Ok(());
         }
-        sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     anyhow::bail!("timeout waiting for backup of {request_id}/{data_type}")
 }
@@ -86,6 +86,9 @@ impl Default for PollConfig {
 /// keeps replying `Unavailable`. On exhaustion this returns
 /// `Status::deadline_exceeded`; any non-`Unavailable` result (success or error)
 /// is returned as-is.
+///
+/// The entire poll-and-retry sequence is bounded by [`OVERALL_TIMEOUT`] so that a
+/// hung or unresponsive server can never make CI hang indefinitely.
 pub(crate) async fn retrying_poll<R: Send>(
     mut client: CoreServiceEndpointClient<Channel>,
     party_id: u32,
@@ -98,23 +101,39 @@ pub(crate) async fn retrying_poll<R: Send>(
     )
         -> Pin<Box<dyn Future<Output = Result<Response<R>, Status>> + Send + 'a>>,
 ) -> Result<Response<R>, Status> {
-    if !config.initial_delay.is_zero() {
-        sleep(config.initial_delay).await;
-    }
-    let mut result = poll_fn(&mut client, Request::new(request_id.clone())).await;
-    let mut retries = 0_usize;
-    while matches!(result.as_ref(), Err(status) if status.code() == tonic::Code::Unavailable) {
-        if retries >= config.max_retries {
-            return Err(Status::deadline_exceeded(format!(
-                "timeout while waiting for {operation} from party {party_id} for request {} after {} retries",
-                request_id.request_id, config.max_retries
-            )));
+    /// Overall backstop on the whole poll-and-retry sequence. Deliberately huge
+    /// (1 hour): this is not a functional timeout but a guard so a hung server can
+    /// never make CI hang indefinitely.
+    const OVERALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+    let poll = async {
+        if !config.initial_delay.is_zero() {
+            tokio::time::sleep(config.initial_delay).await;
         }
-        retries += 1;
-        sleep(config.retry_delay).await;
-        result = poll_fn(&mut client, Request::new(request_id.clone())).await;
-    }
-    result
+        let mut result = poll_fn(&mut client, Request::new(request_id.clone())).await;
+        let mut retries = 0_usize;
+        while matches!(result.as_ref(), Err(status) if status.code() == tonic::Code::Unavailable) {
+            if retries >= config.max_retries {
+                return Err(Status::deadline_exceeded(format!(
+                    "timeout while waiting for {operation} from party {party_id} for request {} after {} retries",
+                    request_id.request_id, config.max_retries
+                )));
+            }
+            retries += 1;
+            tokio::time::sleep(config.retry_delay).await;
+            result = poll_fn(&mut client, Request::new(request_id.clone())).await;
+        }
+        result
+    };
+
+    tokio::time::timeout(OVERALL_TIMEOUT, poll)
+        .await
+        .unwrap_or_else(|_| {
+            Err(Status::deadline_exceeded(format!(
+                "retrying_poll timed out after {OVERALL_TIMEOUT:?} while waiting for {operation} from party {party_id} for request {}",
+                request_id.request_id
+            )))
+        })
 }
 
 /// Constructs the extra data field based on the default context and epoch IDs.
