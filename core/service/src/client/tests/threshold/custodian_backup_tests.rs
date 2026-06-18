@@ -1027,11 +1027,10 @@ async fn test_backup_after_reshare_threshold() {
 
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
-    for (party_id, client) in env.kms_clients().iter() {
+    for client in env.kms_clients().values() {
         // Poll every 500ms for up to 50 tries before giving up.
         if let Err(e) = retrying_poll(
             client.clone(),
-            *party_id,
             new_epoch_req_id.into(),
             "reshare epoch result",
             PollConfig {

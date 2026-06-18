@@ -460,7 +460,6 @@ pub(crate) async fn user_decryption_threshold(
                 // for up to 600 tries (~10 minutes for large types).
                 let response = retrying_poll(
                     cur_client,
-                    i,
                     req_id_clone.clone(),
                     "user decryption result",
                     PollConfig {

@@ -50,7 +50,6 @@ async fn key_gen(
     // Wait for preprocessing to complete
     retrying_poll(
         client.clone(),
-        1,
         preproc_id.into(),
         "key gen preprocessing result",
         PollConfig::default(),
@@ -77,7 +76,6 @@ async fn key_gen(
     // Wait for key generation to complete
     let inner_resp = retrying_poll(
         client.clone(),
-        1,
         (*request_id).into(),
         "key gen result",
         PollConfig::default(),
@@ -308,7 +306,6 @@ async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
     // Wait for CRS generation to complete
     let inner_resp = retrying_poll(
         client.clone(),
-        1,
         req_id.into(),
         "CRS gen result",
         PollConfig::default(),

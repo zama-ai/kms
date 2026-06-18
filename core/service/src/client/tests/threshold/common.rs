@@ -61,10 +61,9 @@ pub(crate) async fn run_insecure_preproc(
     }
 
     // Wait for the (instant) insecure preprocessing to be ready on all parties
-    for (party_id, client) in clients.iter() {
+    for client in clients.values() {
         retrying_poll(
             client.clone(),
-            *party_id,
             (*preproc_id).into(),
             "insecure preprocessing result",
             PollConfig::default(),
@@ -145,7 +144,6 @@ pub async fn threshold_insecure_key_gen(
     for (party_id, client) in clients.iter() {
         let result = retrying_poll(
             client.clone(),
-            *party_id,
             (*request_id).into(),
             "insecure keygen result",
             PollConfig::default(),
@@ -226,10 +224,9 @@ pub async fn threshold_secure_key_gen(
     }
 
     // Wait for preprocessing to complete
-    for (party_id, client) in clients.iter() {
+    for client in clients.values() {
         retrying_poll(
             client.clone(),
-            *party_id,
             (*preproc_id).into(),
             "preprocessing result",
             PollConfig::default(),
@@ -268,7 +265,6 @@ pub async fn threshold_secure_key_gen(
     for (party_id, client) in clients.iter() {
         let result = retrying_poll(
             client.clone(),
-            *party_id,
             (*keygen_id).into(),
             "keygen result",
             PollConfig::default(),

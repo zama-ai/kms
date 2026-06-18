@@ -280,7 +280,6 @@ pub(crate) async fn user_decryption_centralized(
             // profiles and big ciphertexts).
             let response = retrying_poll(
                 cur_client,
-                1,
                 req_id_clone.clone(),
                 "user decryption result",
                 PollConfig {

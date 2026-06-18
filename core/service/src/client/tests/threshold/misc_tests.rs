@@ -518,11 +518,9 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             }
             let cur_client = env.clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
-            let party_id = *i;
             resp_tasks.spawn(async move {
                 let response = retrying_poll(
                     cur_client,
-                    party_id,
                     req_id_clone.clone(),
                     "public decryption result",
                     PollConfig::default(),
@@ -592,11 +590,9 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             }
             let cur_client = env.clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
-            let party_id = *i;
             resp_tasks.spawn(async move {
                 let response = retrying_poll(
                     cur_client,
-                    party_id,
                     req_id_clone.clone(),
                     "public decryption result",
                     PollConfig::default(),

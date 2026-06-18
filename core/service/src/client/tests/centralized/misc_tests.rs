@@ -224,7 +224,6 @@ async fn test_largecipher() -> Result<()> {
 
     let response = retrying_poll(
         kms_client.clone(),
-        1,
         req.request_id.clone().unwrap(),
         "user decryption result",
         PollConfig::default(),

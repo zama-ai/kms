@@ -557,7 +557,6 @@ async fn poll_new_epoch_result(
             // poll every 500ms for up to `max_iter` tries.
             let response = retrying_poll(
                 client,
-                party_idx,
                 reshare_request_id.into(),
                 "resharing result",
                 PollConfig {

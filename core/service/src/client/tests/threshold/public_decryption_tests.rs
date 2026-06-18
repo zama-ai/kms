@@ -402,7 +402,6 @@ pub async fn run_decryption_threshold_optionally_fail(
         if party_ids_to_crash.contains(&(*i as usize)) {
             continue;
         }
-        let party_id = *i;
         for req in &reqs {
             let cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
@@ -412,7 +411,6 @@ pub async fn run_decryption_threshold_optionally_fail(
                 // tries (~10 minutes for large types).
                 let response = retrying_poll(
                     cur_client,
-                    party_id,
                     req_id_clone.clone(),
                     "public decryption result",
                     PollConfig {

@@ -181,7 +181,6 @@ async fn preproc_centralized(
 
     let response = retrying_poll(
         kms_client.clone(),
-        1,
         (*preproc_id).into(),
         "key gen preprocessing result",
         PollConfig::default(),
@@ -283,7 +282,6 @@ pub async fn run_key_gen_centralized(
     assert_eq!(gen_response.into_inner(), Empty {});
     let response = retrying_poll(
         kms_client.clone(),
-        1,
         (*key_req_id).into(),
         "key gen result",
         PollConfig::default(),

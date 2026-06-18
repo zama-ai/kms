@@ -307,7 +307,6 @@ pub async fn wait_for_crsgen_result(
             futs.push(async move {
                 let resp = retrying_poll(
                     client,
-                    server_id,
                     req_id.clone(),
                     "crs gen result",
                     PollConfig::default(),

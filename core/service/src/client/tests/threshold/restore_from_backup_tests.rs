@@ -355,10 +355,9 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     }
 
     // Wait for CRS generation to complete
-    for (party_id, client) in clients.iter() {
+    for client in clients.values() {
         retrying_poll(
             client.clone(),
-            *party_id,
             req_id.into(),
             "CRS gen result",
             PollConfig::default(),

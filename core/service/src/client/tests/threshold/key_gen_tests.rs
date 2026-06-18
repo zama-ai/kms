@@ -340,7 +340,7 @@ async fn wait_for_keygen_result(
         let client = kms_client.clone();
         let req_id = req_get_keygen.into();
         async move {
-            let resp = retrying_poll(client, i, req_id, "keygen result", poll_config, |c, req| {
+            let resp = retrying_poll(client, req_id, "keygen result", poll_config, |c, req| {
                 Box::pin(async move {
                     if insecure {
                         c.get_insecure_key_gen_result(req).await
@@ -1003,9 +1003,8 @@ async fn poll_key_gen_preproc_result(
     max_iter: usize,
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
-    for (party_id, client) in kms_clients.iter() {
+    for client in kms_clients.values() {
         let client = client.clone();
-        let party_id = *party_id;
         let req_id_clone = request.request_id.as_ref().unwrap().clone();
 
         resp_tasks.spawn(async move {
@@ -1013,7 +1012,6 @@ async fn poll_key_gen_preproc_result(
             // preprocessing, then poll every 500ms for up to `max_iter` tries.
             let response = retrying_poll(
                 client,
-                party_id,
                 req_id_clone.clone(),
                 "preprocessing result",
                 PollConfig {
@@ -1571,10 +1569,9 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete on all parties
-    for (party_id, client) in env.clients.iter() {
+    for client in env.clients.values() {
         retrying_poll(
             client.clone(),
-            *party_id,
             preproc_id.into(),
             "preprocessing result",
             PollConfig::default(),
@@ -1612,10 +1609,9 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     }
 
     // Verify key generation completed on active parties (not crashed party)
-    for (party_id, client) in env.clients_except(crashed_party) {
+    for client in env.all_clients_except(crashed_party) {
         retrying_poll(
             client,
-            party_id,
             keygen_id.into(),
             "key gen result",
             PollConfig::default(),
@@ -1681,10 +1677,9 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete on active parties
-    for (party_id, client) in env.clients_except(crashed_party) {
+    for client in env.all_clients_except(crashed_party) {
         retrying_poll(
             client,
-            party_id,
             preproc_id.into(),
             "preprocessing result",
             PollConfig::default(),
@@ -1719,10 +1714,9 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     }
 
     // Verify key generation completed on active parties
-    for (party_id, client) in env.clients_except(crashed_party) {
+    for client in env.all_clients_except(crashed_party) {
         retrying_poll(
             client,
-            party_id,
             keygen_id.into(),
             "key gen result",
             PollConfig::default(),
@@ -2352,10 +2346,9 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete
-    for (party_id, client) in env.clients.iter() {
+    for client in env.clients.values() {
         retrying_poll(
             client.clone(),
-            *party_id,
             preproc_id_3.into(),
             "preprocessing result",
             PollConfig::default(),
@@ -2400,10 +2393,9 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Wait for decompression key generation to complete and collect the result
     let mut keygen_result_3 = None;
-    for (party_id, client) in env.clients.iter() {
+    for client in env.clients.values() {
         let result = retrying_poll(
             client.clone(),
-            *party_id,
             key_id_3.into(),
             "key gen result",
             PollConfig::default(),

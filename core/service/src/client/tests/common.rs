@@ -91,7 +91,6 @@ impl Default for PollConfig {
 /// hung or unresponsive server can never make CI hang indefinitely.
 pub(crate) async fn retrying_poll<R: Send>(
     mut client: CoreServiceEndpointClient<Channel>,
-    party_id: u32,
     request_id: ProtoRequestId,
     operation: &'static str,
     config: PollConfig,
@@ -106,6 +105,10 @@ pub(crate) async fn retrying_poll<R: Send>(
     /// never make CI hang indefinitely.
     const OVERALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
+    // Captured up front for diagnostics: the loop below borrows `client` mutably,
+    // and the timeout fallback closure can't borrow it concurrently.
+    let client_dbg = format!("{client:?}");
+
     let poll = async {
         if !config.initial_delay.is_zero() {
             tokio::time::sleep(config.initial_delay).await;
@@ -115,7 +118,7 @@ pub(crate) async fn retrying_poll<R: Send>(
         while matches!(result.as_ref(), Err(status) if status.code() == tonic::Code::Unavailable) {
             if retries >= config.max_retries {
                 return Err(Status::deadline_exceeded(format!(
-                    "timeout while waiting for {operation} from party {party_id} for request {} after {} retries",
+                    "timeout while waiting for {operation} from {client_dbg} for request {} after {} retries",
                     request_id.request_id, config.max_retries
                 )));
             }
@@ -130,7 +133,7 @@ pub(crate) async fn retrying_poll<R: Send>(
         .await
         .unwrap_or_else(|_| {
             Err(Status::deadline_exceeded(format!(
-                "retrying_poll timed out after {OVERALL_TIMEOUT:?} while waiting for {operation} from party {party_id} for request {}",
+                "retrying_poll timed out after {OVERALL_TIMEOUT:?} while waiting for {operation} from {client_dbg} for request {}",
                 request_id.request_id
             )))
         })

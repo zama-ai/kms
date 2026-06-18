@@ -245,7 +245,6 @@ pub(crate) async fn run_decryption_centralized(
             // big ciphertexts).
             let response = retrying_poll(
                 cur_client,
-                1,
                 req_id_clone.clone(),
                 "public decryption result",
                 PollConfig {
