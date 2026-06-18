@@ -116,7 +116,6 @@ impl RawCompressedPubKeySet {
                 pksk.clone(),
                 params.pksk_rshift(),
                 params
-                    
                     .get_pksk_destination()
                     .unwrap(),
                     KeySwitchingKeyDestinationAtomicPattern::Standard,

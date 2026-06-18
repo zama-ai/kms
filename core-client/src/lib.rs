@@ -2787,11 +2787,7 @@ mod tests {
 
         let params = kms_lib::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
-        let max_norm_hwt = params
-            
-            .get_sk_deviations()
-            .map(|x| x.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.get_sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
             config,
