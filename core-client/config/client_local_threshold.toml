@@ -21,6 +21,13 @@ decryption_mode = "NoiseFloodSmall"
 fhe_params = "Test" # Small, insecure parameters for testing
 # fhe_params = "Default" # Large, secure parameters
 
+# Optional: default extra_data (hex, with or without "0x") bound in the EIP-712
+# signature, used as the default when verifying fetched results (overridable per
+# invocation with `--extra-data`). When unset, each pure-fetch command uses its
+# natural default (empty for public decryption, the context/epoch-derived value
+# for keygen/CRS).
+# default_extra_data = "02..."
+
 # List of connection info to each of the cores
 [[cores]]
 # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
@@ -64,3 +71,13 @@ s3_endpoint = "http://localhost:9000/kms"
 object_folder = "PUB-p4"
 private_object_folder = "PRIV-p4"
 config_path = "../core/service/config/compose_4.toml"
+
+# Default EIP-712 domain used both when *building* requests (full-flow commands) and
+# when *verifying* fetched results (the `*Result` commands). These values match the
+# built-in default; adjust them to match the domain used by whoever issued the request.
+[default_domain]
+name = "Authorization token"
+version = "1"
+chain_id = 8006
+verifying_contract = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+# salt = "..." # optional, hex-encoded 32 bytes

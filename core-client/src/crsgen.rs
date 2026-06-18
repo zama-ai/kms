@@ -1,12 +1,12 @@
 use crate::s3_operations::fetch_public_elements;
-use crate::{CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain};
+use crate::{CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
 
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
+use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
@@ -46,23 +46,19 @@ pub(crate) async fn do_crsgen(
         cc_conf.num_majority
     };
 
+    // The EIP-712 domain comes from the config (falling back to `dummy_domain`),
+    // so the request built here and a later (Insecure)CrsGenResult fetch verify
+    // against the same domain.
+    let domain = cc_conf.default_domain()?;
     let crs_req = internal_client.crs_gen_request(
         &req_id,
         context_id.as_ref(),
         epoch_id.as_ref(),
         max_num_bits,
         Some(param),
-        &dummy_domain(),
+        &domain,
     )?;
     let extra_data = crs_req.extra_data.clone();
-
-    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
-    //we have an issue in the (Insecure)CrsGenResult commands
-    let domain = if let Some(domain) = &crs_req.domain {
-        protobuf_to_alloy_domain(domain)?
-    } else {
-        return Err(anyhow::anyhow!("No domain provided in crsgen request"));
-    };
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -118,8 +114,7 @@ pub(crate) async fn do_crsgen(
         kms_addrs,
         destination_prefix,
         req_id,
-        domain,
-        extra_data,
+        Some((domain, extra_data)),
         resp_response_vec,
         cmd_conf.download_all,
     )
@@ -135,8 +130,10 @@ pub(crate) async fn fetch_and_check_crsgen(
     kms_addrs: &[alloy_primitives::Address],
     destination_prefix: &Path,
     request_id: RequestId,
-    domain: Eip712Domain,
-    extra_data: Vec<u8>,
+    // EIP-712 domain + extra_data to verify the external signature against. When
+    // `None`, the CRS is still downloaded and request IDs checked, but the
+    // external signature is not verified (a warning is logged).
+    verify: Option<(Eip712Domain, Vec<u8>)>,
     responses: Vec<CrsGenResult>,
     download_all: bool,
 ) -> anyhow::Result<()> {
@@ -197,17 +194,28 @@ pub(crate) async fn fetch_and_check_crsgen(
             );
         }
 
-        check_crsgen_ext_signature(
-            &crs,
-            &request_id,
-            &response.external_signature,
-            &domain,
-            extra_data.clone(),
-            kms_addrs,
-        )
-        .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
+        match verify.as_ref() {
+            Some((domain, extra_data)) => {
+                check_crsgen_ext_signature(
+                    &crs,
+                    &request_id,
+                    &response.external_signature,
+                    domain,
+                    extra_data.clone(),
+                    kms_addrs,
+                )
+                .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
 
-        tracing::info!("EIP712 verification of CRS successful.");
+                tracing::info!("EIP712 verification of CRS successful.");
+            }
+            None => {
+                tracing::warn!(
+                    "CRS gen result for request {} fetched WITHOUT signature verification \
+                     (no EIP-712 domain supplied).",
+                    request_id
+                );
+            }
+        }
     }
     Ok(())
 }

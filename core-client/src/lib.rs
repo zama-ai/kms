@@ -35,7 +35,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
+use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM, default_extra_data};
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
@@ -105,6 +105,80 @@ pub struct CoreClientConfig {
     #[validate(range(min = 1))]
     pub num_reconstruct: usize,
     pub fhe_params: Option<FheParameter>,
+    /// Default `extra_data` (hex-encoded) bound in the EIP-712 signature, used as
+    /// the default when verifying fetched results. It can be overridden per
+    /// invocation with `--extra-data`. When neither is set, each pure-fetch
+    /// command falls back to its operation-specific natural default (empty for
+    /// public decryption, [`kms_lib::consts::default_extra_data`] for keygen/CRS).
+    // NOTE: declared before `default_domain` so TOML serialization keeps this
+    // scalar value before the `default_domain` table.
+    pub default_extra_data: Option<String>,
+    /// Default EIP-712 domain used both when *building* requests (full-flow
+    /// commands) and when *verifying* fetched results (pure-fetch `*Result`
+    /// commands). When omitted from the TOML it falls back to [`dummy_domain`],
+    /// so existing config files keep their previous behaviour.
+    pub default_domain: Option<Eip712DomainConfig>,
+}
+
+/// EIP-712 domain as specified in the core-client config file (TOML).
+#[derive(Deserialize, Serialize, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Eip712DomainConfig {
+    pub name: String,
+    pub version: String,
+    pub chain_id: u64,
+    /// Hex-encoded verifying contract address (with or without `0x`).
+    pub verifying_contract: String,
+    /// Optional hex-encoded 32-byte domain salt.
+    pub salt: Option<String>,
+}
+
+impl Eip712DomainConfig {
+    /// Build an [`alloy_sol_types::Eip712Domain`] from the configured fields.
+    pub fn to_domain(&self) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
+        let verifying_contract =
+            alloy_primitives::Address::from_str(self.verifying_contract.trim_start_matches("0x"))
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "invalid verifying_contract '{}' in default_domain: {e}",
+                        self.verifying_contract
+                    )
+                })?;
+        let salt = match &self.salt {
+            Some(s) => {
+                let bytes = parse_hex(s)?;
+                Some(alloy_primitives::B256::try_from(bytes.as_slice()).map_err(|_| {
+                    anyhow::anyhow!("default_domain salt must be exactly 32 bytes")
+                })?)
+            }
+            None => None,
+        };
+        Ok(alloy_sol_types::Eip712Domain {
+            name: Some(std::borrow::Cow::Owned(self.name.clone())),
+            version: Some(std::borrow::Cow::Owned(self.version.clone())),
+            chain_id: Some(alloy_primitives::U256::from(self.chain_id)),
+            verifying_contract: Some(verifying_contract),
+            salt,
+        })
+    }
+}
+
+impl CoreClientConfig {
+    /// The default EIP-712 domain to use for building requests and verifying
+    /// results, falling back to [`dummy_domain`] when not set in the config.
+    pub fn default_domain(&self) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
+        match &self.default_domain {
+            Some(d) => d.to_domain(),
+            None => Ok(dummy_domain()),
+        }
+    }
+
+    /// The configured default `extra_data` (decoded from hex), if any.
+    pub fn default_extra_data(&self) -> anyhow::Result<Option<Vec<u8>>> {
+        match &self.default_extra_data {
+            Some(s) => Ok(Some(parse_hex(s)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
@@ -293,6 +367,8 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             pub num_majority: usize,
             pub num_reconstruct: usize,
             pub fhe_params: Option<FheParameter>,
+            pub default_domain: Option<Eip712DomainConfig>,
+            pub default_extra_data: Option<String>,
         }
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
@@ -307,6 +383,8 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
             fhe_params: temp.fhe_params,
+            default_domain: temp.default_domain,
+            default_extra_data: temp.default_extra_data,
         };
 
         conf.validate().map_err(serde::de::Error::custom)?;
@@ -761,6 +839,49 @@ pub struct KeyGenResultParameters {
     /// Fetch legacy uncompressed public key material instead of the default compressed keyset.
     #[clap(long, short = 'u', default_value_t = false)]
     pub uncompressed: bool,
+    /// Optional `extra_data` (hex-encoded) bound in the EIP-712 signature, overriding
+    /// the config's `default_extra_data` for this verification.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
+    /// Skip verification of the external signature and just download the material.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct CrsGenResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    /// Optional `extra_data` (hex-encoded) bound in the EIP-712 signature, overriding
+    /// the config's `default_extra_data` for this verification.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
+    /// Skip verification of the external signature and just download the material.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct PublicDecryptResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    /// External ciphertext handle(s) (hex-encoded) from the original request, used to
+    /// verify the external signature. Repeat the flag once per ciphertext in the batch.
+    /// When omitted, the result is fetched but NOT verified (a warning is logged), since
+    /// handles are request-specific and cannot be defaulted from the config.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long = "handle")]
+    pub external_handles: Vec<String>,
+    /// Optional `extra_data` (hex-encoded) bound in the EIP-712 signature, overriding
+    /// the config's `default_extra_data` for this verification.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
+    /// Skip verification of the external signature and just return the fetched responses.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -925,14 +1046,14 @@ pub enum CCCommand {
     Encrypt(CipherParameters),
     #[clap(subcommand)]
     PublicDecrypt(CipherArguments),
-    PublicDecryptResult(ResultParameters),
+    PublicDecryptResult(PublicDecryptResultParameters),
     #[clap(subcommand)]
     UserDecrypt(CipherArguments),
     CrsGen(CrsParameters),
-    CrsGenResult(ResultParameters),
+    CrsGenResult(CrsGenResultParameters),
     AbortCrsGen(AbortParameters),
     InsecureCrsGen(CrsParameters),
-    InsecureCrsGenResult(ResultParameters),
+    InsecureCrsGenResult(CrsGenResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
     CustodianRecoveryInit(RecoveryInitParameters),
@@ -994,6 +1115,29 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 // dummy ciphertext handle for testing
 fn dummy_handle() -> Vec<u8> {
     vec![23_u8; 32]
+}
+
+/// Build the `(domain, extra_data)` verification context for a keygen/CRS pure-fetch
+/// command. Returns `None` (skip verification, with a warning) when `no_verify` is set.
+/// Otherwise the domain comes from the config (falling back to [`dummy_domain`]) and the
+/// `extra_data` is taken from `--extra-data`, else the config default, else the natural
+/// keygen/CRS default ([`default_extra_data`]).
+fn keygen_crs_verify_ctx(
+    cc_conf: &CoreClientConfig,
+    no_verify: bool,
+    extra_data_cli: &Option<String>,
+) -> anyhow::Result<Option<(alloy_sol_types::Eip712Domain, Vec<u8>)>> {
+    if no_verify {
+        tracing::warn!(
+            "--no-verify set: fetching result WITHOUT external-signature verification"
+        );
+        return Ok(None);
+    }
+    let extra_data = match extra_data_cli {
+        Some(s) => parse_hex(s)?,
+        None => cc_conf.default_extra_data()?.unwrap_or_else(default_extra_data),
+    };
+    Ok(Some((cc_conf.default_domain()?, extra_data)))
 }
 
 pub struct EncryptionResult {
@@ -1756,6 +1900,7 @@ pub async fn execute_cmd(
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
                 cipher_args.get_extra_data(),
+                cc_conf.default_domain()?,
             )
             .await?
         }
@@ -1834,6 +1979,7 @@ pub async fn execute_cmd(
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
                 cipher_args.get_extra_data(),
+                cc_conf.default_domain()?,
             )
             .await?
         }
@@ -2108,16 +2254,18 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                &result_parameters.extra_data,
+            )?;
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2141,16 +2289,18 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                &result_parameters.extra_data,
+            )?;
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2165,10 +2315,40 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
             let req_id: RequestId = result_parameters.request_id;
+
+            // External-signature verification requires the request's EIP-712 domain
+            // (from config) plus the per-request ciphertext handles (from `--handle`).
+            // Without `--handle`, or with `--no-verify`, we fetch without verifying.
+            let ext_verify = if result_parameters.no_verify {
+                tracing::warn!(
+                    "--no-verify set: fetching public decryption result WITHOUT verification"
+                );
+                None
+            } else if result_parameters.external_handles.is_empty() {
+                tracing::warn!(
+                    "no --handle provided: fetching public decryption result WITHOUT \
+                     verification (ciphertext handles are required to verify the external \
+                     signature)"
+                );
+                None
+            } else {
+                let handles = result_parameters
+                    .external_handles
+                    .iter()
+                    .map(|h| parse_hex(h))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let extra_data = match &result_parameters.extra_data {
+                    Some(s) => parse_hex(s)?,
+                    None => cc_conf.default_extra_data()?.unwrap_or_default(),
+                };
+                Some((cc_conf.default_domain()?, handles, extra_data))
+            };
+
             let resp_response_vec = get_public_decrypt_responses(
                 &core_endpoints_req,
                 None,
                 None,
+                ext_verify,
                 req_id,
                 max_iter,
                 num_expected_responses,
@@ -2196,16 +2376,18 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                &result_parameters.extra_data,
+            )?;
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2228,16 +2410,18 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                &result_parameters.extra_data,
+            )?;
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2843,6 +3027,8 @@ mod tests {
             num_majority: 1,
             num_reconstruct: 1,
             fhe_params: Some(FheParameter::Test),
+            default_domain: None,
+            default_extra_data: None,
         };
 
         let party_confs =

@@ -9,7 +9,7 @@ use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
+use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
@@ -91,8 +91,10 @@ pub(crate) async fn do_keygen(
         cc_conf.num_majority
     };
 
-    // NOTE: If we do not use dummy_domain here, then
-    // this needs changing too in the KeyGenResult command.
+    // The EIP-712 domain comes from the config (falling back to `dummy_domain`),
+    // so the request built here and a later (Insecure)KeyGenResult fetch verify
+    // against the same domain.
+    let domain = cc_conf.default_domain()?;
     let use_existing = shared_config.existing_keyset_id.is_some();
     let keyset_config = Some(build_standard_keyset_config(
         if shared_config.uncompressed {
@@ -123,17 +125,9 @@ pub(crate) async fn do_keygen(
         Some(param),
         keyset_config,
         keyset_added_info,
-        dummy_domain(),
+        domain.clone(),
     )?;
     let extra_data = dkg_req.extra_data.clone();
-
-    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
-    //we have an issue in the (Insecure)KeyGenResult commands
-    let domain = if let Some(domain) = &dkg_req.domain {
-        protobuf_to_alloy_domain(domain)?
-    } else {
-        return Err(anyhow::anyhow!("No domain provided in crsgen request"));
-    };
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -193,8 +187,7 @@ pub(crate) async fn do_keygen(
         kms_addrs,
         destination_prefix,
         req_id,
-        domain,
-        extra_data,
+        Some((domain, extra_data)),
         resp_response_vec,
         cmd_conf.download_all,
         shared_config.uncompressed,
@@ -211,8 +204,10 @@ pub(crate) async fn fetch_and_check_keygen(
     kms_addrs: &[alloy_primitives::Address],
     destination_prefix: &Path,
     request_id: RequestId,
-    domain: Eip712Domain,
-    extra_data: Vec<u8>,
+    // EIP-712 domain + extra_data to verify the external signature against. When
+    // `None`, the keys are still downloaded and request IDs checked, but the
+    // external signature is not verified (a warning is logged).
+    verify: Option<(Eip712Domain, Vec<u8>)>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
     uncompressed: bool,
@@ -274,25 +269,36 @@ pub(crate) async fn fetch_and_check_keygen(
                 );
             }
 
-            let external_signature = response.external_signature;
-            let prep_id = response.preprocessing_id.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No preprocessing ID in keygen response, cannot verify external signature"
-                )
-            })?;
-            check_compressed_keyset_ext_signature(
-                &compressed_keyset,
-                &compact_public_key,
-                &prep_id.try_into()?,
-                &request_id,
-                &external_signature,
-                &domain,
-                extra_data.clone(),
-                kms_addrs,
-            )
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+            match verify.as_ref() {
+                Some((domain, extra_data)) => {
+                    let external_signature = response.external_signature;
+                    let prep_id = response.preprocessing_id.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No preprocessing ID in keygen response, cannot verify external signature"
+                        )
+                    })?;
+                    check_compressed_keyset_ext_signature(
+                        &compressed_keyset,
+                        &compact_public_key,
+                        &prep_id.try_into()?,
+                        &request_id,
+                        &external_signature,
+                        domain,
+                        extra_data.clone(),
+                        kms_addrs,
+                    )
+                    .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
-            tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+                    tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+                }
+                None => {
+                    tracing::warn!(
+                        "KeyGen result for request {} fetched WITHOUT signature verification \
+                         (no EIP-712 domain supplied).",
+                        request_id
+                    );
+                }
+            }
         }
     } else {
         let public_key =
@@ -318,25 +324,36 @@ pub(crate) async fn fetch_and_check_keygen(
                 );
             }
 
-            let external_signature = response.external_signature;
-            let prep_id = response.preprocessing_id.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No preprocessing ID in keygen response, cannot verify external signature"
-                )
-            })?;
-            check_uncompressed_keyset_ext_signature(
-                &public_key,
-                &server_key,
-                &prep_id.try_into()?,
-                &request_id,
-                &external_signature,
-                &domain,
-                extra_data.clone(),
-                kms_addrs,
-            )
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+            match verify.as_ref() {
+                Some((domain, extra_data)) => {
+                    let external_signature = response.external_signature;
+                    let prep_id = response.preprocessing_id.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No preprocessing ID in keygen response, cannot verify external signature"
+                        )
+                    })?;
+                    check_uncompressed_keyset_ext_signature(
+                        &public_key,
+                        &server_key,
+                        &prep_id.try_into()?,
+                        &request_id,
+                        &external_signature,
+                        domain,
+                        extra_data.clone(),
+                        kms_addrs,
+                    )
+                    .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
-            tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+                    tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+                }
+                None => {
+                    tracing::warn!(
+                        "KeyGen result for request {} fetched WITHOUT signature verification \
+                         (no EIP-712 domain supplied).",
+                        request_id
+                    );
+                }
+            }
         }
     }
     Ok(())
