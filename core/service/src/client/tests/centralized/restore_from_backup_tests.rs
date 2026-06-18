@@ -8,6 +8,7 @@
 //! - Auto-backup after server restart
 //! - CRS backup and restore flow (nightly)
 
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, default_extra_data};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -47,18 +48,14 @@ async fn key_gen(
     assert_eq!(preproc_resp.into_inner(), Empty {});
 
     // Wait for preprocessing to complete
-    let mut preproc_result = client
-        .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-        .await;
-    while preproc_result.is_err()
-        && preproc_result.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-    {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        preproc_result = client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-            .await;
-    }
-    preproc_result?;
+    retrying_poll(
+        client.clone(),
+        preproc_id.into(),
+        "key gen preprocessing result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_key_gen_preproc_result(request).await }),
+    )
+    .await?;
 
     // Key generation
     let keygen_req = KeyGenRequest {
@@ -77,16 +74,15 @@ async fn key_gen(
     assert_eq!(keygen_resp.into_inner(), Empty {});
 
     // Wait for key generation to complete
-    let mut result = client
-        .get_key_gen_result(tonic::Request::new((*request_id).into()))
-        .await;
-    while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        result = client
-            .get_key_gen_result(tonic::Request::new((*request_id).into()))
-            .await;
-    }
-    let inner_resp = result?.into_inner();
+    let inner_resp = retrying_poll(
+        client.clone(),
+        (*request_id).into(),
+        "key gen result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+    )
+    .await?
+    .into_inner();
     assert_eq!(inner_resp.request_id, Some((*request_id).into()));
 
     Ok(())
@@ -308,16 +304,15 @@ async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
     assert_eq!(resp.into_inner(), Empty {});
 
     // Wait for CRS generation to complete
-    let mut result = client
-        .get_crs_gen_result(tonic::Request::new(req_id.into()))
-        .await;
-    while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        result = client
-            .get_crs_gen_result(tonic::Request::new(req_id.into()))
-            .await;
-    }
-    let inner_resp = result?.into_inner();
+    let inner_resp = retrying_poll(
+        client.clone(),
+        req_id.into(),
+        "CRS gen result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_crs_gen_result(request).await }),
+    )
+    .await?
+    .into_inner();
     assert_eq!(inner_resp.request_id, Some(req_id.into()));
 
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;

@@ -551,6 +551,10 @@ fn validate_public_decrypt_responses(
                 continue;
             }
         };
+        if cur_payload.request_id.is_none() {
+            tracing::warn!("A request ID must be present!");
+            continue;
+        }
         if let Some(expected_extra_data) = trusted_ctx.extra_data
             && cur_resp.extra_data != expected_extra_data
         {
@@ -1751,6 +1755,19 @@ mod tests {
         {
             let mut bad_resp = resp1.clone();
             bad_resp.extra_data = vec![0];
+            let agg_resp = vec![resp0.clone(), bad_resp];
+            assert_eq!(
+                validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                    .unwrap()
+                    .len(),
+                1 // instead of 2
+            );
+        }
+
+        // No request id
+        {
+            let mut bad_resp = resp1.clone();
+            bad_resp.payload.as_mut().unwrap().request_id = None;
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)

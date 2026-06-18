@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::threshold::common::poll_with_retries;
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
@@ -302,12 +302,20 @@ pub async fn wait_for_crsgen_result(
         let req_id = req.request_id.clone().unwrap();
         for (server_id, client) in kms_clients.iter() {
             let client = client.clone();
-            futs.push(poll_with_retries(
-                client,
-                *server_id,
-                req_id.clone(),
-                |c, req| Box::pin(c.get_crs_gen_result(req)),
-            ))
+            let server_id = *server_id;
+            let req_id = req_id.clone();
+            futs.push(async move {
+                let resp = retrying_poll(
+                    client,
+                    req_id.clone(),
+                    "crs gen result",
+                    PollConfig::default(),
+                    |c, req| Box::pin(c.get_crs_gen_result(req)),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("no crs gen result for server {server_id}: {e:?}"));
+                (server_id, req_id, resp.into_inner())
+            })
         }
     }
     let joined_responses = join_all(futs).await;

@@ -3,7 +3,9 @@ use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
+use crate::client::tests::common::{
+    PollConfig, keygen_config, retrying_poll, uncompressed_keygen_config,
+};
 use crate::client::tests::threshold::common::run_insecure_preproc;
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
@@ -1026,24 +1028,21 @@ async fn test_backup_after_reshare_threshold() {
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
     for client in env.kms_clients().values() {
-        let mut client = client.clone();
-        let req_id = new_epoch_req_id;
-        let mut ctr = 0_usize;
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            let response = client
-                .get_epoch_result(tonic::Request::new(req_id.into()))
-                .await;
-            match response {
-                Ok(_) => break,
-                Err(e) if e.code() == tonic::Code::Unavailable => {
-                    ctr += 1;
-                    if ctr >= 50 {
-                        panic!("Timeout waiting for reshare to complete");
-                    }
-                }
-                Err(e) => panic!("Unexpected error polling epoch result: {e:?}"),
-            }
+        // Poll every 500ms for up to 50 tries before giving up.
+        if let Err(e) = retrying_poll(
+            client.clone(),
+            new_epoch_req_id.into(),
+            "reshare epoch result",
+            PollConfig {
+                initial_delay: tokio::time::Duration::from_millis(500),
+                retry_delay: tokio::time::Duration::from_millis(500),
+                max_retries: 50,
+            },
+            |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
+        )
+        .await
+        {
+            panic!("Failed waiting for reshare to complete: {e:?}");
         }
     }
 
