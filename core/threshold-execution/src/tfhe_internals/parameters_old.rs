@@ -93,7 +93,7 @@ impl DKGParamsOld {
         }
     }
 
-    pub fn to_tfhe_config(&self) -> tfhe::Config {
+    pub fn to_tfhe_config(self) -> tfhe::Config {
         let pbs_params: ClassicPBSParameters =
             self.get_params_basics_handle().to_classic_pbs_parameters();
         let compression_params = self
