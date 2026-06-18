@@ -1249,8 +1249,15 @@ mod tests {
         Ok(())
     }
 
+    //TODO(https://github.com/zama-ai/kms-internal/issues/3050)
     // We return test params to use to truncate the keys
     fn get_truncated_client_keys_params(params: DKGParams) -> DKGParams {
+        // Keep the original SnS compression parameters (untruncated) so the
+        // reshare test actually exercises the SnS-compression-key path. The
+        // regular compression is dropped below (`None`), so the regular and SnS
+        // compression key sizes differ — which is what would catch a regression
+        // of the SnS-compression-key sizing (see `reshare_sk`).
+        let original_sns_compression = params.sns().and_then(|s| s.sns_compression_params());
         let new_sns_params = if let Some(sns_params) = params.sns() {
             let mut new_sns_params = sns_params.sns_params();
 
@@ -1314,7 +1321,7 @@ mod tests {
                 noise_squashing_parameters: new_sns_params.map(|parameters| {
                     tfhe::shortint::parameters::MetaNoiseSquashingParameters {
                         parameters,
-                        compression_parameters: None,
+                        compression_parameters: original_sns_compression,
                     }
                 }),
                 rerand_configuration: None,
@@ -1323,6 +1330,7 @@ mod tests {
         }
     }
 
+    // TODO(https://github.com/zama-ai/kms-internal/issues/3050)
     // We truncate the keys in the keyset to make the test faster
     // to match the sizes in the target parameters
     fn truncate_client_keys(keyset: &mut KeySet, target_params: DKGParams) {
@@ -1355,6 +1363,11 @@ mod tests {
         } else {
             None
         };
+
+        // Keep the original SnS compression key (untruncated) so the reshare
+        // exercises the SnS-compression-key path; its size differs from the
+        // dropped regular compression key.
+        let sns_compression_key = keyset.client_key.clone().into_raw_parts().4;
 
         let (glwe_raw, lwe_raw, _, _) = match keyset
             .client_key
@@ -1401,7 +1414,7 @@ mod tests {
             None,
             None,
             new_sns_private_key,
-            None,
+            sns_compression_key,
             None,
             None,
             tfhe::Tag::default(),
