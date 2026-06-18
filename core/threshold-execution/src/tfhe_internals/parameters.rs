@@ -400,11 +400,11 @@ impl DKGParams {
     /// TUniform noise via the `*_tuniform_bound` helpers, classic compression /
     /// noise-squashing). Call at the parameter-entry boundary so a malformed set
     /// fails fast here rather than panicking deep inside an accessor later.
-    ///
-    /// Note: deliberately does *not* call `MetaParameters::validate()` — that
-    /// performs *security* validation, which would reject the intentionally
-    /// insecure `PARAMS_TEST_BK_SNS`. This is a structural check only.
     pub fn check_conformance(&self) -> anyhow::Result<()> {
+        if !self.meta.is_valid() {
+            anyhow::bail!("MetaParameters are invalid");
+        }
+
         if self.supports_sns() && self.dkg_mode != DkgMode::Z128 {
             anyhow::bail!("SnS parameters require Z128 dkg_mode");
         }
