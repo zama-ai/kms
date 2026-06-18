@@ -471,7 +471,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     // and attempt reconstruction less frequently to reduce O(n×m) complexity
 
     let mut collected_shares = 0;
-    let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
+    // let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
     let mut last_reconstruction_attempt = 0;
     let sharings = Arc::new(Mutex::new(sharings));
 
@@ -488,13 +488,10 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
         match opening_contribution {
             Ok((contributor, partial_openings)) => {
                 if let Ok(partial_openings) = partial_openings {
-                    fill_indexed_shares(
-                        &mut sharings
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
-                        partial_openings,
-                        contributor,
-                    );
+                    let mut locked = sharings
+                        .lock()
+                        .map_err(|_| anyhow_error_and_log("Poisoned lock"))?;
+                    fill_indexed_shares(&mut locked, partial_openings, contributor);
                     collected_shares += 1;
                 } else if let Err(e) = partial_openings {
                     tracing::warn!(
@@ -515,6 +512,8 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
         // 1. First time we reach minimum required shares (threshold + 1)
         // 2. For each additional share to handle potential corrupt/invalid shares
         // 3. When no more jobs are pending (final attempt)
+        let max_errors = (threshold as usize).saturating_sub(num_bots);
+        let required_shares = degree + 2 * max_errors;
         let should_attempt_reconstruction = collected_shares >= required_shares
             && (last_reconstruction_attempt == 0  // First time we have enough shares
                 || collected_shares > last_reconstruction_attempt  // Each additional share
@@ -532,7 +531,10 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 // Build reconstruction hints once from the current owner set.
                 // All sharings in the batch have the same owners (filled identically).
                 let hints = if let Some(first) = locked_sharings.first() {
-                    ReconstructionHints::new(first, degree)?
+                    crate::hotpath_measure_block!(
+                        "open::recon_hints",
+                        ReconstructionHints::new(first, degree)
+                    )?
                 } else {
                     // If there's not even a single sharing, we can return directly
                     return Ok(Some(vec![]));
@@ -546,13 +548,16 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                     .par_iter()
                     .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
                     .map(|sharing| {
-                        reconstruct_fn(
-                            num_parties,
-                            degree,
-                            threshold as usize,
-                            num_bots,
-                            sharing,
-                            &hints,
+                        crate::hotpath_measure_block!(
+                            "open::reconstruct_one",
+                            reconstruct_fn(
+                                num_parties,
+                                degree,
+                                threshold as usize,
+                                num_bots,
+                                sharing,
+                                &hints,
+                            )
                         )
                         .unwrap_or_default()
                     })
