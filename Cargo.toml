@@ -124,13 +124,13 @@ backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual mai
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.2", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
-bytes = "=1.12.0"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
+bytes = "=1.11.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
 cargo_metadata = "=0.23.1"  # Workspace metadata extraction - LOW RISK: oli-obk (rust-lang member) + community, 60M+ downloads, test-only dependency
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
 cfg-if = "=1.0.4"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.61", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
 ciborium = "0.2.2" # CBOR support for serde - LOW RISK: Enarx team, 100M+ downloads
-config = "=0.15.24"  # Configuration management - LOW RISK: rust-cli org (team maintained)
+config = "=0.15.23"  # Configuration management - LOW RISK: rust-cli org (team maintained)
 const_format = "=0.2.36"  # Compile-time string formatting - HIGH RISK: Individual maintainer (rodrimati1992), despite 55M+ downloads
 console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
@@ -148,9 +148,9 @@ http-legacy = { package = "http", version = "=0.2.12" }  # HTTP types (older ver
 hyper-rustls = { version = "=0.24.2" }  # TLS for hyper HTTP client - LOW RISK: rustls team, memory-safe TLS
 hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }  # TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
 iam-rs = { version = "=0.0.23" } # AWS IAM policy parser/generator - HIGH RISK: individual maintainer, 10K downloads
-itertools = "=0.15.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
+itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
 k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ downloads
-minijinja = { version = "=2.21.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
+minijinja = { version = "=2.20.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
 ml-kem = { version = "=0.2.3", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
