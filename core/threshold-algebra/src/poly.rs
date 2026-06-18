@@ -639,18 +639,39 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
     Ok(Poly::from_coefs(coefs))
 }
 
-/// computes the extended Euclidean algorithm for a and b and stops when r1 reaches the stop degree or higher
-fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
-    let (mut r0, mut r1) = (a, b);
-    let (mut t0, mut t1) = (Poly::zero(), Poly::one());
-    // r = gcd(a, b) = a * s + b * t
-    // note that s is not computed here
-    while r1.deg() >= stop {
-        let (q, _) = &r0 / &r1;
-        (r0, r1) = (r1.clone(), r0 - (&q * r1));
-        (t0, t1) = (t1.clone(), t0 - (&q * t1));
+/// Runs the extended Euclidean algorithm for `a` and `b` until `deg(r1) < stop`.
+///
+/// `a` is borrowed: when the EEA loop does not execute, we never read `a`, so we
+/// avoid cloning it. The loop consumes its running remainder, so `a` is cloned
+/// only once we know we need to iterate.
+///
+/// Returns the low-degree remainder `r1` and its Bézout cofactor `t1` with
+/// respect to the original `b`.
+fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
+    let mut r1 = b;
+
+    if r1.deg() < stop {
+        // `b` already satisfies the target degree bound, with cofactor 1.
+        return (r1, Poly::one());
     }
-    // return r and t
+
+    let mut r0 = a.clone();
+
+    // Invariant: each remainder is `a * s + b * t`; we only track `t`.
+    let mut t0 = Poly::zero();
+    let mut t1 = Poly::one();
+
+    while r1.deg() >= stop {
+        let (q, r2) = &r0 / &r1;
+        let t2 = t0 - (&q * &t1);
+
+        r0 = r1;
+        r1 = r2;
+
+        t0 = t1;
+        t1 = t2;
+    }
+
     (r1, t1)
 }
 
@@ -665,7 +686,7 @@ fn gao_decoding_common<F: Field>(
     k: usize,
     max_errors: usize,
     r: Poly<F>,
-    g: Poly<F>,
+    g: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
     // d = n - k + 1
     let d = (n + 1)
@@ -696,7 +717,14 @@ fn gao_decoding_common<F: Field>(
     }
 
     // h is called f_1(x) in the Gao paper.
-    let (h, rem) = q1 / &q0;
+    let (h, rem) = if q0.deg() == 0 && q0.coef(0) != F::ZERO {
+        // q0 is a nonzero constant c (the common no-error case: the xgcd cofactor is the unit poly).
+        // Then q1 / q0 = q1 * c⁻¹ exactly, with zero remainder — divide by the scalar in place
+        // instead of allocating a fresh quotient via long division.
+        (q1 / &q0.coef(0), Poly::zero())
+    } else {
+        q1 / &q0
+    };
 
     if !rem.is_zero() {
         Err(anyhow_error_and_log(format!(
@@ -755,7 +783,7 @@ pub fn gao_decoding<F: Field>(
         g = g * fi;
     }
 
-    gao_decoding_common(n, k, max_errors, r, g)
+    gao_decoding_common(n, k, max_errors, r, &g)
 }
 
 /// Like [`gao_decoding`] but reuses precomputed Lagrange polynomials and the vanishing polynomial
@@ -782,10 +810,8 @@ pub fn gao_decoding_with_field_hints<F: Field>(
     // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
     let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
 
-    // G = vanishing polynomial (precomputed).
-    let g = vanishing_poly.clone();
-
-    gao_decoding_common(n, k, max_errors, r, g)
+    // partial_xgcd only clones "G" if the EEA loop actually runs, which is quite rare.
+    gao_decoding_common(n, k, max_errors, r, vanishing_poly)
 }
 
 #[cfg(test)]
