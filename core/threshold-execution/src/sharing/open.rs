@@ -448,15 +448,19 @@ type ReconsFunc<Z> = fn(
     hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>;
 
-/// Helper function of robust reconstructions which collect the shares and tries to reconstruct
+/// Helper function of robust reconstructions which collects the shares and tries to reconstruct.
 ///
 /// Takes as input:
 ///
-/// - the session_parameters
-/// - indexed_share as the indexed share of the local party
-/// - degree as the degree of the secret sharing
-/// - max_num_errors as the max. number of errors we allow (this is session.threshold)
-/// - a set of jobs to receive the shares from the other parties
+/// - `num_parties`: the total number of parties
+/// - `threshold`: the corruption threshold
+/// - `num_bots`: the number of parties already known to be non-answering/corrupt (excluded from
+///   reconstruction); grows as receive jobs time out or return malformed data. The error-correction
+///   capacity is derived from these as `max_errors = threshold - num_bots`.
+/// - `sharings`: the batch of sharings to reconstruct, each pre-seeded with this party's own share
+/// - `degree`: the degree of the secret sharing
+/// - `jobs`: the set of jobs receiving the other parties' shares
+/// - `reconstruct_fn`: the per-value reconstruction function (sync/async variant)
 async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     num_parties: usize,
     threshold: u8,
@@ -508,10 +512,14 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
             }
         }
 
-        // OPTIMIZATION: Attempt reconstruction strategically to reduce redundant attempts:
-        // 1. First time we reach minimum required shares (threshold + 1)
-        // 2. For each additional share to handle potential corrupt/invalid shares
-        // 3. When no more jobs are pending (final attempt)
+        // Attempt reconstruction strategically to reduce redundant attempts. Only start once we hold
+        // enough shares for error correction to *succeed* — degree + 1 + 2*max_errors total shares
+        // (own + received), i.e. `required_shares` received — since below that `reconstruct_w_errors`
+        // returns None for every value. Then attempt:
+        // 1. the first time we reach that bar,
+        // 2. on each additional share (an earlier attempt may not have corrected the errors present),
+        // 3. and a final time once no jobs remain.
+        // max_errors shrinks as parties drop (num_bots grows), lowering the bar to stay live.
         let max_errors = (threshold as usize).saturating_sub(num_bots);
         let required_shares = degree + 2 * max_errors;
         let should_attempt_reconstruction = collected_shares >= required_shares
