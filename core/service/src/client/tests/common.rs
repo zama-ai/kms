@@ -56,6 +56,7 @@ where
 type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
 /// Timing knobs for [`retrying_poll`].
+#[derive(Clone, Copy)]
 pub(crate) struct PollConfig {
     /// How long to wait before the very first poll attempt.
     pub initial_delay: Duration,

@@ -17,7 +17,6 @@ use crate::client::client_wasm::Client;
 use crate::client::key_gen::tests::check_conformance;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
-#[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{PollConfig, retrying_poll};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
@@ -46,6 +45,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use alloy_dyn_abi::Eip712Domain;
+use futures_util::future::join_all;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyGenResult;
 #[cfg(feature = "slow_tests")]
@@ -326,52 +326,39 @@ async fn wait_for_keygen_result(
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
 
-    let mut finished = Vec::new();
-    // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
-    for _ in 0..MAX_TRIES {
-        tokio::time::sleep(tokio::time::Duration::from_secs(if insecure {
-            1
-        } else {
-            15
-        }))
-        .await;
+    // Poll each party independently until it returns a result. Keygen is slow,
+    // so wait 15s between attempts (1s in insecure mode where it's near-instant).
+    let poll_secs = if insecure { 1 } else { 15 };
+    let poll_config = PollConfig {
+        initial_delay: tokio::time::Duration::from_secs(poll_secs),
+        retry_delay: tokio::time::Duration::from_secs(poll_secs),
+        max_retries: MAX_TRIES,
+    };
 
-        let mut tasks = JoinSet::new();
-        for (i, kms_client) in kms_clients {
-            let req_clone = req_get_keygen.into();
-            let i = *i;
-            let mut cur_client = kms_client.clone();
-            tasks.spawn(async move {
-                (
-                    i,
+    let futs = kms_clients.iter().map(|(i, kms_client)| {
+        let i = *i;
+        let client = kms_client.clone();
+        let req_id = req_get_keygen.into();
+        async move {
+            let resp = retrying_poll(client, i, req_id, "keygen result", poll_config, |c, req| {
+                Box::pin(async move {
                     if insecure {
-                        cur_client
-                            .get_insecure_key_gen_result(tonic::Request::new(req_clone))
-                            .await
+                        c.get_insecure_key_gen_result(req).await
                     } else {
-                        cur_client
-                            .get_key_gen_result(tonic::Request::new(req_clone))
-                            .await
-                    },
-                )
-            });
+                        c.get_key_gen_result(req).await
+                    }
+                })
+            })
+            .await;
+            (i, resp)
         }
-        let mut responses = Vec::new();
-        while let Some(resp) = tasks.join_next().await {
-            responses.push(resp.unwrap());
-        }
-
-        finished = responses
-            .into_iter()
-            .filter(|x| x.1.is_ok())
-            .collect::<Vec<_>>();
-        if finished.len() == kms_clients.len() {
-            break;
-        }
-    }
-
+    });
+    let mut finished = join_all(futs).await;
     finished.sort_by_key(|(i, _)| *i);
-    assert_eq!(finished.len(), kms_clients.len());
+    assert!(
+        finished.iter().all(|(_, r)| r.is_ok()),
+        "not all parties returned a keygen result: {finished:?}"
+    );
 
     let mut out = None;
     let mut all_private_keys = None;

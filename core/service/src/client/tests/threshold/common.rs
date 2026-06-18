@@ -1,21 +1,13 @@
-use core::future::Future;
-
 use crate::client::tests::common::{PollConfig, default_isolated_extra_data, retrying_poll};
-use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MAX_TRIES};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
-use std::pin::Pin;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
-use tonic::{Request, Response, Status};
-
-/// RequestIds as they are represented in the current version of the ProtoBuf API.
-type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
 // =============================================================================
 // ISOLATED TEST HELPERS
@@ -287,37 +279,4 @@ pub async fn threshold_secure_key_gen(
     }
 
     Ok(responses)
-}
-
-/// Helper to retry a single poll call until it succeeds or we exhaust [`crate::consts::MAX_TRIES`].
-pub async fn poll_with_retries<R: Send>(
-    mut client: CoreServiceEndpointClient<Channel>,
-    server_id: u32,
-    req_id: ProtoRequestId,
-    poll_fn: impl for<'a> Fn(
-        &'a mut CoreServiceEndpointClient<Channel>,
-        Request<ProtoRequestId>,
-    )
-        -> Pin<Box<dyn Future<Output = Result<Response<R>, Status>> + Send + 'a>>,
-) -> (u32, ProtoRequestId, R) {
-    for count in 0..MAX_TRIES {
-        // By default our gRPC calls do not time out. Here we're giving it 2sec per poll attempt to reply.
-        tokio::select! {
-            result = poll_fn(&mut client, Request::new(req_id.clone())) => {
-                match result {
-                    Ok(resp) => return (server_id, req_id, resp.into_inner()),
-                    Err(e) => {
-                        let id_str = RequestId::try_from(req_id.clone()).unwrap().to_string();
-                        tracing::trace!("Attempt {count} for server {server_id}, req {id_str}: {e:?}");
-                    }
-                }
-            }
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
-                tracing::trace!("Attempt {count} for server {server_id} timed out");
-            }
-        }
-        // Back-off a little bit before re-trying
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
-    panic!("no response for server {server_id} after {MAX_TRIES} tries");
 }
