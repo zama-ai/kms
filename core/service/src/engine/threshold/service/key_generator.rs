@@ -1016,8 +1016,7 @@ impl<
             )
             .await?;
 
-        let params_handle = params;
-        let compression_params = params_handle
+        let compression_params = params
             .compression_decompression_params()
             .ok_or_else(|| anyhow::anyhow!("missing compression parameters"))?
             .raw_compression_parameters;
@@ -1025,7 +1024,7 @@ impl<
             (Some(glwe_secret_key), Some(compression_secret_key)) => {
                 let bit_glwe_secret_key = GlweSecretKeyOwned::from_container(
                     convert_to_bit(glwe_secret_key)?,
-                    params_handle.polynomial_size(),
+                    params.polynomial_size(),
                 );
                 let bit_compression_secret_key =
                     tfhe::integer::compression_keys::CompressionPrivateKeys::from_raw_parts(
@@ -1041,7 +1040,7 @@ impl<
                     );
 
                 let dummy_lwe_secret_key =
-                    LweSecretKeyOwned::from_container(vec![0u64; params_handle.lwe_dimension().0]);
+                    LweSecretKeyOwned::from_container(vec![0u64; params.lwe_dimension().0]);
 
                 // We need a dummy sns secret key otherwise [to_hl_client_key]
                 // will fail because it will try to use this key when the parameter supports SnS

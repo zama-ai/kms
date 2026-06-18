@@ -47,26 +47,27 @@ impl ResharePreprocRequired {
         parameters: DKGParams,
         oprf_key_present: bool,
     ) -> Self {
-        let params = parameters;
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
 
         match parameters.dkg_mode() {
             DkgMode::Z64 => {
-                num_randoms_64 += params.lwe_hat_dimension().0;
-                num_randoms_64 += params.lwe_dimension().0;
+                num_randoms_64 += parameters.lwe_hat_dimension().0;
+                num_randoms_64 += parameters.lwe_dimension().0;
                 if oprf_key_present {
-                    num_randoms_64 += params.lwe_dimension().0;
+                    num_randoms_64 += parameters.lwe_dimension().0;
                 }
-                num_randoms_64 += params.glwe_sk_num_bits() + params.compression_sk_num_bits()
+                num_randoms_64 +=
+                    parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits()
             }
             DkgMode::Z128 => {
-                num_randoms_128 += params.lwe_hat_dimension().0;
-                num_randoms_128 += params.lwe_dimension().0;
+                num_randoms_128 += parameters.lwe_hat_dimension().0;
+                num_randoms_128 += parameters.lwe_dimension().0;
                 if oprf_key_present {
-                    num_randoms_128 += params.lwe_dimension().0;
+                    num_randoms_128 += parameters.lwe_dimension().0;
                 }
-                num_randoms_128 += params.glwe_sk_num_bits() + params.compression_sk_num_bits();
+                num_randoms_128 +=
+                    parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits();
                 if let Some(p) = parameters.sns() {
                     num_randoms_128 += p.glwe_sk_num_bits_sns() + p.sns_compression_sk_num_bits();
                 }
@@ -380,10 +381,8 @@ where
         (false, None)
     };
 
-    let basic_params_handle = parameters;
-
     // Reshare the LWE compute key
-    let expected_key_size = basic_params_handle.lwe_dimension().0;
+    let expected_key_size = parameters.lwe_dimension().0;
     let lwe_compute_secret_key_share = match parameters.dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
@@ -430,8 +429,8 @@ where
     };
 
     // Reshare the LWE PKe key
-    let expected_key_size = basic_params_handle.lwe_hat_dimension().0;
-    let polynomial_size = basic_params_handle.polynomial_size();
+    let expected_key_size = parameters.lwe_hat_dimension().0;
+    let polynomial_size = parameters.polynomial_size();
     let lwe_encryption_secret_key_share = match parameters.dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
@@ -479,7 +478,7 @@ where
 
     // Reshare the dedicated OPRF LWE key only when the old keyset has one.
     let oprf_secret_key_share = if oprf_key_present {
-        let expected_key_size = basic_params_handle.lwe_dimension().0;
+        let expected_key_size = parameters.lwe_dimension().0;
         match parameters.dkg_mode() {
             DkgMode::Z64 => {
                 let maybe_key = input_share
@@ -529,7 +528,7 @@ where
     };
 
     // Reshare the GLWE compute key
-    let expected_key_size = basic_params_handle.glwe_sk_num_bits();
+    let expected_key_size = parameters.glwe_sk_num_bits();
     let glwe_secret_key_share = match parameters.dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
@@ -585,11 +584,11 @@ where
 
     // Reshare the GLWE compression key
     let glwe_secret_key_share_compression =
-        if let Some(compression_params) = basic_params_handle.compression_decompression_params() {
+        if let Some(compression_params) = parameters.compression_decompression_params() {
             let polynomial_size = compression_params
                 .raw_compression_parameters
                 .packing_ks_polynomial_size;
-            let expected_key_size = basic_params_handle.compression_sk_num_bits();
+            let expected_key_size = parameters.compression_sk_num_bits();
             (
                 true,
                 match parameters.dkg_mode() {
@@ -748,7 +747,7 @@ where
                 oprf_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
-                parameters: basic_params_handle.classic_pbs(),
+                parameters: parameters.classic_pbs(),
                 glwe_secret_key_share_compression,
                 glwe_sns_compression_key_as_lwe,
             }))

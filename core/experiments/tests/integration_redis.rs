@@ -262,8 +262,6 @@ fn test_dkg_orchestrator_large(
 
     redis_tidy();
 
-    let params_basics_handles = params;
-
     let roles = generate_fixed_roles(num_parties);
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
@@ -335,7 +333,7 @@ fn test_dkg_orchestrator_large(
             Some(ref ref_key) => assert_eq!(ref_key, &pk),
         };
         write_element(
-            params_basics_handles
+            params
                 .prefix_path()
                 .join("ORCHESTRATOR")
                 .join(format!("sk_p{party_id}.der")),
@@ -345,10 +343,7 @@ fn test_dkg_orchestrator_large(
     }
     let pk_ref = pk_ref.unwrap();
     write_element(
-        params_basics_handles
-            .prefix_path()
-            .join("ORCHESTRATOR")
-            .join("pk.der"),
+        params.prefix_path().join("ORCHESTRATOR").join("pk.der"),
         &pk_ref,
     )
     .unwrap();

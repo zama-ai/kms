@@ -379,23 +379,22 @@ fn extract_key_containers(
     client_key: Option<&tfhe::ClientKey>,
     params: DKGParams,
 ) -> anyhow::Result<RawKeyContainers> {
-    let params_basic_handle = params;
     let client_key = client_key.map(ClientKeyView::new);
 
     let lwe_sk_container64: Vec<u64> = client_key
         .as_ref()
         .map(|ck| ck.raw_lwe_client_key().into_container())
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_dimension().0]);
 
     let lwe_encryption_sk_container64: Vec<u64> = client_key
         .as_ref()
         .map(|ck| ck.raw_lwe_encryption_client_key().into_container())
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_hat_dimension().0]);
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_hat_dimension().0]);
 
     let glwe_sk_container64: Vec<u64> = client_key
         .as_ref()
         .map(|ck| ck.raw_glwe_client_key().into_container())
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.glwe_sk_num_bits()]);
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.glwe_sk_num_bits()]);
 
     let sns_sk_container128: Option<Vec<u128>> = params.sns().map(|params_sns| {
         client_key
@@ -407,42 +406,31 @@ fn extract_key_containers(
     // Check compression key consistency
     if let Some(ck) = &client_key
         && ck.raw_compression_client_key().is_none()
-        && params_basic_handle
-            .compression_decompression_params()
-            .is_some()
+        && params.compression_decompression_params().is_some()
     {
         anyhow::bail!("Compression client key is missing when parameter is available")
     }
 
     let compression_sk_container64: Option<Vec<u64>> = match &client_key {
         Some(ck) => {
-            if params_basic_handle
-                .compression_decompression_params()
-                .is_none()
-            {
+            if params.compression_decompression_params().is_none() {
                 None
             } else {
                 ck.raw_compression_client_key().map(|x| x.into_container())
             }
         }
         None => {
-            if params_basic_handle
-                .compression_decompression_params()
-                .is_none()
-            {
+            if params.compression_decompression_params().is_none() {
                 None
             } else {
-                Some(vec![
-                    Numeric::ZERO;
-                    params_basic_handle.compression_sk_num_bits()
-                ])
+                Some(vec![Numeric::ZERO; params.compression_sk_num_bits()])
             }
         }
     };
 
     let sns_compression_sk_container128: Option<Vec<u128>> = match &client_key {
         Some(ck) => {
-            if params_basic_handle.sns_compression_params().is_none() {
+            if params.sns_compression_params().is_none() {
                 None
             } else {
                 ck.raw_sns_compression_client_key()
@@ -465,7 +453,7 @@ fn extract_key_containers(
     let oprf_sk_container64: Vec<u64> = client_key
         .as_ref()
         .and_then(|ck| ck.raw_oprf_client_key().map(|k| k.into_container()))
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_dimension().0]);
 
     Ok(RawKeyContainers {
         lwe_sk_container64,
@@ -492,7 +480,6 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params;
     let own_role = session.my_role();
     let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
 
@@ -663,21 +650,22 @@ where
 
     tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
 
-    let glwe_secret_key_share_compression = params_basic_handle
-        .compression_decompression_params()
-        .map(|compression_params| {
-            let params = compression_params.raw_compression_parameters;
-            CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
-                post_packing_ks_key: GlweSecretKeyShare {
-                    data: glwe_compression_key_shares128,
-                    polynomial_size: params.packing_ks_polynomial_size,
-                },
-                params: CompressionParameters::Classic(params),
-            })
-        });
+    let glwe_secret_key_share_compression =
+        params
+            .compression_decompression_params()
+            .map(|compression_params| {
+                let params = compression_params.raw_compression_parameters;
+                CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                    post_packing_ks_key: GlweSecretKeyShare {
+                        data: glwe_compression_key_shares128,
+                        polynomial_size: params.packing_ks_polynomial_size,
+                    },
+                    params: CompressionParameters::Classic(params),
+                })
+            });
 
     let glwe_sns_compression_key_as_lwe =
-        params_basic_handle
+        params
             .sns_compression_params()
             .map(|_sns_compression_params| LweSecretKeyShare {
                 data: glwe_sns_compression_key_shares128,
@@ -695,10 +683,10 @@ where
         })),
         glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
             data: glwe_key_shares128,
-            polynomial_size: params_basic_handle.polynomial_size(),
+            polynomial_size: params.polynomial_size(),
         }),
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
-        parameters: params_basic_handle.classic_pbs(),
+        parameters: params.classic_pbs(),
         glwe_secret_key_share_compression,
         glwe_sns_compression_key_as_lwe,
     })
@@ -718,13 +706,11 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params;
-
     // This only supports Z128 DKG for now
-    if params_basic_handle.dkg_mode() != DkgMode::Z128 {
+    if params.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.dkg_mode()
+            params.dkg_mode()
         );
     }
 
@@ -767,13 +753,11 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params;
-
     // This only supports Z128 DKG for now
-    if params_basic_handle.dkg_mode() != DkgMode::Z128 {
+    if params.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.dkg_mode()
+            params.dkg_mode()
         );
     }
 
@@ -788,10 +772,7 @@ where
 
         // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
         // and use a pmax=1 which should allow for any HW.
-        let max_norm_hwt = params_basic_handle
-            .sk_deviations()
-            .map(|d| d.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|d| d.pmax).unwrap_or(1.0);
         let max_norm_hwt =
             tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
 
@@ -801,7 +782,7 @@ where
         let (client_key, compressed_xof_keyset) = tfhe::xof_key_set::CompressedXofKeySet::generate(
             config,
             private_seed_bytes,
-            params_basic_handle.sec() as u32,
+            params.sec() as u32,
             max_norm_hwt,
             tag,
         )
@@ -909,13 +890,11 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basic_handle = params;
-
     // This only supports Z128 DKG for now
-    if params_basic_handle.dkg_mode() != DkgMode::Z128 {
+    if params.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.dkg_mode()
+            params.dkg_mode()
         );
     }
 
@@ -934,7 +913,7 @@ where
             "Compressed keyset re-generated from existing key by input party {}",
             session.my_role()
         );
-        let security_bits = params_basic_handle.sec() as u32;
+        let security_bits = params.sec() as u32;
 
         // Same domain separators as `CompressedXofKeySet::generate`; the public seed is drawn
         // from the private seed exactly as `generate_with_separators` does. We skip the client

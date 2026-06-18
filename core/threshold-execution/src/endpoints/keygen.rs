@@ -302,8 +302,6 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
     {
-        let params_basics_handle = params;
-
         // Messages exchanged are big so we deserialize them on Rayon
         session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 && params.sns().is_some() {
@@ -312,15 +310,15 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
             ));
         }
 
-        if Z::BIT_LENGTH != params_basics_handle.dkg_mode().expected_bit_length() {
+        if Z::BIT_LENGTH != params.dkg_mode().expected_bit_length() {
             return Err(anyhow_error_and_log(format!(
                 "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
                 Z::BIT_LENGTH,
-                params_basics_handle.dkg_mode().expected_bit_length()
+                params.dkg_mode().expected_bit_length()
             )));
         }
 
-        let seed = sample_seed(params_basics_handle.sec(), session, preprocessing).await?;
+        let seed = sample_seed(params.sec(), session, preprocessing).await?;
         //Init the XOF with the seed computed above
         let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
             Z,
@@ -360,25 +358,24 @@ async fn generate_private_key_set<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basics_handle = params;
     let my_role = session.my_role();
 
     // Generate the shared LWE hat secret key and corresponding public key share
     tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
     let lwe_hat_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
-        params_basics_handle.lwe_hat_dimension(),
+        params.lwe_hat_dimension(),
         preprocessing,
-        params_basics_handle.sk_deviations().map(|d| d.pmax),
+        params.sk_deviations().map(|d| d.pmax),
         session,
     )
     .await?;
 
     // Generate the LWE (no hat) secret key if it should exist
-    let lwe_secret_key_share = if params_basics_handle.has_dedicated_compact_pk_params() {
+    let lwe_secret_key_share = if params.has_dedicated_compact_pk_params() {
         LweSecretKeyShare::new_from_preprocessing(
-            params_basics_handle.lwe_dimension(),
+            params.lwe_dimension(),
             preprocessing,
-            params_basics_handle.pmax(),
+            params.pmax(),
             session,
         )
         .await?
@@ -391,23 +388,18 @@ where
     // Generate the GLWE secret key
     tracing::info!("(Party {my_role}) Generating GLWE secret key...Start");
     let glwe_secret_key_share = GlweSecretKeyShare::new_from_preprocessing(
-        params_basics_handle.glwe_sk_num_bits(),
-        params_basics_handle.polynomial_size(),
+        params.glwe_sk_num_bits(),
+        params.polynomial_size(),
         preprocessing,
-        params_basics_handle.pmax(),
+        params.pmax(),
         session,
     )
     .await?;
     tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
 
     // Generate the compression private key if needed
-    let glwe_secret_key_share_compression = if params_basics_handle
-        .compression_decompression_params()
-        .is_some()
-    {
-        let comp_params = params_basics_handle
-            .compression_decompression_params()
-            .unwrap();
+    let glwe_secret_key_share_compression = if params.compression_decompression_params().is_some() {
+        let comp_params = params.compression_decompression_params().unwrap();
         Some(
             CompressionPrivateKeyShares::new_from_preprocessing(
                 comp_params.raw_compression_parameters,
@@ -435,20 +427,19 @@ where
             .await?;
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
 
-            let sns_compression =
-                if let Some(comp_params) = params_basics_handle.sns_compression_params() {
-                    Some(
-                        SnsCompressionPrivateKeyShares::new_from_preprocessing(
-                            comp_params.raw_compression_parameters,
-                            preprocessing,
-                            comp_params.pmax,
-                            session,
-                        )
-                        .await?,
+            let sns_compression = if let Some(comp_params) = params.sns_compression_params() {
+                Some(
+                    SnsCompressionPrivateKeyShares::new_from_preprocessing(
+                        comp_params.raw_compression_parameters,
+                        preprocessing,
+                        comp_params.pmax,
+                        session,
                     )
-                } else {
-                    None
-                };
+                    .await?,
+                )
+            } else {
+                None
+            };
 
             (Some(glwe_secret_key_share_sns), sns_compression)
         } else {
@@ -457,9 +448,9 @@ where
 
     let oprf_secret_key_share = Some(
         LweSecretKeyShare::new_from_preprocessing(
-            params_basics_handle.lwe_dimension(),
+            params.lwe_dimension(),
             preprocessing,
-            params_basics_handle.pmax(),
+            params.pmax(),
             session,
         )
         .await?,
@@ -497,13 +488,12 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     if private_key_set.oprf_secret_key_share.is_none() {
-        let params_basics_handle = params;
         private_key_set.oprf_secret_key_share = Some(
             crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z128(
                 LweSecretKeyShare::new_from_preprocessing(
-                    params_basics_handle.lwe_dimension(),
+                    params.lwe_dimension(),
                     preprocessing,
-                    params_basics_handle.pmax(),
+                    params.pmax(),
                     session,
                 )
                 .await?,
@@ -547,7 +537,6 @@ async fn generate_all_compressed_public_keys<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basics_handle = params;
     let my_role = session.my_role();
 
     // Generate LWE public key from existing private key
@@ -579,33 +568,32 @@ where
     session.network().set_timeout_for_bk().await;
 
     // Generate compression public keys if compression params exist
-    let compression_keys =
-        if let Some(comp_params) = params_basics_handle.compression_decompression_params() {
-            // Use existing_compression_sk if provided, otherwise use the newly generated one
-            let compression_sk = private_key_set
-                .glwe_secret_key_share_compression
-                .as_ref()
-                .ok_or(anyhow::anyhow!(
-                    "compression parameters exist but not compression key"
-                ))?;
-            Some(
-                generate_compressed_compression_decompression_keys(
-                    &glwe_sk_share_as_lwe,
-                    &private_key_set.glwe_secret_key_share,
-                    compression_sk,
-                    comp_params,
-                    mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                )
-                .await?,
+    let compression_keys = if let Some(comp_params) = params.compression_decompression_params() {
+        // Use existing_compression_sk if provided, otherwise use the newly generated one
+        let compression_sk = private_key_set
+            .glwe_secret_key_share_compression
+            .as_ref()
+            .ok_or(anyhow::anyhow!(
+                "compression parameters exist but not compression key"
+            ))?;
+        Some(
+            generate_compressed_compression_decompression_keys(
+                &glwe_sk_share_as_lwe,
+                &private_key_set.glwe_secret_key_share,
+                compression_sk,
+                comp_params,
+                mpc_encryption_rng,
+                session,
+                preprocessing,
             )
-        } else {
-            None
-        };
+            .await?,
+        )
+    } else {
+        None
+    };
 
     //Generate the KSK
-    let ksk_params = params_basics_handle.ksk_params();
+    let ksk_params = params.ksk_params();
 
     let ksk = generate_compressed_key_switch_key(
         &glwe_sk_share_as_lwe,
@@ -621,7 +609,7 @@ where
     let bk = generate_compressed_bootstrap_key(
         &private_key_set.glwe_secret_key_share,
         &private_key_set.lwe_secret_key_share,
-        params_basics_handle.bk_params(),
+        params.bk_params(),
         mpc_encryption_rng,
         session,
         preprocessing,
@@ -629,7 +617,7 @@ where
     .await?;
 
     // If needed, compute the mod switch noise reduction key
-    let msnrk = match params_basics_handle.msnrk_configuration() {
+    let msnrk = match params.msnrk_configuration() {
         MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
         MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
             CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
@@ -691,10 +679,7 @@ where
     };
 
     //Compute the PKSK
-    let pksk = match (
-        params_basics_handle.pksk_destination(),
-        params_basics_handle.pksk_params(),
-    ) {
+    let pksk = match (params.pksk_destination(), params.pksk_params()) {
         //Corresponds to type = F-GLWE
         (Some(tfhe::shortint::EncryptionKeyChoice::Big), Some(pksk_params)) => Some(
             generate_compressed_key_switch_key(
@@ -727,12 +712,9 @@ where
         }
     };
 
-    let cpk_re_randomization_ksk = match (
-        params_basics_handle.pksk_params(),
-        params_basics_handle.rerand_ksk_params(),
-    ) {
+    let cpk_re_randomization_ksk = match (params.pksk_params(), params.rerand_ksk_params()) {
         (Some(_pksk_params), Some(cpk_re_randomization_ksk_params)) => {
-            if params_basics_handle.rerand_ksk_reuses_pksk() {
+            if params.rerand_ksk_reuses_pksk() {
                 Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
             } else {
                 Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
@@ -755,10 +737,7 @@ where
     };
 
     // If needed, compute the sns compression keys
-    let sns_compression_key = match (
-        params.sns().is_some(),
-        params_basics_handle.sns_compression_params(),
-    ) {
+    let sns_compression_key = match (params.sns().is_some(), params.sns_compression_params()) {
         (true, Some(comp_params)) => Some(
             generate_compressed_sns_compression_keys(
                 &private_key_set
@@ -831,8 +810,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
-    let params_basics_handle = params;
-    let seed = sample_seed(params_basics_handle.sec(), session, preprocessing).await?;
+    let seed = sample_seed(params.sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
         Z128,
@@ -840,7 +818,7 @@ where
         EXTENSION_DEGREE,
     >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
-    let params = params_basics_handle
+    let params = params
         .compression_decompression_params()
         .ok_or_else(|| anyhow::anyhow!("missing (de)compression parameters"))?;
 
@@ -873,8 +851,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
-    let params_basics_handle = params;
-    let seed = sample_seed(params_basics_handle.sec(), session, preprocessing).await?;
+    let seed = sample_seed(params.sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     // QU: Do we want to use the same DSEP as in the regualr KG?
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
@@ -883,7 +860,7 @@ where
         EXTENSION_DEGREE,
     >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
-    let params = params_basics_handle
+    let params = params
         .compression_decompression_params()
         .ok_or_else(|| anyhow::anyhow!("missing (de)compression parameters"))?;
 
@@ -916,12 +893,10 @@ async fn generate_compressed_oprf_bootstrap_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let params_basics_handle = params;
-
     generate_compressed_bootstrap_key(
         glwe_secret_key_share,
         oprf_lwe_secret_key_share,
-        params_basics_handle.bk_params(),
+        params.bk_params(),
         mpc_encryption_rng,
         session,
         preprocessing,
@@ -1674,10 +1649,9 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        let params_handle = params;
         let batch_size = BatchParams {
-            triples: params_handle.total_triples_required(keyset_config),
-            randoms: params_handle.total_randomness_required(keyset_config),
+            triples: params.total_triples_required(keyset_config),
+            randoms: params.total_randomness_required(keyset_config),
         };
 
         let mut small_preproc = SecureSmallPreprocessing::default()
@@ -2363,9 +2337,8 @@ pub mod tests {
         use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
-        let params_basics = params;
-        let lwe_dim = params_basics.lwe_dimension().0;
-        let ciphertext_params = params_basics.classic_pbs();
+        let lwe_dim = params.lwe_dimension().0;
+        let ciphertext_params = params.classic_pbs();
         let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
         let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
 

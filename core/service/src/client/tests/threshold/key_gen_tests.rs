@@ -1068,7 +1068,6 @@ fn try_reconstruct_shares(
         private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
     };
 
-    let param_handle = param;
     // Cast to Z64 before reconstruction
     let lwe_shares = all_threshold_fhe_keys
         .iter()
@@ -1083,7 +1082,7 @@ fn try_reconstruct_shares(
             )
         })
         .collect();
-    let lwe_secret_key = reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
+    let lwe_secret_key = reconstruct_bit_vec(lwe_shares, param.lwe_dimension().0, threshold);
     let lwe_secret_key =
         tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(lwe_secret_key);
 
@@ -1100,11 +1099,7 @@ fn try_reconstruct_shares(
             )
         })
         .collect();
-    _ = reconstruct_bit_vec(
-        lwe_enc_shares,
-        param_handle.lwe_hat_dimension().0,
-        threshold,
-    );
+    _ = reconstruct_bit_vec(lwe_enc_shares, param.lwe_hat_dimension().0, threshold);
 
     // normal keygen should always give us a z128 glwe
     let glwe_shares = all_threshold_fhe_keys
@@ -1122,8 +1117,8 @@ fn try_reconstruct_shares(
         })
         .collect::<HashMap<_, _>>();
     let glwe_sk = GlweSecretKeyOwned::from_container(
-        reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold),
-        param_handle.polynomial_size(),
+        reconstruct_bit_vec(glwe_shares, param.glwe_sk_num_bits(), threshold),
+        param.polynomial_size(),
     );
 
     let sns_lwe_shares = all_threshold_fhe_keys
@@ -1194,7 +1189,7 @@ fn try_reconstruct_shares(
         Some(
             tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
                 oprf_lwe_shares,
-                param_handle.lwe_dimension().0,
+                param.lwe_dimension().0,
                 threshold,
             )),
         )

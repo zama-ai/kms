@@ -275,29 +275,27 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     preprocessing_base: &mut dyn BasePreprocessing<Z>,
     preprocessing_bits: &mut dyn BitPreprocessing<Z>,
 ) -> anyhow::Result<()> {
-    let params_basics_handles = params;
-
     //Generate noise needed for pksk (if needed) and the key switch key
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_lwe_noise(keyset_config),
+            params.all_lwe_noise(keyset_config),
             preprocessing_bits,
         )?,
-        NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
+        NoiseBounds::LweNoise(params.lwe_tuniform_bound()),
     );
 
     //Generate noise needed for the pksk (if needed), the bootstrap key
     //and the decompression key
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_glwe_noise(keyset_config),
+            params.all_glwe_noise(keyset_config),
             preprocessing_bits,
         )?,
-        NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
+        NoiseBounds::GlweNoise(params.glwe_tuniform_bound()),
     );
 
     // Generate noise needed for compression key
-    let ksk_noise = params_basics_handles.all_compression_ksk_noise(keyset_config);
+    let ksk_noise = params.all_compression_ksk_noise(keyset_config);
     prep.append_noises(
         RealSecretDistributions::from_noise_info(ksk_noise, preprocessing_bits)?,
         ksk_noise.bound,
@@ -334,26 +332,26 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     //Generate noise needed for the pk
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_lwe_hat_noise(keyset_config),
+            params.all_lwe_hat_noise(keyset_config),
             preprocessing_bits,
         )?,
-        NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
+        NoiseBounds::LweHatNoise(params.lwe_hat_tuniform_bound()),
     );
 
     //Fill in the required number of _raw_ bits
-    let num_bits_required = params_basics_handles.num_raw_bits(keyset_config);
+    let num_bits_required = params.num_raw_bits(keyset_config);
 
     prep.append_bits(preprocessing_bits.next_bit_vec(num_bits_required)?);
 
     //Fill in the required number of triples
-    let num_triples_required = params_basics_handles.total_triples_required(keyset_config)
-        - params_basics_handles.total_bits_required(keyset_config);
+    let num_triples_required =
+        params.total_triples_required(keyset_config) - params.total_bits_required(keyset_config);
 
     prep.append_triples(preprocessing_base.next_triple_vec(num_triples_required)?);
 
     //Fill in the required number of randomness
-    let num_randomness_required = params_basics_handles.total_randomness_required(keyset_config)
-        - params_basics_handles.total_bits_required(keyset_config);
+    let num_randomness_required =
+        params.total_randomness_required(keyset_config) - params.total_bits_required(keyset_config);
     prep.append_randoms(preprocessing_base.next_random_vec(num_randomness_required)?);
 
     Ok(())
