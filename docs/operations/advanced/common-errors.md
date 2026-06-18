@@ -14,13 +14,13 @@ A non-exhaustive list of issues that can be faced when using/developing the KMS 
 ## Frequent errors and how to fix them
 
 ```jsx
-error: unexpected argument '--pub-url' found  
+error: unexpected argument '--pub-url' found
 ```
 
 Or
 
 ```jsx
-error: unexpected argument '--priv-url' found  
+error: unexpected argument '--priv-url' found
 ```
 
 You are using an old version and should use `--pub-path` or `--priv-path` instead , respectively.
@@ -39,7 +39,7 @@ This typically occurs if you are setting a tracer multiple times, e.g. through `
 No PRSS setup exists
 ```
 
-The threshold servers have not executed the `init` step to ensure that preprocessed material is there. This should be done automatically by the CI during the launching process, but can also be done manually from the CI https://github.com/zama-ai/kms-core/blob/main/core/service/src/bin/kms-init.rs. However, be aware that this must be done for all parties at the same time.  E.g like a command like this 
+The threshold servers have not executed the `init` step to ensure that preprocessed material is there. This should be done automatically by the CI during the launching process, but can also be done manually from the CI https://github.com/zama-ai/kms-core/blob/main/core/service/src/bin/kms-init.rs. However, be aware that this must be done for all parties at the same time.  E.g like a command like this
 
 ```jsx
 kms-init --addresses http://kms-threshold-1-threshold-core_kms-threshold_svc_50100.mesh:80 http://kms-threshold-2-threshold-core_kms-threshold_svc_50100.mesh:80 http://kms-threshold-3-threshold-core_kms-threshold_svc_50100.mesh:80 http://kms-threshold-4-threshold-core_kms-threshold_svc_50100.mesh:80
@@ -58,18 +58,18 @@ The PRSS Setup file should be stored under `keys/PRIV-pX/PrssSetup/000..0001` in
 
 ```jsx
 2024-12-12T01:06:15.064372Z ERROR distributed_decryption::networking::grpc: msg="unknown session id SessionId(44080023662513787892309259147087
-241115) for from sender Identity(\"kms-threshold-3-threshold-core:50001\") (round 1)"                                                         
+241115) for from sender Identity(\"kms-threshold-3-threshold-core:50001\") (round 1)"
 2024-12-12T01:06:15.065783Z ERROR distributed_decryption::networking::grpc: msg="unknown session id SessionId(44080023662513787892309259147087
-241115) for from sender Identity(\"kms-threshold-2-threshold-core:50001\") (round 1)"                                                         
+241115) for from sender Identity(\"kms-threshold-2-threshold-core:50001\") (round 1)"
 2024-12-12T01:06:15.452221Z ERROR distributed_decryption::networking::grpc: msg="unknown session id SessionId(44080023662513787892309259147087
-241115) for from sender Identity(\"kms-threshold-2-threshold-core:50001\") (round 1)"                                                         
+241115) for from sender Identity(\"kms-threshold-2-threshold-core:50001\") (round 1)"
 2024-12-12T01:06:15.570908Z ERROR distributed_decryption::networking::grpc: msg="unknown session id SessionId(44080023662513787892309259147087
-241115) for from sender Identity(\"kms-threshold-3-threshold-core:50001\") (round 1)"                                                         
+241115) for from sender Identity(\"kms-threshold-3-threshold-core:50001\") (round 1)"
 2024-12-12T01:06:16.055237Z ERROR distributed_decryption::networking::grpc: msg="unknown session id SessionId(44080023662513787892309259147087
-241115) for from sender Identity(\"kms-threshold-2-threshold-core:50001\") (round 1)"                                                         
+241115) for from sender Identity(\"kms-threshold-2-threshold-core:50001\") (round 1)"
 2024-12-12T01:10:39.102007Z ERROR grpc_request{endpoint="/kms.CoreServiceEndpoint/GetDecryptResult" trace_id=a61cf5b10cc568f7cc38683d000b80fea
 5fef7c3 request_id=a61cf5b10cc568f7cc38683d000b80fea5fef7c3 trace_id="521986241ce54ddc3e07d286876388d8"}: tower_http::trace::on_failure: respo
-nse failed classification=Code: 14 latency=0 ms 
+nse failed classification=Code: 14 latency=0 ms
 ```
 
 This "unknown session id" can happen if one party is a bit late (or the other party is too early, depends on your PoV) in theory however this should trigger a retry on the sender's party to let some time for the late party to catchup.
@@ -133,160 +133,17 @@ You probably have not build all the needed docker images or have old images pres
 ## Install errors
 
 - `The system library openssl required by crate openssl-sys was not found.`
-    
+
     Solution:    `sudo apt-get install libssl-dev`
-    
+
 
 ## Too many files error
 
-The error `"Too many open files”` on a Mac has an easy fix. Adding the `ulimit -n 1024` statement to your bash profile using **sudo nano .bash_profile** handles it. 
-
-## Failing blockchain connector integration test
-
-Encountering the following error can have different causes.
-
-```bash
----- test_blockchain_connector stdout ----
-thread 'test_blockchain_connector' panicked at blockchain/connector/tests/integration_test.rs:103:70:
-called `Result::unwrap()` on an `Err` value: Contract not found
-```
-
-The actual error should be visible on the kms full node, which can be seen by investigating the docker logs.
-
-- Example kms full node log, showing errors
-    
-    `2024-09-02 10:22:16 kms-full-node-1  | 8:22AM ERR failure when running app err="rpc error: code = Unknown desc = 
-    github.com/cosmos/cosmos-sdk/baseapp.gRPCErrorToSDKError
-    	github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1169
-    github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).handleQueryGRPC
-    	github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1141
-    github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).Query
-    	github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:177
-    github.com/cosmos/cosmos-sdk/server.cometABCIWrapper.Query
-    	github.com/cosmos/cosmos-sdk@v0.50.6/server/cmt_abci.go:24
-    github.com/cometbft/cometbft/abci/client.(*localClient).Query
-    	github.com/cometbft/cometbft@v0.38.6/abci/client/local_client.go:106
-    github.com/cometbft/cometbft/proxy.(*appConnQuery).Query
-    	github.com/cometbft/cometbft@v0.38.6/proxy/app_conn.go:181
-    github.com/cometbft/cometbft/rpc/core.(*Environment).ABCIQuery
-    	github.com/cometbft/cometbft@v0.38.6/rpc/core/abci.go:22
-    reflect.Value.call
-    	reflect/value.go:596
-    reflect.Value.Call
-    	reflect/value.go:380
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.makeJSONRPCHandler.func3
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:108
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.handleInvalidJSONRPCPaths.func4
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:140
-    net/http.HandlerFunc.ServeHTTP
-    	net/http/server.go:2136
-    net/http.(*ServeMux).ServeHTTP
-    	net/http/server.go:2514
-    github.com/cometbft/cometbft/node.(*Node).startRPC.(*Cors).Handler.func9
-    	github.com/rs/cors@v1.8.3/cors.go:236
-    net/http.HandlerFunc.ServeHTTP
-    	net/http/server.go:2136
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.maxBytesHandler.ServeHTTP
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:256
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.Serve.RecoverAndLogHandler.func1
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:229
-    net/http.HandlerFunc.ServeHTTP
-    	net/http/server.go:2136
-    net/http.serverHandler.ServeHTTP
-    	net/http/server.go:2938
-    net/http.(*conn).serve
-    	net/http/server.go:2009
-    rpc error: code = Unknown desc = failed to execute message; message index: 0: uncompress wasm archive: max 819200 bytes: exceeds limit: create wasm contract failed [cosmossdk.io/errors@v1.0.1/errors.go:151] with gas used: '2937699': unknown request"
-    
-    2024-09-02 10:22:17 kms-full-node-1  | 8:22AM ERR failure when running app err="rpc error: code = Unknown desc = 
-    github.com/cosmos/cosmos-sdk/baseapp.gRPCErrorToSDKError
-    	github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1169
-    github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).handleQueryGRPC
-    	github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1141
-    github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).Query
-    	github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:177
-    github.com/cosmos/cosmos-sdk/server.cometABCIWrapper.Query
-    	github.com/cosmos/cosmos-sdk@v0.50.6/server/cmt_abci.go:24
-    github.com/cometbft/cometbft/abci/client.(*localClient).Query
-    	github.com/cometbft/cometbft@v0.38.6/abci/client/local_client.go:106
-    github.com/cometbft/cometbft/proxy.(*appConnQuery).Query
-    	github.com/cometbft/cometbft@v0.38.6/proxy/app_conn.go:181
-    github.com/cometbft/cometbft/rpc/core.(*Environment).ABCIQuery
-    	github.com/cometbft/cometbft@v0.38.6/rpc/core/abci.go:22
-    reflect.Value.call
-    	reflect/value.go:596
-    reflect.Value.Call
-    	reflect/value.go:380
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.makeJSONRPCHandler.func3
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:108
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.handleInvalidJSONRPCPaths.func4
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:140
-    net/http.HandlerFunc.ServeHTTP
-    	net/http/server.go:2136
-    net/http.(*ServeMux).ServeHTTP
-    	net/http/server.go:2514
-    github.com/cometbft/cometbft/node.(*Node).startRPC.(*Cors).Handler.func9
-    	github.com/rs/cors@v1.8.3/cors.go:236
-    net/http.HandlerFunc.ServeHTTP
-    	net/http/server.go:2136
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.maxBytesHandler.ServeHTTP
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:256
-    github.com/cometbft/cometbft/rpc/jsonrpc/server.Serve.RecoverAndLogHandler.func1
-    	github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:229
-    net/http.HandlerFunc.ServeHTTP
-    	net/http/server.go:2136
-    net/http.serverHandler.ServeHTTP
-    	net/http/server.go:2938
-    net/http.(*conn).serve
-    	net/http/server.go:2009
-    rpc error: code = Unknown desc = failed to execute message; message index: 0: Error calling the VM: Error during static Wasm validation: Wasm contract requires unsupported import: \"__wbindgen_placeholder__.__wbindgen_describe\". Required imports: {\"__wbindgen_externref_xform__.__wbindgen_externref_table_grow\", \"__wbindgen_externref_xform__.__wbindgen_externref_table_set_null\", \"__wbindgen_placeholder__.__wbindgen_describe\", ... 1 more}. Available imports: [\"env.abort\", \"env.db_read\", \"env.db_write\", \"env.db_remove\", \"env.addr_validate\", \"env.addr_canonicalize\", \"env.addr_humanize\", \"env.secp256k1_verify\", \"env.secp256k1_recover_pubkey\", \"env.ed25519_verify\", \"env.ed25519_batch_verify\", \"env.debug\", \"env.query_chain\", \"env.db_scan\", \"env.db_next\", \"env.db_next_key\", \"env.db_next_value\"].: create wasm contract failed [CosmWasm/wasmd/x/wasm/keeper/keeper.go:175] with gas used: '1861243': unknown request"`
-    
-
-The above errors were likely caused by using the `getrandom` package with the `js` feature in the `tendermint` and `asc` contracts `Cargo.toml`. This however was required, since we wanted to use `ethers::U256` in the connector. The reason is probably incomplete `wasm` support of some of these features.
-
-Another error occurred was us exceeding some **smart contract size limit** with the ASC after adding too many values to the `OperationValues` being processed in another case.
-
-The error looked like this:
-
-- Error log showing exceeded size during ASC deployment
-    
-    ```
-    ERR failure when running app err="rpc error: code = Unknown desc =
-    [github.com/cosmos/cosmos-sdk/baseapp.gRPCErrorToSDKError](http://github.com/cosmos/cosmos-sdk/baseapp.gRPCErrorToSDKError)[github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1169](http://github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1169)[github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp](http://github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp)).handleQueryGRPC
-    [github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1141](http://github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:1141)[github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp](http://github.com/cosmos/cosmos-sdk/baseapp.(*BaseApp)).Query
-    [github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:177](http://github.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:177)[github.com/cosmos/cosmos-sdk/server.cometABCIWrapper.Query](http://github.com/cosmos/cosmos-sdk/server.cometABCIWrapper.Query)[github.com/cosmos/cosmos-sdk@v0.50.6/server/cmt_abci.go:24](http://github.com/cosmos/cosmos-sdk@v0.50.6/server/cmt_abci.go:24)[github.com/cometbft/cometbft/abci/client.(*localClient](http://github.com/cometbft/cometbft/abci/client.(*localClient)).Query
-    [github.com/cometbft/cometbft@v0.38.6/abci/client/local_client.go:106](http://github.com/cometbft/cometbft@v0.38.6/abci/client/local_client.go:106)[github.com/cometbft/cometbft/proxy.(*appConnQuery](http://github.com/cometbft/cometbft/proxy.(*appConnQuery)).Query
-    [github.com/cometbft/cometbft@v0.38.6/proxy/app_conn.go:181](http://github.com/cometbft/cometbft@v0.38.6/proxy/app_conn.go:181)[github.com/cometbft/cometbft/rpc/core.(*Environment](http://github.com/cometbft/cometbft/rpc/core.(*Environment)).ABCIQuery
-    [github.com/cometbft/cometbft@v0.38.6/rpc/core/abci.go:22](http://github.com/cometbft/cometbft@v0.38.6/rpc/core/abci.go:22)
-    reflect.Value.call
-    reflect/value.go:596
-    reflect.Value.Call
-    reflect/value.go:380
-    [github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.makeJSONRPCHandler.func3](http://github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.makeJSONRPCHandler.func3)[github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:108](http://github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:108)[github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.handleInvalidJSONRPCPaths.func4](http://github.com/cometbft/cometbft/rpc/jsonrpc/server.RegisterRPCFuncs.handleInvalidJSONRPCPaths.func4)[github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:140](http://github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_json_handler.go:140)
-    net/http.HandlerFunc.ServeHTTP
-    net/http/server.go:2136
-    net/http.(*ServeMux).ServeHTTP
-    net/http/server.go:2514
-    [github.com/cometbft/cometbft/node.(*Node](http://github.com/cometbft/cometbft/node.(*Node)).startRPC.(*Cors).Handler.func9
-    [github.com/rs/cors@v1.8.3/cors.go:236](http://github.com/rs/cors@v1.8.3/cors.go:236)
-    net/http.HandlerFunc.ServeHTTP
-    net/http/server.go:2136
-    [github.com/cometbft/cometbft/rpc/jsonrpc/server.maxBytesHandler.ServeHTTP](http://github.com/cometbft/cometbft/rpc/jsonrpc/server.maxBytesHandler.ServeHTTP)[github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:256](http://github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:256)[github.com/cometbft/cometbft/rpc/jsonrpc/server.Serve.RecoverAndLogHandler.func1](http://github.com/cometbft/cometbft/rpc/jsonrpc/server.Serve.RecoverAndLogHandler.func1)[github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:229](http://github.com/cometbft/cometbft@v0.38.6/rpc/jsonrpc/server/http_server.go:229)
-    net/http.HandlerFunc.ServeHTTP
-    net/http/server.go:2136
-    net/http.serverHandler.ServeHTTP
-    net/http/server.go:2938
-    net/http.(*conn).serve
-    net/http/server.go:2009
-    rpc error: code = Unknown desc = failed to execute message; message index: 0: uncompress wasm archive: max 819200 bytes: exceeds limit: create wasm contract failed [[cosmossdk.io/errors@v1.0.1/errors.go:151](http://cosmossdk.io/errors@v1.0.1/errors.go:151)] with gas used: '2678783': unknown request"
-    ```
-    
-
-A workaround was to go from normal size optimization to aggressive size optimization using `wasm-opt`, i.e. changing `-Os` to `-Oz` in the `dev.dockerfile` that builds and optimizes the ASC. Alternative optimizers like [cosmwasm optimizer](https://github.com/CosmWasm/optimizer) might be another idea. We might also need a more generic solution in the future that reduces code size by design. Maybe splitting up the ASC into multiple contracts. More details here: https://github.com/zama-ai/kms-core/issues/1230.
+The error `"Too many open files”` on a Mac has an easy fix. Adding the `ulimit -n 1024` statement to your bash profile using **sudo nano .bash_profile** handles it.
 
 ## Blockchain time out when getting response
 
-This is probably an issue with the docker images. Delete the old ones and build them again using 
+This is probably an issue with the docker images. Delete the old ones and build them again using
 
 ```rust
 docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build
@@ -295,7 +152,7 @@ docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-central
 
 ## Missing field in ASC
 
-If there's an `missing field <field name>` issue in ASC, for example when running the simulator tests. Check that the field parameter in the contract function matches the `serde(rename(...))` proc macro in `blockchain/events/src/kms.rs` . For example, the function below has the field `verify_proven_ct`. 
+If there's an `missing field <field name>` issue in ASC, for example when running the simulator tests. Check that the field parameter in the contract function matches the `serde(rename(...))` proc macro in `blockchain/events/src/kms.rs` . For example, the function below has the field `verify_proven_ct`.
 
 ```rust
     #[sv::msg(exec)]
@@ -332,9 +189,9 @@ thread 'test_blockchain_connector' panicked at blockchain/connector/tests/integr
 called `Result::unwrap()` on an `Err` value: Transaction error QueryError("Transaction found for \"82C6A5F04377E3B31F72A3111E2B629AB193D04DF8B6614708614772E6CD7E06\" with error code 5 and message \"\\ngithub.com/CosmWasm/wasmd/x/wasm/keeper.Keeper.execute\\n\\tgithub.com/CosmWasm/wasmd/x/wasm/keeper/keeper.go:422\\ngithub.com/CosmWasm/wasmd/x/wasm/keeper.msgServer.ExecuteContract\\n\\tgithub.com/CosmWasm/wasmd/x/wasm/keeper/msg_server.go:124\\ngithub.com/CosmWasm/wasmd/x/wasm/types._Msg_ExecuteContract_Handler.func1\\n\\tgithub.com/CosmWasm/wasmd/x/wasm/types/tx.pb.go:2265\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*MsgServiceRouter).registerMsgServiceHandler.func2.1\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/msg_service_router.go:175\\ngithub.com/CosmWasm/wasmd/x/wasm/types._Msg_ExecuteContract_Handler\\n\\tgithub.com/CosmWasm/wasmd/x/wasm/types/tx.pb.go:2267\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*MsgServiceRouter).registerMsgServiceHandler.func2\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/msg_service_router.go:198\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).runMsgs\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/baseapp.go:1010\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).runTx\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/baseapp.go:948\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).deliverTx\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/baseapp.go:763\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).internalFinalizeBlock\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:790\\ngithub.com/cosmos/cosmos-sdk/baseapp.(*BaseApp).FinalizeBlock\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/baseapp/abci.go:884\\ngithub.com/cosmos/cosmos-sdk/server.cometABCIWrapper.FinalizeBlock\\n\\tgithub.com/cosmos/cosmos-sdk@v0.50.6/server/cmt_abci.go:44\\ngithub.com/cometbft/cometbft/abci/client.(*localClient).FinalizeBlock\\n\\tgithub.com/cometbft/cometbft@v0.38.6/abci/client/local_client.go:185\\ngithub.com/cometbft/cometbft/proxy.(*appConnConsensus).FinalizeBlock\\n\\tgithub.com/cometbft/cometbft@v0.38.6/proxy/app_conn.go:104\\ngithub.com/cometbft/cometbft/state.(*BlockExecutor).ApplyBlock\\n\\tgithub.com/cometbft/cometbft@v0.38.6/state/execution.go:213\\ngithub.com/cometbft/cometbft/consensus.(*State).finalizeCommit\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:1771\\ngithub.com/cometbft/cometbft/consensus.(*State).tryFinalizeCommit\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:1682\\ngithub.com/cometbft/cometbft/consensus.(*State).enterCommit.func1\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:1617\\ngithub.com/cometbft/cometbft/consensus.(*State).enterCommit\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:1655\\ngithub.com/cometbft/cometbft/consensus.(*State).addVote\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:2334\\ngithub.com/cometbft/cometbft/consensus.(*State).tryAddVote\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:2066\\ngithub.com/cometbft/cometbft/consensus.(*State).handleMsg\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:929\\ngithub.com/cometbft/cometbft/consensus.(*State).receiveRoutine\\n\\tgithub.com/cometbft/cometbft@v0.38.6/consensus/state.go:856\\nfailed to execute message; message index: 0: Error parsing into type tendermint_ipsc::contract::sv::ContractExecMsg: Unsupported message received: {\\\"decrypt\\\":{\\\"decrypt\\\":{\\\"acl_address\\\":\\\"0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE\\\",\\\"ciphertext_handles\\\":[\\\"00000000000101010101\\\"],\\\"eip712_chain_id\\\":\\\"6565656565656565656565656565656565656565656565656565656565656565\\\",\\\"eip712_name\\\":\\\"eip712name\\\",\\\"eip712_salt\\\":\\\"\\\",\\\"eip712_verifying_contract\\\":\\\"0x33dA6bF26964af9d7eed9e03E53415D37aA960EE\\\",\\\"eip712_version\\\":\\\"1\\\",\\\"external_handles\\\":[\\\"01000000000101010101\\\"],\\\"fhe_types\\\":[\\\"euint8\\\"],\\\"key_id\\\":\\\"010203\\\",\\\"proof\\\":\\\"some_proof\\\",\\\"version\\\":1}}}. Messages supported by this contract: verify_proof: execute wasm contract failed\"")
 ```
 
-If you dive into the logs from Docker you may find the following line in the log `max 819200 bytes: exceeds limit: create wasm contract failed [[cosmossdk.io/errors@v1.0.1/errors.go:151](http://cosmossdk.io/errors@v1.0.1/errors.go:151)] with gas used: '2786840': unknown request"` 
+If you dive into the logs from Docker you may find the following line in the log `max 819200 bytes: exceeds limit: create wasm contract failed [[cosmossdk.io/errors@v1.0.1/errors.go:151](http://cosmossdk.io/errors@v1.0.1/errors.go:151)] with gas used: '2786840': unknown request"`
 
-Basically the smart contract is too big. You can try to optimize it more aggresively as suggested [here](https://github.com/zama-ai/kms-core/issues/1230) 
+Basically the smart contract is too big. You can try to optimize it more aggresively as suggested [here](https://github.com/zama-ai/kms-core/issues/1230)
 
 Otherwise something more drastic is needed…
 
@@ -342,7 +199,7 @@ Otherwise something more drastic is needed…
 
 The following code snippet can be called for example from a unit test to see proper tracing logs.
 
-It does the following things and can naturally be customized accordingly: 
+It does the following things and can naturally be customized accordingly:
 
 - it shows `DEBUG` logs for `kms` (core service) and `distributed-decryption` (core engine) and restricts tonic to `INFO` logs (the debug ones are excessive).
 - It writes the logs to a file (`mylog.log`).
@@ -415,7 +272,7 @@ in docker logs, for KMS validator service,  if you get :
 Ethereum ASC contract address: transaction failed for ethereum-asc
 ```
 
-instead of something like 
+instead of something like
 
 ```jsx
 Ethereum ASC contract address: wasm1nc5tatafv6eyq7llkr2gv50ff9e22mnf70qgjlv737ktmt4eswrqr5j2ht
@@ -469,7 +326,7 @@ assertion `left == right` failed
 
 ## `"We can't deserialize our own validated sks key"` from fhevm-backend
 
-If you get an error like : 
+If you get an error like :
 
 ```jsx
 2024-11-06 18:24:35 We can't deserialize our own validated sks key: DeserializationError("invalid value: integer `1`, expected variant index 0 <= i < 1")
@@ -480,17 +337,17 @@ If you get an error like :
     - it is triggered by tfhe-rs but the error message is not caught
 - solution was to update the coprocessor image used in the l1 demo :
     - update image in `docker-compose.yaml` from `work_dir/fhevm-backend/fhevm-engine/coprocessor` from :
-    
+
     ```jsx
       coproc:
         image: ghcr.io/zama-ai/fhevm-coprocessor:v0.1.0-3
     ```
-    
+
     - this new image uses tfhe-rs 0.9, while the old one (version `v9` was using tfhe-rs 0.8)
 
 ## `message: "account wasm1z6rlvnjrm5nktcvt75x9yera4gu48jflhy2ysv not found"`
 
-if you get something like : 
+if you get something like :
 
 ```jsx
 2024-11-06T10:21:02.918330Z  INFO gateway::blockchain::kms_blockchain: 🍊 Decrypting ciphertexts of total size: 2082
@@ -503,7 +360,7 @@ Caused by:
 
 you most likely have a config issue with the gateway and/or the connector’s toml files.
 
-In our case, the issue happened when running e2e test with the deployed tkms : 
+In our case, the issue happened when running e2e test with the deployed tkms :
 
 - a new wallet was needed for sending transactions to marcus' deployed blockchain, for which we had a new mnemonic
 - the issue was that only the connector's mnemonic (`default.toml`) was changed
@@ -525,7 +382,7 @@ Another reason could be that the specified wallet never appeared in a tx before,
 
 ## `test_blockchain_connector` failes with timeout
 
-If you get something like 
+If you get something like
 
 ```jsx
 thread 'test_blockchain_connector' panicked at blockchain/connector/tests/integration_test.rs:192:18:
@@ -542,17 +399,17 @@ And checking logs seems to tell you that some responses are not properly sent to
     - (optional) add some `tracing::info` and run the test with `RUST_LOG=info`
     - go to the `full-node` docker container and exec `wasmd` commands in it to get more info :
         - if you have the `transactionId` , get the transaction :
-            
+
             ```jsx
             wasmd query wasm contract-state smart '$CONTRACT_ADDR' '{"get_transaction": {"txn_id":"$TXN_ID"}}'
             ```
-            
+
         - to get all transactions sent by the connector:
-            
+
             ```jsx
             wasmd query txs --query "message.sender='$CONNECTOR_ADDR'"
             ```
-            
+
             - in particular, check `raw_logs`
             - you can also see a what time these transactions were made with `timestamp`
 
@@ -581,17 +438,17 @@ Running the servers in docker results in a crash with something like the followi
 dev-kms-core-1-1 exited with code 137
 ```
 
-This is due to Docker running out of memory. By default Docker only uses 8 GB of memory, but to run tests, even for just 4 parties. Significantly more is needed. It is recommended to increase it to 24 Gb (although the tests for 4 parties will likely work with less). 
+This is due to Docker running out of memory. By default Docker only uses 8 GB of memory, but to run tests, even for just 4 parties. Significantly more is needed. It is recommended to increase it to 24 Gb (although the tests for 4 parties will likely work with less).
 
 Hence to fix the issue change your local Docker settings to ensure it has enough RAM
 
 ## Error loading from [ghcr.io](http://ghcr.io) during docker image generation
 
-Running the following results in an error 
+Running the following results in an error
 
 ```jsx
-docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build          
-[+] Building 12.4s (8/8) FINISHED                                                  
+docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
+[+] Building 12.4s (8/8) FINISHED
  => [internal] load local bake definitions                                    0.0s
  => => reading from stdin 3.40kB                                              0.0s
  => [dev-kms-core-3 internal] load build definition from Dockerfile           0.0s
@@ -617,7 +474,7 @@ echo '<classic PAT with Zama authorized>' | docker login ghcr.io -u <my_username
 
 ## Error loading from cgr.dev during docker image generation
 
-When trying to compile the docker images an error in relation to [cgr.dev](http://cgr.dev) or chainguard will be presented. 
+When trying to compile the docker images an error in relation to [cgr.dev](http://cgr.dev) or chainguard will be presented.
 
 For this to work you must ensure that you have configured a valid access toke to the chainguard images.
 
@@ -625,6 +482,6 @@ For this to work you must ensure that you have configured a valid access toke to
 
 **NOTE: never** use the tokens in CI or post them in the repo or other public places. The tokens are meant for local development.
 
-Navigate to this page [https://console.chainguard.dev/org/zama.ai/settings/pull-tokens](https://console.chainguard.dev/org/zama.ai/settings/pull-tokens) and then setup a new pull token and configure this in your command line using the suggested command after token generation. 
+Navigate to this page [https://console.chainguard.dev/org/zama.ai/settings/pull-tokens](https://console.chainguard.dev/org/zama.ai/settings/pull-tokens) and then setup a new pull token and configure this in your command line using the suggested command after token generation.
 
 If you do not have owner rights, or access to chainguard then request access in the Working-tools slack channel.
