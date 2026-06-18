@@ -706,6 +706,7 @@ where
             request_id,
             deterministic,
             // 1-based party id; NonZeroUsize by construction (saturates on overflow).
+            // computes storage_index + 1
             std::num::NonZeroUsize::MIN.saturating_add(storage_index),
             subject,
             tls_wildcard,
