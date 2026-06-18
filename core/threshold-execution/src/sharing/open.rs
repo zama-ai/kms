@@ -620,7 +620,7 @@ pub(crate) mod test {
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z128,
         sharing::shamir::{InputOp, ShamirSharings},
-        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Sample},
     };
     use threshold_types::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
@@ -769,6 +769,68 @@ pub(crate) mod test {
             10,
             NetworkMode::Async,
         ).await;
+    }
+
+    #[tokio::test]
+    async fn test_async_weak_reconstruction_starts_at_degree_plus_t() {
+        let num_parties = 13;
+        let threshold = 4_u8;
+        let degree = threshold as usize;
+
+        assert!(degree + 3 * (threshold as usize) >= num_parties);
+        assert!(degree + 2 * (threshold as usize) < num_parties);
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let secret = ResiduePolyF4Z128::sample(&mut rng);
+        let shares = ShamirSharings::<ResiduePolyF4Z128>::share(
+            &mut rng,
+            secret,
+            num_parties,
+            threshold as usize,
+        )
+        .unwrap()
+        .shares;
+
+        let own_role = Role::indexed_from_one(1);
+        let own_share = shares
+            .iter()
+            .find(|share| share.owner() == own_role)
+            .copied()
+            .unwrap();
+        let sharings = vec![ShamirSharings::create(vec![own_share])];
+
+        let mut jobs = tokio::task::JoinSet::new();
+
+        // Own share + 8 remote shares = 9 heard-from parties. This is enough for the weak
+        // async branch (`num_heard_from > degree + t`) but below the sync/strong-async bar.
+        for share in shares
+            .iter()
+            .filter(|share| (2..=9).contains(&share.owner().one_based()))
+        {
+            let contributor = share.owner();
+            let value = share.value();
+            jobs.spawn(async move {
+                Ok::<_, tokio::time::error::Elapsed>((
+                    contributor,
+                    Ok::<_, anyhow::Error>(vec![value]),
+                ))
+            });
+        }
+
+        let opened = super::try_reconstruct_from_shares(
+            num_parties,
+            threshold,
+            0,
+            sharings,
+            degree,
+            jobs,
+            NetworkMode::Async,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(opened, vec![secret]);
     }
 
     #[tokio::test]
