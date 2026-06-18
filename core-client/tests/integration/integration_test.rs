@@ -114,6 +114,7 @@ fn build_test_core_config(
         }),
         backup_vault: None,
         rate_limiter_conf: None,
+        bandwidth_benchmark: None,
         threshold: Some(ThresholdPartyConf {
             listen_address: "127.0.0.1".to_string(),
             listen_port: mpc_port,
