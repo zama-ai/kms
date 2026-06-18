@@ -142,17 +142,21 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
     ) -> anyhow::Result<Option<Vec<Z>>> {
         //Might need to chunk the opening into multiple ones due to network limits
         let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
-        let chunks: Vec<Vec<_>> = shares
-            .into_iter()
-            .chunks(chunk_size)
-            .into_iter()
-            .map(|chunk| chunk.collect())
-            .collect_vec();
+        let chunks: Vec<Vec<_>> = crate::hotpath_measure_block!("open::chunking", {
+            shares
+                .into_iter()
+                .chunks(chunk_size)
+                .into_iter()
+                .map(|chunk| chunk.collect())
+                .collect_vec()
+        });
         let mut result = Vec::new();
         for chunked_shares in chunks {
-            match self
-                .execute(session, OpeningKind::ToAll(chunked_shares), degree)
-                .await?
+            match crate::hotpath_measure_async!(
+                "open::execute_to_all",
+                self.execute(session, OpeningKind::ToAll(chunked_shares), degree)
+            )
+            .await?
             {
                 Some(res) => result.extend(res),
                 None => return Ok(None),

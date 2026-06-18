@@ -138,6 +138,33 @@ async fn default_decryption_threshold(
     .await;
 }
 
+// Same as default_decryption_threshold but BitDecSmall, which exercises the mult_list/open_list path heavily.
+#[cfg(feature = "slow_tests")]
+#[rstest::rstest]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
+#[tokio::test(flavor = "multi_thread")]
+async fn default_decryption_threshold_bitdec(
+    #[case] msg: Vec<TestingPlaintext>,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+) {
+    decryption_threshold(
+        DEFAULT_PARAM,
+        key_id,
+        msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        parallelism,
+        amount_parties,
+        None,
+        Some(DecryptionMode::BitDecSmall),
+    )
+    .await;
+}
+
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
@@ -202,6 +229,16 @@ pub async fn decryption_threshold(
     decryption_mode: Option<DecryptionMode>,
 ) {
     assert!(parallelism > 0);
+
+    // Set KMS_HOTPATH to print an allocation/timing report on drop (build with --features hotpath[,hotpath-alloc]).
+    #[cfg(feature = "hotpath")]
+    let _hotpath_guard = std::env::var_os("KMS_HOTPATH").map(|_| {
+        hotpath::HotpathGuardBuilder::new("kms::test::decryption_threshold")
+            .percentiles(&[50.0, 95.0, 99.0])
+            .limit(0)
+            .build()
+    });
+
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * parallelism,
         pub_decrypt: 100,

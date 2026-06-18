@@ -155,10 +155,12 @@ pub async fn open_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     to_open: &[Share<Z>],
     session: &Ses,
 ) -> anyhow::Result<Vec<Z>> {
-    let parsed_to_open = to_open
-        .iter()
-        .map(|cur_open| cur_open.value())
-        .collect_vec();
+    let parsed_to_open = crate::hotpath_measure_block!("open::parsed_to_open", {
+        to_open
+            .iter()
+            .map(|cur_open| cur_open.value())
+            .collect_vec()
+    });
     let opened_vals: Vec<Z> = match SecureRobustOpen::default()
         .robust_open_list_to_all(session, parsed_to_open, session.threshold() as usize)
         .await?
