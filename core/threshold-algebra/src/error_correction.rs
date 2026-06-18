@@ -522,6 +522,9 @@ pub fn error_correction<F: Field>(
 /// embedding, Lagrange polynomial, and vanishing polynomial computations.
 ///
 /// `field_hints` must have been built from the same __ordered list__ of parties that own the `shares`.
+// `ys` is a scratch buffer only. If decoding fails, callers must not rely on its contents.
+#[allow(unknown_lints)] // `non_local_effect_before_error_return` is a dylint-only lint
+#[allow(non_local_effect_before_error_return)]
 pub fn error_correction_with_field_hints<F: Field>(
     shares: &[Share<F>],
     degree: usize,
