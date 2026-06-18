@@ -334,7 +334,7 @@ fn test_dkg_orchestrator_large(
         };
         write_element(
             params
-                .prefix_path()
+                .generate_testing_prefix()
                 .join("ORCHESTRATOR")
                 .join(format!("sk_p{party_id}.der")),
             &sk,
@@ -343,7 +343,10 @@ fn test_dkg_orchestrator_large(
     }
     let pk_ref = pk_ref.unwrap();
     write_element(
-        params.prefix_path().join("ORCHESTRATOR").join("pk.der"),
+        params
+            .generate_testing_prefix()
+            .join("ORCHESTRATOR")
+            .join("pk.der"),
         &pk_ref,
     )
     .unwrap();
@@ -358,7 +361,7 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     // `get_params_without_sns()` behavior this replaced).
     let mut params = PARAMS_TEST_BK_SNS.remove_sns_parameters();
     params.dkg_mode = DkgMode::Z64;
-    fs::create_dir_all(params.prefix_path().join("ORCHESTRATOR")).unwrap();
+    fs::create_dir_all(params.generate_testing_prefix().join("ORCHESTRATOR")).unwrap();
     let num_sessions = 10;
     let num_parties = 5;
     let threshold = 1;

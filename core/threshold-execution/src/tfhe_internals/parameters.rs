@@ -1,42 +1,11 @@
-//! Flattened, `MetaParameters`-backed reimplementation of `DKGParams`.
+//! Flattened, `MetaParameters`-backed `DKGParams`.
 //!
-//! This is a work-in-progress alternative to [`super::parameters::DKGParams`].
-//! The goal is to stop duplicating the tfhe-rs crypto-parameter layout inside
-//! KMS and instead carry a single [`tfhe::shortint::parameters::MetaParameters`]
-//! plus the few values tfhe-rs has no concept of (`dkg_mode`, `sec`,
-//! `secret_key_deviations`).
-//!
-//! ## Differences vs `parameters.rs` (all behavior-preserving)
-//!
-//! 1. **One flat struct instead of the `WithoutSnS`/`WithSnS` enum.** The
-//!    discriminant maps exactly to `noise_squashing_parameters.is_some()`
-//!    (`DKGParamsSnS.sns_params` is non-optional, so `WithSnS` always carries
-//!    SnS data, and `DKGParamsRegular` never does). This removes the entire
-//!    `DKGParamsSnS` impl that just forwarded to `regular_params`, and the
-//!    per-variant `From`/`TryFrom` glue.
-//!
-//! 2. **`SnsView` for SnS-only accessors.** Instead of methods that each assume
-//!    an SnS variant, the `*_sns` methods live on a view obtained once via
-//!    [`DKGParams::sns`], so callers check the `Option` once per scope rather
-//!    than per call.
-//!
-//! 3. **`SnS ⇒ Z128` is enforced, not coerced.** The legacy
-//!    `DKGParamsSnS::dkg_mode()` ignored the stored mode and always returned
-//!    `Z128`, which can hide a malformed value. Here the real `dkg_mode` is
-//!    stored and the invariant is checked explicitly in
-//!    [`DKGParams::check_conformance`].
-//!
-//! The budget arithmetic (bits / triples / randomness / noise) is a faithful
-//! port of `parameters.rs`; it reuses the very same helper functions
-//! (`combine_noise_info`, `compute_prob_hw_within_range`, `compute_min_trials`)
-//! so the two implementations cannot drift. The `budgets_match_legacy_for_all_params`
-//! test below pins this equivalence for every shipped parameter set.
+//! This carries a [`tfhe::shortint::parameters::MetaParameters`] plus the
+//! few values tfhe-rs has no concept of (`dkg_mode`, `sec`, `secret_key_deviations`).
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use statrs::distribution::{Binomial, DiscreteCDF};
-use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
 use std::sync::LazyLock;
 use tfhe::core_crypto::commons::ciphertext_modulus::CiphertextModulus;
 use tfhe::integer::parameters::DecompositionBaseLog;
@@ -410,14 +379,17 @@ impl DKGParams {
     }
 
     pub fn compact_pk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
-        //If we are using old style keys, there's no separate CompactPublicKeyEncryptionParameters
         self.dedicated_compact_pk_parameters().map_or_else(
             || {
-                (<ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(
+                // No dedicated compact public key: derive the CPK encryption
+                // parameters from the compute parameters (i.e. no dedicated pk).
+                // `TryFrom<PBSParameters> for CompactPublicKeyEncryptionParameters`
+                //  can fail in general but only for non-standard atomic patterns, which we reject in `check_conformance()`.
+                <ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(
                     self.classic_pbs(),
-                ))
+                )
                 .try_into()
-                .unwrap()
+                .expect("PBS parameters yield valid CPK encryption parameters")
             },
             |p| p.pke_params,
         )
@@ -539,20 +511,20 @@ impl DKGParams {
         PBSOrder::from(self.encryption_key_choice())
     }
 
-    /// Returns a path based on message/carry modulus, whether SnS is present,
-    /// whether compression is present, and a hash of the whole parameter set
-    /// (to keep otherwise-identical-looking sets from clashing).
+    /// A `temp/dkg/...` path that identifies this parameter set, used **only by
+    /// tests** to locate cached key material. The suffix hashes the serialized
+    /// parameters, so it is stable across runs for a given set (and more stable
+    /// across versions than hashing the `Debug` string would be).
     ///
-    /// __Any two sets of parameters that share these characteristics will have
-    /// the same prefix path, which may result in a clash.__
-    pub fn prefix_path(&self) -> PathBuf {
+    /// __Any two parameter sets that share message/carry modulus, SnS presence,
+    /// and compression presence and hash identically will collide.__
+    #[cfg(any(test, feature = "testing"))]
+    pub fn generate_testing_prefix(&self) -> std::path::PathBuf {
         let mut h = std::hash::DefaultHasher::new();
-        // `DKGParams` is not `Serialize`; its `Debug` representation is a
-        // faithful, deterministic rendering of every field, which is enough to
-        // disambiguate parameter sets here.
-        format!("{self:?}").hash(&mut h);
-        let hash = h.finish();
-        PathBuf::from(format!(
+        let serialized = bc2wrap::serialize(self).expect("DKGParams is serializable");
+        std::hash::Hash::hash(&serialized, &mut h);
+        let hash = std::hash::Hasher::finish(&h);
+        std::path::PathBuf::from(format!(
             "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_{}_compression_{}_{}",
             self.message_modulus().0,
             self.carry_modulus().0,
@@ -953,7 +925,7 @@ impl DKGParams {
     pub fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         let mut bits = self.regular_num_raw_bits(keyset_config);
 
-        // ⚠️ DISCLAIMER — BEHAVIOR CHANGE vs `parameters.rs`.
+        // ⚠️ DISCLAIMER — BEHAVIOR CHANGE vs the legacy `parameters_old.rs`.
         //
         // The legacy `DKGParamsSnS::num_raw_bits` added the *raw* SnS key sizes
         // (`glwe_sk_num_bits_sns`, `sns_compression_sk_num_bits`), even though it
