@@ -306,11 +306,10 @@ mod test {
                 .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
                 .build()
         } else {
-            ConfigBuilder::with_custom_parameters(PARAMS_TEST_BK_SNS.classic_pbs())
-                .enable_compression(PARAMS_TEST_BK_SNS.compression().unwrap())
-                .use_dedicated_compact_public_key_parameters(
-                    PARAMS_TEST_BK_SNS.dedicated_pk_params().unwrap(),
-                )
+            let params = PARAMS_TEST_BK_SNS;
+            ConfigBuilder::with_custom_parameters(params.classic_pbs())
+                .enable_compression(params.compression().unwrap())
+                .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
                 .build()
         };
         let (client_key, server_key) = generate_keys(config);

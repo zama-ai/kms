@@ -91,7 +91,7 @@ pub mod tfhe_internals {
     // Legacy `DKGParams` representation, kept only as a test-only oracle for the
     // equivalence tests in `parameters.rs`. Not compiled into release builds.
     #[cfg(test)]
-    pub mod parameters_old;
+    pub(crate) mod parameters_old;
     #[cfg(feature = "non-wasm")]
     pub mod private_keysets;
     #[cfg(feature = "non-wasm")]

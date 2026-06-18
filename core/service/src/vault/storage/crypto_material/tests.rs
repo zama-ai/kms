@@ -328,7 +328,7 @@ async fn write_central_keys() {
         .into();
 
     let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("expect sns").sns_params();
+    let sns_params = param.sns().expect("sns param").sns_params();
     let config =
         ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
     let client_key = tfhe::ClientKey::generate(config);
@@ -457,7 +457,7 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             .into();
 
     let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("expect sns").sns_params();
+    let sns_params = param.sns().expect("sns param").sns_params();
     let config =
         ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
     let client_key = tfhe::ClientKey::generate(config);

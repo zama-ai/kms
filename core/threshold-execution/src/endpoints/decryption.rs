@@ -176,10 +176,7 @@ mod tests {
     #[test]
     fn test_packing_factor() {
         let block_param: ClassicPBSParameters = PARAMS_TEST_BK_SNS.classic_pbs();
-        let sns_param = PARAMS_TEST_BK_SNS
-            .sns()
-            .expect("expected sns params")
-            .sns_params();
+        let sns_param = PARAMS_TEST_BK_SNS.sns().expect("sns params").sns_params();
         let config = ConfigBuilder::with_custom_parameters(block_param)
             .enable_noise_squashing(sns_param)
             .build();

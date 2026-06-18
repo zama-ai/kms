@@ -1129,7 +1129,7 @@ fn try_reconstruct_shares(
             None => None,
         })
         .collect::<HashMap<_, _>>();
-    let dkg_sns_param = param.sns().expect("missing sns param");
+    let dkg_sns_param = param.sns().expect("sns param");
     let sns_glwe_sk = GlweSecretKeyOwned::from_container(
         reconstruct_bit_vec(
             sns_lwe_shares,
