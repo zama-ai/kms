@@ -138,17 +138,19 @@ impl Eip712DomainConfig {
         let verifying_contract =
             alloy_primitives::Address::from_str(self.verifying_contract.trim_start_matches("0x"))
                 .map_err(|e| {
-                    anyhow::anyhow!(
-                        "invalid verifying_contract '{}' in default_domain: {e}",
-                        self.verifying_contract
-                    )
-                })?;
+                anyhow::anyhow!(
+                    "invalid verifying_contract '{}' in default_domain: {e}",
+                    self.verifying_contract
+                )
+            })?;
         let salt = match &self.salt {
             Some(s) => {
                 let bytes = parse_hex(s)?;
-                Some(alloy_primitives::B256::try_from(bytes.as_slice()).map_err(|_| {
-                    anyhow::anyhow!("default_domain salt must be exactly 32 bytes")
-                })?)
+                Some(
+                    alloy_primitives::B256::try_from(bytes.as_slice()).map_err(|_| {
+                        anyhow::anyhow!("default_domain salt must be exactly 32 bytes")
+                    })?,
+                )
             }
             None => None,
         };
@@ -1128,14 +1130,14 @@ fn keygen_crs_verify_ctx(
     extra_data_cli: &Option<String>,
 ) -> anyhow::Result<Option<(alloy_sol_types::Eip712Domain, Vec<u8>)>> {
     if no_verify {
-        tracing::warn!(
-            "--no-verify set: fetching result WITHOUT external-signature verification"
-        );
+        tracing::warn!("--no-verify set: fetching result WITHOUT external-signature verification");
         return Ok(None);
     }
     let extra_data = match extra_data_cli {
         Some(s) => parse_hex(s)?,
-        None => cc_conf.default_extra_data()?.unwrap_or_else(default_extra_data),
+        None => cc_conf
+            .default_extra_data()?
+            .unwrap_or_else(default_extra_data),
     };
     Ok(Some((cc_conf.default_domain()?, extra_data)))
 }
