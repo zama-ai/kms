@@ -280,11 +280,6 @@ impl RobustOpen for SecureRobustOpen {
                 .map(|share| ShamirSharings::create(vec![Share::new(own_role, share)]))
                 .collect_vec();
 
-            let reconstruct_fn = match session.network().get_network_mode() {
-                NetworkMode::Sync => reconstruct_w_errors_sync,
-                NetworkMode::Async => reconstruct_w_errors_async,
-            };
-
             let num_parties = session.num_parties();
             let threshold = session.threshold();
             let num_bots = session.corrupt_roles().len();
@@ -295,7 +290,7 @@ impl RobustOpen for SecureRobustOpen {
                 sharings,
                 degree,
                 jobs,
-                reconstruct_fn,
+                session.network().get_network_mode(),
             )
             .await?
         } else {
@@ -402,11 +397,6 @@ impl RobustOpen for SecureRobustOpen {
                 ),
             };
 
-            let reconstruct_fn = match session.network().get_network_mode() {
-                NetworkMode::Sync => reconstruct_w_errors_sync,
-                NetworkMode::Async => reconstruct_w_errors_async,
-            };
-
             // Use my own share if ever I am in both sets
             let sharings = if let Some(my_shares) = my_shares {
                 let my_reconstruction_role = role_transform(&own_role, external_opening_info);
@@ -430,7 +420,7 @@ impl RobustOpen for SecureRobustOpen {
                 sharings,
                 degree,
                 jobs,
-                reconstruct_fn,
+                session.network().get_network_mode(),
             )
             .await;
         }
@@ -460,7 +450,8 @@ type ReconsFunc<Z> = fn(
 /// - `sharings`: the batch of sharings to reconstruct, each pre-seeded with this party's own share
 /// - `degree`: the degree of the secret sharing
 /// - `jobs`: the set of jobs receiving the other parties' shares
-/// - `reconstruct_fn`: the per-value reconstruction function (sync/async variant)
+/// - `network_mode`: selects the per-value reconstruction function (sync/async variant) and, from the
+///   same decision, the share-count bar at which that function can first succeed
 async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     num_parties: usize,
     threshold: u8,
@@ -468,15 +459,30 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     sharings: Vec<ShamirSharings<Z>>,
     degree: usize,
     mut jobs: JoinSet<Result<JobResultType<Role, Z>, Elapsed>>,
-    reconstruct_fn: ReconsFunc<Z>,
+    network_mode: NetworkMode,
 ) -> anyhow::Result<Option<Vec<Z>>> {
     // OPTIMIZATION: Collect shares concurrently with batched reconstruction
     // Instead of processing one party at a time, collect multiple responses
     // and attempt reconstruction less frequently to reduce O(n×m) complexity
 
+    // Pick the reconstruction function and the share-count needed for reconstruction. The sync mode need degree + 2t.
+    // Same for the robust async mode. The weaker async branch however can reconstruct from as few as degree + t shares.
+    let t = threshold as usize;
+    let (reconstruct_fn, attempt_bound): (ReconsFunc<Z>, usize) = match network_mode {
+        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t),
+        NetworkMode::Async if degree + 3 * t < num_parties => {
+            (reconstruct_w_errors_async, degree + 2 * t)
+        }
+        NetworkMode::Async => (reconstruct_w_errors_async, degree + t),
+    };
+
     let mut collected_shares = 0;
-    // let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
+    let mut has_attempted = false;
     let mut last_reconstruction_attempt = 0;
+    // Own shares already seeded into each sharing (0 if we hold none for this set, e.g. when we are
+    // not part of the sending set). All sharings in the batch are filled identically, so the first
+    // one's current length is representative.
+    let initial_shares = sharings.first().map_or(0, |s| s.shares.len());
     let sharings = Arc::new(Mutex::new(sharings));
 
     //Start awaiting on receive jobs to retrieve the shares
@@ -512,22 +518,21 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
             }
         }
 
-        // Attempt reconstruction strategically to reduce redundant attempts. Only start once we hold
-        // enough shares for error correction to *succeed* — degree + 1 + 2*max_errors total shares
-        // (own + received), i.e. `required_shares` received — since below that `reconstruct_w_errors`
-        // returns None for every value. Then attempt:
-        // 1. the first time we reach that bar,
-        // 2. on each additional share (an earlier attempt may not have corrected the errors present),
-        // 3. and a final time once no jobs remain.
-        // max_errors shrinks as parties drop (num_bots grows), lowering the bar to stay live.
-        let max_errors = (threshold as usize).saturating_sub(num_bots);
-        let required_shares = degree + 2 * max_errors;
-        let should_attempt_reconstruction = collected_shares >= required_shares
-            && (last_reconstruction_attempt == 0  // First time we have enough shares
-                || collected_shares > last_reconstruction_attempt  // Each additional share
+        // Don't spawn the batched par-iter until `reconstruct_w_errors` could actually succeed: it
+        // returns None for every value while `num_heard_from <= attempt_bound`. `num_heard_from`
+        // counts everyone we've heard from — own + received good shares + known bots — exactly as the
+        // reconstruct functions do, so the bar tracks them through party drops (num_bots grows as
+        // receive jobs time out / return garbage). Once over the bar, attempt the first time, again on
+        // each newly received share (an earlier attempt may not have corrected the errors then
+        // present), and a final time once no jobs remain.
+        let num_heard_from = initial_shares + collected_shares + num_bots;
+        let should_attempt_reconstruction = num_heard_from > attempt_bound
+            && (!has_attempted  // First time we're over the bar
+                || collected_shares > last_reconstruction_attempt  // Each newly received share
                 || jobs.is_empty()); // Final attempt when all responses collected
 
         if should_attempt_reconstruction {
+            has_attempted = true;
             last_reconstruction_attempt = collected_shares;
 
             // Spawn a task on rayon.
