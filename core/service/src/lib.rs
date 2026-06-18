@@ -1,6 +1,45 @@
 use anyhow::anyhow;
 use std::{fmt, panic::Location};
 
+// Allocation profiler. cfg(test) keeps it out of the kms_lib rlib (which the bins link), so it lives
+// only in the unit-test binary and can't collide with another global allocator.
+#[cfg(all(test, feature = "hotpath", feature = "hotpath-alloc"))]
+#[global_allocator]
+static HOTPATH_ALLOCATOR: hotpath::CountingAllocator<std::alloc::System> =
+    hotpath::CountingAllocator::new();
+
+// --- hotpath profiling helpers (no-op unless the `hotpath` feature is on; unused until instrumented) ---
+#[cfg(feature = "hotpath")]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_block {
+    ($label:literal, $expr:expr) => {{ hotpath::measure_block!($label, $expr) }};
+}
+#[cfg(not(feature = "hotpath"))]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_block {
+    ($label:literal, $expr:expr) => {{
+        let _ = $label;
+        $expr
+    }};
+}
+#[cfg(feature = "hotpath")]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_async {
+    ($label:literal, $future:expr) => {{ hotpath::measure_async_future($label, $future) }};
+}
+#[cfg(not(feature = "hotpath"))]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_async {
+    ($label:literal, $future:expr) => {{
+        let _ = $label;
+        $future
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use hotpath_measure_async;
+#[allow(unused_imports)]
+pub(crate) use hotpath_measure_block;
+
 pub mod client;
 pub mod consts;
 

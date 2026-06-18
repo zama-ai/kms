@@ -1,3 +1,35 @@
+// --- hotpath profiling helpers (no-op unless the `hotpath` feature is on; unused until instrumented) ---
+#[cfg(feature = "hotpath")]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_block {
+    ($label:literal, $expr:expr) => {{ hotpath::measure_block!($label, $expr) }};
+}
+#[cfg(not(feature = "hotpath"))]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_block {
+    ($label:literal, $expr:expr) => {{
+        let _ = $label;
+        $expr
+    }};
+}
+#[cfg(feature = "hotpath")]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_async {
+    ($label:literal, $future:expr) => {{ hotpath::measure_async_future($label, $future) }};
+}
+#[cfg(not(feature = "hotpath"))]
+#[allow(unused_macros)]
+macro_rules! hotpath_measure_async {
+    ($label:literal, $future:expr) => {{
+        let _ = $label;
+        $future
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use hotpath_measure_async;
+#[allow(unused_imports)]
+pub(crate) use hotpath_measure_block;
+
 #[cfg(feature = "non-wasm")]
 pub mod communication {
     pub mod broadcast;
