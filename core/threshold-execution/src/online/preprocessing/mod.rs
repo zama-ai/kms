@@ -301,23 +301,19 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
         ksk_noise.bound,
     );
 
-    //Generate noise needed for Switch and Squash bootstrap key if needed
-    if keyset_config.is_standard()
-        && let Some(sns_params) = params.sns()
-    {
-        prep.append_noises(
-            RealSecretDistributions::from_noise_info(
-                sns_params.all_bk_sns_noise(),
-                preprocessing_bits,
-            )?,
-            NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
-        );
-    }
-
-    // Generate noise for sns compression key if needed
+    // SnS noise
     match keyset_config {
         KeySetConfig::Standard(_) => {
             if let Some(sns_params) = params.sns() {
+                // Generate noise needed for Switch and Squash bootstrap key if needed
+                prep.append_noises(
+                    RealSecretDistributions::from_noise_info(
+                        sns_params.all_bk_sns_noise(),
+                        preprocessing_bits,
+                    )?,
+                    NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
+                );
+                // Generate noise for sns compression key if needed
                 let noise_info = sns_params.num_needed_noise_sns_compression_key();
                 let bound = noise_info.bound;
                 prep.append_noises(

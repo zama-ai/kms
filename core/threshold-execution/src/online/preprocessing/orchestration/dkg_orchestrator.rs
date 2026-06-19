@@ -519,11 +519,16 @@ fn get_num_tuniform_raw_bits_required(
     tuniform_productions.push(params.all_glwe_noise(keyset_config));
     tuniform_productions.push(params.all_compression_ksk_noise(keyset_config));
 
-    if let Some(sns_params) = params.sns() {
-        tuniform_productions.push(sns_params.all_bk_sns_noise());
-        if sns_params.sns_compression_params().is_some() {
-            tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
+    match keyset_config {
+        KeySetConfig::Standard(_) => {
+            if let Some(sns_params) = params.sns() {
+                tuniform_productions.push(sns_params.all_bk_sns_noise());
+                if sns_params.sns_compression_params().is_some() {
+                    tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
+                }
+            }
         }
+        KeySetConfig::DecompressionOnly => {}
     }
 
     tuniform_productions.push(params.all_lwe_hat_noise(keyset_config));
