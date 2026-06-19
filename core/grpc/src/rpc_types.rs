@@ -551,6 +551,100 @@ impl crate::kms::v1::UserDecryptionRequest {
     }
 }
 
+/// Computes the Solana-native user-decryption request↔response link.
+///
+/// On EVM, [`crate::kms::v1::UserDecryptionRequest::compute_link_checked`] binds the
+/// triple `(publicKey, handles, userAddress)` via an EIP-712 hash over the gateway domain
+/// (an EVM `verifying_contract` + `chainId`). A Solana host has no EVM verifying contract
+/// and the user identity is a 32-byte ed25519 pubkey rather than a 20-byte `address`, so
+/// the EIP-712 linker cannot represent it.
+///
+/// This binds the same logical triple — the user's ML-KEM `enc_key`, the ciphertext
+/// `handles`, and the 32-byte Solana user pubkey — under the Solana host chain id, with
+/// keccak256 (matching the keccak domain used across the Solana on-chain surface). It is
+/// purely the request↔response binding, so a relayed response cannot be swapped onto a
+/// different request; it is NOT the authorization. Authorization for a Solana user
+/// decryption is enforced by the kms-connector before the core call: the RPC-verified
+/// on-chain ACL (the user holds the use/decrypt role on the handle's `zama-host` ACL
+/// record) plus the user's ed25519 `signMessage` over the canonical native request.
+///
+/// Length-prefixed fields keep the preimage unambiguous; a version tag domain-separates
+/// it from every other keccak preimage on the Solana surface.
+pub fn compute_link_solana(
+    enc_key: &[u8],
+    handles: &[[u8; 32]],
+    solana_user_pubkey: &[u8; 32],
+    host_chain_id: u64,
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(64 + handles.len() * 32 + enc_key.len());
+    preimage.extend_from_slice(b"SolanaUserDecryptionLinker:v0");
+    preimage.extend_from_slice(&host_chain_id.to_be_bytes());
+    preimage.extend_from_slice(solana_user_pubkey);
+    preimage.extend_from_slice(&(handles.len() as u32).to_be_bytes());
+    for handle in handles {
+        preimage.extend_from_slice(handle);
+    }
+    preimage.extend_from_slice(&(enc_key.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(enc_key);
+    alloy_primitives::keccak256(&preimage).to_vec()
+}
+
+#[cfg(test)]
+mod solana_link_tests {
+    use super::compute_link_solana;
+
+    #[test]
+    fn solana_link_is_deterministic_and_field_sensitive() {
+        let enc_key = vec![7u8; 800];
+        let handles = vec![[1u8; 32], [2u8; 32]];
+        let pubkey = [9u8; 32];
+        let chain_id = 9_223_372_036_854_788_153u64; // RFC-021 Solana host chain id
+
+        let base = compute_link_solana(&enc_key, &handles, &pubkey, chain_id);
+        assert_eq!(base.len(), 32, "keccak256 output is 32 bytes");
+        // Deterministic.
+        assert_eq!(
+            base,
+            compute_link_solana(&enc_key, &handles, &pubkey, chain_id)
+        );
+
+        // Sensitive to every bound field.
+        let mut other_pubkey = pubkey;
+        other_pubkey[0] ^= 0xff;
+        assert_ne!(
+            base,
+            compute_link_solana(&enc_key, &handles, &other_pubkey, chain_id)
+        );
+        assert_ne!(
+            base,
+            compute_link_solana(&enc_key, &[[1u8; 32]], &pubkey, chain_id),
+            "dropping a handle must change the link"
+        );
+        assert_ne!(
+            base,
+            compute_link_solana(&[7u8; 799], &handles, &pubkey, chain_id),
+            "a different enc_key must change the link"
+        );
+        assert_ne!(
+            base,
+            compute_link_solana(&enc_key, &handles, &pubkey, chain_id + 1)
+        );
+    }
+
+    #[test]
+    fn solana_link_length_prefixing_prevents_field_boundary_collision() {
+        // Two handles [a,b] vs one handle that is the concatenation a‖b would collide
+        // without length-prefixing; the count prefix must keep them distinct.
+        let enc_key = vec![0u8; 4];
+        let pubkey = [3u8; 32];
+        let two = compute_link_solana(&enc_key, &[[0xaa; 32], [0xbb; 32]], &pubkey, 1);
+        // One 32-byte handle plus enc_key shifted can't reproduce the two-handle preimage
+        // because the handle count (2 vs 1) is hashed in.
+        let one = compute_link_solana(&enc_key, &[[0xaa; 32]], &pubkey, 1);
+        assert_ne!(two, one);
+    }
+}
+
 /// returns a slice of the first N bytes of the vector, padding with zeros if the vector is too short
 fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
     // Get a slice of the first len bytes, if available

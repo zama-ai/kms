@@ -25,6 +25,7 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
+use kms_grpc::rpc_types::compute_link_solana;
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
@@ -202,6 +203,112 @@ impl Client {
             })?;
         }
         let receiver_id = self.client_address.to_vec();
+        let unsign_key =
+            UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
+
+        payload
+            .signcrypted_ciphertexts
+            .into_iter()
+            .map(|ct| {
+                unsign_key
+                    .unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
+                    .map(|res| res.plaintext)
+                    .map_err(|e| anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e))
+            })
+            .collect()
+    }
+
+    /// Solana (RFC-021) centralized de-signcryption.
+    ///
+    /// Identical to [`Self::centralized_user_decryption_resp`] except for the request<->response
+    /// binding `link`: on Solana it is the opaque keccak [`compute_link_solana`] digest over
+    /// `(host_chain_id, solana_user_pubkey, handles, enc_key)`, not the EVM `UserDecryptionLinker`
+    /// EIP-712 hash. The KMS signcrypts against this same link and the derived signcryption
+    /// `receiver_id = keccak256(solana_user_pubkey)[12..]` (see the Solana branch in
+    /// `validation_non_wasm`), so the client reproduces both here. The link is opaque AAD to the
+    /// signcryption layer, so the unsigncryption is mechanically the EVM path with a different link.
+    ///
+    /// Server authenticity is checked via the internal ECDSA signature over the response payload;
+    /// the external EIP-712 certificate is the on-chain-consumable artifact and is not needed to
+    /// recover the plaintext client-side.
+    pub fn process_user_decryption_resp_solana(
+        &self,
+        request: &ParsedUserDecryptionRequest,
+        solana_user_pubkey: &[u8; 32],
+        host_chain_id: u64,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
+        agg_resp: &[UserDecryptionResponse],
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
+        let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
+
+        // Handles are 32 bytes on Solana; left-pad defensively to mirror the EVM consistency check.
+        let handles: Vec<[u8; 32]> = request
+            .ciphertext_handles
+            .iter()
+            .map(|c| {
+                let mut h = [0u8; 32];
+                let src = &c.0;
+                let take = src.len().min(32);
+                h[32 - take..].copy_from_slice(&src[src.len() - take..]);
+                h
+            })
+            .collect();
+        let link = compute_link_solana(
+            &request.enc_key,
+            &handles,
+            solana_user_pubkey,
+            host_chain_id,
+        );
+        if link != payload.digest {
+            return Err(anyhow_error_and_log(format!(
+                "solana link mismatch ({} != {})",
+                hex::encode(&link),
+                hex::encode(&payload.digest),
+            )));
+        }
+
+        let stored_server_addrs = &self.get_server_addrs();
+        if stored_server_addrs.len() != 1 {
+            return Err(anyhow_error_and_log("incorrect length for addresses"));
+        }
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&payload.verification_key)?;
+        match stored_server_addrs.get(&1) {
+            Some(server_addr) if *server_addr == cur_verf_key.address() => {}
+            Some(_) => return Err(anyhow_error_and_log("server address is not consistent")),
+            None => return Err(anyhow_error_and_log("missing server address at ID 1")),
+        }
+
+        // Authenticity: the relayer/gateway path carries only the KMS external (EIP-712) signature,
+        // already verified on-chain by gateway consensus, with the internal ECDSA `signature` empty;
+        // the direct-gRPC path carries the internal ECDSA signature. Verify the internal signature
+        // when present; otherwise rely on the gateway-verified external signature plus the link/AEAD
+        // binding below (the opaque `link` must equal payload.digest, and unsigncryption is an AEAD
+        // keyed to the server verf key + receiver id, so a forged response cannot be unsigncrypted).
+        if resp.signature.is_empty() {
+            if resp.external_signature.is_empty() {
+                return Err(anyhow_error_and_log(
+                    "solana user-decrypt response has neither internal nor external signature",
+                ));
+            }
+        } else {
+            let sig = Signature {
+                sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
+            };
+            internal_verify_sig(
+                &DSEP_USER_DECRYPTION,
+                &bc2wrap::serialize(&payload)?,
+                &sig,
+                &cur_verf_key,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("solana user-decrypt response signature invalid ({e})")
+            })?;
+        }
+
+        // receiver_id mirrors the server's `solana_user_decrypt_client_id`: keccak256(pubkey)[12..].
+        let receiver_id = alloy_primitives::keccak256(solana_user_pubkey)[12..].to_vec();
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
