@@ -1303,7 +1303,9 @@ mod tests {
     use crate::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
     use crate::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
-    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
+    use crate::tfhe_internals::test_feature::{
+        ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
+    };
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
         runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
@@ -1333,8 +1335,8 @@ mod tests {
         let parties = 5;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let shares = keygen_all_party_shares_from_keyset::<_, 4>(
-            &keyset,
+        let shares = keygen_all_party_shares_from_client_key::<_, 4>(
+            &keyset.client_key,
             params,
             &mut AesRng::seed_from_u64(0),
             parties,
@@ -1355,11 +1357,11 @@ mod tests {
             ));
         });
         let first_bit_sharing = ShamirSharings::create(first_bit_shares);
-        let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
+        let rec = first_bit_sharing.error_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
-            keyset
-                .get_raw_glwe_client_sns_key()
+            ClientKeyView::new(&keyset.client_key)
+                .raw_glwe_client_sns_key()
                 .unwrap()
                 .into_container()[0],
             inner_rec.0
@@ -1411,9 +1413,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
@@ -1498,9 +1505,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
@@ -1580,9 +1592,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
@@ -1678,9 +1695,14 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 

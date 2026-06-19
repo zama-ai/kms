@@ -9,6 +9,7 @@
 //! - CRS backup and restore flow
 
 use crate::client::tests::common::wait_for_storage;
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -58,8 +59,8 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
     let key_id_1 = derive_request_id("isolated-threshold-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-threshold-dkg-backup-2")?;
 
-    threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test).await?;
-    threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test).await?;
+    threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test, None, None).await?;
+    threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test, None, None).await?;
 
     // Delete threshold private key material for both keys on all parties
     let fhe_key_info_type = PrivDataType::FheKeyInfo.to_string();
@@ -267,7 +268,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<(
 
     let key_id = derive_request_id("isolated-threshold-autobackup")?;
 
-    threshold_insecure_key_gen(&clients, &key_id, FheParameter::Test).await?;
+    threshold_insecure_key_gen(&clients, &key_id, FheParameter::Test, None, None).await?;
 
     // Shutdown servers
     drop(clients);
@@ -355,17 +356,14 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
 
     // Wait for CRS generation to complete
     for client in clients.values() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_crs_gen_result(tonic::Request::new(req_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_crs_gen_result(tonic::Request::new(req_id.into()))
-                .await;
-        }
-        result?;
+        retrying_poll(
+            client.clone(),
+            req_id.into(),
+            "CRS gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_crs_gen_result(request).await }),
+        )
+        .await?;
     }
 
     // Delete CRS metadata from private storage on all parties

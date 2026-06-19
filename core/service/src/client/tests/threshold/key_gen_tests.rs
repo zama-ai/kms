@@ -17,11 +17,12 @@ use crate::client::client_wasm::Client;
 use crate::client::key_gen::tests::check_conformance;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
+use crate::client::tests::common::{PollConfig, retrying_poll};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{decompression_keygen_config, uncompressed_keygen_config};
-use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::threshold::common::threshold_key_gen_secure;
+use crate::client::tests::threshold::common::threshold_secure_key_gen;
+use crate::client::tests::threshold::common::{run_insecure_preproc, threshold_insecure_key_gen};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 use crate::consts::MAX_TRIES;
@@ -31,7 +32,6 @@ use crate::consts::default_extra_data;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 use crate::dummy_domain;
-use crate::engine::base::INSECURE_PREPROCESSING_ID;
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::utils::make_extra_data;
@@ -45,6 +45,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use alloy_dyn_abi::Eip712Domain;
+use futures_util::future::join_all;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyGenResult;
 #[cfg(feature = "slow_tests")]
@@ -190,11 +191,15 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
     let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
 
     let (keyset_config, keyset_added_info) = keygen_config();
+    let preproc_id = derive_request_id(&format!(
+        "test_insecure_compressed_dkg_preproc_{amount_parties}_{TEST_PARAM:?}"
+    ))?;
+    run_insecure_preproc(&kms_clients, &preproc_id, FheParameter::Test).await?;
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &key_id,
         keyset_config,
         keyset_added_info,
@@ -237,6 +242,9 @@ async fn secure_threshold_compressed_keygen_test() {
     .await;
 }
 
+/// Runs only the (secure or insecure) key generation step. The matching
+/// preprocessing — `run_preproc` for secure, `run_insecure_preproc` for
+/// insecure — must already have been run for `preproc_req_id` by the caller.
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_threshold_keygen(
     parameter: FheParameter,
@@ -251,6 +259,7 @@ pub(crate) async fn run_threshold_keygen(
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
+
     let req_keygen = internal_client
         .key_gen_request(
             keygen_req_id,
@@ -326,52 +335,39 @@ async fn wait_for_keygen_result(
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
 
-    let mut finished = Vec::new();
-    // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
-    for _ in 0..MAX_TRIES {
-        tokio::time::sleep(tokio::time::Duration::from_secs(if insecure {
-            1
-        } else {
-            15
-        }))
-        .await;
+    // Poll each party independently until it returns a result. Keygen is slow,
+    // so wait 15s between attempts (1s in insecure mode where it's near-instant).
+    let poll_secs = if insecure { 1 } else { 15 };
+    let poll_config = PollConfig {
+        initial_delay: tokio::time::Duration::from_secs(poll_secs),
+        retry_delay: tokio::time::Duration::from_secs(poll_secs),
+        max_retries: MAX_TRIES,
+    };
 
-        let mut tasks = JoinSet::new();
-        for (i, kms_client) in kms_clients {
-            let req_clone = req_get_keygen.into();
-            let i = *i;
-            let mut cur_client = kms_client.clone();
-            tasks.spawn(async move {
-                (
-                    i,
+    let futs = kms_clients.iter().map(|(i, kms_client)| {
+        let i = *i;
+        let client = kms_client.clone();
+        let req_id = req_get_keygen.into();
+        async move {
+            let resp = retrying_poll(client, req_id, "keygen result", poll_config, |c, req| {
+                Box::pin(async move {
                     if insecure {
-                        cur_client
-                            .get_insecure_key_gen_result(tonic::Request::new(req_clone))
-                            .await
+                        c.get_insecure_key_gen_result(req).await
                     } else {
-                        cur_client
-                            .get_key_gen_result(tonic::Request::new(req_clone))
-                            .await
-                    },
-                )
-            });
+                        c.get_key_gen_result(req).await
+                    }
+                })
+            })
+            .await;
+            (i, resp)
         }
-        let mut responses = Vec::new();
-        while let Some(resp) = tasks.join_next().await {
-            responses.push(resp.unwrap());
-        }
-
-        finished = responses
-            .into_iter()
-            .filter(|x| x.1.is_ok())
-            .collect::<Vec<_>>();
-        if finished.len() == kms_clients.len() {
-            break;
-        }
-    }
-
+    });
+    let mut finished = join_all(futs).await;
     finished.sort_by_key(|(i, _)| *i);
-    assert_eq!(finished.len(), kms_clients.len());
+    assert!(
+        finished.iter().all(|(_, r)| r.is_ok()),
+        "not all parties returned a keygen result: {finished:?}"
+    );
 
     let mut out = None;
     let mut all_private_keys = None;
@@ -419,30 +415,25 @@ async fn wait_for_keygen_result(
         (out, all_private_keys) = (Some(res.0), Some(res.1));
     }
 
-    if !insecure {
-        // Try to request another kg with the same preproc but another request id,
-        // we should see that it fails because the preproc material is consumed.
-        //
-        // We only test for the secure variant of the dkg because the insecure
-        // variant does not use preprocessing material.
-        tracing::debug!("starting another dkg with a used preproc ID");
-        let other_key_gen_id = derive_request_id("test_dkg other key id").unwrap();
-        let keygen_req_data = internal_client
-            .key_gen_request(
-                &other_key_gen_id,
-                &req_preproc,
-                None,
-                None,
-                Some(FheParameter::Test),
-                None,
-                None,
-                domain,
-            )
-            .unwrap();
-        let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
-        for response in responses {
-            assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
-        }
+    // Try to request another kg with the same preproc but another request id;
+    // the preprocessing entry must have been consumed.
+    tracing::debug!("starting another dkg with a used preproc ID");
+    let other_key_gen_id = derive_request_id("test_dkg other key id").unwrap();
+    let keygen_req_data = internal_client
+        .key_gen_request(
+            &other_key_gen_id,
+            &req_preproc,
+            None,
+            None,
+            Some(FheParameter::Test),
+            None,
+            None,
+            domain,
+        )
+        .unwrap();
+    let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
+    for response in responses {
+        assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
     }
     (out.unwrap(), all_private_keys)
 }
@@ -454,25 +445,17 @@ pub(crate) async fn run_threshold_decompression_keygen(
     parameter: FheParameter,
     insecure: bool,
 ) {
-    let preproc_id_1 = if insecure {
-        *INSECURE_PREPROCESSING_ID
-    } else {
-        derive_request_id(&format!(
-            "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
-        ))
-        .unwrap()
-    };
+    let preproc_id_1 = derive_request_id(&format!(
+        "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
+    ))
+    .unwrap();
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
 
-    let preproc_id_2 = if insecure {
-        *INSECURE_PREPROCESSING_ID
-    } else {
-        derive_request_id(&format!(
-            "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
-        ))
-        .unwrap()
-    };
+    let preproc_id_2 = derive_request_id(&format!(
+        "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
+    ))
+    .unwrap();
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
 
@@ -506,7 +489,11 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let test_path = material_dir.path();
 
-    if !insecure {
+    if insecure {
+        run_insecure_preproc(&kms_clients, &preproc_id_1, parameter)
+            .await
+            .unwrap();
+    } else {
         run_preproc(
             amount_parties,
             parameter,
@@ -537,7 +524,11 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .0;
     let (client_key_1, _public_key_1, server_key_1) = keys1.get_uncompressed();
 
-    if !insecure {
+    if insecure {
+        run_insecure_preproc(&kms_clients, &preproc_id_2, parameter)
+            .await
+            .unwrap();
+    } else {
         run_preproc(
             amount_parties,
             parameter,
@@ -568,18 +559,23 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .0;
     let (client_key_2, _public_key_2, _server_key_2) = keys2.get_uncompressed();
 
-    // We always need to run preproc for the last keygen
-    run_preproc(
-        amount_parties,
-        parameter,
-        &kms_clients,
-        &internal_client,
-        &preproc_id_3,
-        None,
-        0,
-        None,
-    )
-    .await;
+    if insecure {
+        run_insecure_preproc(&kms_clients, &preproc_id_3, parameter)
+            .await
+            .unwrap();
+    } else {
+        run_preproc(
+            amount_parties,
+            parameter,
+            &kms_clients,
+            &internal_client,
+            &preproc_id_3,
+            None,
+            0,
+            None,
+        )
+        .await;
+    }
 
     // finally do the decompression keygen between the first and second keysets
     let (keyset_config, keyset_added_info) = decompression_keygen_config(&key_id_1, &key_id_2);
@@ -742,17 +738,23 @@ pub(crate) async fn preproc_and_keygen(
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
                 async move {
-                    run_preproc(
-                        amount_parties,
-                        parameter,
-                        &clients_clone,
-                        &internalclient_clone,
-                        &preproc_id,
-                        None,
-                        expected_num_parties_crashed,
-                        partial_preproc,
-                    )
-                    .await
+                    if insecure_key_gen {
+                        run_insecure_preproc(&clients_clone, &preproc_id, parameter)
+                            .await
+                            .unwrap();
+                    } else {
+                        run_preproc(
+                            amount_parties,
+                            parameter,
+                            &clients_clone,
+                            &internalclient_clone,
+                            &preproc_id,
+                            None,
+                            expected_num_parties_crashed,
+                            partial_preproc,
+                        )
+                        .await
+                    }
                 }
             });
         }
@@ -784,7 +786,6 @@ pub(crate) async fn preproc_and_keygen(
                 let internalclient_clone = Arc::clone(&arc_internalclient);
                 let path_clone = test_path.clone();
                 async move {
-                    // todo proper use of insecure to skip preproc
                     (
                         key_id,
                         run_threshold_keygen(
@@ -836,17 +837,23 @@ pub(crate) async fn preproc_and_keygen(
         tracing::info!("Finished concurrent preproc and keygen");
     } else {
         for preproc_id in preproc_ids.iter() {
-            run_preproc(
-                amount_parties,
-                parameter,
-                &kms_clients,
-                &internal_client,
-                preproc_id,
-                None,
-                expected_num_parties_crashed,
-                partial_preproc,
-            )
-            .await;
+            if insecure_key_gen {
+                run_insecure_preproc(&kms_clients, preproc_id, parameter)
+                    .await
+                    .unwrap();
+            } else {
+                run_preproc(
+                    amount_parties,
+                    parameter,
+                    &kms_clients,
+                    &internal_client,
+                    preproc_id,
+                    None,
+                    expected_num_parties_crashed,
+                    partial_preproc,
+                )
+                .await;
+            }
         }
         expected_num_parties_crashed += crash_parties_for_keygen(
             party_ids_to_crash_keygen,
@@ -1008,29 +1015,26 @@ async fn poll_key_gen_preproc_result(
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
     for client in kms_clients.values() {
-        let mut client = client.clone();
+        let client = client.clone();
         let req_id_clone = request.request_id.as_ref().unwrap().clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete preprocessing
-            tokio::time::sleep(tokio::time::Duration::from_millis(PREPROC_POLL_SLEEP_MS)).await;
-
-            let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
-                .await;
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(PREPROC_POLL_SLEEP_MS)).await;
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for preprocessing after {max_iter} retries");
-                }
-                ctr += 1;
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-            }
+            // Sleep initially to give the server some time to complete
+            // preprocessing, then poll every 500ms for up to `max_iter` tries.
+            let response = retrying_poll(
+                client,
+                req_id_clone.clone(),
+                "preprocessing result",
+                PollConfig {
+                    initial_delay: tokio::time::Duration::from_millis(500),
+                    retry_delay: tokio::time::Duration::from_millis(500),
+                    max_retries: max_iter,
+                },
+                |client, request| {
+                    Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+                },
+            )
+            .await;
 
             (req_id_clone, response.unwrap().into_inner())
         });
@@ -1379,7 +1383,8 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
     let key_id = derive_request_id("test_insecure_dkg")?;
 
     // Generate key using insecure mode
-    let responses = threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test).await?;
+    let (preproc_id, responses) =
+        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test, None, None).await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
@@ -1387,7 +1392,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         responses,
         Some(env.material_dir.path()),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &key_id,
         &crate::dummy_domain(),
         make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
@@ -1436,8 +1441,9 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
     let key_id = derive_request_id("default_insecure_dkg")?;
 
     // Use FheParameter::Default to match MaterialType::Default
-    let responses =
-        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Default).await?;
+    let (preproc_id, responses) =
+        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Default, None, None)
+            .await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env
@@ -1447,7 +1453,7 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         responses,
         Some(env.material_dir.path()),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &key_id,
         &crate::dummy_domain(),
         make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
@@ -1491,7 +1497,7 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
     let keygen_id = derive_request_id("secure_threshold_keygen")?;
 
     // Run secure key generation with preprocessing
-    let responses = threshold_key_gen_secure(
+    let responses = threshold_secure_key_gen(
         &env.clients,
         &preproc_id,
         &keygen_id,
@@ -1574,18 +1580,17 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete on all parties
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-                .await;
-        }
-        result?;
+    for client in env.clients.values() {
+        retrying_poll(
+            client.clone(),
+            preproc_id.into(),
+            "preprocessing result",
+            PollConfig::default(),
+            |client, request| {
+                Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+            },
+        )
+        .await?;
     }
 
     // Simulate crash: Run keygen WITHOUT party 2
@@ -1616,17 +1621,14 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
 
     // Verify key generation completed on active parties (not crashed party)
     for client in env.all_clients_except(crashed_party) {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-                .await;
-        }
-        result?;
+        retrying_poll(
+            client,
+            keygen_id.into(),
+            "key gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+        )
+        .await?;
     }
 
     for server in env.into_servers() {
@@ -1687,17 +1689,16 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 
     // Wait for preprocessing to complete on active parties
     for client in env.all_clients_except(crashed_party) {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
-                .await;
-        }
-        result?;
+        retrying_poll(
+            client,
+            preproc_id.into(),
+            "preprocessing result",
+            PollConfig::default(),
+            |client, request| {
+                Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+            },
+        )
+        .await?;
     }
 
     // Run keygen with same active parties (crashed party stays crashed)
@@ -1725,17 +1726,14 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 
     // Verify key generation completed on active parties
     for client in env.all_clients_except(crashed_party) {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_result(tonic::Request::new(keygen_id.into()))
-                .await;
-        }
-        result?;
+        retrying_poll(
+            client,
+            keygen_id.into(),
+            "key gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+        )
+        .await?;
     }
 
     for server in env.into_servers() {
@@ -1751,7 +1749,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_oprf() -> anyhow::Result<()>
 {
-    run_secure_threshold_compressed_keygen_from_existing(false).await
+    run_threshold_compressed_keygen_from_existing(false, false).await
 }
 
 /// Test secure threshold compressed key generation from legacy existing secret shares
@@ -1760,10 +1758,30 @@ async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_oprf() 
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
 {
-    run_secure_threshold_compressed_keygen_from_existing(true).await
+    run_threshold_compressed_keygen_from_existing(false, true).await
 }
 
-/// Run secure threshold compressed key generation from existing secret shares.
+/// Same migration flow as the secure variants above, but driven through the insecure keygen
+/// endpoint (party 1 reconstructs the existing secret key and re-shares it; no preprocessing).
+/// Gated on both `slow_tests` (for the shared `threshold_secure_key_gen`/ddec machinery the
+/// generalized helper references) and `insecure` (the server must expose the insecure endpoint).
+#[tokio::test]
+#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+async fn insecure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()> {
+    run_threshold_compressed_keygen_from_existing(true, false).await
+}
+
+/// Same insecure migration flow as above, but starting from legacy existing secret shares
+/// that do not include the dedicated OPRF private-key share.
+#[tokio::test]
+#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+async fn insecure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
+{
+    run_threshold_compressed_keygen_from_existing(true, true).await
+}
+
+/// Run threshold compressed key generation from existing secret shares, over either the secure
+/// or the insecure keygen path (selected by `insecure`).
 ///
 /// Generates an uncompressed keyset first, then performs compressed key generation
 /// reusing the existing secret key shares from the first keygen. When `remove_oprf`
@@ -1771,12 +1789,12 @@ async fn secure_threshold_compressed_keygen_from_existing_adds_missing_oprf() ->
 /// dedicated OPRF share before the servers are restarted.
 ///
 /// **Workflow:**
-/// 1. Uncompressed keygen (preprocessing + online) to produce the first keyset
-/// 2. Preprocessing for compressed keygen from existing shares
-/// 3. Compressed keygen from existing shares
-/// 4. Verify both keygens completed on all parties using ddec
+/// 1. Uncompressed keygen to produce the first keyset
+/// 2. Compressed keygen from the existing shares
+/// 3. Verify both keygens completed on all parties, the migration semantics, and ddec
 #[cfg(feature = "slow_tests")]
-async fn run_secure_threshold_compressed_keygen_from_existing(
+async fn run_threshold_compressed_keygen_from_existing(
+    insecure: bool,
     remove_oprf: bool,
 ) -> anyhow::Result<()> {
     use crate::client::tests::common::keygen_config_from_existing;
@@ -1791,31 +1809,48 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         .build()
         .await?;
 
-    // Step 1: Uncompressed keygen (preprocessing + online)
+    // Step 1: Uncompressed keygen (secure: preprocessing + online; insecure: direct)
     let preproc_id_1 = derive_request_id("compressed_existing_preproc_1")?;
     let keygen_id_1 = derive_request_id("compressed_existing_keygen_1")?;
     let (uncompressed_keyset_config, uncompressed_keyset_added_info) = uncompressed_keygen_config();
 
-    threshold_key_gen_secure(
-        &env.clients,
-        &preproc_id_1,
-        &keygen_id_1,
-        FheParameter::Test,
-        uncompressed_keyset_config,
-        uncompressed_keyset_added_info,
-        None,
-        None,
-    )
-    .await?;
+    if insecure {
+        threshold_insecure_key_gen(
+            &env.clients,
+            &keygen_id_1,
+            FheParameter::Test,
+            uncompressed_keyset_config,
+            uncompressed_keyset_added_info,
+        )
+        .await?;
+    } else {
+        threshold_secure_key_gen(
+            &env.clients,
+            &preproc_id_1,
+            &keygen_id_1,
+            FheParameter::Test,
+            uncompressed_keyset_config,
+            uncompressed_keyset_added_info,
+            None,
+            None,
+        )
+        .await?;
+    }
 
     let (mut clients, mut servers, material_path, _guard) = env.into_parts();
 
     // Verify standard keygen completed on all parties
     for client in clients.values() {
         let mut cur_client = client.clone();
-        let result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id_1.into()))
-            .await?;
+        let result = if insecure {
+            cur_client
+                .get_insecure_key_gen_result(tonic::Request::new(keygen_id_1.into()))
+                .await?
+        } else {
+            cur_client
+                .get_key_gen_result(tonic::Request::new(keygen_id_1.into()))
+                .await?
+        };
         assert_eq!(result.into_inner().request_id, Some(keygen_id_1.into()));
     }
 
@@ -1833,30 +1868,49 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         clients = restarted_clients;
     }
 
-    // Step 2: Compressed keygen from existing secret shares (preprocessing + online)
+    // Step 2: Compressed keygen from existing secret shares (secure: preprocessing + online;
+    // insecure: direct). The keyset inherits the existing tag and copies the new compressed
+    // material back onto the original key id.
     let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
     let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true, true);
 
-    threshold_key_gen_secure(
-        &clients,
-        &preproc_id_2,
-        &keygen_id_2,
-        FheParameter::Test,
-        keyset_config,
-        keyset_added_info,
-        None,
-        None,
-    )
-    .await?;
+    if insecure {
+        threshold_insecure_key_gen(
+            &clients,
+            &keygen_id_2,
+            FheParameter::Test,
+            keyset_config,
+            keyset_added_info,
+        )
+        .await?;
+    } else {
+        threshold_secure_key_gen(
+            &clients,
+            &preproc_id_2,
+            &keygen_id_2,
+            FheParameter::Test,
+            keyset_config,
+            keyset_added_info,
+            None,
+            None,
+        )
+        .await?;
+    }
 
     // Verify compressed keygen completed on all parties
     for client in clients.values() {
         let mut cur_client = client.clone();
-        let result = cur_client
-            .get_key_gen_result(tonic::Request::new(keygen_id_2.into()))
-            .await?;
+        let result = if insecure {
+            cur_client
+                .get_insecure_key_gen_result(tonic::Request::new(keygen_id_2.into()))
+                .await?
+        } else {
+            cur_client
+                .get_key_gen_result(tonic::Request::new(keygen_id_2.into()))
+                .await?
+        };
         assert_eq!(result.into_inner().request_id, Some(keygen_id_2.into()));
     }
 
@@ -1878,8 +1932,10 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
     // from keygen_id_1 (migration semantics), not the one obtained by decompressing the
     // newly-generated CompressedXofKeySet.
     {
-        use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
+        use crate::engine::base::DSEP_PUBDATA_KEY;
         use crate::vault::storage::crypto_material::CryptoMaterialReader;
+        use hashing::hash_versioned;
+
         let expected_tag: tfhe::Tag = keygen_id_1.into();
         for (&party_id, storage) in &pub_storage_map {
             let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
@@ -1910,12 +1966,9 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_1).await?;
 
             // CompactPublicKey does not implement PartialEq, so compare via digests.
-            let digest_stored_new =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &stored_pk_new).unwrap();
-            let digest_stored_old =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &stored_pk_old).unwrap();
-            let digest_derived_from_new_keyset =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
+            let digest_stored_new = hash_versioned(&DSEP_PUBDATA_KEY, &stored_pk_new).unwrap();
+            let digest_stored_old = hash_versioned(&DSEP_PUBDATA_KEY, &stored_pk_old).unwrap();
+            let digest_derived_from_new_keyset = hash_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
 
             assert_eq!(
                 digest_stored_new, digest_stored_old,
@@ -2230,13 +2283,13 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Step 1: Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey
     let key_id_1 = derive_request_id("decom_dkg_key_1")?;
-    let responses_1 =
-        threshold_insecure_key_gen(&env.clients, &key_id_1, FheParameter::Test).await?;
+    let (preproc_id_1, responses_1) =
+        threshold_insecure_key_gen(&env.clients, &key_id_1, FheParameter::Test, None, None).await?;
     let (keys_1, _) = verify_keygen_responses(
         responses_1,
         Some(&material_path),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id_1,
         &key_id_1,
         &dummy_domain(),
         default_extra_data(),
@@ -2254,13 +2307,13 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
-    let responses_2 =
-        threshold_insecure_key_gen(&env.clients, &key_id_2, FheParameter::Test).await?;
+    let (preproc_id_2, responses_2) =
+        threshold_insecure_key_gen(&env.clients, &key_id_2, FheParameter::Test, None, None).await?;
     let (keys_2, _) = verify_keygen_responses(
         responses_2,
         Some(&material_path),
         &internal_client,
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id_2,
         &key_id_2,
         &dummy_domain(),
         default_extra_data(),
@@ -2304,18 +2357,17 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     }
 
     // Wait for preprocessing to complete
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_preproc_result(tonic::Request::new(preproc_id_3.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_preproc_result(tonic::Request::new(preproc_id_3.into()))
-                .await;
-        }
-        result?;
+    for client in env.clients.values() {
+        retrying_poll(
+            client.clone(),
+            preproc_id_3.into(),
+            "preprocessing result",
+            PollConfig::default(),
+            |client, request| {
+                Box::pin(async move { client.get_key_gen_preproc_result(request).await })
+            },
+        )
+        .await?;
     }
 
     // Generate decompression key with proper configuration
@@ -2352,17 +2404,15 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Wait for decompression key generation to complete and collect the result
     let mut keygen_result_3 = None;
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
-        let mut result = cur_client
-            .get_key_gen_result(tonic::Request::new(key_id_3.into()))
-            .await;
-        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client
-                .get_key_gen_result(tonic::Request::new(key_id_3.into()))
-                .await;
-        }
+    for client in env.clients.values() {
+        let result = retrying_poll(
+            client.clone(),
+            key_id_3.into(),
+            "key gen result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+        )
+        .await;
         // Only need one result to retrieve the decompression key from pub storage
         if keygen_result_3.is_none() {
             keygen_result_3 = Some(result?.into_inner());

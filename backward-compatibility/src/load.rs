@@ -153,10 +153,12 @@ impl Display for TestSkipped {
     }
 }
 
+/// Load a `.ron` file and deserialize it into a vector of `Testcase<T>`, where `T` is typically the `Metadata`
+/// associated type of `Testcase`.
 pub fn load_tests_metadata<P: AsRef<Path>, T: DeserializeOwned>(
     path: P,
 ) -> Result<Vec<Testcase<T>>, String> {
     let serialized =
-        fs::read_to_string(path).map_err(|e| format!("Failed to load test metadata: {}", e))?;
-    ron::from_str(&serialized).map_err(|e| format!("Invalid test metadata: {}", e))
+        fs::read_to_string(path).map_err(|e| format!("Failed to load RON test metadata: {}", e))?;
+    ron::from_str(&serialized).map_err(|e| format!("Invalid test RON metadata: {}", e))
 }

@@ -48,11 +48,11 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_6_1::safe_serialization::safe_serialize;
-use tfhe_1_6_1::shortint::parameters::{
+use tfhe_1_6_2::safe_serialization::safe_serialize;
+use tfhe_1_6_2::shortint::parameters::{
     LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
 };
-use tfhe_1_6_1::{
+use tfhe_1_6_2::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -69,7 +69,7 @@ use tfhe_1_6_1::{
     },
     ServerKey, Tag,
 };
-use tfhe_versionable_0_7::Upgrade;
+use tfhe_versionable_0_8::Upgrade;
 use threshold_execution_0_14_0::small_execution::prf::PrfKey;
 use threshold_execution_0_14_0::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution_0_14_0::{
@@ -121,6 +121,13 @@ macro_rules! store_versioned_auxiliary {
     ($msg:expr, $dir:expr, $test_name:expr, $filename:expr $(,)? ) => {
         store_versioned_auxiliary_05($msg, $dir, $test_name, $filename)
     };
+}
+
+/// Fixed timestamp (≈50 years after the Unix epoch) used when generating the custodian
+/// fixtures. Using a constant instead of `SystemTime::now()` keeps the generated v0.14.0
+/// data byte-for-byte reproducible, so re-running the generator never churns the LFS objects.
+fn fixed_fixture_timestamp() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
 }
 
 fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
@@ -175,7 +182,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_1::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -188,7 +195,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_1::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -603,8 +610,8 @@ impl KmsV0_14_0 {
         let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
         let key_id: RequestId = RequestId::new_random(&mut rng);
 
-        let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
-        let mut legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
+        let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
+        let mut legacy: BTreeMap<PubDataType, SignedPubDataHandleInternal> = BTreeMap::new();
         let server_key_digest =
             safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
         let pub_key_digest =
@@ -702,7 +709,7 @@ impl KmsV0_14_0 {
         let key_id: RequestId = RequestId::new_random(&mut rng);
 
         let extra_data = KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.extra_data.to_vec();
-        let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+        let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
         let server_key_digest =
             safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
         let pub_key_digest =
@@ -1064,7 +1071,7 @@ impl KmsV0_14_0 {
         let payload = CustodianSetupMessagePayload {
             header: "header".to_string(),
             random_value: [4_u8; 32],
-            timestamp: 0,
+            timestamp: fixed_fixture_timestamp(),
             public_enc_key: enc_key.clone(),
             verification_key: cus_pk.clone(),
         };
@@ -1149,7 +1156,7 @@ impl KmsV0_14_0 {
                 custodian_role: cus_role,
                 name: format!("role{role_j}"),
                 random_value: rnd,
-                timestamp: 42,
+                timestamp: fixed_fixture_timestamp(),
                 public_enc_key: cus_enc_key,
                 public_verf_key: custodian_verf_key,
             };
@@ -1365,9 +1372,11 @@ impl KmsV0_14_0 {
             private_key,
         )
         .unwrap();
-        let custodian_setup_message = custodian
-            .generate_setup_message(&mut rng, "custodian-1".to_string())
-            .unwrap();
+        let custodian_setup_message = custodian.generate_setup_message_with_timestamp(
+            &mut rng,
+            "custodian-1".to_string(),
+            fixed_fixture_timestamp(),
+        );
         store_versioned_test!(
             &custodian_setup_message,
             dir,

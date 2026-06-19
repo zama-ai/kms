@@ -149,7 +149,7 @@ impl S3Storage {
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
-        s3_put_blob(&self.s3_client, &self.bucket, key, buf.clone()).await?;
+        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
 
         Ok(())
     }

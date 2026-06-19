@@ -27,7 +27,7 @@ use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use tfhe::{
     CompactPublicKey, ConfigBuilder, Seed, ServerKey, safe_serialization::safe_serialize,
     shortint::ClassicPBSParameters, xof_key_set::CompressedXofKeySet,
@@ -36,7 +36,7 @@ use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
-    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_keyset},
+    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
 };
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, RwLock};
@@ -299,6 +299,8 @@ async fn write_central_keys() {
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
+    // The successful write caches exactly one FHE key entry.
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 
     // Note: under the strong-permit invariant, "second write to same req_id"
     // is impossible from the outside — `insert` refuses to mint a duplicate
@@ -517,6 +519,72 @@ async fn write_threshold_keys_meta_update() {
         .read_guarded_fhe_keys(&req_id, &epoch_id)
         .await;
     assert!(refreshed.is_ok(), "threshold read path should succeed");
+}
+
+#[tokio::test]
+async fn purge_epoch_from_cache_removes_only_matching_epoch() {
+    // Two cached keys under two different epochs in the SAME storage.
+    let req_a = derive_request_id("purge_epoch_cache_a").unwrap();
+    let epoch_a: EpochId = derive_request_id("purge_epoch_cache_epoch_a")
+        .unwrap()
+        .into();
+    let req_b = derive_request_id("purge_epoch_cache_b").unwrap();
+    let epoch_b: EpochId = derive_request_id("purge_epoch_cache_epoch_b")
+        .unwrap()
+        .into();
+
+    let (crypto_storage, keys_a, pubset_a) = setup_threshold_store(&req_a);
+    // A second keyset; the throwaway storage is unused, only the key material is.
+    let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b);
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_a).unwrap();
+        guard.insert(&req_b).unwrap();
+    }
+
+    crypto_storage
+        .write_fhe_keys(
+            &req_a,
+            &epoch_a,
+            keys_a,
+            PublicKeySet::Uncompressed(Arc::new(pubset_a)),
+            meta_store.clone(),
+            "",
+        )
+        .await
+        .unwrap();
+    crypto_storage
+        .write_fhe_keys(
+            &req_b,
+            &epoch_b,
+            keys_b,
+            PublicKeySet::Uncompressed(Arc::new(pubset_b)),
+            meta_store.clone(),
+            "",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 2);
+
+    // Purging epoch_a removes exactly its one entry; epoch_b is untouched.
+    let removed = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
+    assert_eq!(removed, 1);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
+    assert!(
+        crypto_storage
+            .read_guarded_fhe_keys(&req_b, &epoch_b)
+            .await
+            .is_ok(),
+        "the non-purged epoch's key must remain available"
+    );
+
+    // Purging an epoch with no cached entries is a harmless no-op.
+    let removed_none = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
+    assert_eq!(removed_none, 0);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 }
 
 #[tokio::test]
@@ -739,7 +807,8 @@ fn setup_threshold_store(
     // TODO(dp): should probably switch over to compressed keys here (and below).
     let keyset = gen_uncompressed_key_set(TEST_PARAM, req_id.into(), &mut rng);
     let key_shares =
-        keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
+        keygen_all_party_shares_from_client_key(&keyset.client_key, pbs_params, &mut rng, 4, 1)
+            .unwrap();
 
     let fhe_key_set = keyset.public_keys.clone();
 
@@ -793,10 +862,7 @@ fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
     let payload = CustodianSetupMessagePayload {
         header: HEADER.to_string(),
         random_value: [4_u8; 32],
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+        timestamp: SystemTime::now(),
         public_enc_key: enc_key.clone(),
         verification_key: verf_key,
     };

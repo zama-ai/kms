@@ -298,7 +298,7 @@ service CoreServiceEndpoint {
   // * The `crs_id` in `request` will not be usable again.
   // * All data associated with the `crs_id` has been removed.
   rpc AbortCrsGen(kms.v1.RequestId) returns (kms.v1.Empty);
-  
+
   // Constructs a new MPC context.
   //
   // That is, updates the internal state and configuration files to support a new MPC context.
@@ -494,4 +494,7 @@ service CoreServiceEndpoint {
   // ## Pre-condition: KMS service must be initialized
   // ## Post-condition: No state changes, read-only operation
   rpc GetHealthStatus(kms.v1.Empty) returns (kms.v1.HealthStatusResponse);
+
+
+  rpc BandwidthBenchmark(kms.v1.BandwidthBenchmarkRequest) returns (kms.v1.BandwidthBenchmarkResponse);
 }

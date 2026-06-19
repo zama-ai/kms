@@ -2,6 +2,8 @@
 //!
 //! These tests run in isolated temporary directories with pre-generated cryptographic material.
 
+#[cfg(feature = "slow_tests")]
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::tests::common::{get_pub_dec_resp, send_dec_reqs};
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -220,16 +222,14 @@ async fn test_largecipher() -> Result<()> {
         .unwrap();
     assert_eq!(response.into_inner(), Empty {});
 
-    let mut response = kms_client
-        .get_user_decryption_result(req.request_id.clone().unwrap())
-        .await;
-    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete user decryption
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        response = kms_client
-            .get_user_decryption_result(req.request_id.clone().unwrap())
-            .await;
-    }
+    let response = retrying_poll(
+        kms_client.clone(),
+        req.request_id.clone().unwrap(),
+        "user decryption result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_user_decryption_result(request).await }),
+    )
+    .await;
     // Check that we get a server error instead of a server crash
     assert!(
         response.is_err(),

@@ -1,14 +1,18 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::OptKeySetConfigAccessor;
 use crate::client::tests::common::keygen_config;
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
+use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::derive_request_id;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::StorageReaderExt;
 use crate::vault::storage::{StorageType, file::FileStorage};
+
 use alloy_dyn_abi::Eip712Domain;
+use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -18,9 +22,8 @@ use kms_grpc::{ContextId, RequestId};
 use std::path::Path;
 use std::str::FromStr;
 use tfhe::prelude::Tagged;
-use tonic::transport::Channel;
-
 use threshold_execution::tfhe_internals::test_feature::run_decompression_test;
+use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_key_gen_centralized() -> anyhow::Result<()> {
@@ -176,16 +179,14 @@ async fn preproc_centralized(
         .unwrap();
     assert_eq!(preproc_response.into_inner(), Empty {});
 
-    let mut response = kms_client
-        .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
-        .await;
-    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete preprocessing
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        response = kms_client
-            .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
-            .await;
-    }
+    let response = retrying_poll(
+        kms_client.clone(),
+        (*preproc_id).into(),
+        "key gen preprocessing result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_key_gen_preproc_result(request).await }),
+    )
+    .await;
     let inner_resp = response.unwrap().into_inner();
     assert_eq!(inner_resp.preprocessing_id, Some((*preproc_id).into()));
 }
@@ -279,16 +280,14 @@ pub async fn run_key_gen_centralized(
         .await
         .unwrap();
     assert_eq!(gen_response.into_inner(), Empty {});
-    let mut response = kms_client
-        .get_key_gen_result(tonic::Request::new((*key_req_id).into()))
-        .await;
-    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete key generation
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        response = kms_client
-            .get_key_gen_result(tonic::Request::new((*key_req_id).into()))
-            .await;
-    }
+    let response = retrying_poll(
+        kms_client.clone(),
+        (*key_req_id).into(),
+        "key gen result",
+        PollConfig::default(),
+        |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
+    )
+    .await;
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let priv_storage = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();
@@ -329,16 +328,8 @@ pub async fn run_key_gen_centralized(
             // from the compressed keyset (migration flow would differ, but this test path is
             // always a fresh keygen). CompactPublicKey does not implement PartialEq, so we
             // compare via domain-separated digests.
-            let stored_digest = crate::engine::base::safe_serialize_hash_element_versioned(
-                &crate::engine::base::DSEP_PUBDATA_KEY,
-                &stored_public_key,
-            )
-            .unwrap();
-            let derived_digest = crate::engine::base::safe_serialize_hash_element_versioned(
-                &crate::engine::base::DSEP_PUBDATA_KEY,
-                &derived_public_key,
-            )
-            .unwrap();
+            let stored_digest = hash_versioned(&DSEP_PUBDATA_KEY, &stored_public_key).unwrap();
+            let derived_digest = hash_versioned(&DSEP_PUBDATA_KEY, &derived_public_key).unwrap();
             assert_eq!(stored_digest, derived_digest);
             (server_key, stored_public_key)
         } else {

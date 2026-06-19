@@ -8,7 +8,7 @@ cfg_if::cfg_if! {
             compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
             CrsGenMetadata,
         };
-        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
+        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
@@ -16,6 +16,8 @@ cfg_if::cfg_if! {
         };
         use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
+
+        use hashing::hash_versioned;
         use futures_util::future;
         use itertools::Itertools;
         use kms_grpc::identifiers::EpochId;
@@ -24,7 +26,7 @@ cfg_if::cfg_if! {
         use threshold_execution::keyset_config::StandardKeySetConfig;
         use threshold_execution::tfhe_internals::parameters::DKGParams;
         use threshold_execution::tfhe_internals::test_feature::gen_key_set;
-        use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
+        use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_client_key;
         use threshold_execution::zk::ceremony::{max_num_bits_from_crs, public_parameters_by_trusted_setup};
         use threshold_types::session_id::SessionId;
     }
@@ -1097,8 +1099,8 @@ where
     };
 
     // Generate key shares with error handling
-    let key_shares = match keygen_all_party_shares_from_keyset(
-        &keyset,
+    let key_shares = match keygen_all_party_shares_from_client_key(
+        &keyset.client_key,
         dkg_params
             .get_params_basics_handle()
             .to_classic_pbs_parameters(),
@@ -1114,14 +1116,13 @@ where
     };
 
     // Hash the compressed keyset once; reuse per party.
-    let compressed_digest =
-        match safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset) {
-            Ok(digest) => digest,
-            Err(e) => {
-                tracing::error!("Failed to hash compressed keyset: {}", e);
-                return false;
-            }
-        };
+    let compressed_digest = match hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset) {
+        Ok(digest) => digest,
+        Err(e) => {
+            tracing::error!("Failed to hash compressed keyset: {}", e);
+            return false;
+        }
+    };
 
     // Derive the CompactPublicKey from the compressed keyset once; store and sign it
     // along with the compressed keyset for each party.
@@ -1134,14 +1135,13 @@ where
     };
 
     // Hash the compact public key once; reuse per party.
-    let public_key_digest =
-        match safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compact_public_key) {
-            Ok(digest) => digest,
-            Err(e) => {
-                tracing::error!("Failed to hash compact public key: {}", e);
-                return false;
-            }
-        };
+    let public_key_digest = match hash_versioned(&DSEP_PUBDATA_KEY, &compact_public_key) {
+        Ok(digest) => digest,
+        Err(e) => {
+            tracing::error!("Failed to hash compact public key: {}", e);
+            return false;
+        }
+    };
 
     // Wrap the compressed keyset, public key, and per-party shares once; futures hold cheap Arc clones.
     let compressed_keyset = Arc::new(compressed_keyset);
@@ -1364,7 +1364,7 @@ where
         });
 
     // Hash pp once; reused per party.
-    let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)
+    let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, &pp)
         .expect("serializing and hashing a CompactPkCrs works");
     let crs_max_num_bits = max_num_bits_from_crs(&pp);
 

@@ -1,5 +1,4 @@
 use crate::client::client_wasm::Client;
-use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::testing::setup::CentralizedTestEnv;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use crate::{
@@ -10,7 +9,9 @@ use crate::{
     util::rate_limiter::RateLimiterConfig,
     vault::storage::StorageReader,
 };
+
 use anyhow::Result;
+use hashing::hash_versioned;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{
@@ -123,8 +124,7 @@ async fn crs_gen_centralized_manual(
         .await
         .unwrap();
 
-    let actual_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs_unversioned).unwrap();
+    let actual_digest = hash_versioned(&DSEP_PUBDATA_CRS, &crs_unversioned).unwrap();
     assert_eq!(actual_digest, resp.crs_digest);
 
     let max_num_bits = max_num_bits_from_crs(&crs_unversioned);

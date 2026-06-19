@@ -15,7 +15,7 @@ use threshold_execution::{
     runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     tests::ensure_real_keys_setup,
     tfhe_internals::{
-        test_feature::{KeySet, keygen_all_party_shares_from_keyset},
+        test_feature::{KeySet, keygen_all_party_shares_from_client_key},
         utils::expanded_encrypt,
     },
 };
@@ -65,9 +65,14 @@ fn ddec_nsmall(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
@@ -122,9 +127,14 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
@@ -172,9 +182,14 @@ fn ddec_nlarge(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
@@ -232,9 +247,14 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     for config in params {
         let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();

@@ -372,11 +372,13 @@ pub async fn compute_cipher_from_stored_key(
     };
 
     // compute_cipher can take a long time since it may do SnS
-    let (send, recv) = tokio::sync::oneshot::channel();
-    rayon::spawn_fifo(move || {
-        let _ = send.send(compute_cipher(msg, &pk, Some(server_key), enc_config));
-    });
-    recv.await.unwrap()
+    // Use a tokio spawn_blocking instead of rayon because computer_cipher sets
+    // the server key which is a thread global variable using RefCell in tfhe
+    // and if the key is reset in another rayon thread while compute_cipher is running,
+    // it can cause a panic due to the RefCell borrow rules.
+    tokio::task::spawn_blocking(move || compute_cipher(msg, &pk, Some(server_key), enc_config))
+        .await
+        .unwrap()
 }
 
 /// Purge any kind of public or private data, regardless of type, for a specific request ID.
