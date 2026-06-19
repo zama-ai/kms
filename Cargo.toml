@@ -136,7 +136,6 @@ console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better 
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
 crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }  # Big integer operations for crypto - LOW RISK: RustCrypto org
 dashmap = "=6.2.1"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
-derive_more = { version = "=2.1.1", features = ["display"] }  # Derive macros for common traits - HIGH RISK: Individual maintainer (JelteF), despite 180M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
 escargot = "=0.5.15" # Interact with cargo without spawning external processes. MEDIUM RISK: single maintainer, 8M downloads, test-only dependency.
 futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
