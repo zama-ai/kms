@@ -373,9 +373,7 @@ impl<
         };
 
         let crs_start_timer = Instant::now();
-        let pke_params = params
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params();
+        let pke_params = params.compact_pk_enc_params();
         let pp = if insecure {
             // sanity check to make sure we're using the insecure feature
             #[cfg(not(feature = "insecure"))]
