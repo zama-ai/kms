@@ -138,7 +138,7 @@ pub struct MetaStorePermit<T> {
     req_id: RequestId,
     /// Lightweight type used to tracking the permit, automatically dropped when the permit is dropped.
     _claim: Arc<()>,
-    /// Needed to prevent permits of same `req_id` to be used across meta-stores.
+    /// Needed to prevent permits of same `req_id` to be used in another MetaStore of different type `T`.
     _phantom: PhantomData<T>,
 }
 
