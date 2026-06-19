@@ -431,6 +431,46 @@ pub fn process_user_decryption_resp_from_js(
     }
 }
 
+/// Solana variant of [process_user_decryption_resp_from_js]. The signed link is the keccak
+/// `compute_link_solana` digest (bound from the 32-byte Solana user pubkey + host chain id),
+/// not the EVM EIP-712 `UserDecryptionLinker`; the de-signcryption is otherwise identical.
+#[wasm_bindgen]
+pub fn process_user_decryption_resp_solana_from_js(
+    client: &mut Client,
+    request: JsValue,
+    solana_user_pubkey: Vec<u8>,
+    host_chain_id: u64,
+    agg_resp: JsValue,
+    enc_pk: &PublicEncKeyMlKem512,
+    enc_sk: &PrivateEncKeyMlKem512,
+) -> Result<Vec<TypedPlaintext>, JsError> {
+    let agg_resp = js_to_resp(agg_resp)
+        .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
+    let request = ParsedUserDecryptionRequest::try_from(request)?;
+    let solana_user_pubkey: [u8; 32] = solana_user_pubkey
+        .as_slice()
+        .try_into()
+        .map_err(|_| JsError::new("solana_user_pubkey must be 32 bytes"))?;
+    // Internally plaintexts are little-endian; JS expects big-endian (mirror the EVM wrapper).
+    match client.process_user_decryption_resp_solana(
+        &request,
+        &solana_user_pubkey,
+        host_chain_id,
+        &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
+        &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+        &agg_resp,
+    ) {
+        Ok(le_res) => Ok(le_res
+            .into_iter()
+            .map(|x| TypedPlaintext {
+                bytes: x.bytes.into_iter().rev().collect(),
+                fhe_type: x.fhe_type,
+            })
+            .collect()),
+        Err(e) => Err(JsError::new(&e.to_string())),
+    }
+}
+
 /// Process the user_decryption response from Rust objects.
 /// Consider using [process_user_decryption_resp_from_js]
 /// when using the JS API.
