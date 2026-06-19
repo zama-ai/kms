@@ -213,7 +213,7 @@ pub struct MetaStore<T> {
     min_cache: usize,
     // Storage of all elements in the system
     storage: HashMap<RequestId, StoredEntry<T>>,
-    // Queue of all elements that have been completed
+    // Queue of all elements that have been completed. Deleted elements are never included in this queue.
     complete_queue: VecDeque<RequestId>,
     // Number of tombstoned (`Deleted`) entries still occupying `storage`.
     deleted_count: usize,
@@ -612,9 +612,11 @@ impl<T> MetaStore<T> {
     /// Get processing request IDs (not yet completed)
     pub(crate) fn get_processing_request_ids(&self) -> Vec<RequestId> {
         self.storage
-            .keys()
-            .filter(|id| !self.complete_queue.contains(id))
-            .cloned()
+            .iter()
+            .filter(|(id, e)| {
+                !matches!(e, StoredEntry::Deleted) && !self.complete_queue.contains(id)
+            })
+            .map(|(id, _)| *id)
             .collect()
     }
 
