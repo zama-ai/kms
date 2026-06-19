@@ -118,7 +118,7 @@ async fn test_list_requests_negative_max_results_does_not_panic() {
 
     let response = service.list_requests(request).await;
     assert!(response.is_ok());
-    // Negative is rejected, the default (100) applies, so entries from index 5 onward.
+    // Negative is treated as unset, the default (100) applies, so entries from index 5 onward.
     assert_eq!(response.unwrap().into_inner().requests.len(), 5);
 }
 
