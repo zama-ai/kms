@@ -14,10 +14,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
-use hashing::DomainSep;
-use hashing::HashingWriter;
-use hashing::hash_element;
-use hashing::serialize_hash_element;
+use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
@@ -246,7 +243,7 @@ pub(crate) fn compute_info_crs(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<CrsGenMetadata> {
-    let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
+    let crs_digest = hash_versioned(domain_separator, pp)?;
     let max_num_bits = max_num_bits_from_crs(pp);
     compute_info_crs_from_digest(sk, crs_id, crs_digest, max_num_bits, domain, extra_data)
 }
@@ -310,10 +307,8 @@ pub(crate) fn compute_keygen_digests(
     domain_separator: &DomainSep,
     keyset: &FhePubKeySet,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
-    let public_key_digest =
-        safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
+    let server_key_digest = hash_versioned(domain_separator, &keyset.server_key)?;
+    let public_key_digest = hash_versioned(domain_separator, &keyset.public_key)?;
 
     tracing::info!(
         "Computed server key digest: {} and public key digest: {}",
@@ -364,7 +359,7 @@ pub(crate) fn compute_info_decompression_keygen(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let key_digest = safe_serialize_hash_element_versioned(domain_separator, decompression_key)?;
+    let key_digest = hash_versioned(domain_separator, decompression_key)?;
 
     let sol_type = FheDecompressionUpgradeKey {
         decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
@@ -394,10 +389,8 @@ pub(crate) fn compute_info_compressed_keygen(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let compressed_keyset_digest =
-        safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
-    let public_key_digest =
-        safe_serialize_hash_element_versioned(domain_separator, compact_public_key)?;
+    let compressed_keyset_digest = hash_versioned(domain_separator, compressed_keyset)?;
+    let public_key_digest = hash_versioned(domain_separator, compact_public_key)?;
     compute_info_compressed_keygen_from_digests(
         sk,
         prep_id,
@@ -460,7 +453,7 @@ pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
 where
     S: Serialize + Versionize + Named,
 {
-    let mut digest = safe_serialize_hash_element_versioned(&DSEP_HANDLE, element)?;
+    let mut digest = hash_versioned(&DSEP_HANDLE, element)?;
     // Truncate and convert to hex
     digest.truncate(ID_LENGTH);
     Ok(hex::encode(digest))
@@ -662,21 +655,6 @@ pub fn deserialize_to_low_level(
         }
     };
     Ok(radix_ct)
-}
-
-/// Serialize and hash a versioned element using tfhe-rs' `safe_serialize` function.
-pub fn safe_serialize_hash_element_versioned<T>(
-    domain_separator: &DomainSep,
-    msg: &T,
-) -> anyhow::Result<Vec<u8>>
-where
-    T: Serialize + tfhe::Versionize + tfhe::named::Named,
-{
-    let mut writer = HashingWriter::new(domain_separator);
-
-    tfhe::safe_serialization::safe_serialize(msg, &mut writer, SAFE_SER_SIZE_LIMIT)
-        .map_err(|e| anyhow::anyhow!("Could not serialize&hash element. Error: {e}"))?;
-    Ok(writer.finalize())
 }
 
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
@@ -925,17 +903,24 @@ pub fn compute_public_decryption_message(
 /// InvalidArgument if the concrete parameter does not exist.
 /// The default DKG parameters are returned if None is provided.
 pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParams, BoxedStatus> {
-    match fhe_parameter {
+    let params = match fhe_parameter {
         Some(inner) => {
             let fhe_parameter: WrappedDKGParams = FheParameter::try_from(inner)
                 .map_err(|e| {
                     tonic::Status::invalid_argument(format!("DKG parameter not found: {e}"))
                 })?
                 .into();
-            Ok(*fhe_parameter)
+            *fhe_parameter
         }
-        None => Ok(*WrappedDKGParams::from(FheParameter::default())),
-    }
+        None => *WrappedDKGParams::from(FheParameter::default()),
+    };
+    // Validate the KMS-level invariants at the parameter-entry boundary so a
+    // malformed parameter set fails fast here with a clear error, instead of
+    // panicking deep inside an accessor (e.g. `classic_pbs`) later on.
+    params
+        .check_conformance()
+        .map_err(|e| tonic::Status::invalid_argument(format!("Invalid DKG parameters: {e}")))?;
+    Ok(params)
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -1190,7 +1175,7 @@ pub(crate) mod tests {
             base::{
                 DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_external_signature_preprocessing,
                 compute_info_uncompressed_keygen, compute_public_decryption_message,
-                safe_serialize_hash_element_versioned,
+                hash_versioned,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_uncompressed_fhe_keys,
@@ -1583,10 +1568,8 @@ pub(crate) mod tests {
         let server_key = client_key.generate_server_key();
         let public_key = FhePublicKey::new(&client_key);
 
-        let server_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
-        let public_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+        let server_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
 
         let keyset = FhePubKeySet {
             public_key,
@@ -1783,7 +1766,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
 
         {
             // do the verification correctly
@@ -1902,8 +1885,7 @@ pub(crate) mod tests {
                 &mut rng,
             )
             .unwrap();
-            let crs_digest =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+            let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
 
             let sol_struct = CrsgenVerification::new(
                 &crs_id,

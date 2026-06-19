@@ -21,6 +21,7 @@ use backward_compatibility::{
     tests::{TestedModule, run_all_tests},
 };
 use common::{load_and_unversionize, load_and_unversionize_auxiliary};
+use hashing::hash_versioned;
 use kms_grpc::{
     RequestId,
     kms::v1::TypedPlaintext,
@@ -53,10 +54,7 @@ use kms_lib::{
         },
     },
     engine::{
-        base::{
-            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
-            safe_serialize_hash_element_versioned,
-        },
+        base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
         context::{ContextInfo, NodeInfo, SoftwareVersion},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
@@ -197,10 +195,8 @@ fn test_key_gen_metadata(
 
     let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
     let mut new_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
-    let pub_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let server_key_digest = hash_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest = hash_versioned(b"TESTTEST", &pretend_public_key).unwrap();
     let sol_type = KeygenVerificationQ126::new_standard(
         &preprocessing_id,
         &key_id,
@@ -355,10 +351,8 @@ fn test_key_gen_metadata_with_extra_data(
 
     let extra_data = test.extra_data.to_vec();
     let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
-    let pub_key_digest =
-        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let server_key_digest = hash_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest = hash_versioned(b"TESTTEST", &pretend_public_key).unwrap();
     let sol_type = KeygenVerification::new_uncompressed(
         &preprocessing_id,
         &key_id,
@@ -851,9 +845,7 @@ fn test_recovery_material(
             operator_pk: operator_pk.clone(),
             shares: Vec::new(),
         };
-        let msg_digest =
-            safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                .unwrap();
+        let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
         commitments.insert(cus_role, msg_digest);
         let mut payload = [0_u8; 32];
         rng.fill_bytes(&mut payload);
@@ -923,12 +915,20 @@ fn test_internal_recovery_request(
     }
 }
 
+/// Fixed timestamp used by the v0.14.0 generator for the custodian fixtures. Must match
+/// `fixed_fixture_timestamp` in `backward-compatibility/generate-v0.14.0/src/data_0_14.rs`
+/// so that regenerated, deterministic fixtures compare equal to what we rebuild here.
+fn fixed_fixture_timestamp() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
+}
+
 fn test_internal_custodian_context(
     dir: &Path,
     test: &InternalCustodianContextTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: InternalCustodianContext = load_and_unversionize(dir, test, format)?;
+
     let enc_key: UnifiedPublicEncKey =
         load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
@@ -946,7 +946,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: 42,
+            timestamp: fixed_fixture_timestamp(),
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };
@@ -1148,11 +1148,10 @@ fn test_internal_custodian_message(
     let (dec_key, enc_key) = enc.keygen().unwrap();
     let custodian =
         Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
-    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
-
-    // the timestamp will never match, so we modify it manually
-    // the timestamp also affects the signature, so modify it as well
-    new_custodian_setup_message.timestamp = original_custodian_setup_message.timestamp;
+    // Use the same fixed timestamp the generator uses so the rebuilt message matches the
+    // deterministic on-disk fixture exactly.
+    let new_custodian_setup_message =
+        custodian.generate_setup_message_with_timestamp(&mut rng, name, fixed_fixture_timestamp());
 
     if original_custodian_setup_message != new_custodian_setup_message {
         Err(test.failure(

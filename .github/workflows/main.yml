@@ -310,6 +310,8 @@ jobs:
       - test-workspace-crates
       - test-wasm
     uses: ./.github/workflows/test-reporter.yml
+    with:
+      initial-workflow: 'main'
     permissions:
       checks: write # Required to create GitHub checks for test results
       packages: read # Required to read GitHub packages/container registry

@@ -377,7 +377,7 @@ pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHan
                     .map(|(role, share)| Share::new(*role, *share))
                     .collect_vec();
                 let sharing = ShamirSharings::create(sharing);
-                let try_reconstruct = sharing.err_reconstruct(threshold, 0);
+                let try_reconstruct = sharing.error_reconstruct(threshold, 0);
 
                 if let Ok(value) = try_reconstruct {
                     if let Some(result_map) = result_map {

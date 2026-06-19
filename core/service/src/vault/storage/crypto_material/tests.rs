@@ -29,14 +29,13 @@ use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use tfhe::{
     CompactPublicKey, ConfigBuilder, Seed, ServerKey, safe_serialization::safe_serialize,
     shortint::ClassicPBSParameters, xof_key_set::CompressedXofKeySet,
 };
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
-    parameters::DKGParams,
     public_keysets::FhePubKeySet,
     test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
 };
@@ -289,9 +288,7 @@ async fn read_public_key() {
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
 
-    let pbs_params: ClassicPBSParameters = TEST_PARAM
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
+    let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let client_key = tfhe::ClientKey::generate(config);
     let public_key = CompactPublicKey::new(&client_key);
@@ -330,12 +327,8 @@ async fn write_central_keys() {
         .unwrap()
         .into();
 
-    let pbs_params: ClassicPBSParameters =
-        param.get_params_basics_handle().to_classic_pbs_parameters();
-    let sns_params = match param {
-        DKGParams::WithoutSnS(_) => panic!("expect sns"),
-        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
-    };
+    let pbs_params: ClassicPBSParameters = param.classic_pbs();
+    let sns_params = param.sns().expect("sns param").sns_params();
     let config =
         ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
     let client_key = tfhe::ClientKey::generate(config);
@@ -369,6 +362,8 @@ async fn write_central_keys() {
         err.contains("Error while updating meta store for") && err.contains("request is missing"),
         "expected meta-store update failure when empty, got: {err}"
     );
+    // The failed write must not populate the in-memory cache.
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 0);
 
     // update the meta store and the write should be ok
     {
@@ -387,6 +382,8 @@ async fn write_central_keys() {
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
+    // The successful write caches exactly one FHE key entry.
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
@@ -459,12 +456,8 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             .unwrap()
             .into();
 
-    let pbs_params: ClassicPBSParameters =
-        param.get_params_basics_handle().to_classic_pbs_parameters();
-    let sns_params = match param {
-        DKGParams::WithoutSnS(_) => panic!("expect sns"),
-        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
-    };
+    let pbs_params: ClassicPBSParameters = param.classic_pbs();
+    let sns_params = param.sns().expect("sns param").sns_params();
     let config =
         ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
     let client_key = tfhe::ClientKey::generate(config);
@@ -686,6 +679,72 @@ async fn write_threshold_keys_meta_update() {
         refreshed.is_ok(),
         "threshold read path should still succeed after duplicate conflict"
     );
+}
+
+#[tokio::test]
+async fn purge_epoch_from_cache_removes_only_matching_epoch() {
+    // Two cached keys under two different epochs in the SAME storage.
+    let req_a = derive_request_id("purge_epoch_cache_a").unwrap();
+    let epoch_a: EpochId = derive_request_id("purge_epoch_cache_epoch_a")
+        .unwrap()
+        .into();
+    let req_b = derive_request_id("purge_epoch_cache_b").unwrap();
+    let epoch_b: EpochId = derive_request_id("purge_epoch_cache_epoch_b")
+        .unwrap()
+        .into();
+
+    let (crypto_storage, keys_a, pubset_a) = setup_threshold_store(&req_a);
+    // A second keyset; the throwaway storage is unused, only the key material is.
+    let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b);
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_a).unwrap();
+        guard.insert(&req_b).unwrap();
+    }
+
+    crypto_storage
+        .write_fhe_keys(
+            &req_a,
+            &epoch_a,
+            keys_a,
+            PublicKeySet::Uncompressed(Arc::new(pubset_a)),
+            meta_store.clone(),
+            "",
+        )
+        .await
+        .unwrap();
+    crypto_storage
+        .write_fhe_keys(
+            &req_b,
+            &epoch_b,
+            keys_b,
+            PublicKeySet::Uncompressed(Arc::new(pubset_b)),
+            meta_store.clone(),
+            "",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 2);
+
+    // Purging epoch_a removes exactly its one entry; epoch_b is untouched.
+    let removed = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
+    assert_eq!(removed, 1);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
+    assert!(
+        crypto_storage
+            .read_guarded_fhe_keys(&req_b, &epoch_b)
+            .await
+            .is_ok(),
+        "the non-purged epoch's key must remain available"
+    );
+
+    // Purging an epoch with no cached entries is a harmless no-op.
+    let removed_none = crypto_storage.purge_epoch_from_cache(&epoch_a).await;
+    assert_eq!(removed_none, 0);
+    assert_eq!(crypto_storage.cached_fhe_key_count().unwrap(), 1);
 }
 
 #[tokio::test]
@@ -960,9 +1019,7 @@ fn setup_threshold_store(
         HashMap::new(),
     );
 
-    let pbs_params: ClassicPBSParameters = TEST_PARAM
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
+    let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
 
     let mut rng = AesRng::seed_from_u64(100);
     // TODO(dp): should probably switch over to compressed keys here (and below).
@@ -1023,10 +1080,7 @@ fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
     let payload = CustodianSetupMessagePayload {
         header: HEADER.to_string(),
         random_value: [4_u8; 32],
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+        timestamp: SystemTime::now(),
         public_enc_key: enc_key.clone(),
         verification_key: verf_key,
     };

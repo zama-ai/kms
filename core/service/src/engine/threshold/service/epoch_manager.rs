@@ -491,11 +491,7 @@ impl<
                 keys.into_iter().zip_eq(verified_previous_epoch.keys_info)
             {
                 // Lift to expected domain
-                let mut private_keys = match key_info
-                    .key_parameters
-                    .get_params_basics_handle()
-                    .get_dkg_mode()
-                {
+                let mut private_keys = match key_info.key_parameters.dkg_mode() {
                     DkgMode::Z64 => private_keys.lift_to_z64(),
                     DkgMode::Z128 => {
                         private_keys
@@ -674,7 +670,6 @@ impl<
                     // instead preserve the old keyset's CompactPublicKey to keep the
                     // externally visible public key stable across epochs of the same key_id.
                     let compact_public_key = compressed_keyset
-                        .clone()
                         .decompress()
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to decompress reshared compressed keyset: {e}")
@@ -701,7 +696,7 @@ impl<
                         }
                     };
 
-                    let public_material = PublicKeyMaterial::new(compressed_keyset.clone());
+                    let public_material = PublicKeyMaterial::new(compressed_keyset);
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
                         Arc::new(new_private_keyset),
@@ -1005,11 +1000,7 @@ impl<
                 verified_previous_epoch.keys_info.iter().zip_eq(keys)
             {
                 // Lift to expected domain
-                let mut private_keys = match key_info
-                    .key_parameters
-                    .get_params_basics_handle()
-                    .get_dkg_mode()
-                {
+                let mut private_keys = match key_info.key_parameters.dkg_mode() {
                     DkgMode::Z64 => private_keys.lift_to_z64(),
                     DkgMode::Z128 => {
                         private_keys
@@ -1395,13 +1386,24 @@ impl<
 
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
-        Self::destroy_epoch(
+        let res = Self::destroy_epoch(
             &epoch_id,
             &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
             &priv_storage,
             &self.session_maker,
         )
-        .await
+        .await;
+
+        // `destroy_epoch` above removes only the on-disk material, so the cached
+        // decompressed keys must be dropped here separately or they stay resident
+        // until restart. Safe even if destruction partially failed: the epoch is
+        // already gone from the session maker, so nothing can reach these entries.
+        let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
+        tracing::info!(
+            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
+        );
+
+        res
     }
 
     async fn get_epoch_result(

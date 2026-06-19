@@ -7,14 +7,11 @@ use super::{
     progress_tracker::ProgressTracker,
 };
 use crate::{
+    constants::{BATCH_SIZE_BITS, BATCH_SIZE_TRIPLES, CHANNEL_BUFFER_SIZE, TRACKER_LOG_PERCENTAGE},
     keyset_config::KeySetConfig,
     online::{
         preprocessing::{
-            DKGPreprocessing, PreprocessorFactory,
-            constants::{
-                BATCH_SIZE_BITS, BATCH_SIZE_TRIPLES, CHANNEL_BUFFER_SIZE, TRACKER_LOG_PERCENTAGE,
-            },
-            orchestration::producer_traits::ProducerFactory,
+            DKGPreprocessing, PreprocessorFactory, orchestration::producer_traits::ProducerFactory,
         },
         triple::Triple,
     },
@@ -120,7 +117,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         params: DKGParams,
         keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithSnS(_) = params {
+        if params.supports_sns() {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
@@ -132,10 +129,11 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         );
 
         let triple_progress_tracker =
-            ProgressTracker::new("TripleGen", num_triples, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
-            ProgressTracker::new("RandomGen", num_randomness, TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -156,7 +154,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         keyset_config: KeySetConfig,
         percentage_offline: usize,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithSnS(_) = params {
+        if params.supports_sns() {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
@@ -166,10 +164,11 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
             get_num_correlated_randomness_required(&params, keyset_config, percentage_offline);
 
         let triple_progress_tracker =
-            ProgressTracker::new("TripleGen", num_triples, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
-            ProgressTracker::new("RandomGen", num_randomness, TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -195,7 +194,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         params: DKGParams,
         keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithoutSnS(_) = params {
+        if !params.supports_sns() {
             return Err(anyhow_error_and_log(
                 "Should not have no SNS with ResiduePolyF8Z128",
             ));
@@ -209,10 +208,11 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         );
 
         let triple_progress_tracker =
-            ProgressTracker::new("TripleGen", num_triples, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
-            ProgressTracker::new("RandomGen", num_randomness, TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -233,7 +233,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         keyset_config: KeySetConfig,
         percentage_offline: usize,
     ) -> anyhow::Result<Self> {
-        if let DKGParams::WithoutSnS(_) = params {
+        if !params.supports_sns() {
             return Err(anyhow_error_and_log(
                 "Should not have no SNS with ResiduePolyF8Z128",
             ));
@@ -245,10 +245,11 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
             get_num_correlated_randomness_required(&params, keyset_config, percentage_offline);
 
         let triple_progress_tracker =
-            ProgressTracker::new("TripleGen", num_triples, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
-            ProgressTracker::new("RandomGen", num_randomness, TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Ok(Self {
             params,
@@ -283,7 +284,7 @@ pub fn create_channels<R: Clone>(
     let mut triple_sender_channels = Vec::new();
     let mut triple_receiver_channels = Vec::new();
     for _ in 0..num_triple_sessions {
-        let (tx, rx) = channel::<Vec<Triple<R>>>(CHANNEL_BUFFER_SIZE);
+        let (tx, rx) = channel::<Vec<Triple<R>>>(*CHANNEL_BUFFER_SIZE);
         triple_sender_channels.push(tx);
         triple_receiver_channels.push(Mutex::new(rx));
     }
@@ -292,7 +293,7 @@ pub fn create_channels<R: Clone>(
     let mut random_sender_channels = Vec::new();
     let mut random_receiver_channels = Vec::new();
     for _ in 0..num_random_sessions {
-        let (tx, rx) = channel::<Vec<Share<R>>>(CHANNEL_BUFFER_SIZE);
+        let (tx, rx) = channel::<Vec<Share<R>>>(*CHANNEL_BUFFER_SIZE);
         random_sender_channels.push(tx);
         random_receiver_channels.push(Mutex::new(rx));
     }
@@ -300,7 +301,7 @@ pub fn create_channels<R: Clone>(
     let mut bit_sender_channels = Vec::new();
     let mut bit_receiver_channels = Vec::new();
     for _ in 0..num_bits_sessions {
-        let (tx, rx) = channel::<Vec<Share<R>>>(CHANNEL_BUFFER_SIZE);
+        let (tx, rx) = channel::<Vec<Share<R>>>(*CHANNEL_BUFFER_SIZE);
         bit_sender_channels.push(tx);
         bit_receiver_channels.push(Mutex::new(rx));
     }
@@ -391,7 +392,7 @@ where
 
         //Start the producers
         let triple_producer = P::TripleProducer::new(
-            BATCH_SIZE_TRIPLES,
+            *BATCH_SIZE_TRIPLES,
             num_triples,
             basic_sessions,
             triple_sender_channels,
@@ -400,7 +401,7 @@ where
         let mut triple_producer_handles = triple_producer.start_triple_production();
 
         let bit_producer = P::BitProducer::new(
-            BATCH_SIZE_BITS,
+            *BATCH_SIZE_BITS,
             num_bits,
             sessions,
             bit_sender_channels,
@@ -471,11 +472,9 @@ fn get_num_correlated_randomness_required(
     keyset_config: KeySetConfig,
     #[cfg(feature = "testing")] percentage_offline: usize,
 ) -> (usize, usize, usize) {
-    let params_basics_handle = params.get_params_basics_handle();
-
-    let num_bits = params_basics_handle.total_bits_required(keyset_config);
-    let num_triples = params_basics_handle.total_triples_required(keyset_config) - num_bits;
-    let num_randomness = params_basics_handle.total_randomness_required(keyset_config) - num_bits;
+    let num_bits = params.total_bits_required(keyset_config);
+    let num_triples = params.total_triples_required(keyset_config) - num_bits;
+    let num_randomness = params.total_randomness_required(keyset_config) - num_bits;
 
     #[cfg(feature = "testing")]
     {
@@ -515,26 +514,27 @@ fn get_num_tuniform_raw_bits_required(
     #[cfg(feature = "testing")] percentage_offline: usize,
 ) -> (Vec<NoiseInfo>, usize) {
     let mut tuniform_productions = Vec::new();
-    let params_basics_handle = params.get_params_basics_handle();
 
-    tuniform_productions.push(params_basics_handle.all_lwe_noise(keyset_config));
-    tuniform_productions.push(params_basics_handle.all_glwe_noise(keyset_config));
-    tuniform_productions.push(params_basics_handle.all_compression_ksk_noise(keyset_config));
+    tuniform_productions.push(params.all_lwe_noise(keyset_config));
+    tuniform_productions.push(params.all_glwe_noise(keyset_config));
+    tuniform_productions.push(params.all_compression_ksk_noise(keyset_config));
 
-    match params {
-        DKGParams::WithSnS(sns_params) => {
-            tuniform_productions.push(sns_params.all_bk_sns_noise());
-            if sns_params.sns_compression_params.is_some() {
-                tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
+    match keyset_config {
+        KeySetConfig::Standard(_) => {
+            if let Some(sns_params) = params.sns() {
+                tuniform_productions.push(sns_params.all_bk_sns_noise());
+                if sns_params.sns_compression_params().is_some() {
+                    tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
+                }
             }
         }
-        DKGParams::WithoutSnS(_) => (),
+        KeySetConfig::DecompressionOnly => {}
     }
 
-    tuniform_productions.push(params_basics_handle.all_lwe_hat_noise(keyset_config));
+    tuniform_productions.push(params.all_lwe_hat_noise(keyset_config));
 
     //Required number of _raw_ bits
-    let num_bits_required = params_basics_handle.num_raw_bits(keyset_config);
+    let num_bits_required = params.num_raw_bits(keyset_config);
     #[cfg(feature = "testing")]
     {
         let num_bits_required = if percentage_offline < 100 {

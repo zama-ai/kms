@@ -452,6 +452,8 @@ jobs:
     needs:
       - kind-testing
     uses: ./.github/workflows/test-reporter.yml
+    with:
+      initial-workflow: 'kind-testing'
     permissions:
       checks: write # Required to create GitHub checks for test results
       packages: read # Required to read GitHub packages/container registry

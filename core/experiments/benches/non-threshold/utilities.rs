@@ -104,11 +104,7 @@ pub fn generate_tfhe_keys(params: &DKGParams) -> (ClientKey, CompressedXofKeySet
     let config = params.to_tfhe_config();
 
     // If the params do not have sk deviation, we set a default value of 1.0
-    let max_norm_hwt = params
-        .get_params_basics_handle()
-        .get_sk_deviations()
-        .map(|d| d.pmax)
-        .unwrap_or(1.0);
+    let max_norm_hwt = params.sk_deviations().map(|d| d.pmax).unwrap_or(1.0);
 
     let mut seeder = new_seeder();
     let private_seed_bytes = seeder.seed().0.to_le_bytes().to_vec();

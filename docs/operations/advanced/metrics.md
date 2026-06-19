@@ -146,6 +146,11 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - **Description**: Memory used by KMS in bytes.
 - **Alarm**: If memory usage exceeds 85% of available memory.
 
+#### Metric Name: `kms_fhe_key_cache_size`
+- **Type**: Gauge
+- **Description**: Number of FHE key entries held in the in-memory crypto-material cache. Each entry can hold multi-GiB decompressed key material, so this gauge tracks the dominant driver of KMS memory usage.
+- **Alarm**: If the count does not drop after an epoch is destroyed (cache entries are expected to be reclaimed).
+
 #### Other Gauges
 - **Type**: Gauge
 - **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_rate_limiter_usage`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).

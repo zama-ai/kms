@@ -1,3 +1,4 @@
+use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
     CrsGenerator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
@@ -66,6 +67,26 @@ impl_endpoint! {
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
             self.keygen_preprocessor.partial_key_gen_preproc(request).await.map_err(|e| e.into())
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn insecure_key_gen_preproc(
+            &self,
+            request: Request<KeyGenPreprocRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.insecure_key_gen_preproc(request).await.map_err(|e| e.into())
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn get_insecure_key_gen_preproc_result(
+            &self,
+            request: Request<RequestId>,
+        ) -> Result<Response<KeyGenPreprocResult>, Status> {
+            METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_RESULT);
+            self.keygen_preprocessor.get_insecure_result(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -407,6 +428,20 @@ impl_endpoint! {
             };
 
             Ok(Response::new(response))
+        }
+
+
+        #[tracing::instrument(skip(self, request))]
+        async fn bandwidth_benchmark(
+            &self,
+            request: Request<kms_grpc::kms::v1::BandwidthBenchmarkRequest>,
+        ) -> Result<Response<kms_grpc::kms::v1::BandwidthBenchmarkResponse>, Status> {
+            run_bandwidth_benchmark(
+                request,
+                self.session_maker.clone(),
+                std::sync::Arc::clone(&self.bandwidth_bench_limiter),
+                &self.bandwidth_bench_config,
+            ).await
         }
     }
 }

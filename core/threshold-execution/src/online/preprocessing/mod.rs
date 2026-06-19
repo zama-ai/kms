@@ -89,7 +89,9 @@ mock! {
 
 pub trait BitPreprocessing<Z: Clone>: Send + Sync {
     fn append_bits(&mut self, bits: Vec<Share<Z>>);
+    /// Must return an error if there are no bits available
     fn next_bit(&mut self) -> anyhow::Result<Share<Z>>;
+    /// Must return an error if there are not enough bits available
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>>;
     fn bits_len(&self) -> usize;
 }
@@ -273,38 +275,37 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     preprocessing_base: &mut dyn BasePreprocessing<Z>,
     preprocessing_bits: &mut dyn BitPreprocessing<Z>,
 ) -> anyhow::Result<()> {
-    let params_basics_handles = params.get_params_basics_handle();
-
     //Generate noise needed for pksk (if needed) and the key switch key
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_lwe_noise(keyset_config),
+            params.all_lwe_noise(keyset_config),
             preprocessing_bits,
         )?,
-        NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
+        NoiseBounds::LweNoise(params.lwe_tuniform_bound()),
     );
 
     //Generate noise needed for the pksk (if needed), the bootstrap key
     //and the decompression key
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_glwe_noise(keyset_config),
+            params.all_glwe_noise(keyset_config),
             preprocessing_bits,
         )?,
-        NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
+        NoiseBounds::GlweNoise(params.glwe_tuniform_bound()),
     );
 
     // Generate noise needed for compression key
-    let ksk_noise = params_basics_handles.all_compression_ksk_noise(keyset_config);
+    let ksk_noise = params.all_compression_ksk_noise(keyset_config);
     prep.append_noises(
         RealSecretDistributions::from_noise_info(ksk_noise, preprocessing_bits)?,
         ksk_noise.bound,
     );
 
-    //Generate noise needed for Switch and Squash bootstrap key if needed
-    if keyset_config.is_standard() {
-        match params {
-            DKGParams::WithSnS(sns_params) => {
+    // SnS noise
+    match keyset_config {
+        KeySetConfig::Standard(_) => {
+            if let Some(sns_params) = params.sns() {
+                // Generate noise needed for Switch and Squash bootstrap key if needed
                 prep.append_noises(
                     RealSecretDistributions::from_noise_info(
                         sns_params.all_bk_sns_noise(),
@@ -312,15 +313,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
                     )?,
                     NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
                 );
-            }
-            DKGParams::WithoutSnS(_) => (),
-        }
-    }
-
-    // Generate noise for sns compression key if needed
-    match keyset_config {
-        KeySetConfig::Standard(_) => match params {
-            DKGParams::WithSnS(sns_params) => {
+                // Generate noise for sns compression key if needed
                 let noise_info = sns_params.num_needed_noise_sns_compression_key();
                 let bound = noise_info.bound;
                 prep.append_noises(
@@ -328,34 +321,33 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
                     bound,
                 );
             }
-            DKGParams::WithoutSnS(_) => (),
-        },
+        }
         KeySetConfig::DecompressionOnly => {}
     }
 
     //Generate noise needed for the pk
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_lwe_hat_noise(keyset_config),
+            params.all_lwe_hat_noise(keyset_config),
             preprocessing_bits,
         )?,
-        NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
+        NoiseBounds::LweHatNoise(params.lwe_hat_tuniform_bound()),
     );
 
     //Fill in the required number of _raw_ bits
-    let num_bits_required = params_basics_handles.num_raw_bits(keyset_config);
+    let num_bits_required = params.num_raw_bits(keyset_config);
 
     prep.append_bits(preprocessing_bits.next_bit_vec(num_bits_required)?);
 
     //Fill in the required number of triples
-    let num_triples_required = params_basics_handles.total_triples_required(keyset_config)
-        - params_basics_handles.total_bits_required(keyset_config);
+    let num_triples_required =
+        params.total_triples_required(keyset_config) - params.total_bits_required(keyset_config);
 
     prep.append_triples(preprocessing_base.next_triple_vec(num_triples_required)?);
 
     //Fill in the required number of randomness
-    let num_randomness_required = params_basics_handles.total_randomness_required(keyset_config)
-        - params_basics_handles.total_bits_required(keyset_config);
+    let num_randomness_required =
+        params.total_randomness_required(keyset_config) - params.total_bits_required(keyset_config);
     prep.append_randoms(preprocessing_base.next_random_vec(num_randomness_required)?);
 
     Ok(())
@@ -409,7 +401,6 @@ where
     redis_factory::<EXTENSION_DEGREE>(key_prefix, redis_conf)
 }
 
-pub mod constants;
 pub mod dummy;
 pub mod memory;
 pub mod orchestration;

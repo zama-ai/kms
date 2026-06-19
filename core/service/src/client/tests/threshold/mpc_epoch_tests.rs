@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use hashing::hash_versioned;
 use itertools::Itertools;
 use kms_grpc::{
     ContextId, RequestId,
@@ -19,7 +20,7 @@ use crate::{
     client::{
         client_wasm::Client,
         tests::{
-            common::keygen_config,
+            common::{PollConfig, keygen_config, retrying_poll},
             threshold::{
                 crs_gen_tests::run_crs,
                 key_gen_tests::{
@@ -33,7 +34,7 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::{
-        base::{DSEP_PUBDATA_KEY, derive_request_id, safe_serialize_hash_element_versioned},
+        base::{DSEP_PUBDATA_KEY, derive_request_id},
         threshold::service::ThresholdFheKeys,
         validation::ResharingParams,
     },
@@ -165,7 +166,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 
         // compute the key digest for compressed keyset
         let compressed_keyset_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
+            hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
         keys_info.push(KeyInfo {
             key_id: Some((*key_req_id).into()),
             preproc_id: Some((*preproc_req_id).into()),
@@ -482,10 +483,9 @@ async fn run_new_epoch(
             // secret shares, so its stored CompactPublicKey must match the one obtained
             // by decompressing the keyset (resharing derives the PK from the new keyset,
             // per epoch_manager.rs). CompactPublicKey has no PartialEq, compare digests.
-            let stored_pk_digest =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
+            let stored_pk_digest = hash_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
             let decompressed_pk_digest =
-                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &decompressed_pk).unwrap();
+                hash_versioned(&DSEP_PUBDATA_KEY, &decompressed_pk).unwrap();
             assert_eq!(
                 stored_pk_digest, decompressed_pk_digest,
                 "stored CompactPublicKey must equal the one derived from the reshared compressed keyset"
@@ -548,30 +548,25 @@ async fn poll_new_epoch_result(
     let mut resp_tasks = JoinSet::new();
 
     for (party_idx, client) in kms_clients.iter() {
-        let mut client = client.clone();
+        let client = client.clone();
 
         let reshare_request_id = *new_epoch_id;
         let party_idx = *party_idx;
         resp_tasks.spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            let mut response = client
-                .get_epoch_result(tonic::Request::new(reshare_request_id.into()))
-                .await;
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for resharing after {max_iter} retries");
-                }
-                ctr += 1;
-                response = client
-                    .get_epoch_result(tonic::Request::new(reshare_request_id.into()))
-                    .await;
-            }
+            // Sleep initially to give the server time to complete resharing, then
+            // poll every 500ms for up to `max_iter` tries.
+            let response = retrying_poll(
+                client,
+                reshare_request_id.into(),
+                "resharing result",
+                PollConfig {
+                    initial_delay: tokio::time::Duration::from_millis(500),
+                    retry_delay: tokio::time::Duration::from_millis(500),
+                    max_retries: max_iter,
+                },
+                |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
+            )
+            .await;
             (party_idx, reshare_request_id, response)
         });
     }

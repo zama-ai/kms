@@ -602,7 +602,6 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use crate::engine::base::safe_serialize_hash_element_versioned;
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
@@ -615,7 +614,9 @@ mod tests {
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_versioned_at_request_id;
+
     use aes_prng::AesRng;
+    use hashing::hash_versioned;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
@@ -682,25 +683,17 @@ mod tests {
 
         // generate the keys
         let params = crate::consts::TEST_PARAM;
-        let pbs_params: ClassicPBSParameters = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params: ClassicPBSParameters = params.classic_pbs();
         let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
         let client_key = tfhe::ClientKey::generate(config);
         let server_key = client_key.generate_server_key();
         let public_key = CompactPublicKey::new(&client_key);
 
         // generate digests
-        let server_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &server_key,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &public_key,
-        )
-        .unwrap();
+        let server_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
         let key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
             (PubDataType::ServerKey, server_key_digest),
             (PubDataType::PublicKey, public_key_digest),
@@ -1029,11 +1022,7 @@ mod tests {
         let config = params.to_tfhe_config();
         // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
         // and use a pmax=1 which should allow for any HW.
-        let max_norm_hwt = params
-            .get_params_basics_handle()
-            .get_sk_deviations()
-            .map(|x| x.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let tag = (&key_id).into();
 
@@ -1042,11 +1031,8 @@ mod tests {
                 .unwrap();
 
         // generate digest
-        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compressed_keyset,
-        )
-        .unwrap();
+        let compressed_keyset_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
         let key_digests: HashMap<PubDataType, Vec<u8>> =
             HashMap::from_iter([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]);
 

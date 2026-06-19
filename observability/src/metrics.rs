@@ -77,6 +77,7 @@ pub struct CoreMetrics {
     meta_storage_user_dec_gauge: IntGauge, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
     meta_storage_user_dec_total_gauge: IntGauge, // Total number of user decryptions in meta storage
+    fhe_key_cache_size_gauge: IntGauge, // Number of FHE key entries in the in-memory crypto-material cache
 
     // System metrics
     total_cpus_gauge: IntGauge,     // Total number of CPUs
@@ -267,6 +268,15 @@ impl CoreMetrics {
             .register(Box::new(rate_limiter_gauge.clone()))
             .expect("failed to register rate limiter gauge");
 
+        let fhe_key_cache_size_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_fhe_key_cache_size"),
+            "Number of FHE key entries currently held in the in-memory crypto-material cache",
+        ))
+        .expect("failed to create FHE key cache size gauge");
+        registry
+            .register(Box::new(fhe_key_cache_size_gauge.clone()))
+            .expect("failed to register FHE key cache size gauge");
+
         let active_session_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_active_sessions"),
             "Number of active sessions in the KMS",
@@ -391,6 +401,7 @@ impl CoreMetrics {
             socat_task_gauge,
             task_gauge,
             rate_limiter_gauge,
+            fhe_key_cache_size_gauge,
             active_session_gauge,
             inactive_session_gauge,
             meta_storage_pub_dec_gauge,
@@ -551,6 +562,12 @@ impl CoreMetrics {
     /// Record the current rate limiter usage into the gauge
     pub fn record_rate_limiter_usage(&self, count: u64) {
         self.rate_limiter_gauge.set(count as i64);
+    }
+
+    /// Record the number of FHE key entries in the in-memory cache into the gauge
+    pub fn record_fhe_key_cache_size(&self, count: u64) {
+        let value = i64::try_from(count).unwrap_or(i64::MAX);
+        self.fhe_key_cache_size_gauge.set(value);
     }
 
     /// Record the sum of active sessions done with other parties into the gauge
@@ -865,6 +882,7 @@ mod tests {
             "kms_active_sessions",
             "kms_backup_errors_total",
             "kms_cpu_load",
+            "kms_fhe_key_cache_size",
             "kms_file_descriptors",
             "kms_inactive_sessions",
             "kms_memory_usage",
@@ -904,6 +922,18 @@ mod tests {
             names, expected_metrics,
             "Metric families changed. If intentional, update the allowlist in this test."
         );
+    }
+
+    #[test]
+    fn record_fhe_key_cache_size_sets_and_clamps() {
+        METRICS.record_fhe_key_cache_size(3);
+        assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), 3);
+
+        METRICS.record_fhe_key_cache_size(u64::MAX);
+        assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), i64::MAX);
+
+        METRICS.record_fhe_key_cache_size(0);
+        assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), 0);
     }
 
     #[test]

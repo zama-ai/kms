@@ -65,13 +65,14 @@ pub async fn key_gen_impl<
         .start();
 
     let inner = request.into_inner();
+    let request_params_set = inner.params.is_some();
 
     let (
         req_id,
         preproc_id,
         context_id,
         epoch_id,
-        dkg_params,
+        dkg_params_of_request,
         internal_keyset_config,
         eip712_domain,
         extra_data,
@@ -92,31 +93,47 @@ pub async fn key_gen_impl<
         ));
     }
 
+    let preproc_id = preproc_id.ok_or_else(|| {
+        MetricedError::new(
+            op_tag,
+            Some(req_id),
+            anyhow::anyhow!("Missing preprocessing ID in key generation request"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
+
     // Check for existence of request preprocessing ID
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
+    //
+    // Unlike the threshold KMS, the centralized KMS draws no distinction between
+    // secure and insecure preprocessing: both `key_gen_preproc` and
+    // `insecure_key_gen_preproc` store an identical dummy entry in the same
+    // `preprocessing_meta_store`. We therefore retrieve by ID without checking
+    // how the preprocessing was produced, so either a normal or an insecure
+    // keygen can consume either kind of preprocessing.
     let (params, permit) = {
-        // If we're in insecure mode, we skip removing preprocessed material since it may not exist
-        let params = if !insecure {
-            let preproc = retrieve_from_meta_store(
-                service.preprocessing_meta_store.read().await,
-                &preproc_id,
+        let preproc = retrieve_from_meta_store(
+            service.preprocessing_meta_store.read().await,
+            &preproc_id,
+            op_tag,
+        )
+        .await
+        .map_err(|e| {
+            // Remap the error to include the correct request ID
+            MetricedError::new(
                 op_tag,
+                Some(req_id),
+                anyhow::anyhow!(e.internal_err().to_string()),
+                e.code(),
             )
-            .await
-            .map_err(|e| {
-                // Remap the error to include the correct request ID
-                MetricedError::new(
-                    op_tag,
-                    Some(req_id),
-                    anyhow::anyhow!(e.internal_err().to_string()),
-                    e.code(),
-                )
-            })?;
-            preproc.dkg_param
+        })?;
+        // Request params take precedence; otherwise use the params stored during preprocessing.
+        let params = if request_params_set {
+            dkg_params_of_request
         } else {
-            dkg_params
+            preproc.dkg_param
         };
 
         // Ensure that no key already exists for a given request.
@@ -138,11 +155,6 @@ pub async fn key_gen_impl<
             ));
         }
 
-        // check that the request ID is not used yet
-        // and then insert the request ID only if it's unused
-        // all validation must be done before inserting the request ID
-        add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)?;
-
         (params, permit)
     };
 
@@ -162,12 +174,29 @@ pub async fn key_gen_impl<
 
     let token = CancellationToken::new();
     {
-        service
-            .ongoing_key_gen
-            .lock()
-            .await
-            .insert(preproc_id, token.clone());
+        let mut ongoing_key_gen = service.ongoing_key_gen.lock().await;
+        if ongoing_key_gen.contains_key(&preproc_id) {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(req_id),
+                anyhow::anyhow!(
+                    "Key generation with preprocessing ID {preproc_id} is already ongoing"
+                ),
+                tonic::Code::AlreadyExists,
+            ));
+        }
+        ongoing_key_gen.insert(preproc_id, token.clone());
     }
+
+    // check that the request ID is not used yet
+    // and then insert the request ID only if it's unused
+    // all validation must be done before inserting the request ID
+    if let Err(e) = add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)
+    {
+        service.ongoing_key_gen.lock().await.remove(&preproc_id);
+        return Err(e);
+    }
+
     let ongoing = Arc::clone(&service.ongoing_key_gen);
     let crypto_storage = service.crypto_storage.clone();
     let crypto_storage_cancel = service.crypto_storage.clone();
@@ -587,7 +616,7 @@ pub(crate) mod tests {
     pub(crate) async fn test_standard_keygen(
         kms: &RealCentralizedKms<RamStorage, RamStorage>,
         req_id: &RequestId,
-        preproc_id: &RequestId,
+        preproc_id: Option<&RequestId>,
         insecure: bool,
     ) {
         let request = KeyGenRequest {
@@ -596,7 +625,7 @@ pub(crate) mod tests {
             keyset_added_info: None,
             request_id: Some((*req_id).into()),
             context_id: None,
-            preproc_id: Some((*preproc_id).into()),
+            preproc_id: preproc_id.map(|id| (*id).into()),
             domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
             epoch_id: None,
             extra_data: vec![],
@@ -617,7 +646,93 @@ pub(crate) mod tests {
         let preproc_id = derive_request_id("test_keygen_sunshine_preproc").unwrap();
         let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         let request_id = derive_request_id("test_keygen_sunshine").unwrap();
-        test_standard_keygen(&kms, &request_id, &preproc_id, false).await
+        test_standard_keygen(&kms, &request_id, Some(&preproc_id), false).await
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_sunshine() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let preproc_id = derive_request_id("test_insecure_keygen_sunshine_preproc").unwrap();
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let request_id = derive_request_id("test_insecure_keygen_sunshine").unwrap();
+        test_standard_keygen(&kms, &request_id, Some(&preproc_id), true).await
+    }
+
+    /// The insecure keygen must fail when the preprocessing ID was never registered,
+    /// just like the secure keygen.
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_keygen_preproc_not_found() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let preproc_id = derive_request_id("test_insecure_keygen_missing_preproc").unwrap();
+        let request_id = derive_request_id("test_insecure_keygen_missing_preproc_key").unwrap();
+
+        let request = KeyGenRequest {
+            params: Some(FheParameter::Test.into()),
+            keyset_config: None,
+            keyset_added_info: None,
+            request_id: Some(request_id.into()),
+            context_id: None,
+            preproc_id: Some(preproc_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        let err = key_gen_impl(&kms, tonic::Request::new(request), true)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// The insecure keygen must reject a request without a preprocessing ID.
+    #[cfg(feature = "insecure")]
+    #[tokio::test]
+    async fn insecure_keygen_missing_preproc_id() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let request_id = derive_request_id("test_insecure_keygen_missing_preproc_id").unwrap();
+        let request = KeyGenRequest {
+            params: Some(FheParameter::Test.into()),
+            keyset_config: None,
+            keyset_added_info: None,
+            request_id: Some(request_id.into()),
+            context_id: None,
+            preproc_id: None,
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+
+        let err = key_gen_impl(&kms, tonic::Request::new(request), true)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    /// The secure keygen must reject a request without a preprocessing ID.
+    #[tokio::test]
+    async fn secure_keygen_missing_preproc_id() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let request_id = derive_request_id("test_keygen_missing_preproc_id").unwrap();
+
+        let request = KeyGenRequest {
+            params: Some(FheParameter::Test.into()),
+            keyset_config: None,
+            keyset_added_info: None,
+            request_id: Some(request_id.into()),
+            context_id: None,
+            preproc_id: None,
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        let err = key_gen_impl(&kms, tonic::Request::new(request), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 
     #[tokio::test]
@@ -870,6 +985,22 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
+        // The first key generation consumed the preprocessing entry, so register
+        // it again to make sure the second request fails on the duplicate request
+        // ID and not on the missing preprocessing.
+        let preproc_req = KeyGenPreprocRequest {
+            params: FheParameter::Test.into(),
+            keyset_config: None,
+            request_id: Some(preproc_id.into()),
+            context_id: None,
+            domain: Some(domain.clone()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        preprocessing_impl(&kms, tonic::Request::new(preproc_req))
+            .await
+            .unwrap();
+
         let err = key_gen_impl(
             &kms,
             tonic::Request::new(request.clone()),
@@ -893,7 +1024,7 @@ pub(crate) mod tests {
         // the second one should fail with not found because the preprocessing ID is removed after use
         {
             // Execute, emulating a secure key generation, i.e. with "emulated" preprocessing
-            test_standard_keygen(&kms, &request_id, &preproc_id, false).await;
+            test_standard_keygen(&kms, &request_id, Some(&preproc_id), false).await;
 
             let new_request_id = derive_request_id("test_keygen_already_exists_key_id_2").unwrap();
             let request = KeyGenRequest {
