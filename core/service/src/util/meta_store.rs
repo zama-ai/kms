@@ -213,7 +213,7 @@ pub struct MetaStore<T> {
     min_cache: usize,
     // Storage of all elements in the system
     storage: HashMap<RequestId, StoredEntry<T>>,
-    // Queue of all elements that have been completed. Deleted elements are never included in this queue.
+    // Queue of all elements that have been completed. Deleted elements are NOT included in this queue.
     complete_queue: VecDeque<RequestId>,
     // Number of tombstoned (`Deleted`) entries still occupying `storage`.
     deleted_count: usize,
@@ -581,7 +581,6 @@ impl<T> MetaStore<T> {
     }
 
     /// Get the number of completed items
-    #[allow(dead_code)]
     pub(crate) fn get_completed_count(&self) -> usize {
         self.complete_queue.len()
     }
@@ -597,11 +596,6 @@ impl<T> MetaStore<T> {
             .len()
             .saturating_sub(self.complete_queue.len())
             .saturating_sub(self.deleted_count)
-    }
-
-    /// Get all request IDs in the store
-    pub(crate) fn get_all_request_ids(&self) -> Vec<RequestId> {
-        self.storage.keys().cloned().collect()
     }
 
     /// Get completed request IDs. That is, this excludes request IDs that have been deleted or are pending.
@@ -1419,13 +1413,6 @@ mod tests {
         assert_eq!(store.get_total_count(), store.get_current_count());
         assert_eq!(store.get_completed_count(), 2);
         assert_eq!(store.get_processing_count(), 2);
-
-        // Full id listing.
-        let all = store.get_all_request_ids();
-        assert_eq!(all.len(), 4);
-        for id in [&ok, &err, &pending1, &pending2] {
-            assert!(all.contains(id));
-        }
 
         // Completed vs processing partition.
         let completed = store.get_completed_request_ids();
