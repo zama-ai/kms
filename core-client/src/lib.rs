@@ -2433,8 +2433,8 @@ fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationSta
 // Prints the timings for the command execution, showing latency and throughput based on the measured durations.
 fn print_timings(
     cmd: &str,
-    total_client_durations: &mut [tokio::time::Duration],
-    durations_to_get_responses: &mut [tokio::time::Duration],
+    total_client_durations: &[tokio::time::Duration],
+    durations_to_get_responses: &[tokio::time::Duration],
     start: tokio::time::Instant,
 ) {
     // compute total time that is elapsed since we sent the first request

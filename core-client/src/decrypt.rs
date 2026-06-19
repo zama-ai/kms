@@ -506,7 +506,7 @@ pub(crate) async fn get_public_decrypt_responses(
     internal_client: &Client,
     kms_addrs: &[alloy_primitives::Address],
     start: tokio::time::Instant,
-) -> anyhow::Result<(Vec<PublicDecryptionResponse>, std::time::Duration)> {
+) -> anyhow::Result<(Vec<PublicDecryptionResponse>, tokio::time::Duration)> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config

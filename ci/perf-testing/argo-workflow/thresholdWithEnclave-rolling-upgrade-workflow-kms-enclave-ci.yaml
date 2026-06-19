@@ -65,7 +65,6 @@ spec:
           # WARMUP Decrypt test (1 request)
           ##########################################################################
           - name: warmup-public-decrypt-euint64-req1
-            dependencies: ["crs-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -74,7 +73,7 @@ spec:
                 - name: test-name
                   value: "warmup-public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
