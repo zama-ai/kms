@@ -1054,7 +1054,6 @@ fn try_reconstruct_shares(
         private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
     };
 
-    let param_handle = param.get_params_basics_handle();
     // Cast to Z64 before reconstruction
     let lwe_shares = all_threshold_fhe_keys
         .iter()
@@ -1069,7 +1068,7 @@ fn try_reconstruct_shares(
             )
         })
         .collect();
-    let lwe_secret_key = reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
+    let lwe_secret_key = reconstruct_bit_vec(lwe_shares, param.lwe_dimension().0, threshold);
     let lwe_secret_key =
         tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(lwe_secret_key);
 
@@ -1086,11 +1085,7 @@ fn try_reconstruct_shares(
             )
         })
         .collect();
-    _ = reconstruct_bit_vec(
-        lwe_enc_shares,
-        param_handle.lwe_hat_dimension().0,
-        threshold,
-    );
+    _ = reconstruct_bit_vec(lwe_enc_shares, param.lwe_hat_dimension().0, threshold);
 
     // normal keygen should always give us a z128 glwe
     let glwe_shares = all_threshold_fhe_keys
@@ -1108,8 +1103,8 @@ fn try_reconstruct_shares(
         })
         .collect::<HashMap<_, _>>();
     let glwe_sk = GlweSecretKeyOwned::from_container(
-        reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold),
-        param_handle.polynomial_size(),
+        reconstruct_bit_vec(glwe_shares, param.glwe_sk_num_bits(), threshold),
+        param.polynomial_size(),
     );
 
     let sns_lwe_shares = all_threshold_fhe_keys
@@ -1120,24 +1115,21 @@ fn try_reconstruct_shares(
             None => None,
         })
         .collect::<HashMap<_, _>>();
-    let dkg_sns_param = match param {
-        DKGParams::WithoutSnS(_) => panic!("missing sns param"),
-        DKGParams::WithSnS(sns_param) => sns_param,
-    };
+    let dkg_sns_param = param.sns().expect("sns param");
     let sns_glwe_sk = GlweSecretKeyOwned::from_container(
         reconstruct_bit_vec(
             sns_lwe_shares,
             dkg_sns_param
-                .sns_params
+                .sns_params()
                 .glwe_dimension()
-                .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size())
+                .to_equivalent_lwe_dimension(dkg_sns_param.sns_params().polynomial_size())
                 .0,
             threshold,
         )
         .into_iter()
         .map(|x| x as u128)
         .collect(),
-        dkg_sns_param.sns_params.polynomial_size(),
+        dkg_sns_param.sns_params().polynomial_size(),
     );
 
     let sns_compression_key_shares = all_threshold_fhe_keys
@@ -1149,7 +1141,7 @@ fn try_reconstruct_shares(
         })
         .collect::<HashMap<_, _>>();
     let sns_compression_private_key =
-        if let Some(sns_compression_params) = dkg_sns_param.sns_compression_params {
+        if let Some(sns_compression_params) = dkg_sns_param.sns_compression_params() {
             let sns_compression_key_bits = reconstruct_bit_vec(
                 sns_compression_key_shares,
                 dkg_sns_param.sns_compression_sk_num_bits(),
@@ -1183,7 +1175,7 @@ fn try_reconstruct_shares(
         Some(
             tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
                 oprf_lwe_shares,
-                param_handle.lwe_dimension().0,
+                param.lwe_dimension().0,
                 threshold,
             )),
         )

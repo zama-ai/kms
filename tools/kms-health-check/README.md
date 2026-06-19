@@ -352,6 +352,15 @@ This is done over a period of `DURATION_SEC` after which the results are collect
 
 If the `DURATION_SEC` is set to 0, then we only send a single payload per session; this may be useful to test how long it takes to clear a big number of sessions.
 
+__NOTE__: The node caps these parameters so the endpoint cannot be used to exhaust node memory or flood peers (each payload is cloned per peer in the networking layer). A request exceeding any cap is rejected with `InvalidArgument`. The defaults are:
+- `PAYLOAD_SIZE` ≤ 256 MiB
+- `NUM_SESSIONS` in `1..=256`
+- `PAYLOAD_SIZE × NUM_SESSIONS` ≤ 1 GiB (combined cap)
+- `DURATION_SEC` ≤ 60
+- at most 1 benchmark running concurrently per node
+
+These defaults can be raised (e.g. in a trusted test environment) via the node's `bandwidth_benchmark` config section or the corresponding `KMS_CORE__BANDWIDTH_BENCHMARK__*` environment variables, without recompiling.
+
 To better emulate what happens during the execution of an MPC protocol, it's best to perform the bandwidth benchmark on all the parties at the same time, such that all the parties send and receive the same amount of data.
 
 
