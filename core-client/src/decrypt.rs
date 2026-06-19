@@ -232,8 +232,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
 
     print_timings(
         "public decrypt",
-        &mut durations,
-        &mut durations_to_get_responses,
+        &durations,
+        &durations_to_get_responses,
         start,
     );
 
@@ -487,8 +487,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 
     print_timings(
         "user decrypt",
-        &mut durations,
-        &mut durations_to_get_responses,
+        &durations,
+        &durations_to_get_responses,
         start,
     );
 
