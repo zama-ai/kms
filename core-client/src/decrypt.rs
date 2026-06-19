@@ -200,9 +200,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
 
             let resp_response_vec = get_public_decrypt_responses(
                 &core_endpoints_resp,
-                Some(dec_req),
+                Some(PubDecVerificationMaterial::Request(dec_req)),
                 Some(ptxt),
-                None,
                 req_id,
                 max_iter,
                 num_expected_responses,
@@ -487,15 +486,33 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     Ok(result_vec)
 }
 
+/// Material used to verify fetched public-decryption responses.
+///
+/// The two variants are mutually exclusive by construction, replacing the previous
+/// `dec_req: Option<_>` + `ext_verify: Option<_>` pair which could represent the
+/// nonsensical "both set" state.
+pub(crate) enum PubDecVerificationMaterial {
+    /// Full-flow: verify against the original request. The EIP-712 domain, external
+    /// ciphertext handles and `extra_data` are all derived from it, and the request
+    /// itself binds the responses (internal request-binding check).
+    Request(PublicDecryptionRequest),
+    /// Pure-fetch: verify against externally-supplied material (e.g. from config +
+    /// CLI) when the original request object is not available. Responses are still
+    /// checked against the trusted KMS keys, but not bound to a specific request.
+    External {
+        domain: Eip712Domain,
+        external_handles: Vec<Vec<u8>>,
+        extra_data: Vec<u8>,
+    },
+}
+
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn get_public_decrypt_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    dec_req: Option<PublicDecryptionRequest>,
+    // Verification material for the fetched responses. `None` skips signature
+    // verification entirely (responses are returned unverified, with an error log).
+    verification: Option<PubDecVerificationMaterial>,
     expected_answer: Option<TypedPlaintext>,
-    // External-signature verification inputs (domain, external handles, extra_data),
-    // used by the pure-fetch path when no full `dec_req` is available. When both
-    // `dec_req` and this are `None`, signature verification is skipped.
-    ext_verify: Option<(Eip712Domain, Vec<Vec<u8>>, Vec<u8>)>,
     request_id: RequestId,
     max_iter: usize,
     num_expected_responses: usize,
@@ -586,31 +603,41 @@ pub(crate) async fn get_public_decrypt_responses(
         .map(|(_, resp)| resp)
         .collect();
 
-    // Determine the verification inputs (domain, external handles, extra_data).
-    // Full-flow callers pass the original `dec_req`; pure-fetch callers pass
-    // `ext_verify` (built from config + CLI). When neither is available we skip
-    // signature verification and just return the fetched responses.
-    let verify_inputs: Option<(Eip712Domain, Vec<Vec<u8>>, Vec<u8>)> =
-        if let Some(decryption_request) = dec_req.as_ref() {
-            let domain_msg = decryption_request
-                .domain
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("domain not set in decryption request"))?;
-            let domain = protobuf_to_alloy_domain(domain_msg)?;
-            // retrieve external handles from request
-            let external_handles: Vec<_> = decryption_request
-                .ciphertexts
-                .iter()
-                .map(|ct| ct.external_handle.clone())
-                .collect();
-            let extra_data = decryption_request.extra_data.clone();
-            Some((domain, external_handles, extra_data))
-        } else {
-            ext_verify
-        };
+    // Resolve the verification material into (domain, external handles, extra_data)
+    // plus the optional original request used for the internal request-binding check.
+    // Full-flow callers pass `Request(..)` (everything derived from the request);
+    // pure-fetch callers pass `External { .. }` (built from config + CLI). `None`
+    // skips signature verification and just returns the fetched responses.
+    match verification {
+        Some(material) => {
+            let (domain, external_handles, extra_data, request) = match material {
+                PubDecVerificationMaterial::Request(decryption_request) => {
+                    let domain_msg = decryption_request
+                        .domain
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("domain not set in decryption request"))?;
+                    let domain = protobuf_to_alloy_domain(domain_msg)?;
+                    // retrieve external handles from request
+                    let external_handles: Vec<_> = decryption_request
+                        .ciphertexts
+                        .iter()
+                        .map(|ct| ct.external_handle.clone())
+                        .collect();
+                    let extra_data = decryption_request.extra_data.clone();
+                    (
+                        domain,
+                        external_handles,
+                        extra_data,
+                        Some(decryption_request),
+                    )
+                }
+                PubDecVerificationMaterial::External {
+                    domain,
+                    external_handles,
+                    extra_data,
+                } => (domain, external_handles, extra_data, None),
+            };
 
-    match verify_inputs {
-        Some((domain, external_handles, extra_data)) => {
             //If an expected answer is provided, then consider it,
             //otherwise consider the first answer
             let ptxt = match expected_answer {
@@ -628,9 +655,9 @@ pub(crate) async fn get_public_decrypt_responses(
             };
 
             // check the internal signatures (verifies responses are signed by the
-            // trusted KMS keys; request-binding only applies when `dec_req` is set)
+            // trusted KMS keys; request-binding only applies for the `Request` variant)
             internal_client.process_decryption_resp(
-                dec_req,
+                request,
                 num_expected_responses as u32,
                 &resp_response_vec,
             )?;
@@ -652,9 +679,9 @@ pub(crate) async fn get_public_decrypt_responses(
             );
         }
         None => {
-            tracing::warn!(
+            tracing::error!(
                 "{:?} ###! Public decryption result fetched WITHOUT verification \
-                 (no EIP-712 domain/handles supplied). The returned plaintexts are NOT \
+                 (no verification material supplied). The returned plaintexts are NOT \
                  verified against the original request.",
                 request_id.as_str(),
             );

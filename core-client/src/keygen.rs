@@ -1,7 +1,7 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
+    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, SigVerificationMaterial, dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -187,7 +187,7 @@ pub(crate) async fn do_keygen(
         kms_addrs,
         destination_prefix,
         req_id,
-        Some((domain, extra_data)),
+        Some(SigVerificationMaterial { domain, extra_data }),
         resp_response_vec,
         cmd_conf.download_all,
         shared_config.uncompressed,
@@ -206,8 +206,8 @@ pub(crate) async fn fetch_and_check_keygen(
     request_id: RequestId,
     // EIP-712 domain + extra_data to verify the external signature against. When
     // `None`, the keys are still downloaded and request IDs checked, but the
-    // external signature is not verified (a warning is logged).
-    verify: Option<(Eip712Domain, Vec<u8>)>,
+    // external signature is not verified (an error is logged).
+    verify: Option<SigVerificationMaterial>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
     uncompressed: bool,
@@ -270,7 +270,7 @@ pub(crate) async fn fetch_and_check_keygen(
             }
 
             match verify.as_ref() {
-                Some((domain, extra_data)) => {
+                Some(material) => {
                     let external_signature = response.external_signature;
                     let prep_id = response.preprocessing_id.ok_or_else(|| {
                         anyhow::anyhow!(
@@ -283,8 +283,8 @@ pub(crate) async fn fetch_and_check_keygen(
                         &prep_id.try_into()?,
                         &request_id,
                         &external_signature,
-                        domain,
-                        extra_data.clone(),
+                        &material.domain,
+                        material.extra_data.clone(),
                         kms_addrs,
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
@@ -292,7 +292,7 @@ pub(crate) async fn fetch_and_check_keygen(
                     tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
                 }
                 None => {
-                    tracing::warn!(
+                    tracing::error!(
                         "KeyGen result for request {} fetched WITHOUT signature verification \
                          (no EIP-712 domain supplied).",
                         request_id
@@ -325,7 +325,7 @@ pub(crate) async fn fetch_and_check_keygen(
             }
 
             match verify.as_ref() {
-                Some((domain, extra_data)) => {
+                Some(material) => {
                     let external_signature = response.external_signature;
                     let prep_id = response.preprocessing_id.ok_or_else(|| {
                         anyhow::anyhow!(
@@ -338,8 +338,8 @@ pub(crate) async fn fetch_and_check_keygen(
                         &prep_id.try_into()?,
                         &request_id,
                         &external_signature,
-                        domain,
-                        extra_data.clone(),
+                        &material.domain,
+                        material.extra_data.clone(),
                         kms_addrs,
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
@@ -347,7 +347,7 @@ pub(crate) async fn fetch_and_check_keygen(
                     tracing::info!("EIP712 verification of Public Key and Server Key successful.");
                 }
                 None => {
-                    tracing::warn!(
+                    tracing::error!(
                         "KeyGen result for request {} fetched WITHOUT signature verification \
                          (no EIP-712 domain supplied).",
                         request_id

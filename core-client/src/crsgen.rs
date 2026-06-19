@@ -1,5 +1,7 @@
 use crate::s3_operations::fetch_public_elements;
-use crate::{CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
+use crate::{
+    CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, SigVerificationMaterial,
+};
 
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -114,7 +116,7 @@ pub(crate) async fn do_crsgen(
         kms_addrs,
         destination_prefix,
         req_id,
-        Some((domain, extra_data)),
+        Some(SigVerificationMaterial { domain, extra_data }),
         resp_response_vec,
         cmd_conf.download_all,
     )
@@ -132,8 +134,8 @@ pub(crate) async fn fetch_and_check_crsgen(
     request_id: RequestId,
     // EIP-712 domain + extra_data to verify the external signature against. When
     // `None`, the CRS is still downloaded and request IDs checked, but the
-    // external signature is not verified (a warning is logged).
-    verify: Option<(Eip712Domain, Vec<u8>)>,
+    // external signature is not verified (an error is logged).
+    verify: Option<SigVerificationMaterial>,
     responses: Vec<CrsGenResult>,
     download_all: bool,
 ) -> anyhow::Result<()> {
@@ -195,13 +197,13 @@ pub(crate) async fn fetch_and_check_crsgen(
         }
 
         match verify.as_ref() {
-            Some((domain, extra_data)) => {
+            Some(material) => {
                 check_crsgen_ext_signature(
                     &crs,
                     &request_id,
                     &response.external_signature,
-                    domain,
-                    extra_data.clone(),
+                    &material.domain,
+                    material.extra_data.clone(),
                     kms_addrs,
                 )
                 .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
@@ -209,7 +211,7 @@ pub(crate) async fn fetch_and_check_crsgen(
                 tracing::info!("EIP712 verification of CRS successful.");
             }
             None => {
-                tracing::warn!(
+                tracing::error!(
                     "CRS gen result for request {} fetched WITHOUT signature verification \
                      (no EIP-712 domain supplied).",
                     request_id

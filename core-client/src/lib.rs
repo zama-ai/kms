@@ -18,7 +18,9 @@ use crate::backup::{
     do_new_custodian_context, do_restore_from_backup,
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
-use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
+use crate::decrypt::{
+    PubDecVerificationMaterial, do_public_decrypt, do_user_decrypt, get_public_decrypt_responses,
+};
 use crate::keygen::{
     do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
     get_keygen_responses, get_preproc_keygen_responses,
@@ -107,9 +109,9 @@ pub struct CoreClientConfig {
     pub fhe_params: Option<FheParameter>,
     /// Default `extra_data` (hex-encoded) bound in the EIP-712 signature, used as
     /// the default when verifying fetched results. It can be overridden per
-    /// invocation with `--extra-data`. When neither is set, each pure-fetch
-    /// command falls back to its operation-specific natural default (empty for
-    /// public decryption, [`kms_lib::consts::default_extra_data`] for keygen/CRS).
+    /// invocation with `--extra-data`. When neither is set, every pure-fetch
+    /// command falls back to [`kms_lib::consts::default_extra_data`] (RFC-005
+    /// version 0x02: default context_id ‖ epoch_id).
     // NOTE: declared before `default_domain` so TOML serialization keeps this
     // scalar value before the `default_domain` table.
     pub default_extra_data: Option<String>,
@@ -1119,18 +1121,26 @@ fn dummy_handle() -> Vec<u8> {
     vec![23_u8; 32]
 }
 
-/// Build the `(domain, extra_data)` verification context for a keygen/CRS pure-fetch
-/// command. Returns `None` (skip verification, with a warning) when `no_verify` is set.
-/// Otherwise the domain comes from the config (falling back to [`dummy_domain`]) and the
-/// `extra_data` is taken from `--extra-data`, else the config default, else the natural
-/// keygen/CRS default ([`default_extra_data`]).
+/// External-signature verification material for a keygen/CRS result fetch: the
+/// EIP-712 `domain` and the `extra_data` the signature is bound to. Wrapped in an
+/// `Option` at the call sites, where `None` means "skip verification".
+pub(crate) struct SigVerificationMaterial {
+    pub domain: alloy_sol_types::Eip712Domain,
+    pub extra_data: Vec<u8>,
+}
+
+/// Build the [`SigVerificationMaterial`] for a keygen/CRS pure-fetch command. Returns
+/// `None` (skip verification, with an error log) when `no_verify` is set. Otherwise the
+/// domain comes from the config (falling back to [`dummy_domain`]) and the `extra_data`
+/// is taken from `--extra-data`, else the config default, else the natural keygen/CRS
+/// default ([`default_extra_data`]).
 fn keygen_crs_verify_ctx(
     cc_conf: &CoreClientConfig,
     no_verify: bool,
     extra_data_cli: &Option<String>,
-) -> anyhow::Result<Option<(alloy_sol_types::Eip712Domain, Vec<u8>)>> {
+) -> anyhow::Result<Option<SigVerificationMaterial>> {
     if no_verify {
-        tracing::warn!("--no-verify set: fetching result WITHOUT external-signature verification");
+        tracing::error!("--no-verify set: fetching result WITHOUT external-signature verification");
         return Ok(None);
     }
     let extra_data = match extra_data_cli {
@@ -1139,7 +1149,10 @@ fn keygen_crs_verify_ctx(
             .default_extra_data()?
             .unwrap_or_else(default_extra_data),
     };
-    Ok(Some((cc_conf.default_domain()?, extra_data)))
+    Ok(Some(SigVerificationMaterial {
+        domain: cc_conf.default_domain()?,
+        extra_data,
+    }))
 }
 
 pub struct EncryptionResult {
@@ -2321,36 +2334,45 @@ pub async fn execute_cmd(
             // External-signature verification requires the request's EIP-712 domain
             // (from config) plus the per-request ciphertext handles (from `--handle`).
             // Without `--handle`, or with `--no-verify`, we fetch without verifying.
-            let ext_verify = if result_parameters.no_verify {
-                tracing::warn!(
+            let verification = if result_parameters.no_verify {
+                tracing::error!(
                     "--no-verify set: fetching public decryption result WITHOUT verification"
                 );
                 None
             } else if result_parameters.external_handles.is_empty() {
-                tracing::warn!(
+                tracing::error!(
                     "no --handle provided: fetching public decryption result WITHOUT \
                      verification (ciphertext handles are required to verify the external \
                      signature)"
                 );
                 None
             } else {
-                let handles = result_parameters
+                let external_handles = result_parameters
                     .external_handles
                     .iter()
                     .map(|h| parse_hex(h))
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 let extra_data = match &result_parameters.extra_data {
                     Some(s) => parse_hex(s)?,
-                    None => cc_conf.default_extra_data()?.unwrap_or_default(),
+                    // Same fallback as the keygen/CRS pure-fetch path: the default
+                    // `extra_data` follows RFC-005 (version 0x02: default context_id ‖
+                    // epoch_id). Revisit if a newer RFC changes the extra_data encoding
+                    // the gateway/relayer binds into the EIP-712 signature.
+                    None => cc_conf
+                        .default_extra_data()?
+                        .unwrap_or_else(default_extra_data),
                 };
-                Some((cc_conf.default_domain()?, handles, extra_data))
+                Some(PubDecVerificationMaterial::External {
+                    domain: cc_conf.default_domain()?,
+                    external_handles,
+                    extra_data,
+                })
             };
 
             let resp_response_vec = get_public_decrypt_responses(
                 &core_endpoints_req,
+                verification,
                 None,
-                None,
-                ext_verify,
                 req_id,
                 max_iter,
                 num_expected_responses,

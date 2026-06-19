@@ -23,9 +23,8 @@ fhe_params = "Test" # Small, insecure parameters for testing
 
 # Optional: default extra_data (hex, with or without "0x") bound in the EIP-712
 # signature, used as the default when verifying fetched results (overridable per
-# invocation with `--extra-data`). When unset, each pure-fetch command uses its
-# natural default (empty for public decryption, the context/epoch-derived value
-# for keygen/CRS).
+# invocation with `--extra-data`). When unset, every pure-fetch command falls back
+# to the RFC-005 default (version 0x02: default context_id ‖ epoch_id).
 # default_extra_data = "02..."
 
 # List of connection info to each of the cores (in the centralized case, there will only be a single core)
