@@ -762,6 +762,9 @@ impl TypedPlaintext {
                 "Plaintext is not of type Bool. Returning the least significant bit as Bool"
             );
         }
+        if self.bytes.is_empty() {
+            tracing::warn!("Bool Plaintext has no bytes. Returning false (0).");
+        }
         let first = self.bytes.first().copied().unwrap_or(0);
         if first > 1 {
             tracing::warn!(
@@ -775,6 +778,9 @@ impl TypedPlaintext {
     pub fn as_u4(&self) -> u8 {
         if self.fhe_type != FheTypes::Uint4 as i32 {
             tracing::warn!("Plaintext is not of type u4. Returning the value modulo 16");
+        }
+        if self.bytes.is_empty() {
+            tracing::warn!("U4 Plaintext has no bytes. Returning 0.");
         }
         let first = self.bytes.first().copied().unwrap_or(0);
         if first > 15 {
