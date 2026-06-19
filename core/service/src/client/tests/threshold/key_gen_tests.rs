@@ -77,10 +77,6 @@ use tonic::{Response, Status};
 #[cfg(feature = "slow_tests")]
 const SECURE_PREPROC_POLL_MAX_ITER: usize = 6000;
 
-/// Sleep between preprocessing-result poll attempts.
-#[cfg(feature = "slow_tests")]
-const PREPROC_POLL_SLEEP_MS: u64 = 500;
-
 #[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {

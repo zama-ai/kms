@@ -538,11 +538,12 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
     let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b);
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-    {
-        let mut guard = meta_store.write().await;
-        guard.insert(&req_a).unwrap();
-        guard.insert(&req_b).unwrap();
-    }
+    let permit_a = add_req_to_meta_store(&meta_store, &req_a, "test")
+        .await
+        .unwrap();
+    let permit_b = add_req_to_meta_store(&meta_store, &req_b, "test")
+        .await
+        .unwrap();
 
     crypto_storage
         .write_fhe_keys(
@@ -551,7 +552,8 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
             keys_a,
             PublicKeySet::Uncompressed(Arc::new(pubset_a)),
             meta_store.clone(),
-            "",
+            permit_a,
+            "test",
         )
         .await
         .unwrap();
@@ -562,7 +564,8 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
             keys_b,
             PublicKeySet::Uncompressed(Arc::new(pubset_b)),
             meta_store.clone(),
-            "",
+            permit_b,
+            "test",
         )
         .await
         .unwrap();

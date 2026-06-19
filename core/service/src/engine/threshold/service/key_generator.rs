@@ -2409,9 +2409,10 @@ mod tests {
             preprocessing_store: PreprocMaterial::Insecure,
             dkg_param: TEST_PARAM,
         };
-        let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
-        guarded_prep_bucket.insert(prep_id).unwrap();
-        guarded_prep_bucket.update(prep_id, Ok(bucket)).unwrap();
+        let permit = add_req_to_meta_store(&kg.preproc_buckets, prep_id, "test")
+            .await
+            .unwrap();
+        assert!(update_ok_req_in_meta_store(&kg.preproc_buckets, permit, bucket, "test").await)
     }
 
     #[cfg(feature = "insecure")]

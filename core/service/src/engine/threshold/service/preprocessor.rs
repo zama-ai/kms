@@ -1105,14 +1105,9 @@ mod tests {
         );
 
         // The stored bucket must hold no preprocessing material
-        let bucket = retrieve_from_meta_store_with_timeout(
-            prep.preproc_buckets.read().await,
-            &req_id,
-            "test",
-            1,
-        )
-        .await
-        .unwrap();
+        let bucket = retrieve_from_meta_store(&prep.preproc_buckets, &req_id, "test")
+            .await
+            .unwrap();
         assert!(matches!(
             bucket.preprocessing_store,
             super::PreprocMaterial::Insecure
