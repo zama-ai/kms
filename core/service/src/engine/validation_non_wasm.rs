@@ -289,7 +289,23 @@ fn unpack_user_decrypt_req(
     // binding is sound as long as the client recomputes the same link. The response cert is the
     // standard secp256k1 EIP-712 the gateway verifies, signed under the gateway's `Decryption`
     // domain (`req.domain`) — see the domain note at the return below.
-    if let Some(solana_pubkey) = parse_solana_user_decrypt_pubkey(&req.client_address) {
+    // Typed-identity routing (fails CLOSED): when the `client_identity` oneof is set, route
+    // STRICTLY by variant — a Solana request is handled as Solana and NEVER reparsed as an EVM
+    // address. Legacy clients leave it unset and fall back to the `client_address` string overload.
+    use kms_grpc::kms::v1::user_decryption_request::ClientIdentity;
+    let solana_pubkey_opt: Option<[u8; 32]> = match &req.client_identity {
+        Some(ClientIdentity::SolanaPubkey(pk)) => Some(<[u8; 32]>::try_from(pk.as_slice()).map_err(
+            |_| {
+                anyhow::anyhow!(
+                    "Solana client identity must be a 32-byte pubkey, got {} bytes",
+                    pk.len()
+                )
+            },
+        )?),
+        Some(ClientIdentity::EvmAddress(_)) => None,
+        None => parse_solana_user_decrypt_pubkey(&req.client_address),
+    };
+    if let Some(solana_pubkey) = solana_pubkey_opt {
         let mut handles = Vec::with_capacity(req.typed_ciphertexts.len());
         for c in &req.typed_ciphertexts {
             if c.external_handle.len() > 32 {
@@ -338,13 +354,25 @@ fn unpack_user_decrypt_req(
         ));
     }
 
-    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
-        .map_err(|e| {
-        anyhow::anyhow!(
-            "Error parsing checksummed client address: {} - {e}",
-            req.client_address
-        )
-    })?;
+    // EVM path: a typed `evm_address` (oneof) takes precedence and fails closed on a wrong length;
+    // otherwise fall back to the legacy EIP-55 `client_address` string.
+    let client_verf_key = match &req.client_identity {
+        Some(ClientIdentity::EvmAddress(addr)) => {
+            let bytes: [u8; 20] = addr.as_slice().try_into().map_err(|_| {
+                anyhow::anyhow!(
+                    "EVM client identity must be a 20-byte address, got {} bytes",
+                    addr.len()
+                )
+            })?;
+            alloy_primitives::Address::from(bytes)
+        }
+        _ => alloy_primitives::Address::parse_checksummed(&req.client_address, None).map_err(|e| {
+            anyhow::anyhow!(
+                "Error parsing checksummed client address: {} - {e}",
+                req.client_address
+            )
+        })?,
+    };
 
     let domain = match verify_user_decrypt_eip712(req) {
         Ok(domain) => {

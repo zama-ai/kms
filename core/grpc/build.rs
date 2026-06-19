@@ -12,6 +12,7 @@ fn default_builder() -> Builder {
         .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
         .type_attribute("UserDecryptionRequest", DERIVES)
+        .type_attribute("UserDecryptionRequest.client_identity", DERIVES)
         .type_attribute("UserDecryptionResponse", DERIVES)
         .type_attribute("UserDecryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
