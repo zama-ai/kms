@@ -37,7 +37,10 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM, default_extra_data};
+use kms_lib::consts::{
+    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
+};
+use kms_lib::engine::utils::make_extra_data;
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
@@ -107,14 +110,6 @@ pub struct CoreClientConfig {
     #[validate(range(min = 1))]
     pub num_reconstruct: usize,
     pub fhe_params: Option<FheParameter>,
-    /// Default `extra_data` (hex-encoded) bound in the EIP-712 signature, used as
-    /// the default when verifying fetched results. It can be overridden per
-    /// invocation with `--extra-data`. When neither is set, every pure-fetch
-    /// command falls back to [`kms_lib::consts::default_extra_data`] (RFC-005
-    /// version 0x02: default context_id ‖ epoch_id).
-    // NOTE: declared before `default_domain` so TOML serialization keeps this
-    // scalar value before the `default_domain` table.
-    pub default_extra_data: Option<String>,
     /// Default EIP-712 domain used both when *building* requests (full-flow
     /// commands) and when *verifying* fetched results (pure-fetch `*Result`
     /// commands). When omitted from the TOML it falls back to [`dummy_domain`],
@@ -173,14 +168,6 @@ impl CoreClientConfig {
         match &self.default_domain {
             Some(d) => d.to_domain(),
             None => Ok(dummy_domain()),
-        }
-    }
-
-    /// The configured default `extra_data` (decoded from hex), if any.
-    pub fn default_extra_data(&self) -> anyhow::Result<Option<Vec<u8>>> {
-        match &self.default_extra_data {
-            Some(s) => Ok(Some(parse_hex(s)?)),
-            None => Ok(None),
         }
     }
 }
@@ -372,7 +359,6 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             pub num_reconstruct: usize,
             pub fhe_params: Option<FheParameter>,
             pub default_domain: Option<Eip712DomainConfig>,
-            pub default_extra_data: Option<String>,
         }
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
@@ -388,7 +374,6 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             num_reconstruct: temp.num_reconstruct,
             fhe_params: temp.fhe_params,
             default_domain: temp.default_domain,
-            default_extra_data: temp.default_extra_data,
         };
 
         conf.validate().map_err(serde::de::Error::custom)?;
@@ -605,20 +590,6 @@ impl CipherArguments {
             }
         }
     }
-
-    pub fn get_extra_data(&self) -> Vec<u8> {
-        let hex_str = match self {
-            CipherArguments::FromFile(cipher_file) => &cipher_file.extra_data,
-            CipherArguments::FromArgs(cipher_parameters) => &cipher_parameters.extra_data,
-        };
-        parse_extra_data(hex_str)
-    }
-}
-
-// Helper function to parse the extra data from the CLI arguments, with the same logic for both CipherParameters and CipherFile.
-// Defaults to an empty byte vector if the extra data is not provided or if the hex parsing fails.
-fn parse_extra_data(hex_str: &Option<String>) -> Vec<u8> {
-    parse_hex(hex_str.as_deref().unwrap_or("")).unwrap_or_default()
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -673,11 +644,6 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[serde(skip_serializing, skip_deserializing)]
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -698,10 +664,6 @@ pub struct CipherFile {
     /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -843,11 +805,16 @@ pub struct KeyGenResultParameters {
     /// Fetch legacy uncompressed public key material instead of the default compressed keyset.
     #[clap(long, short = 'u', default_value_t = false)]
     pub uncompressed: bool,
-    /// Optional `extra_data` (hex-encoded) bound in the EIP-712 signature, overriding
-    /// the config's `default_extra_data` for this verification.
-    /// Can optionally have a "0x" prefix.
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
     #[clap(long)]
-    pub extra_data: Option<String>,
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
     /// Skip verification of the external signature and just download the material.
     #[clap(long, default_value_t = false)]
     pub no_verify: bool,
@@ -857,11 +824,16 @@ pub struct KeyGenResultParameters {
 pub struct CrsGenResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
-    /// Optional `extra_data` (hex-encoded) bound in the EIP-712 signature, overriding
-    /// the config's `default_extra_data` for this verification.
-    /// Can optionally have a "0x" prefix.
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
     #[clap(long)]
-    pub extra_data: Option<String>,
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
     /// Skip verification of the external signature and just download the material.
     #[clap(long, default_value_t = false)]
     pub no_verify: bool,
@@ -873,16 +845,21 @@ pub struct PublicDecryptResultParameters {
     pub request_id: RequestId,
     /// External ciphertext handle(s) (hex-encoded) from the original request, used to
     /// verify the external signature. Repeat the flag once per ciphertext in the batch.
-    /// When omitted, the result is fetched but NOT verified (a warning is logged), since
+    /// When omitted, the result is fetched but NOT verified (an error is logged), since
     /// handles are request-specific and cannot be defaulted from the config.
     /// Can optionally have a "0x" prefix.
     #[clap(long = "handle")]
     pub external_handles: Vec<String>,
-    /// Optional `extra_data` (hex-encoded) bound in the EIP-712 signature, overriding
-    /// the config's `default_extra_data` for this verification.
-    /// Can optionally have a "0x" prefix.
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
     #[clap(long)]
-    pub extra_data: Option<String>,
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
     /// Skip verification of the external signature and just return the fetched responses.
     #[clap(long, default_value_t = false)]
     pub no_verify: bool,
@@ -1121,6 +1098,22 @@ fn dummy_handle() -> Vec<u8> {
     vec![23_u8; 32]
 }
 
+/// Derive the `extra_data` payload from an optional context/epoch, falling back to
+/// [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`] when not supplied. This is the single
+/// source of truth for how the core-client builds `extra_data` (RFC-005 v2), used both
+/// when *constructing* requests (full-flow commands) and when *verifying* fetched
+/// `*Result`s (pure-fetch commands), so the two always agree for the same context/epoch.
+pub(crate) fn extra_data_from_context_epoch(
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+) -> anyhow::Result<Vec<u8>> {
+    make_extra_data(
+        2,
+        Some(&context_id.unwrap_or(*DEFAULT_MPC_CONTEXT)),
+        Some(&epoch_id.unwrap_or(*DEFAULT_EPOCH_ID)),
+    )
+}
+
 /// External-signature verification material for a keygen/CRS result fetch: the
 /// EIP-712 `domain` and the `extra_data` the signature is bound to. Wrapped in an
 /// `Option` at the call sites, where `None` means "skip verification".
@@ -1132,26 +1125,21 @@ pub(crate) struct SigVerificationMaterial {
 /// Build the [`SigVerificationMaterial`] for a keygen/CRS pure-fetch command. Returns
 /// `None` (skip verification, with an error log) when `no_verify` is set. Otherwise the
 /// domain comes from the config (falling back to [`dummy_domain`]) and the `extra_data`
-/// is taken from `--extra-data`, else the config default, else the natural keygen/CRS
-/// default ([`default_extra_data`]).
+/// is derived from the supplied context/epoch via [`extra_data_from_context_epoch`]
+/// (RFC-005 v2), matching what the request builders emit for the same context/epoch.
 fn keygen_crs_verify_ctx(
     cc_conf: &CoreClientConfig,
     no_verify: bool,
-    extra_data_cli: &Option<String>,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
 ) -> anyhow::Result<Option<SigVerificationMaterial>> {
     if no_verify {
         tracing::error!("--no-verify set: fetching result WITHOUT external-signature verification");
         return Ok(None);
     }
-    let extra_data = match extra_data_cli {
-        Some(s) => parse_hex(s)?,
-        None => cc_conf
-            .default_extra_data()?
-            .unwrap_or_else(default_extra_data),
-    };
     Ok(Some(SigVerificationMaterial {
         domain: cc_conf.default_domain()?,
-        extra_data,
+        extra_data: extra_data_from_context_epoch(context_id, epoch_id)?,
     }))
 }
 
@@ -1914,7 +1902,6 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
-                cipher_args.get_extra_data(),
                 cc_conf.default_domain()?,
             )
             .await?
@@ -1993,7 +1980,6 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
-                cipher_args.get_extra_data(),
                 cc_conf.default_domain()?,
             )
             .await?
@@ -2272,7 +2258,8 @@ pub async fn execute_cmd(
             let verify = keygen_crs_verify_ctx(
                 &cc_conf,
                 result_parameters.no_verify,
-                &result_parameters.extra_data,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
             )?;
             fetch_and_check_keygen(
                 num_expected_responses,
@@ -2307,7 +2294,8 @@ pub async fn execute_cmd(
             let verify = keygen_crs_verify_ctx(
                 &cc_conf,
                 result_parameters.no_verify,
-                &result_parameters.extra_data,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
             )?;
             fetch_and_check_keygen(
                 num_expected_responses,
@@ -2352,20 +2340,16 @@ pub async fn execute_cmd(
                     .iter()
                     .map(|h| parse_hex(h))
                     .collect::<anyhow::Result<Vec<_>>>()?;
-                let extra_data = match &result_parameters.extra_data {
-                    Some(s) => parse_hex(s)?,
-                    // Same fallback as the keygen/CRS pure-fetch path: the default
-                    // `extra_data` follows RFC-005 (version 0x02: default context_id ‖
-                    // epoch_id). Revisit if a newer RFC changes the extra_data encoding
-                    // the gateway/relayer binds into the EIP-712 signature.
-                    None => cc_conf
-                        .default_extra_data()?
-                        .unwrap_or_else(default_extra_data),
-                };
+                // `extra_data` is derived from the supplied context/epoch via
+                // `make_extra_data` (RFC-005 v2), matching what the request builder
+                // emits for the same context/epoch (defaults when not supplied).
                 Some(PubDecVerificationMaterial::External {
                     domain: cc_conf.default_domain()?,
                     external_handles,
-                    extra_data,
+                    extra_data: extra_data_from_context_epoch(
+                        result_parameters.context_id,
+                        result_parameters.epoch_id,
+                    )?,
                 })
             };
 
@@ -2403,7 +2387,8 @@ pub async fn execute_cmd(
             let verify = keygen_crs_verify_ctx(
                 &cc_conf,
                 result_parameters.no_verify,
-                &result_parameters.extra_data,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
             )?;
             fetch_and_check_crsgen(
                 num_expected_responses,
@@ -2437,7 +2422,8 @@ pub async fn execute_cmd(
             let verify = keygen_crs_verify_ctx(
                 &cc_conf,
                 result_parameters.no_verify,
-                &result_parameters.extra_data,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
             )?;
             fetch_and_check_crsgen(
                 num_expected_responses,
@@ -2864,6 +2850,75 @@ mod tests {
     }
 
     #[test]
+    fn default_domain_omitted_falls_back_to_dummy() {
+        let toml_str = build_test_toml("centralized", None, 1, 1, &[1]);
+        let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
+        assert!(conf.default_domain.is_none());
+        // The fallback must equal the built-in dummy domain so config files without a
+        // [default_domain] section keep verifying against the same domain as before.
+        assert_eq!(conf.default_domain().unwrap(), dummy_domain());
+    }
+
+    #[test]
+    fn shipped_default_domain_values_match_dummy() {
+        // All shipped client TOMLs embed these literals and document them as matching the
+        // built-in default. This guards that the two stay in lockstep: if `dummy_domain()`
+        // changes, either this test or the shipped [default_domain] sections must change.
+        let mut toml_str = build_test_toml("centralized", None, 1, 1, &[1]);
+        toml_str.push_str(
+            "\n[default_domain]\n\
+             name = \"Authorization token\"\n\
+             version = \"1\"\n\
+             chain_id = 8006\n\
+             verifying_contract = \"0x66f9664f97F2b50F62D13eA064982f936dE76657\"\n",
+        );
+        let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(conf.default_domain().unwrap(), dummy_domain());
+    }
+
+    #[test]
+    fn default_domain_salt_must_be_32_bytes() {
+        let cfg = Eip712DomainConfig {
+            name: "n".to_string(),
+            version: "1".to_string(),
+            chain_id: 1,
+            verifying_contract: "0x66f9664f97F2b50F62D13eA064982f936dE76657".to_string(),
+            salt: Some("0x1234".to_string()), // 2 bytes, not 32
+        };
+        let err = cfg.to_domain().unwrap_err().to_string();
+        assert!(err.contains("32 bytes"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn default_domain_rejects_invalid_verifying_contract() {
+        let cfg = Eip712DomainConfig {
+            name: "n".to_string(),
+            version: "1".to_string(),
+            chain_id: 1,
+            verifying_contract: "not-an-address".to_string(),
+            salt: None,
+        };
+        let err = cfg.to_domain().unwrap_err().to_string();
+        assert!(
+            err.contains("invalid verifying_contract"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn extra_data_from_context_epoch_matches_default_builders() {
+        // The pure-fetch *Result verification path and the full-flow request builders must
+        // derive `extra_data` identically for the same context/epoch — here, the defaults.
+        let from_helper = extra_data_from_context_epoch(None, None).unwrap();
+        let from_builder =
+            make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap();
+        assert_eq!(from_helper, from_builder);
+        // v2 layout: 1 version byte + 32-byte context + 32-byte epoch.
+        assert_eq!(from_helper.len(), 1 + 32 + 32);
+        assert_eq!(from_helper[0], 2);
+    }
+
+    #[test]
     fn test_parse_previous_key_info() {
         let id1 = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         let id2 = "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
@@ -3052,7 +3107,6 @@ mod tests {
             num_reconstruct: 1,
             fhe_params: Some(FheParameter::Test),
             default_domain: None,
-            default_extra_data: None,
         };
 
         let party_confs =

@@ -114,9 +114,13 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
     parallel_requests: usize,
-    extra_data: Vec<u8>,
     domain: Eip712Domain,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    // `extra_data` is always derived from the (resolved) context/epoch via
+    // `make_extra_data` (RFC-005 v2) — never user-supplied — matching the
+    // keygen/CRS request builders.
+    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
+
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
 
@@ -251,9 +255,13 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
     parallel_requests: usize,
-    extra_data: Vec<u8>,
     domain: Eip712Domain,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    // `extra_data` is always derived from the (resolved) context/epoch via
+    // `make_extra_data` (RFC-005 v2) — never user-supplied — matching the
+    // keygen/CRS request builders.
+    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
+
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
@@ -488,9 +496,11 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 
 /// Material used to verify fetched public-decryption responses.
 ///
-/// The two variants are mutually exclusive by construction, replacing the previous
-/// `dec_req: Option<_>` + `ext_verify: Option<_>` pair which could represent the
-/// nonsensical "both set" state.
+/// Wrapped in an `Option` at the call sites, where `None` means "skip verification".
+/// This replaces the previous `dec_req: Option<PublicDecryptionRequest>` parameter, whose
+/// `None` case silently fell back to `dummy_domain()`/`dummy_handle()` rather than either
+/// skipping or verifying against real config/CLI material. The two variants are mutually
+/// exclusive by construction, so a caller cannot mix request-derived and external material.
 pub(crate) enum PubDecVerificationMaterial {
     /// Full-flow: verify against the original request. The EIP-712 domain, external
     /// ciphertext handles and `extra_data` are all derived from it, and the request

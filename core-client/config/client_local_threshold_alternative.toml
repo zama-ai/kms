@@ -23,12 +23,6 @@ decryption_mode = "NoiseFloodSmall"
 # fhe_params = "Test" # Small, insecure parameters for testing
 fhe_params = "Default" # Large, secure parameters
 
-# Optional: default extra_data (hex, with or without "0x") bound in the EIP-712
-# signature, used as the default when verifying fetched results (overridable per
-# invocation with `--extra-data`). When unset, every pure-fetch command falls back
-# to the RFC-005 default (version 0x02: default context_id ‖ epoch_id).
-# default_extra_data = "02..."
-
 # List of connection info to each of the cores
 [[cores]]
 # The ID of the given KMS server (monotonically increasing positive integer starting at 1)

@@ -243,7 +243,6 @@ fn generate_centralized_cli_config(
         num_reconstruct: 1,
         fhe_params: Some(fhe_params),
         default_domain: None,
-        default_extra_data: None,
     };
     write_core_client_toml(&config_path, &cfg)?;
     Ok(config_path)
@@ -518,7 +517,6 @@ fn generate_threshold_cli_config(
         num_reconstruct: majority,
         fhe_params: Some(fhe_params),
         default_domain: None,
-        default_extra_data: None,
     };
     write_core_client_toml(&config_path, &cfg)?;
     Ok(config_path)
@@ -906,7 +904,6 @@ async fn setup_party_resharing_servers(
         num_reconstruct: 3,
         fhe_params: Some(fhe_params),
         default_domain: None,
-        default_extra_data: None,
     };
     write_core_client_toml(&config_path_1234, &cfg_1234)?;
 
@@ -946,7 +943,6 @@ async fn setup_party_resharing_servers(
         num_reconstruct: 3,
         fhe_params: Some(fhe_params),
         default_domain: None,
-        default_extra_data: None,
     };
     write_core_client_toml(&config_path_5634, &cfg_5634)?;
 
@@ -1006,7 +1002,6 @@ fn cipher_params(
         parallel_requests: 1,
         ciphertext_output_path,
         inter_request_delay_ms: 0,
-        extra_data: None,
     }
 }
 
@@ -1181,7 +1176,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1189,7 +1183,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
     ];
 
@@ -1252,7 +1245,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1260,7 +1252,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
     ];
 
@@ -1294,7 +1285,8 @@ async fn integration_test_commands(
                 CCCommand::KeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
                     uncompressed: key_gen_parameters.shared_args.uncompressed,
-                    extra_data: None,
+                    context_id: None,
+                    epoch_id: None,
                     no_verify: false,
                 })
             }
@@ -1302,7 +1294,8 @@ async fn integration_test_commands(
                 CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
                     uncompressed: key_gen_parameters.shared_args.uncompressed,
-                    extra_data: None,
+                    context_id: None,
+                    epoch_id: None,
                     no_verify: false,
                 })
             }
@@ -1310,19 +1303,22 @@ async fn integration_test_commands(
                 CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
                     request_id: req_id.unwrap(),
                     external_handles: vec![],
-                    extra_data: None,
+                    context_id: None,
+                    epoch_id: None,
                     no_verify: false,
                 })
             }
             CCCommand::CrsGen(_) => CCCommand::CrsGenResult(CrsGenResultParameters {
                 request_id: req_id.unwrap(),
-                extra_data: None,
+                context_id: None,
+                epoch_id: None,
                 no_verify: false,
             }),
             CCCommand::InsecureCrsGen(_) => {
                 CCCommand::InsecureCrsGenResult(CrsGenResultParameters {
                     request_id: req_id.unwrap(),
-                    extra_data: None,
+                    context_id: None,
+                    epoch_id: None,
                     no_verify: false,
                 })
             }
@@ -1420,7 +1416,8 @@ async fn integration_test_commands_default_keys(
                 CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
                     request_id: req_id.unwrap(),
                     external_handles: vec![],
-                    extra_data: None,
+                    context_id: None,
+                    epoch_id: None,
                     no_verify: false,
                 })
             }
@@ -1997,7 +1994,6 @@ struct StrictCheckedInCoreClientToml {
     num_reconstruct: usize,
     decryption_mode: Option<String>,
     fhe_params: Option<String>,
-    default_extra_data: Option<String>,
     cores: Vec<StrictCheckedInCoreToml>,
     default_domain: Option<StrictCheckedInDomainToml>,
 }
@@ -3195,7 +3191,6 @@ async fn test_threshold_reshare() -> Result<()> {
             ciphertext_output_path: None,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
         200,
     );
