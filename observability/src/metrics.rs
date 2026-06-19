@@ -1,5 +1,5 @@
 use crate::metrics_names::{
-    TAG_OPERATION, TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     TAG_USER_DECRYPTION_KIND,
 };
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
@@ -9,11 +9,12 @@ use std::time::{Duration, Instant};
 use tracing::warn;
 
 /// Label keys for the duration histogram (must match all tag keys used by callers).
-/// The first key (`operation`) holds the primary operation name (e.g. OP_KEYGEN_REQUEST),
-/// matching the label key used by the `*_operations_total` counters and the payload size
-/// histogram. The second key (`operation_type`) is for subtypes such as OP_TYPE_TOTAL.
+/// The first key (`operation_type`) holds the operation name (e.g. OP_KEYGEN_REQUEST). It is named
+/// `operation_type` rather than `operation` for backward compatibility: this is the label existing
+/// Grafana dashboards and alerts query, so it must not be renamed. The `*_operations_total` counters
+/// and the payload-size histogram use `operation` for the same value — a historical naming
+/// difference that is kept on purpose (see `metrics.md`).
 const DURATION_LABEL_KEYS: &[&str] = &[
-    TAG_OPERATION,
     TAG_OPERATION_TYPE,
     TAG_PARTY_ID,
     TAG_TFHE_TYPE,
@@ -460,10 +461,11 @@ impl CoreMetrics {
         values[0] = operation.as_ref();
         for (key, value) in extra_tags {
             match DURATION_LABEL_KEYS.iter().position(|k| k == key) {
-                // values[0] is the operation label; never let a tag override it.
+                // values[0] is the operation name (emitted under the `operation_type` label);
+                // never let a tag override it.
                 Some(0) => warn!(
                     key,
-                    "ignoring duration metric tag that would override the operation label"
+                    "ignoring duration metric tag that would override the operation_type label"
                 ),
                 Some(idx) => values[idx] = value,
                 None => warn!(key, "ignoring unknown duration metric tag key"),
@@ -722,7 +724,6 @@ pub static METRICS: LazyLock<CoreMetrics> =
 #[derive(Debug, Clone)]
 pub struct MetricsConfig {
     pub prefix: String,
-    pub default_unit: Option<String>,
     /// Static const-labels added to every metric to distinguish deployments (e.g.
     /// `deployment_profile=kind-ci`); populated by [`MetricsConfig::from_env`], empty by default.
     pub labels: BTreeMap<String, String>,
@@ -732,7 +733,6 @@ impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
             prefix: "kms".to_string(),
-            default_unit: None,
             labels: BTreeMap::new(),
         }
     }
@@ -828,12 +828,13 @@ fn is_valid_label_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Label names already reserved by built-in metrics: `error`, the duration tags in
-/// [`DURATION_LABEL_KEYS`] (which include `operation`), the `version` const-label, and the `le`
-/// histogram bucket-boundary label. A configured const-label colliding with any of these would make
-/// Prometheus reject the metric at registration (panicking the `.expect`), so it is skipped instead.
+/// Label names already reserved by built-in metrics: the duration tags in [`DURATION_LABEL_KEYS`]
+/// (which include `operation_type`), plus `operation` (used by the counters and the payload-size
+/// histogram), `error`, the `version` const-label, and the `le` histogram bucket-boundary label. A
+/// configured const-label colliding with any of these would make Prometheus reject the metric at
+/// registration (panicking the `.expect`), so it is skipped instead.
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["error", "version", "le"];
+    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version", "le"];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
@@ -913,7 +914,6 @@ mod tests {
             "_test_cardinality",
             Duration::from_millis(1),
             &[
-                (TAG_OPERATION_TYPE, "total".to_string()), // exercise the subtype label (now at its own key)
                 (TAG_PARTY_ID, "1".to_string()),
                 (TAG_TFHE_TYPE, "fhe_uint8".to_string()),
                 (TAG_PUBLIC_DECRYPTION_KIND, "test".to_string()),
@@ -930,10 +930,9 @@ mod tests {
             .iter()
             .find(|metric| {
                 metric.get_label().iter().any(|label| {
-                    // Locate the specific seeded sample by its primary operation name.
-                    // The primary op lives under the `operation` label (to match counters + docs
-                    // and to leave `operation_type` free for subtypes like "total").
-                    label.name() == TAG_OPERATION && label.value() == "_test_cardinality"
+                    // Locate the seeded sample by its operation name, which lives under the
+                    // `operation_type` label (kept for backward compatibility with dashboards).
+                    label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
                 })
             })
             .expect("seeded duration sample should be present");
@@ -1113,10 +1112,12 @@ mod tests {
 
     #[test]
     fn duration_tag_cannot_override_operation_label() {
+        // The operation name lives at values[0] (the `operation_type` label). A tag targeting that
+        // same key must hit the override guard and be ignored, not overwrite the operation name.
         METRICS.observe_duration_with_tags(
             "_test_op_overwrite",
             Duration::from_millis(1),
-            &[(TAG_OPERATION, "_test_spoofed".to_string())],
+            &[(TAG_OPERATION_TYPE, "_test_spoofed".to_string())],
         );
 
         let duration_metrics = prometheus::gather()
@@ -1127,16 +1128,16 @@ mod tests {
         let operation_values: Vec<String> = duration_metrics
             .iter()
             .flat_map(|metric| metric.get_label())
-            .filter(|label| label.name() == TAG_OPERATION)
+            .filter(|label| label.name() == TAG_OPERATION_TYPE)
             .map(|label| label.value().to_string())
             .collect();
         assert!(
             operation_values.iter().any(|v| v == "_test_op_overwrite"),
-            "the operation argument must fill the operation label"
+            "the operation argument must fill the operation_type label"
         );
         assert!(
             !operation_values.iter().any(|v| v == "_test_spoofed"),
-            "a TAG_OPERATION tag must not override the operation label"
+            "a TAG_OPERATION_TYPE tag must not override the operation_type label"
         );
     }
 

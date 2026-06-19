@@ -132,8 +132,7 @@ Track the distribution of values:
 - `{prefix}_operation_duration_ms` - Duration of operations in milliseconds
   ```rust
   let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)
-      .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
-      .start();  // {prefix}_operation_duration_ms{operation="keygen_request",operation_type="total"}
+      .start();  // {prefix}_operation_duration_ms{operation_type="keygen_request"}
   ```
 - `{prefix}_payload_size_bytes` - Size of operation payloads in bytes
   ```rust
@@ -144,6 +143,13 @@ Track the distribution of values:
   there its `operation` label carries the serialized element's **type name** (e.g. a key/keyset type),
   not an operation name, and the size is recorded only after the write succeeds. Call `observe_size`
   from other paths whenever a payload size is worth tracking.
+
+> **Label naming — `operation` vs `operation_type`.** The counters (`*_operations_total`,
+> `*_operation_errors_total`) and `kms_payload_size_bytes` carry the operation name under the
+> `operation` label, while the **duration** histogram carries it under `operation_type`. This
+> difference is historical: `operation_type` is what existing Grafana dashboards and alerts already
+> query, so it is deliberately **not** renamed (doing so would break observability for every KMS
+> party). Treat the two as equivalent "operation name" keys for their respective metrics.
 
 Both histograms use **explicit buckets** tuned to KMS workloads (`kms_operation_duration_ms`: 1 ms →
 5 min; `kms_payload_size_bytes`: 1 KiB → 64 GiB). Prometheus' default buckets top out at ~10 (tuned for
@@ -184,8 +190,7 @@ METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND);  // k
 // Record duration with tags
 let _timer = METRICS
     .time_operation(OP_KEYGEN_REQUEST)
-    .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
-    .start();  // kms_operation_duration_ms{operation="keygen_request",operation_type="total"}
+    .start();  // kms_operation_duration_ms{operation_type="keygen_request"}
 
 // Record payload size (operation name on RPC paths; element type name on storage writes — see NOTE above)
 METRICS.observe_size(OP_PUBLIC_DECRYPT_REQUEST, input.len() as f64);  // kms_payload_size_bytes{operation="public_decrypt_request"}
@@ -218,18 +223,18 @@ metrics.increment_request_counter(OP_KEYGEN_REQUEST);  // app_operations_total{o
 
 ### Duration Measurement with Tags
 
-The preferred way to measure operation duration is an RAII guard that records on drop. Only the keys in
-`DURATION_LABEL_KEYS` (`operation` plus `operation_type`, `party_id`, `tfhe_type`, `public_decryption_mode`,
-`user_decryption_mode`) are recorded on this histogram — unknown keys are ignored with a warning, and
+The preferred way to measure operation duration is an RAII guard that records on drop. The operation
+name automatically fills the `operation_type` label (`DURATION_LABEL_KEYS[0]`); the only additional
+keys recorded on this histogram are the rest of `DURATION_LABEL_KEYS` (`party_id`, `tfhe_type`,
+`public_decryption_mode`, `user_decryption_mode`) — unknown keys are ignored with a warning, and
 high-cardinality keys (e.g. `key_id`) must not be used.
 
 ```rust
 fn run_keygen(party_id: usize) -> Result<(), Error> {
-    // Records on drop; the operation name fills the `operation` label.
+    // Records on drop; the operation name fills the `operation_type` label.
     let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)
-        .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
         .tag(TAG_PARTY_ID, party_id.to_string())
-        .start();  // kms_operation_duration_ms{operation="keygen_request",operation_type="total",party_id="..."}
+        .start();  // kms_operation_duration_ms{operation_type="keygen_request",party_id="..."}
 
     process_data()?;
     Ok(())
@@ -240,9 +245,7 @@ Manual recording, when you need the elapsed value or must record before the guar
 
 ```rust
 fn explicit_timing() -> Result<(), Error> {
-    let guard = METRICS.time_operation(OP_KEYGEN_REQUEST)
-        .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
-        .start();
+    let guard = METRICS.time_operation(OP_KEYGEN_REQUEST).start();
 
     do_work()?;
 
@@ -258,9 +261,7 @@ fn explicit_timing() -> Result<(), Error> {
 use observability::metrics::METRICS;
 
 fn handle_request(request: Request) -> Result<(), Error> {
-    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)
-        .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL)
-        .start();
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST).start();
 
     METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
     match validate_data(request) {
@@ -336,17 +337,18 @@ server logs them at startup so operators can confirm how a deployment is tagged.
 - Use tag keys that match parameter names when possible
 - Keep tag keys short and consistent
 - Common tags from `metrics_names`:
-  - `operation`: matches the gRPC method name
+  - `operation`: the operation name (gRPC method) — label on the counters and the payload-size histogram
+  - `operation_type`: the operation name on the **duration** histogram (named `operation_type` for
+    backward compatibility — see the note under "Histograms")
   - `error`: standardized error type
   - `party_id`: identifies the MPC party
-  - `operation_type`: type of the operation (e.g., "total")
 - Avoid introducing new tag keys without adding them to `metrics_names`.
 - Also to _not_ use tags that will have high cardinality. E.g. using `RequestId` as tag would not be acceptable.
 
 ### 4. Duration Measurement
 
-- Use the `observe_duration_with_tags` method with proper operation name constants
-- Include operation type tags for all duration measurements
+- Use `time_operation(...)` / `observe_duration_with_tags` with the proper `OP_*` operation-name constants
+- Only attach low-cardinality tags from `DURATION_LABEL_KEYS` (e.g. `party_id`, `tfhe_type`)
 - Keep measurements consistent across similar operations
 
 ### 5. Metric Consistency

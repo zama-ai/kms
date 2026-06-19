@@ -125,7 +125,7 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 #### Metric Name: `kms_operation_duration_ms`
 - **Type**: Histogram
 - **Description**: Duration of KMS operations in milliseconds. Uses explicit buckets (1 ms → 5 min) because Prometheus defaults are tuned for seconds and would put most KMS measurements in `+Inf` (making p50/p95 meaningless).
-- **Tags**: Primary `operation` (e.g. an `OP_*` constant), optional `operation_type` (e.g. `total`, `load_crs_pk`), plus low-cardinality tags like `party_id`, `tfhe_type`, etc. High-cardinality tags (e.g. `key_id`, `request_id`) are intentionally not attached to this series.
+- **Tags**: The operation name is carried under `operation_type` (e.g. an `OP_*` constant value such as `keygen_request`) — named `operation_type` rather than `operation` for backward compatibility with existing dashboards — plus low-cardinality tags like `party_id`, `tfhe_type`, etc. High-cardinality tags (e.g. `key_id`, `request_id`) are intentionally not attached to this series.
 - **Alarm**: If P95 latency exceeds acceptable thresholds for critical operations.
 
 #### Metric Name: `kms_payload_size_bytes`
@@ -155,9 +155,9 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 **Common Metric Tag Keys**: All metrics include contextual tags for filtering and aggregation:
 
-- `operation` - The specific operation being performed (see operation types above; primary label for duration histogram and counters)
+- `operation` - The operation name; label on the counters (`*_operations_total`, `*_operation_errors_total`) and the payload-size histogram
+- `operation_type` - The operation name on the **duration** histogram; named `operation_type` (not `operation`) for backward compatibility with existing dashboards
 - `error` - The error type for error metrics (see error types above)
-- `operation_type` - Sub-type of operation (e.g., `total`, `load_crs_pk`, `proof_verification`, `ct_proof`)
 - `party_id` - ID of the party performing the operation
 - `tfhe_type` - Type of TFHE operation being performed
 - `public_decryption_mode` - Mode for public decryption operations
