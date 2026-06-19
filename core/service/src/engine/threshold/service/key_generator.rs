@@ -364,7 +364,6 @@ impl<
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let meta_store_cancelled = Arc::clone(&self.dkg_pubinfo_meta_store);
         let sk = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
         })?;
@@ -458,34 +457,20 @@ impl<
         let keygen_background = async move {
             // Remove the preprocessing entry from the meta store.
             tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-            let handle = {
-                let mut meta_store_guard = preproc_bucket.write().await;
-                meta_store_guard.delete(&preproc_id)
-            };
-            match handle_res(handle, &preproc_id).await {
-                Ok(_) => {
+            match try_delete_in_meta_store(&preproc_bucket, &preproc_id).await {
+                Ok(EntryState::Done(_)) => {
                     tracing::info!(
                         "Successfully deleted preprocessing ID {preproc_id} before running keygen for request ID {req_id}"
                     );
-                    match try_delete_in_meta_store(&preproc_bucket, preproc_id).await {
-                        Ok(EntryState::Done(_)) => {
-                            tracing::info!(
-                                "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
-                            );
-                        }
-                        Ok(other) => {
-                            MetricedError::handle_unreturnable_error(
-                                op_tag,
-                                Some(req_id),
-                                anyhow::anyhow!(
-                                    "Preprocessing ID {preproc_id} deleted but was in state {other}"
-                                ),
-                            );
-                        }
-                        Err(e) => {
-                            MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-                        }
-                    }
+                }
+                Ok(other) => {
+                    MetricedError::handle_unreturnable_error(
+                        op_tag,
+                        Some(req_id),
+                        anyhow::anyhow!(
+                            "Preprocessing ID {preproc_id} deleted but was in state {other}"
+                        ),
+                    );
                 }
                 Err(e) => {
                     MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
@@ -640,33 +625,18 @@ impl<
             insecure
         );
 
-        if let Err(e) = self
-            .launch_dkg(
-                internal_keyset_config,
-                resolved_preprocessing,
-                req_id,
-                &eip712_domain,
-                extra_data,
-                context_id,
-                epoch_id,
-                permit,
-                meta_permit,
-            )
-            .await
-        {
-            let launch_error = e.internal_err().to_string();
-            if let Err(update_error) = self
-                .dkg_pubinfo_meta_store
-                .write()
-                .await
-                .update(&req_id, Err(launch_error))
-            {
-                tracing::warn!(
-                    "Failed to mark key generation request {req_id} as failed after launch error: {update_error}"
-                );
-            }
-            return Err(e);
-        }
+        self.launch_dkg(
+            internal_keyset_config,
+            resolved_preprocessing,
+            req_id,
+            &eip712_domain,
+            extra_data,
+            context_id,
+            epoch_id,
+            permit,
+            meta_permit,
+        )
+        .await?;
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
@@ -748,7 +718,7 @@ impl<
         // The mode of the keygen request must match the mode of the stored
         // preprocessing: real material is required for the secure keygen and
         // insecure (dummy) preprocessing may only be used by the insecure keygen.
-        let preproc_handle = match &*preproc_bucket.preprocessing_store {
+        let preproc_handle = match &preproc_bucket.preprocessing_store {
             PreprocMaterial::Real(preprocessing_store) => {
                 if insecure {
                     return Err(MetricedError::new(
@@ -760,7 +730,7 @@ impl<
                         tonic::Code::FailedPrecondition,
                     ));
                 }
-                PreprocHandleWithMode::Secure((preproc_id, preprocessing_store))
+                PreprocHandleWithMode::Secure((preproc_id, Arc::clone(preprocessing_store)))
             }
             #[cfg(feature = "insecure")]
             PreprocMaterial::Insecure => {

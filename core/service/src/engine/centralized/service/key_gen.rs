@@ -112,21 +112,18 @@ pub async fn key_gen_impl<
     // how the preprocessing was produced, so either a normal or an insecure
     // keygen can consume either kind of preprocessing.
     let (params, permit) = {
-        let preproc = retrieve_from_meta_store(
-            &service.preprocessing_meta_store,
-            &preproc_id,
-            op_tag,
-        )
-        .await
-        .map_err(|e| {
-            // Remap the error to include the correct request ID
-            MetricedError::new(
-                op_tag,
-                Some(req_id),
-                anyhow::anyhow!(e.internal_err().to_string()),
-                e.code(),
-            )
-        })?;
+        let preproc =
+            retrieve_from_meta_store(&service.preprocessing_meta_store, &preproc_id, op_tag)
+                .await
+                .map_err(|e| {
+                    // Remap the error to include the correct request ID
+                    MetricedError::new(
+                        op_tag,
+                        Some(req_id),
+                        anyhow::anyhow!(e.internal_err().to_string()),
+                        e.code(),
+                    )
+                })?;
         // Request params take precedence; otherwise use the params stored during preprocessing.
         let params = if request_params_set {
             dkg_params_of_request
@@ -173,8 +170,6 @@ pub async fn key_gen_impl<
         )
     })?;
 
-    let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
-
     let token = CancellationToken::new();
     {
         let mut ongoing_key_gen = service.ongoing_key_gen.lock().await;
@@ -194,11 +189,13 @@ pub async fn key_gen_impl<
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID
-    if let Err(e) = add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)
-    {
-        service.ongoing_key_gen.lock().await.remove(&preproc_id);
-        return Err(e);
-    }
+    let meta_permit = match add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await {
+        Ok(permit) => permit,
+        Err(e) => {
+            service.ongoing_key_gen.lock().await.remove(&preproc_id);
+            return Err(e);
+        }
+    };
 
     let ongoing = Arc::clone(&service.ongoing_key_gen);
     let crypto_storage = service.crypto_storage.clone();

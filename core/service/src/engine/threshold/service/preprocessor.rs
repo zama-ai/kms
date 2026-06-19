@@ -437,7 +437,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         &self,
         request: KeyGenPreprocRequest,
     ) -> Result<Response<Empty>, MetricedError> {
-        let rate_limiting_permit = self.rate_limiter.start_preproc().await?;
+        let _rate_limiting_permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS
             .time_operation(OP_INSECURE_KEYGEN_PREPROC_REQUEST)
             .start();
@@ -447,7 +447,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             context_id,
             epoch_id,
             dkg_params,
-            keyset_config,
+            _keyset_config,
             eip712_domain,
             extra_data,
         ) = validate_preproc_request(request)?;
@@ -580,7 +580,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         Ok(Response::new(KeyGenPreprocResult {
             preprocessing_id: Some(request_id.into()),
-            external_signature: preproc_data.external_signature,
+            external_signature: preproc_data.external_signature.clone(),
         }))
     }
 }
