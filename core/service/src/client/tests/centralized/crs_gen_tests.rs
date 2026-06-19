@@ -1,5 +1,7 @@
 use crate::client::client_wasm::Client;
+use crate::engine::utils::MetricedError;
 use crate::testing::setup::CentralizedTestEnv;
+use crate::testing::utils::poll_result_until_ready;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use crate::{
     consts::TEST_PARAM,
@@ -219,17 +221,16 @@ pub(crate) async fn run_crs_centralized(
         }
     };
 
-    let mut response = kms_client
-        .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
-        .await;
-    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete CRS generation
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        response = kms_client
+    let inner_resp = poll_result_until_ready(|| async {
+        kms_client
+            .clone()
             .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
-            .await;
-    }
-    let inner_resp = response.unwrap().into_inner();
+            .await
+            .map_err(|e| MetricedError::new("test", Some(*crs_req_id), e, tonic::Code::Internal))
+    })
+    .await
+    .unwrap()
+    .into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let pp = internal_client
         .process_get_crs_resp(
