@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use super::{
-    preprocessing::BasePreprocessing,
-    triple::{mult_list, open_list},
-};
+use super::{preprocessing::BasePreprocessing, triple::mult_list};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
+use crate::sharing::open::{RobustOpen, SecureRobustOpen};
 use algebra::{
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Solve},
 };
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use thread_handles::spawn_compute_bound;
 use tracing::instrument;
 
@@ -51,32 +51,59 @@ impl BitGenEven for SecureBitGenEven {
         let a = Arc::new(preproc.next_random_vec(amount)?);
 
         let triples = preproc.next_triple_vec(amount)?;
-        let s = mult_list(Arc::clone(&a), Arc::clone(&a), triples, session).await?;
+        let s = crate::hotpath_measure_async!(
+            "gen_bits::mult",
+            mult_list(Arc::clone(&a), Arc::clone(&a), triples, session)
+        )
+        .await?;
 
         let compute_a = Arc::clone(&a);
-        let v = spawn_compute_bound(move || {
+        // Build the values to open (v = a + s) directly as `Vec<Z>`, bypassing `open_list`.
+        // `open_list` would re-collect Share -> value into a second `Vec`; producing the values
+        // here removes that extra allocation (the same optimization applied to `mult_list`).
+        let to_open = spawn_compute_bound(move || {
             compute_a
                 .iter()
                 .zip_eq(s) // May panic but would imply a bug in `mult_list`
-                .map(|(cur_a, cur_s)| cur_s + cur_a)
+                .map(|(cur_a, cur_s)| (cur_s + cur_a).value())
                 .collect_vec()
         })
         .await?;
-        let opened_v_vec = open_list(&v, session).await?;
 
-        //let a = Arc::into_inner(a).ok_or_else(|| anyhow_error_and_log("Failed to unarc a"))?;
-        spawn_compute_bound(move || {
-            opened_v_vec
-                .iter()
-                .zip_eq(a.iter()) // May panic but would imply a bug in `open_list`
-                .map(|(cur_v, cur_a)| {
-                    let cur_r = Z::solve(cur_v)?;
-                    let cur_d = Z::ZERO - (Z::ONE + cur_r.mul_by_u128(2));
-                    let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
-                    Ok(cur_b)
-                })
-                .try_collect()
-        })
+        let open = SecureRobustOpen::default();
+        let opened_v_vec = match crate::hotpath_measure_async!(
+            "gen_bits::open",
+            open.robust_open_list_to_all(session, to_open, session.threshold() as usize,)
+        )
+        .await?
+        {
+            Some(opened) => opened,
+            None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
+        };
+
+        crate::hotpath_measure_async!(
+            "gen_bits::solve_invert",
+            spawn_compute_bound(move || {
+                // A length mismatch here would imply a bug in the open.
+                debug_assert_eq!(opened_v_vec.len(), a.len());
+                // `solve` + `invert` are the heaviest scalar ops in the protocol and each entry is
+                // independent, so run them in parallel (mirrors the rayon loops in `sharing::open`
+                // and `secret_distributions`). `with_min_len` keeps small batches single-threaded.
+                (0..opened_v_vec.len())
+                    .into_par_iter()
+                    .with_min_len(*crate::constants::BITGEN_SOLVE_PAR_MIN_CHUNK)
+                    .map(|i| {
+                        let cur_v = &opened_v_vec[i];
+                        let cur_a = &a[i];
+                        let cur_r = Z::solve(cur_v)?;
+                        // d = -(1 + 2r); double via addition instead of a general scalar multiply.
+                        let cur_d = Z::ZERO - (Z::ONE + (cur_r + cur_r));
+                        let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
+                        Ok(cur_b)
+                    })
+                    .collect::<anyhow::Result<Vec<Share<Z>>>>()
+            })
+        )
         .await?
     }
 }

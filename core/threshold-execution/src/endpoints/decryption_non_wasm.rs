@@ -129,12 +129,15 @@ where
         let mut sns_preprocessing = InMemoryNoiseFloodPreprocessing::default();
         let own_role = session.my_role();
 
-        let masks = self
-            .session
-            .get_mut()
-            .prss_as_mut()
-            .mask_next_vec(own_role, B_SWITCH_SQUASH, num_ctxt)
-            .await?;
+        // PRSS noise sampling for switch-and-squash masking (one mask per ciphertext block).
+        let masks = crate::hotpath_measure_async!(
+            "decrypt::prss_mask_sample",
+            self.session
+                .get_mut()
+                .prss_as_mut()
+                .mask_next_vec(own_role, B_SWITCH_SQUASH, num_ctxt)
+        )
+        .await?;
         sns_preprocessing.append_masks(masks);
         Ok(sns_preprocessing)
     }
@@ -246,8 +249,11 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
             spawn_compute_bound(move || -> anyhow::Result<_> {
                 let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
                 for current_ct_block in ciphertext.packed_blocks() {
-                    let partial_decrypt =
-                        partial_decrypt128(&keyshares, current_ct_block, ddec_key_type)?;
+                    // Inner product <a, s> of the shared SnS key bits with the ciphertext mask (b - <a,s>).
+                    let partial_decrypt = crate::hotpath_measure_block!(
+                        "decrypt::inner_product",
+                        partial_decrypt128(&keyshares, current_ct_block, ddec_key_type)
+                    )?;
                     let res = partial_decrypt
                         + preprocessing
                             .lock()
@@ -261,7 +267,12 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
             .await?
         }?;
 
-        let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, &keyshares).await?;
+        // Robust open of the masked partial decryptions, then reconstruct the message.
+        let partial_decrypted = crate::hotpath_measure_async!(
+            "decrypt::open_masked",
+            open_masked_ptxts(session, shared_masked_ptxts, &keyshares)
+        )
+        .await?;
         let usable_message_bits =
             ciphertext.packing_factor() * keyshares.parameters.message_modulus_log() as usize;
         let shared_partial_decrypt = BlocksPartialDecrypt {

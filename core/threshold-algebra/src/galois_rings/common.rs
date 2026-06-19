@@ -763,13 +763,14 @@ where
             x = (x * x + *v) * y;
         }
 
-        // Validate the result, i.e. x+x^2 = input
-        //Note: This is a sanity check, we don't explicitly need it
-        if v != &(x + x * x) {
-            return Err(anyhow_error_and_log(
-                "The outer Newton Raphson inversion computation in solve() failed",
-            ));
-        }
+        // Validate the result, i.e. x+x^2 = input. This is a sanity check we don't explicitly
+        // need (Newton-Raphson converges for valid inputs over Z_{2^k}), so it is debug-only to
+        // keep the two ring multiplies off the per-element release hot path — consistent with the
+        // `debug_assert_eq!` used in `invert` above.
+        debug_assert!(
+            v == &(x + x * x),
+            "The outer Newton Raphson inversion computation in solve() failed"
+        );
         Ok(x)
     }
 }

@@ -90,6 +90,13 @@ cfg_if::cfg_if! {
             std::sync::LazyLock::new(|| {
                 env_usize("MPC_ROBUST_OPEN_PAR_MIN_CHUNK", 256)
             });
+        /// Bit generation (`online::gen_bits`) final solve/invert loop: heavy per item
+        /// (a `solve` plus an `invert`, each several Newton-Raphson rounds of ring multiplies).
+        /// Env: `MPC_BITGEN_SOLVE_PAR_MIN_CHUNK` (default 256).
+        pub(crate) static BITGEN_SOLVE_PAR_MIN_CHUNK: std::sync::LazyLock<usize> =
+            std::sync::LazyLock::new(|| {
+                env_usize("MPC_BITGEN_SOLVE_PAR_MIN_CHUNK", 256)
+            });
     }
 }
 
