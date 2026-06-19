@@ -25,7 +25,6 @@ use aes_prng::AesRng;
 use alloy_primitives::{Address, U256};
 use kms_grpc::kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::client::user_decryption_wasm::{CiphertextHandle, ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SAFE_SER_SIZE_LIMIT};
 use kms_lib::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
 use kms_lib::cryptography::signatures::PublicSigKey;
@@ -417,18 +416,11 @@ async fn solana_user_decrypt_live() {
         kms_pk.expect("KMS verification key in response payload"),
     );
     let client = Client::new(server_pks, derived, None, DEFAULT_PARAM, None);
-    let request = ParsedUserDecryptionRequest::new(
-        None,
-        derived,
-        pk_bytes.clone(),
-        vec![CiphertextHandle::new(handle32.to_vec())],
-        Address::ZERO,
-        vec![0x00],
-    );
 
     let plaintexts = client
         .process_user_decryption_resp_solana(
-            &request,
+            &pk_bytes,
+            &[handle32],
             &pubkey,
             contracts_chain_id,
             &unified_pk,

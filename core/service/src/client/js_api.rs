@@ -569,7 +569,8 @@ pub fn process_user_decryption_resp_from_js(
 /// EVM EIP-712 `UserDecryptionLinker`; de-signcryption is otherwise identical to the EVM path.
 #[wasm_bindgen]
 pub fn process_user_decryption_resp_solana_from_js(
-    request: JsValue,
+    enc_key: Vec<u8>,
+    ciphertext_handles: Vec<String>,
     solana_user_pubkey: Vec<u8>,
     host_chain_id: u64,
     agg_resp: JsValue,
@@ -579,7 +580,17 @@ pub fn process_user_decryption_resp_solana_from_js(
     console_error_panic_hook::set_once();
     let agg_resp = js_to_resp(agg_resp)
         .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
-    let request = ParsedUserDecryptionRequest::try_from(request)?;
+    // Solana takes only the bound transport key + 32-byte handles, not the EVM-shaped request.
+    let handles: Vec<[u8; 32]> = ciphertext_handles
+        .iter()
+        .map(|h| {
+            let bytes = hex_decode_js_err(h)?;
+            let mut padded = [0u8; 32];
+            let take = bytes.len().min(32);
+            padded[32 - take..].copy_from_slice(&bytes[bytes.len() - take..]);
+            Ok(padded)
+        })
+        .collect::<Result<Vec<_>, JsError>>()?;
     let solana_user_pubkey: [u8; 32] = solana_user_pubkey
         .as_slice()
         .try_into()
@@ -597,8 +608,9 @@ pub fn process_user_decryption_resp_solana_from_js(
             .map_err(|e| JsError::new(&format!("verification key parse failed: {e}")))?;
         server_pks.insert((i + 1) as u32, vk);
     }
-    let client_address =
-        alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_user_pubkey)[12..]);
+    let client_address = alloy_primitives::Address::from_slice(
+        &alloy_primitives::keccak256(solana_user_pubkey)[12..],
+    );
     let client = Client {
         server_identities: ServerIdentities::Pks(server_pks),
         client_address,
@@ -609,7 +621,8 @@ pub fn process_user_decryption_resp_solana_from_js(
 
     // Internally plaintexts are little-endian; JS expects big-endian (mirror the EVM wrapper).
     match client.process_user_decryption_resp_solana(
-        &request,
+        &enc_key,
+        &handles,
         &solana_user_pubkey,
         host_chain_id,
         &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),

@@ -233,7 +233,8 @@ impl Client {
     /// recover the plaintext client-side.
     pub fn process_user_decryption_resp_solana(
         &self,
-        request: &ParsedUserDecryptionRequest,
+        enc_key_bytes: &[u8],
+        handles: &[[u8; 32]],
         solana_user_pubkey: &[u8; 32],
         host_chain_id: u64,
         enc_key: &UnifiedPublicEncKey,
@@ -243,24 +244,10 @@ impl Client {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
-        // Handles are 32 bytes on Solana; left-pad defensively to mirror the EVM consistency check.
-        let handles: Vec<[u8; 32]> = request
-            .ciphertext_handles
-            .iter()
-            .map(|c| {
-                let mut h = [0u8; 32];
-                let src = &c.0;
-                let take = src.len().min(32);
-                h[32 - take..].copy_from_slice(&src[src.len() - take..]);
-                h
-            })
-            .collect();
-        let link = compute_link_solana(
-            &request.enc_key,
-            &handles,
-            solana_user_pubkey,
-            host_chain_id,
-        );
+        // Solana de-signcryption needs only the bound transport key + handles — never the EVM-shaped
+        // request fields (client_address, eip712 contract, signature). `enc_key_bytes` is the
+        // serialized transport pubkey bound into the link; `handles` are the 32-byte ciphertext ids.
+        let link = compute_link_solana(enc_key_bytes, handles, solana_user_pubkey, host_chain_id);
         if link != payload.digest {
             return Err(anyhow_error_and_log(format!(
                 "solana link mismatch ({} != {})",

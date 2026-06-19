@@ -294,14 +294,14 @@ fn unpack_user_decrypt_req(
     // address. Legacy clients leave it unset and fall back to the `client_address` string overload.
     use kms_grpc::kms::v1::user_decryption_request::ClientIdentity;
     let solana_pubkey_opt: Option<[u8; 32]> = match &req.client_identity {
-        Some(ClientIdentity::SolanaPubkey(pk)) => Some(<[u8; 32]>::try_from(pk.as_slice()).map_err(
-            |_| {
+        Some(ClientIdentity::SolanaPubkey(pk)) => {
+            Some(<[u8; 32]>::try_from(pk.as_slice()).map_err(|_| {
                 anyhow::anyhow!(
                     "Solana client identity must be a 32-byte pubkey, got {} bytes",
                     pk.len()
                 )
-            },
-        )?),
+            })?)
+        }
         Some(ClientIdentity::EvmAddress(_)) => None,
         None => parse_solana_user_decrypt_pubkey(&req.client_address),
     };
@@ -366,12 +366,14 @@ fn unpack_user_decrypt_req(
             })?;
             alloy_primitives::Address::from(bytes)
         }
-        _ => alloy_primitives::Address::parse_checksummed(&req.client_address, None).map_err(|e| {
-            anyhow::anyhow!(
-                "Error parsing checksummed client address: {} - {e}",
-                req.client_address
-            )
-        })?,
+        _ => alloy_primitives::Address::parse_checksummed(&req.client_address, None).map_err(
+            |e| {
+                anyhow::anyhow!(
+                    "Error parsing checksummed client address: {} - {e}",
+                    req.client_address
+                )
+            },
+        )?,
     };
 
     let domain = match verify_user_decrypt_eip712(req) {
@@ -1351,6 +1353,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1372,6 +1375,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1396,6 +1400,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1417,6 +1422,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1438,6 +1444,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -1464,6 +1471,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1485,6 +1493,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
@@ -1551,6 +1560,7 @@ mod tests {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            client_identity: None,
         };
 
         {
