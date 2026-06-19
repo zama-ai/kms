@@ -34,11 +34,7 @@
 //! Any meta store that is NOT used for decryption (user or public) should be unlimited and MUST ensure that all data elements are present.
 
 use kms_grpc::RequestId;
-use std::{
-    collections::{HashMap, VecDeque},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use thiserror::Error;
 use tracing;
 
@@ -214,7 +210,7 @@ pub struct MetaStore<T> {
     // Storage of all elements in the system
     storage: HashMap<RequestId, StoredEntry<T>>,
     // Queue of all elements that have been completed. Deleted elements are NOT included in this queue.
-    complete_queue: VecDeque<RequestId>,
+    complete_queue: Vec<RequestId>,
     // Number of tombstoned (`Deleted`) entries still occupying `storage`.
     deleted_count: usize,
 }
@@ -230,7 +226,7 @@ impl<T> MetaStore<T> {
             capacity,
             min_cache,
             storage: HashMap::with_capacity(capacity),
-            complete_queue: VecDeque::with_capacity(min_cache),
+            complete_queue: Vec::with_capacity(min_cache),
             deleted_count: 0,
         }
     }
@@ -241,18 +237,18 @@ impl<T> MetaStore<T> {
             capacity: usize::MAX,
             min_cache: usize::MAX,
             storage: HashMap::new(),
-            complete_queue: VecDeque::new(),
+            complete_queue: Vec::new(),
             deleted_count: 0,
         }
     }
 
     /// Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
     pub(crate) fn new_from_map(map: HashMap<RequestId, T>) -> Self {
-        let mut completed_queue = VecDeque::new();
+        let mut completed_queue = Vec::new();
         let storage = map
             .into_iter()
             .map(|(key, value)| {
-                completed_queue.push_back(key);
+                completed_queue.push(key);
                 (key, StoredEntry::done(Ok(Arc::new(value))))
             })
             .collect();
@@ -333,12 +329,13 @@ impl<T> MetaStore<T> {
                         req_id: *request_id,
                     });
                 };
-                let old_request_id = self.complete_queue.remove(pos).ok_or_else(|| {
+                if pos >= self.complete_queue.len() {
                     let msg =
                         format!("complete_queue index {pos} vanished while inserting {request_id}");
                     tracing::error!(msg);
-                    MetaStoreError::Invariant(msg)
-                })?;
+                    return Err(MetaStoreError::Invariant(msg));
+                }
+                let old_request_id = self.complete_queue.remove(pos);
                 if self.storage.remove(&old_request_id).is_none() {
                     self.complete_queue.insert(pos, old_request_id);
                     let msg = format!(
@@ -421,7 +418,7 @@ impl<T> MetaStore<T> {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
         *cell = StoredEntry::done(update.map(Arc::new));
-        self.complete_queue.push_back(req_id);
+        self.complete_queue.push(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
     }
@@ -451,7 +448,7 @@ impl<T> MetaStore<T> {
             StoredEntry::Pending(_) => {
                 // First completion of this entry — record it as completed.
                 *cell = StoredEntry::done(Ok(Arc::new(value)));
-                self.complete_queue.push_back(req_id);
+                self.complete_queue.push(req_id);
             }
             StoredEntry::Done(_, _) => {
                 // Existing Done locked in place — overwrite, keep the queue slot.
@@ -599,11 +596,12 @@ impl<T> MetaStore<T> {
     }
 
     /// Get completed request IDs. That is, this excludes request IDs that have been deleted or are pending.
-    pub(crate) fn get_completed_request_ids(&self) -> Vec<RequestId> {
-        self.complete_queue.iter().cloned().collect()
+    pub(crate) fn get_completed_request_ids(&self) -> &[RequestId] {
+        &self.complete_queue
     }
 
     /// Get processing request IDs (not yet completed)
+    /// WARNING: This is a slow operation
     pub(crate) fn get_processing_request_ids(&self) -> Vec<RequestId> {
         self.storage
             .iter()

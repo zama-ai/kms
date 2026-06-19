@@ -256,7 +256,9 @@ impl MetaStoreStatusServiceImpl {
 
         let request_ids = match status_filter {
             Some(RequestProcessingStatus::Processing) => store_guard.get_processing_request_ids(),
-            Some(RequestProcessingStatus::Completed) => store_guard.get_completed_request_ids(),
+            Some(RequestProcessingStatus::Completed) => {
+                store_guard.get_completed_request_ids().to_vec()
+            }
             Some(RequestProcessingStatus::Failed) => store_guard.get_failed_request_ids(),
             Some(RequestProcessingStatus::Any) | None => {
                 let mut res = store_guard.get_processing_request_ids();
