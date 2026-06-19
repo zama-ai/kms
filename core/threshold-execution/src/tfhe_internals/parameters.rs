@@ -18,7 +18,7 @@ use tfhe::shortint::parameters::{
     MetaNoiseSquashingParameters, MetaParameters, ModulusSwitchNoiseReductionParams,
     ModulusSwitchType, NoiseEstimationMeasureBound, NoiseSquashingClassicParameters,
     NoiseSquashingCompressionParameters, NoiseSquashingParameters, PBSOrder, PBSParameters,
-    PolynomialSize, ReRandomizationConfiguration, ReRandomizationParameters, RSigmaFactor,
+    PolynomialSize, RSigmaFactor, ReRandomizationConfiguration, ReRandomizationParameters,
     ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
 };
 use tfhe::shortint::{CarryModulus, MaxNoiseLevel, MessageModulus};
@@ -468,7 +468,7 @@ impl DKGParams {
         // already enforces the structural invariants of each mode — in
         // particular, in derived mode any dedicated *encryption* CPK must carry no
         // rerand KSK (`re_randomization_parameters: None`). Here we add the
-        // KMS-specific restriction that derived mode requires KS_PBS / Big-key
+        // also enforce that derived mode requires KS_PBS / Big-key
         // compute parameters: the derived rerand CPK reuses the compute large key,
         // so encryption must be under the large (`Big`) key.
         if let Some(rerand) = self.meta.rerand_configuration.as_ref() {
@@ -1699,6 +1699,25 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
     secret_key_deviations: None,
 };
 
+/// Derived-rerand test parameters: [`PARAMS_TEST_BK_SNS`] with re-randomization
+/// switched from the legacy dedicated-CPK-plus-KSK mode to the derived
+/// (`DerivedCompactPublicKeyWithoutKeySwitch`) mode. The compute parameters are
+/// already KS_PBS / `Big`-key with `glwe_sk_num_bits == 1 * 256 == 256` (a power
+/// of two), so they satisfy the derived-mode invariants enforced by
+/// [`DKGParams::check_conformance`] and `MetaParameters::is_valid`. Test/bench
+/// only — deliberately not reachable over the gRPC `FheParameter` enum.
+#[cfg(any(test, feature = "testing"))]
+pub static PARAMS_TEST_BK_SNS_DERIVED_RERAND: LazyLock<DKGParams> = LazyLock::new(|| {
+    let mut params = PARAMS_TEST_BK_SNS;
+    // Derived mode forbids a rerand KSK on the dedicated (encryption) CPK.
+    if let Some(cpk) = params.meta.dedicated_compact_public_key_parameters.as_mut() {
+        cpk.re_randomization_parameters = None;
+    }
+    params.meta.rerand_configuration =
+        Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch);
+    params
+});
+
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
@@ -1901,7 +1920,8 @@ mod tests {
                     + p.num_needed_noise_compression_key().num_bits_needed()
                     + p.num_needed_noise_msnrk().num_bits_needed()
                     + p.num_needed_noise_decompression_key().num_bits_needed()
-                    + p.num_needed_noise_rerand_ksk().num_bits_needed();
+                    + p.num_needed_noise_rerand_ksk().num_bits_needed()
+                    + p.num_needed_noise_rerand_pk().num_bits_needed();
                 if let Some(sns) = p.sns() {
                     n += sns.all_bk_sns_noise().num_bits_needed()
                         + sns.num_needed_noise_msnrk_sns().num_bits_needed()
@@ -1947,6 +1967,51 @@ mod tests {
         assert!(
             bad.check_conformance().is_err(),
             "SnS parameters with Z64 dkg_mode must be rejected"
+        );
+    }
+
+    /// Derived-CPK re-randomization: the derived test set is conformant and
+    /// recognized as derived, the budget gains exactly `glwe_sk_num_bits` of
+    /// GLWE-domain rerand-PK noise while preserving the
+    /// `total_bits == num_raw_bits + Σnoise` invariant, and a derived set over
+    /// the small (PBS_KS) key is rejected.
+    #[test]
+    fn check_conformance_derived_rerand() {
+        let p = *PARAMS_TEST_BK_SNS_DERIVED_RERAND;
+
+        p.check_conformance()
+            .expect("derived-rerand test params should be conformant");
+        assert!(p.uses_derived_rerand());
+        assert!(matches!(
+            p.rerand_configuration(),
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch)
+        ));
+
+        // The derived rerand CPK is generated over the compute Big key, so it
+        // needs exactly `glwe_sk_num_bits` GLWE-domain noise elements, while the
+        // legacy rerand KSK budget is 0.
+        assert_eq!(p.num_needed_noise_rerand_pk().amount, p.glwe_sk_num_bits());
+        assert_eq!(p.num_needed_noise_rerand_ksk().amount, 0);
+
+        // Budget invariant still holds with the extra rerand-PK noise.
+        let cfg = KeySetConfig::Standard(StandardKeySetConfig::default());
+        assert_eq!(
+            p.total_bits_required(cfg),
+            p.num_raw_bits(cfg) + expected_noise_bits(&p, cfg),
+            "total_bits_required != num_raw_bits + noise for derived rerand"
+        );
+
+        // Derived rerand requires KS_PBS / Big-key compute parameters: forcing
+        // the compute encryption key to Small must be rejected.
+        let mut bad = p;
+        if let AtomicPatternParameters::Standard(PBSParameters::PBS(pbs)) =
+            &mut bad.meta.compute_parameters
+        {
+            pbs.encryption_key_choice = EncryptionKeyChoice::Small;
+        }
+        assert!(
+            bad.check_conformance().is_err(),
+            "derived rerand with Small-key compute params must be rejected"
         );
     }
 
