@@ -55,6 +55,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "UserDecryptionRequest",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
+        // The typed `client_identity` oneof is a connector→kms-core gRPC concern; the WASM/SDK
+        // path only de-signcrypts the response and never reads it. Its generated oneof enum has
+        // no wasm ABI, so exclude the field from the JS getter to keep the wasm build compiling.
+        .field_attribute(
+            "UserDecryptionRequest.client_identity",
+            "#[wasm_bindgen(skip)]",
+        )
         .type_attribute(
             "UserDecryptionResponse",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
