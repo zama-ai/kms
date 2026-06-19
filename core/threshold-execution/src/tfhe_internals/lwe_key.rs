@@ -296,11 +296,10 @@ pub(crate) async fn generate_lwe_public_key_shared<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let basic_handle = params.get_params_basics_handle();
     let my_role = session.my_role();
 
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
-    let NoiseInfo { amount, bound } = basic_handle.num_needed_noise_pk();
+    let NoiseInfo { amount, bound } = params.num_needed_noise_pk();
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(amount, bound)?
         .iter()

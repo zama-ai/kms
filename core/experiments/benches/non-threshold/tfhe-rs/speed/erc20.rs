@@ -70,11 +70,7 @@ fn transfer_overflow(
 fn main() {
     set_plan();
     for (name, params) in ALL_PARAMS {
-        if params
-            .get_params_basics_handle()
-            .get_rerand_params()
-            .is_none()
-        {
+        if params.rerand_params().is_none() {
             // Rerandomization is required for this bench
             continue;
         }
