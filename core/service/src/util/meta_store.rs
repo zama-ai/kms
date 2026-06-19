@@ -360,11 +360,11 @@ impl<T> MetaStore<T> {
         Ok(permit)
     }
 
-/// Acquire a permit for an existing entry, returning an error if the entry does not exist, is tombstoned (`Deleted`), or is currently held by another permit.
-///
-/// This is intended for callers that need to update or delete an existing entry but do not hold its original insert permit.
-///
-/// Note that acquiring a permit on an existing entry does not change its state: the entry remains `Pending` or `Done` as it was before.
+    /// Acquire a permit for an existing entry, returning an error if the entry does not exist, is tombstoned (`Deleted`), or is currently held by another permit.
+    ///
+    /// This is intended for callers that need to update or delete an existing entry but do not hold its original insert permit.
+    ///
+    /// Note that acquiring a permit on an existing entry does not change its state: the entry remains `Pending` or `Done` as it was before.
     pub(crate) fn lock_entry(
         &mut self,
         request_id: &RequestId,
