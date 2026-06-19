@@ -18,8 +18,8 @@ use tfhe::shortint::parameters::{
     MetaNoiseSquashingParameters, MetaParameters, ModulusSwitchNoiseReductionParams,
     ModulusSwitchType, NoiseEstimationMeasureBound, NoiseSquashingClassicParameters,
     NoiseSquashingCompressionParameters, NoiseSquashingParameters, PBSOrder, PBSParameters,
-    PolynomialSize, RSigmaFactor, ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
-    Variance,
+    PolynomialSize, ReRandomizationConfiguration, RSigmaFactor, ShortintKeySwitchingParameters,
+    SupportedCompactPkeZkScheme, Variance,
 };
 use tfhe::shortint::{CarryModulus, MaxNoiseLevel, MessageModulus};
 
@@ -339,9 +339,34 @@ impl DKGParams {
             .map(|d| (d.pke_params, d.ksk_params))
     }
 
+    /// The *legacy* re-randomization KSK parameters, i.e. the key-switching
+    /// parameters carried by the dedicated CPK to reach the compute (Big) key.
+    /// Only ever `Some` in the `LegacyDedicatedCompactPublicKeyWithKeySwitch`
+    /// configuration — in `DerivedCompactPublicKeyWithoutKeySwitch` mode there is
+    /// no rerand KSK, so a conformant derived set always returns `None` here (see
+    /// `MetaParameters::is_valid`). Use [`Self::uses_derived_rerand`] to tell the
+    /// two rerand modes apart.
     pub fn rerand_params(&self) -> Option<ShortintKeySwitchingParameters> {
         self.dedicated_compact_pk_parameters()
             .and_then(|d| d.re_randomization_parameters)
+    }
+
+    /// The re-randomization configuration (`Legacy` vs `Derived`), if any.
+    /// This is independent of [`Self::has_dedicated_compact_pk_params`]: the
+    /// *encryption* CPK and the rerand mode are separate `MetaParameters` fields.
+    pub fn rerand_configuration(&self) -> Option<ReRandomizationConfiguration> {
+        self.meta.rerand_configuration
+    }
+
+    /// Whether re-randomization uses the derived-CPK (no-keyswitch) mode, where
+    /// the rerand compact public key is derived from the compute (Big) key and no
+    /// rerand KSK is generated. Contrast with the legacy mode, which reuses the
+    /// dedicated encryption CPK plus a KSK onto the compute key.
+    pub fn uses_derived_rerand(&self) -> bool {
+        matches!(
+            self.meta.rerand_configuration,
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch)
+        )
     }
 
     /// Mirrors `parameters.rs`: the rerand KSK reuses the PKSK (and so needs no
@@ -424,19 +449,28 @@ impl DKGParams {
             anyhow::bail!("KMS only supports the TUniform noise distribution");
         }
 
-        // TODO: KMS currently only supports the legacy re-randomization configuration
-        // (`LegacyDedicatedCompactPublicKeyWithKeySwitch`). Lift this restriction once
-        // the other `ReRandomizationConfiguration` variants are wired through keygen.
-        if let Some(rerand) = self.meta.rerand_configuration.as_ref()
-            && !matches!(
-                rerand,
-                tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch
-            )
-        {
-            anyhow::bail!(
-                "KMS only supports the legacy re-randomization configuration \
-                 (LegacyDedicatedCompactPublicKeyWithKeySwitch)"
-            );
+        // Re-randomization: KMS supports both the legacy (dedicated CPK + rerand
+        // KSK onto the compute key) and the derived (CPK derived from the compute
+        // key, no KSK) configurations. `MetaParameters::is_valid` (checked above)
+        // already enforces the structural invariants of each mode — in
+        // particular, in derived mode any dedicated *encryption* CPK must carry no
+        // rerand KSK (`re_randomization_parameters: None`). Here we add the
+        // KMS-specific restriction that derived mode requires KS_PBS / Big-key
+        // compute parameters: the derived rerand CPK reuses the compute large key,
+        // so encryption must be under the large (`Big`) key.
+        if let Some(rerand) = self.meta.rerand_configuration.as_ref() {
+            match rerand {
+                ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch => {}
+                ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch => {
+                    if self.encryption_key_choice() != EncryptionKeyChoice::Big {
+                        anyhow::bail!(
+                            "Derived re-randomization \
+                             (DerivedCompactPublicKeyWithoutKeySwitch) requires KS_PBS \
+                             (Big-key) compute parameters"
+                        );
+                    }
+                }
+            }
         }
 
         // Compression, if present, must be classic with TUniform noise.
@@ -771,6 +805,35 @@ impl DKGParams {
         }
     }
 
+    /// Noise for the *derived* re-randomization compact public key.
+    ///
+    /// In `DerivedCompactPublicKeyWithoutKeySwitch` mode the rerand CPK is a
+    /// fresh compact public key generated over the compute (`Big`) key — it is
+    /// NOT the dedicated encryption CPK (which lives over the small / dedicated
+    /// key) nor a key-switch. Generating a compact public key over a key of
+    /// dimension `d` consumes `d` noise elements (see
+    /// `generate_lwe_compact_public_key`), and the CPK derived from the compute
+    /// parameters encrypts under the large key, so `d == glwe_sk_num_bits` with
+    /// the compute GLWE noise. (Equality with the derived CPK's
+    /// `encryption_lwe_dimension` / `encryption_noise_distribution` holds because
+    /// `check_conformance` requires `encryption_key_choice == Big` for derived
+    /// rerand.)
+    ///
+    /// Zero in the legacy / no-rerand modes: there the rerand CPK is the
+    /// dedicated encryption CPK (budgeted via [`Self::num_needed_noise_pk`]) plus
+    /// a KSK (budgeted via [`Self::num_needed_noise_rerand_ksk`]).
+    pub fn num_needed_noise_rerand_pk(&self) -> NoiseInfo {
+        let amount = if self.uses_derived_rerand() {
+            self.glwe_sk_num_bits()
+        } else {
+            0
+        };
+        NoiseInfo {
+            amount,
+            bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+        }
+    }
+
     pub fn num_needed_noise_bk(&self) -> NoiseInfo {
         let amount = self.lwe_dimension().0
             * (self.glwe_dimension().0 + 1)
@@ -965,6 +1028,7 @@ impl DKGParams {
                 n += self.num_needed_noise_msnrk().num_bits_needed();
                 n += self.num_needed_noise_decompression_key().num_bits_needed();
                 n += self.num_needed_noise_rerand_ksk().num_bits_needed();
+                n += self.num_needed_noise_rerand_pk().num_bits_needed();
             }
             KeySetConfig::DecompressionOnly => {
                 n += self.num_needed_noise_decompression_key().num_bits_needed();
@@ -1066,6 +1130,7 @@ impl DKGParams {
                     self.num_needed_noise_pksk(),
                     self.num_needed_noise_decompression_key(),
                     self.num_needed_noise_rerand_ksk(),
+                    self.num_needed_noise_rerand_pk(),
                 ],
             ),
             KeySetConfig::DecompressionOnly => {
