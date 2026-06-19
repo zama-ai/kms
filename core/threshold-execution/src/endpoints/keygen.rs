@@ -14,13 +14,17 @@ use crate::{
         },
         glwe_key::GlweSecretKeyShare,
         lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
-        lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
+        lwe_key::{
+            LweSecretKeyShare, generate_lwe_public_key_shared,
+            generate_lwe_public_key_shared_with_noise,
+        },
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
         modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
         parameters::{DKGParams, MSNRKConfiguration},
         private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
         public_keysets::{
-            CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
+            CompressedReRandomizationRawKey, CompressedReRandomizationRawKeySwitchingKey,
+            FhePubKeySet, RawCompressedPubKeySet,
         },
         randomness::MPCEncryptionRandomGenerator,
         sns_compression_key::SnsCompressionPrivateKeyShares,
@@ -712,27 +716,48 @@ where
         }
     };
 
-    let cpk_re_randomization_ksk = match (params.pksk_params(), params.rerand_ksk_params()) {
-        (Some(_pksk_params), Some(cpk_re_randomization_ksk_params)) => {
-            if params.rerand_ksk_reuses_pksk() {
-                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
-            } else {
-                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
-                    generate_compressed_key_switch_key(
-                        &private_key_set.lwe_encryption_secret_key_share,
-                        &glwe_sk_share_as_lwe,
-                        &cpk_re_randomization_ksk_params,
-                        mpc_encryption_rng,
-                        session,
-                        preprocessing,
+    let cpk_re_randomization = if params.uses_derived_rerand() {
+        // Derived re-randomization: generate a compact public key over the
+        // compute (`Big`) key (`glwe_sk_share_as_lwe`) — no key-switch. The XOF
+        // seed is snapshotted right before the mask bytes are consumed, exactly
+        // like the encryption public key above.
+        let compression_seed = mpc_encryption_rng.current_compression_seed();
+        let derived_pk_share = generate_lwe_public_key_shared_with_noise(
+            params.num_needed_noise_rerand_pk(),
+            mpc_encryption_rng,
+            &glwe_sk_share_as_lwe,
+            session,
+            preprocessing,
+        )
+        .await?;
+        let seeded_pk = derived_pk_share
+            .open_to_tfhers_seeded_type(compression_seed, session)
+            .await?;
+        Some(CompressedReRandomizationRawKey::DerivedCpk(seeded_pk))
+    } else {
+        match (params.pksk_params(), params.rerand_ksk_params()) {
+            (Some(_pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+                let ksk = if params.rerand_ksk_reuses_pksk() {
+                    CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK
+                } else {
+                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                        generate_compressed_key_switch_key(
+                            &private_key_set.lwe_encryption_secret_key_share,
+                            &glwe_sk_share_as_lwe,
+                            &cpk_re_randomization_ksk_params,
+                            mpc_encryption_rng,
+                            session,
+                            preprocessing,
+                        )
+                        .await?,
                     )
-                    .await?,
-                ))
+                };
+                Some(CompressedReRandomizationRawKey::LegacyKsk(ksk))
             }
-        }
-        (_, None) => None,
-        _ => {
-            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+            (_, None) => None,
+            _ => {
+                panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+            }
         }
     };
 
@@ -787,7 +812,7 @@ where
         msnrk,
         msnrk_sns,
         sns_compression_key,
-        cpk_re_randomization_ksk,
+        cpk_re_randomization,
         oprf_key,
         seed,
     })

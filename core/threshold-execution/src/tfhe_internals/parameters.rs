@@ -18,8 +18,8 @@ use tfhe::shortint::parameters::{
     MetaNoiseSquashingParameters, MetaParameters, ModulusSwitchNoiseReductionParams,
     ModulusSwitchType, NoiseEstimationMeasureBound, NoiseSquashingClassicParameters,
     NoiseSquashingCompressionParameters, NoiseSquashingParameters, PBSOrder, PBSParameters,
-    PolynomialSize, ReRandomizationConfiguration, RSigmaFactor, ShortintKeySwitchingParameters,
-    SupportedCompactPkeZkScheme, Variance,
+    PolynomialSize, ReRandomizationConfiguration, ReRandomizationParameters, RSigmaFactor,
+    ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
 };
 use tfhe::shortint::{CarryModulus, MaxNoiseLevel, MessageModulus};
 
@@ -420,6 +420,19 @@ impl DKGParams {
         )
     }
 
+    /// CPK encryption parameters for the *derived* re-randomization compact
+    /// public key. Unlike [`Self::compact_pk_enc_params`] (which returns the
+    /// dedicated *encryption* CPK params when present), these are *always*
+    /// derived from the compute parameters — the derived rerand CPK encrypts
+    /// under the compute (`Big`) key regardless of any dedicated encryption CPK.
+    /// Only meaningful in `DerivedCompactPublicKeyWithoutKeySwitch` mode; the
+    /// `Big`-key requirement is enforced by [`Self::check_conformance`].
+    pub fn derived_rerand_cpk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
+        <ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(self.classic_pbs())
+            .try_into()
+            .expect("PBS parameters yield valid CPK encryption parameters")
+    }
+
     /// Validates the KMS-level invariants that
     /// the accessors rely on (classic PBS via [`Self::classic_pbs`],
     /// TUniform noise via the `*_tuniform_bound` helpers, classic compression /
@@ -747,10 +760,22 @@ impl DKGParams {
         } else {
             config
         };
-        let config = if let Some(rerand_params) = self.rerand_params() {
-            config.enable_ciphertext_re_randomization(rerand_params)
-        } else {
-            config
+        let config = match self.meta.rerand_configuration {
+            Some(ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch) => {
+                // Legacy rerand: the dedicated CPK carries the rerand KSK params.
+                let rerand_params = self
+                    .rerand_params()
+                    .expect("legacy rerand configuration carries rerand KSK params");
+                config.enable_ciphertext_re_randomization(rerand_params)
+            }
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch) => {
+                // Derived rerand: the CPK is derived from the compute parameters,
+                // so no key-switching parameters are needed.
+                config.enable_ciphertext_re_randomization(
+                    ReRandomizationParameters::DerivedCPKWithoutKeySwitch,
+                )
+            }
+            None => config,
         };
         config.build()
     }
