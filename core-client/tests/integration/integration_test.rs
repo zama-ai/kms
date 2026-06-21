@@ -2,7 +2,7 @@
 //!
 //! Verifies kms-core-client CLI tool functionality using isolated native KMS servers.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::future::join_all;
 use kms_core_client::*;
 use kms_grpc::KeyId;
@@ -35,7 +35,7 @@ use kms_grpc::{ContextId, RequestId};
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::engine::base::derive_request_id;
 use std::fs::create_dir_all;
-use std::process::Output;
+use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test (only needed with threshold_tests feature)
@@ -1766,18 +1766,54 @@ async fn new_custodian_context(
         .to_string()
 }
 
-/// Native implementation: Generate custodian keys using kms-custodian binary directly
+// Build the `kms-custodian` binary and return its path.
+//
+// The binary lives in the `kms` package, so nextest won't auto-build it for these cross-package tests. We invoke
+// `cargo build` directly.
+//
+// Rather than guess the output path from `current_exe` (which breaks under a custom `CARGO_TARGET_DIR`, split target
+// dirs, or nextest archive runs), we ask cargo where it put the binary via `--message-format=json` and read the
+// `executable` field of the `compiler-artifact` message for the bin target.
+fn build_kms_custodian() -> Result<PathBuf> {
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "build",
+            "--profile",
+            "test",
+            "--package",
+            "kms",
+            "--bin",
+            "kms-custodian",
+            "--message-format=json",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "failed to build kms-custodian: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Cargo emits one JSON object per line; the artifact for our bin carries the absolute path to the freshly built
+    // executable.
+    let custodian_bin = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|msg| {
+            (msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "kms-custodian")
+                .then(|| msg["executable"].as_str().map(PathBuf::from))
+                .flatten()
+        })
+        .context("cargo build did not report a kms-custodian executable")?;
+    Ok(custodian_bin)
+}
+
 async fn generate_custodian_keys_to_file(
     temp_dir: &Path,
     custodian_count: usize,
 ) -> Result<(Vec<String>, Vec<PathBuf>)> {
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
-    let kms_custodian_cmd = escargot::CargoBuild::new()
-        .package("kms")
-        .bin("kms-custodian")
-        .args(["--profile", "test"])
-        .run()?;
+    let custodian_bin = build_kms_custodian()?;
 
     for cus_idx in 1..=custodian_count {
         let cur_setup_path = temp_dir
@@ -1788,9 +1824,7 @@ async fn generate_custodian_keys_to_file(
         // Ensure the dir exists
         create_dir_all(cur_setup_path.parent().unwrap()).unwrap();
 
-        // Build&run the kms-custodian binary directly. First time is slow.
-        let cmd_output = kms_custodian_cmd
-            .command()
+        let cmd_output = Command::new(&custodian_bin)
             .args([
                 "generate",
                 "--randomness",
@@ -1869,11 +1903,7 @@ async fn custodian_reencrypt(
     recovery_paths: &[PathBuf],
 ) -> Result<Vec<PathBuf>> {
     let mut response_paths = Vec::new();
-    let kms_custodian_cmd = escargot::CargoBuild::new()
-        .package("kms")
-        .bin("kms-custodian")
-        .args(["--profile", "test"])
-        .run()?;
+    let custodian_bin = build_kms_custodian()?;
 
     for operator_index in 1..=amount_operators {
         let pub_prefix = if amount_operators == 1 {
@@ -1901,9 +1931,7 @@ async fn custodian_reencrypt(
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
 
-            // Build&run the kms-custodian binary. First time is slow.
-            let cmd_output = kms_custodian_cmd
-                .command()
+            let cmd_output = Command::new(&custodian_bin)
                 .args([
                     "decrypt",
                     "--seed-phrase",
