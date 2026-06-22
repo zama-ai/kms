@@ -2437,6 +2437,7 @@ fn print_timings(
     durations_to_get_responses: &[tokio::time::Duration],
     start: tokio::time::Instant,
 ) {
+    let num_results = total_client_durations.len();
     // compute total time that is elapsed since we sent the first request
     let total_elapsed = start.elapsed();
 
@@ -2448,16 +2449,9 @@ fn print_timings(
 
     tracing::info!("Latency for {cmd}: {}", response_duration_stat);
 
-    tracing::debug!(
-        "Total elapsed time for {cmd} with {} collected results: {total_elapsed:?}. Throughput: {} requests/s",
-        total_client_durations.len(),
-        total_client_durations.len() as f64 / total_elapsed.as_secs_f64()
-    );
-
     tracing::info!(
-        "Time to get responses for {cmd} with {} collected results: {total_elapsed:?}. Throughput: {} requests/s",
-        durations_to_get_responses.len(),
-        durations_to_get_responses.len() as f64 / response_duration_stat.max.as_secs_f64()
+        "Total elapsed time for {cmd} with {num_results} collected results: {total_elapsed:?}. Throughput: {} requests/s",
+        num_results as f64 / total_elapsed.as_secs_f64()
     );
 
     // For debugging, print all collected durations
