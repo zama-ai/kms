@@ -40,6 +40,13 @@
 //! 4. **CLI-to-Pod**: Plain gRPC via kubectl port-forward (secure tunnel)
 //!
 //! The test validates MPC operations work correctly over TLS-secured channels.
+//!
+//! ## Metrics
+//!
+//! This test only drives operations; with metrics enabled, the resulting metrics are emitted by the
+//! KMS server pods and scraped by the in-cluster kube-prometheus-stack (kms-core ServiceMonitor,
+//! names `ci_`-prefixed), then remote-written to Grafana Cloud tagged `deployment_profile=kind-ci`.
+//! See `docs/developer/metrics.md`.
 
 #![cfg(feature = "kind_tests")]
 
