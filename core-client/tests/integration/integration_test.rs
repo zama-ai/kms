@@ -2,7 +2,7 @@
 //!
 //! Verifies kms-core-client CLI tool functionality using isolated native KMS servers.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::future::join_all;
 use kms_core_client::*;
 use kms_grpc::KeyId;
@@ -35,7 +35,7 @@ use kms_grpc::{ContextId, RequestId};
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::engine::base::derive_request_id;
 use std::fs::create_dir_all;
-use std::process::Output;
+use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test (only needed with threshold_tests feature)
@@ -1766,18 +1766,80 @@ async fn new_custodian_context(
         .to_string()
 }
 
-/// Native implementation: Generate custodian keys using kms-custodian binary directly
+// Build the `kms-custodian` binary and return its path.
+//
+// The binary lives in the `kms` package, so nextest won't auto-build it for these cross-package tests. We invoke
+// `cargo build` directly.
+//
+// Rather than guess the output path from `current_exe` (which breaks under a custom `CARGO_TARGET_DIR`, split target
+// dirs, or nextest archive runs), we ask cargo where it put the binary via `--message-format=json` and read the
+// `executable` field of the `compiler-artifact` message for the bin target.
+fn build_kms_custodian() -> Result<PathBuf> {
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "build",
+            "--profile",
+            "test",
+            "--package",
+            "kms",
+            "--bin",
+            "kms-custodian",
+            "--message-format=json",
+        ])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "failed to build kms-custodian (status {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    parse_custodian_bin(&String::from_utf8_lossy(&output.stdout))
+        .context("cargo build did not report a kms-custodian executable")
+}
+
+// Find the `kms-custodian` executable path in cargo's `--message-format=json` output.
+fn parse_custodian_bin(stdout: &str) -> Option<PathBuf> {
+    serde_json::Deserializer::from_str(stdout)
+        .into_iter::<serde_json::Value>()
+        .filter_map(|msg| msg.ok())
+        .find_map(|msg| {
+            (msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "kms-custodian")
+                .then(|| msg["executable"].as_str().map(PathBuf::from))
+                .flatten()
+        })
+}
+
+#[cfg(test)]
+const CARGO_JSON_FIXTURE: &str = r#"{"reason":"compiler-artifact","package_id":"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.22","manifest_path":"/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-ident-1.0.22/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"unicode_ident","src_path":"/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-ident-1.0.22/src/lib.rs","edition":"2018","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"1","debuginfo":"line-tables-only","debug_assertions":true,"overflow_checks":true,"test":false},"features":[],"filenames":["/repo/target/debug/deps/libunicode_ident-6a5967fbdebe44b4.rlib","/repo/target/debug/deps/libunicode_ident-6a5967fbdebe44b4.rmeta"],"executable":null,"fresh":true}
+{"reason":"compiler-artifact","package_id":"path+file:///repo/core/service#kms@0.14.0-0","manifest_path":"/repo/core/service/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"kms-custodian","src_path":"/repo/core/service/src/bin/kms-custodian.rs","edition":"2024","doc":true,"doctest":false,"test":true},"profile":{"opt_level":"3","debuginfo":"line-tables-only","debug_assertions":true,"overflow_checks":true,"test":false},"features":["default","non-wasm"],"filenames":["/repo/target/debug/kms-custodian"],"executable":"/repo/target/debug/kms-custodian","fresh":false}
+{"reason":"build-finished","success":true}"#;
+
+#[test]
+fn parse_custodian_bin_picks_executable_from_artifact_line() {
+    assert_eq!(
+        parse_custodian_bin(CARGO_JSON_FIXTURE),
+        Some(PathBuf::from("/repo/target/debug/kms-custodian")),
+    );
+}
+
+#[test]
+fn parse_custodian_bin_returns_none_when_absent() {
+    // Same stream with the bin artifact removed: nothing for us to find.
+    let stdout = r#"{"reason":"compiler-artifact","package_id":"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.22","target":{"kind":["lib"],"crate_types":["lib"],"name":"unicode_ident"},"executable":null,"fresh":true}
+{"reason":"build-finished","success":true}"#;
+
+    assert_eq!(parse_custodian_bin(stdout), None);
+}
+
 async fn generate_custodian_keys_to_file(
     temp_dir: &Path,
     custodian_count: usize,
 ) -> Result<(Vec<String>, Vec<PathBuf>)> {
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
-    let kms_custodian_cmd = escargot::CargoBuild::new()
-        .package("kms")
-        .bin("kms-custodian")
-        .args(["--profile", "test"])
-        .run()?;
+    let custodian_bin = build_kms_custodian()?;
 
     for cus_idx in 1..=custodian_count {
         let cur_setup_path = temp_dir
@@ -1788,9 +1850,7 @@ async fn generate_custodian_keys_to_file(
         // Ensure the dir exists
         create_dir_all(cur_setup_path.parent().unwrap()).unwrap();
 
-        // Build&run the kms-custodian binary directly. First time is slow.
-        let cmd_output = kms_custodian_cmd
-            .command()
+        let cmd_output = Command::new(&custodian_bin)
             .args([
                 "generate",
                 "--randomness",
@@ -1869,11 +1929,7 @@ async fn custodian_reencrypt(
     recovery_paths: &[PathBuf],
 ) -> Result<Vec<PathBuf>> {
     let mut response_paths = Vec::new();
-    let kms_custodian_cmd = escargot::CargoBuild::new()
-        .package("kms")
-        .bin("kms-custodian")
-        .args(["--profile", "test"])
-        .run()?;
+    let custodian_bin = build_kms_custodian()?;
 
     for operator_index in 1..=amount_operators {
         let pub_prefix = if amount_operators == 1 {
@@ -1901,9 +1957,7 @@ async fn custodian_reencrypt(
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
 
-            // Build&run the kms-custodian binary. First time is slow.
-            let cmd_output = kms_custodian_cmd
-                .command()
+            let cmd_output = Command::new(&custodian_bin)
                 .args([
                     "decrypt",
                     "--seed-phrase",

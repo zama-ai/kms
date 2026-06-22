@@ -138,7 +138,6 @@ crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-s
 dashmap = "=6.1.0"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 derive_more = { version = "=2.0.1", features = ["display"] }  # Derive macros for common traits - HIGH RISK: Individual maintainer (JelteF), despite 180M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
-escargot = "=0.5.15" # Interact with cargo without spawning external processes. MEDIUM RISK: single maintainer, 8M downloads, test-only dependency.
 futures = "=0.3.31"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.31"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
