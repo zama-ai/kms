@@ -20,8 +20,8 @@ use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
-        self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
-        UserDecryptionResponse, UserDecryptionResponsePayload,
+        self, CiphertextFormat, Empty, TypedCiphertext, TypedSigncryptedCiphertext,
+        UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
 };
 use observability::{
@@ -35,7 +35,7 @@ use rand::{CryptoRng, RngCore};
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
         SmallOfflineNoiseFloodSession, partial_decrypt_using_noiseflooding,
         secure_partial_decrypt_using_bitdec,
     },
@@ -87,9 +87,7 @@ pub trait NoiseFloodPartialDecryptor: Send + Sync {
     type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
@@ -111,9 +109,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
 
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
@@ -123,14 +119,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
     where
         ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve,
     {
-        partial_decrypt_using_noiseflooding(
-            noiseflood_session,
-            server_key,
-            ck,
-            ct,
-            secret_key_share,
-        )
-        .await
+        partial_decrypt_using_noiseflooding(noiseflood_session, ct, secret_key_share).await
     }
 }
 
@@ -229,7 +218,13 @@ impl<
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let decomp_key = keys.decompression_key();
+            // Only the SmallCompressed format needs the decompression key to deserialize.
+            // Fetching it would lazily decompress the (multi-GiB) keyset, so avoid it for
+            // the Big*/SmallExpanded formats that don't use it.
+            let decomp_key = match ct_format {
+                CiphertextFormat::SmallCompressed => keys.decompression_key(),
+                _ => None,
+            };
             let low_level_ct = spawn_compute_bound(move || {
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
             })
@@ -247,14 +242,16 @@ impl<
                         })?;
                     let mut noiseflood_session = Dec::Prep::new(session);
 
-                    let pdec = Dec::partial_decrypt(
-                        &mut noiseflood_session,
-                        keys.integer_server_key(),
-                        keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?,
-                        low_level_ct,
-                        &keys.private_keys,
-                    )
-                    .await;
+                    // Only `Small` ciphertexts need switch&squash; the closure (and hence the
+                    // lazy key decompression it triggers) does not run for the Big* variants.
+                    let ct = low_level_ct.with_sns_keys(|| {
+                        let server_key = keys.integer_server_key();
+                        let ck = keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?;
+                        Ok((server_key, ck))
+                    })?;
+
+                    let pdec =
+                        Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
 
                     let res = match pdec {
                         Ok((partial_dec_map, packing_factor, time)) => {
@@ -687,9 +684,7 @@ mod tests {
 
         async fn partial_decrypt(
             noiseflood_session: &mut Self::Prep,
-            _server_key: Arc<tfhe::integer::ServerKey>,
-            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-            _ct: LowLevelCiphertext,
+            _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
             HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
