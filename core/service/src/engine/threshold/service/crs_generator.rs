@@ -135,9 +135,6 @@ impl<
                 tonic::Code::AlreadyExists,
             ));
         }
-
-        let meta_permit =
-            add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         let sigkey = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
                 op_tag,
@@ -146,6 +143,8 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        let meta_permit =
+            add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
             verified.req_id,
@@ -260,7 +259,7 @@ impl<
 
         let crs_data = retrieve_from_meta_store(&self.crs_meta_store, &request_id, op_tag).await?;
 
-        match (*crs_data).clone() {
+        match crs_data.as_ref() {
             CrsGenMetadata::Current(crs_data) => {
                 if crs_data.crs_id != request_id {
                     return Err(MetricedError::new(
@@ -276,9 +275,9 @@ impl<
                 }
                 Ok(Response::new(CrsGenResult {
                     request_id: Some(request_id.into()),
-                    crs_digest: crs_data.crs_digest,
+                    crs_digest: crs_data.crs_digest.clone(),
                     max_num_bits: crs_data.max_num_bits,
-                    external_signature: crs_data.external_signature,
+                    external_signature: crs_data.external_signature.clone(),
                 }))
             }
             CrsGenMetadata::LegacyV0(_) => {

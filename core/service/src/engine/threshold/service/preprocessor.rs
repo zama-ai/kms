@@ -462,14 +462,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
-        // Add preprocessing to metastore and fail in case it is already present.
-        let meta_permit = add_req_to_meta_store(
-            &self.preproc_buckets,
-            &request_id,
-            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
-        )
-        .await?;
-
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 
         let sk = self.base_kms.sig_key().map_err(|e| {
@@ -480,6 +472,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 tonic::Code::FailedPrecondition,
             )
         })?;
+
+        // Add preprocessing to metastore and fail in case it is already present.
+        let meta_permit = add_req_to_meta_store(
+            &self.preproc_buckets,
+            &request_id,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+        )
+        .await?;
         let preproc_bucket_res = super::new_insecure_preproc_bucket(
             &sk,
             request_id,

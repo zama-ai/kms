@@ -80,15 +80,6 @@ pub async fn user_decrypt_impl<
                 tonic::Code::NotFound,
             )
         })?;
-
-    let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let mut rng = service.base_kms.new_rng().await;
-    let meta_permit = add_req_to_meta_store(
-        &service.user_dec_meta_store,
-        &request_id,
-        OP_USER_DECRYPT_REQUEST,
-    )
-    .await?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -106,6 +97,15 @@ pub async fn user_decrypt_impl<
             tonic::Code::Internal,
         )
     })?;
+
+    let meta_store = Arc::clone(&service.user_dec_meta_store);
+    let mut rng = service.base_kms.new_rng().await;
+    let meta_permit = add_req_to_meta_store(
+        &service.user_dec_meta_store,
+        &request_id,
+        OP_USER_DECRYPT_REQUEST,
+    )
+    .await?;
 
     tokio::spawn(
         async move {
@@ -259,7 +259,14 @@ pub async fn public_decrypt_impl<
                 tonic::Code::NotFound,
             )
         })?;
-
+    let sig_key = service.base_kms.sig_key().map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+            tonic::Code::FailedPrecondition,
+        )
+    })?;
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
     let meta_permit = add_req_to_meta_store(
@@ -270,14 +277,6 @@ pub async fn public_decrypt_impl<
     .await?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
-        MetricedError::new(
-            OP_PUBLIC_DECRYPT_REQUEST,
-            Some(request_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
 
     // we do not need to hold the handle,
     // the result of the computation is tracked by the pub_dec_meta_store

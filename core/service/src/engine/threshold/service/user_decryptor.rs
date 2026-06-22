@@ -490,13 +490,6 @@ impl<
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        let meta_permit =
-            add_req_to_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -542,6 +535,13 @@ impl<
                 )
             })?;
 
+        // Below we write to the meta-store.
+        // After writing, the the meta-store on this [req_id] will be in the "Started" state
+        // So we need to update it everytime something bad happens,
+        // or put all the code that may error before the first write to the meta-store,
+        // otherwise it'll be in the "Started" state forever.
+        let meta_permit =
+            add_req_to_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;

@@ -59,13 +59,6 @@ pub async fn preprocessing_impl<
     let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain, extra_data) =
         validate_preproc_request(inner)?;
 
-    let permit = add_req_to_meta_store(
-        &service.preprocessing_meta_store,
-        &req_id,
-        OP_KEYGEN_PREPROC_REQUEST,
-    )
-    .await?;
-
     let sk = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_KEYGEN_PREPROC_REQUEST,
@@ -74,6 +67,12 @@ pub async fn preprocessing_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    let permit = add_req_to_meta_store(
+        &service.preprocessing_meta_store,
+        &req_id,
+        OP_KEYGEN_PREPROC_REQUEST,
+    )
+    .await?;
     let external_signature =
         compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain, extra_data)
             .map_err(|e| e.to_string());

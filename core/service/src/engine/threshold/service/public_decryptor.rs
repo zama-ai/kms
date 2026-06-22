@@ -164,10 +164,7 @@ impl<
         ct: Vec<u8>,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
-        fhe_keys: OwnedRwLockReadGuard<
-            HashMap<(RequestId, EpochId), ThresholdFheKeys>,
-            ThresholdFheKeys,
-        >,
+        fhe_keys: ThresholdFheKeys,
         dec_mode: DecryptionMode,
     ) -> anyhow::Result<T>
     where
@@ -313,15 +310,6 @@ impl<
             "Starting decryption process"
         );
 
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        let meta_permit =
-            add_req_to_meta_store(&self.pub_dec_meta_store, &req_id, OP_PUBLIC_DECRYPT_REQUEST)
-                .await?;
-
         let ext_handles_bytes = ciphertexts
             .iter()
             .map(|c| c.external_handle.to_owned())
@@ -336,6 +324,28 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+
+        let fhe_keys_rlock = self
+            .crypto_storage
+            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_INNER,
+                    Some(req_id),
+                    anyhow::anyhow!("fhe key not found due to {e:?}"),
+                    tonic::Code::NotFound,
+                )
+            })?;
+
+        // Below we write to the meta-store.
+        // After writing, the the meta-store on this [req_id] will be in the "Started" state
+        // So we need to update it everytime something bad happens,
+        // or put all the code that may error before the first write to the meta-store,
+        // otherwise it'll be in the "Started" state forever.
+        let meta_permit =
+            add_req_to_meta_store(&self.pub_dec_meta_store, &req_id, OP_PUBLIC_DECRYPT_REQUEST)
+                .await?;
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let mut dec_tasks = Vec::new();
 
@@ -345,35 +355,14 @@ impl<
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .tags(metric_tags.clone())
                 .start();
-            let internal_sid = req_id
-                .derive_session_id_with_counter(ctr as u64)
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        e,
-                        tonic::Code::Aborted,
-                    )
-                })?;
 
-            let crypto_storage = self.crypto_storage.clone();
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store
             let session_maker = self.session_maker.clone();
 
-            let fhe_keys_rlock = crypto_storage
-                .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
-                .await
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        anyhow::anyhow!("fhe key not found due to {e:?}"),
-                        tonic::Code::NotFound,
-                    )
-                })?;
-
+            let fhe_keys_rlock_clone = fhe_keys_rlock.clone();
             let decrypt_future = || async move {
+                let internal_sid = req_id.derive_session_id_with_counter(ctr as u64)?;
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
                     f
@@ -402,7 +391,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -417,7 +406,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -432,7 +421,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -447,7 +436,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -462,7 +451,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -476,7 +465,7 @@ impl<
                             ciphertext,
                             fhe_type,
                             ct_format,
-                            fhe_keys_rlock,
+                            fhe_keys_rlock_clone,
                             dec_mode,
                         )
                         .await
@@ -491,7 +480,7 @@ impl<
                             ciphertext,
                             fhe_type,
                             ct_format,
-                            fhe_keys_rlock,
+                            fhe_keys_rlock_clone,
                             dec_mode,
                         )
                         .await
@@ -511,7 +500,7 @@ impl<
                             ciphertext,
                             fhe_type,
                             ct_format,
-                            fhe_keys_rlock,
+                            fhe_keys_rlock_clone,
                             dec_mode,
                         )
                         .await
