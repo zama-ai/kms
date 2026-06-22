@@ -1787,11 +1787,13 @@ fn build_kms_custodian() -> Result<PathBuf> {
             "--message-format=json",
         ])
         .output()?;
-    assert!(
-        output.status.success(),
-        "failed to build kms-custodian: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    if !output.status.success() {
+        anyhow::bail!(
+            "failed to build kms-custodian (status {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     // Cargo emits one JSON object per line; the artifact for our bin carries the absolute path to the freshly built
     // executable.
