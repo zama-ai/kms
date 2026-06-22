@@ -903,17 +903,24 @@ pub fn compute_public_decryption_message(
 /// InvalidArgument if the concrete parameter does not exist.
 /// The default DKG parameters are returned if None is provided.
 pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParams, BoxedStatus> {
-    match fhe_parameter {
+    let params = match fhe_parameter {
         Some(inner) => {
             let fhe_parameter: WrappedDKGParams = FheParameter::try_from(inner)
                 .map_err(|e| {
                     tonic::Status::invalid_argument(format!("DKG parameter not found: {e}"))
                 })?
                 .into();
-            Ok(*fhe_parameter)
+            *fhe_parameter
         }
-        None => Ok(*WrappedDKGParams::from(FheParameter::default())),
-    }
+        None => *WrappedDKGParams::from(FheParameter::default()),
+    };
+    // Validate the KMS-level invariants at the parameter-entry boundary so a
+    // malformed parameter set fails fast here with a clear error, instead of
+    // panicking deep inside an accessor (e.g. `classic_pbs`) later on.
+    params
+        .check_conformance()
+        .map_err(|e| tonic::Status::invalid_argument(format!("Invalid DKG parameters: {e}")))?;
+    Ok(params)
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

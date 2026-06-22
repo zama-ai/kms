@@ -34,6 +34,8 @@ pub struct CoreConfig {
     #[validate(nested)]
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     #[validate(nested)]
+    pub bandwidth_benchmark: Option<BandwidthBenchmarkConfig>,
+    #[validate(nested)]
     pub threshold: Option<ThresholdPartyConf>,
     #[validate(nested)]
     pub internal_config: Option<InternalConfig>,
@@ -80,6 +82,56 @@ pub struct ServiceEndpoint {
     // maximum gRPC message size in bytes
     #[validate(range(min = 1, max = 2147483647))]
     pub grpc_max_message_size: usize,
+}
+
+/// Caller-input bounds for the bandwidth benchmark diagnostic endpoint (threshold nodes only).
+///
+/// Every field caps an otherwise unbounded, caller-controlled quantity that the endpoint turns
+/// into memory allocation or peer traffic; without them the endpoint is a memory-exhaustion /
+/// peer-traffic amplification primitive. Defaults are deliberately conservative. Because the
+/// config is loaded with the `KMS_CORE` env prefix, a trusted test deployment can raise any of
+/// them without recompiling, e.g. `KMS_CORE__BANDWIDTH_BENCHMARK__MAX_PAYLOAD_BYTES=...`.
+///
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BandwidthBenchmarkConfig {
+    /// Max per-session payload a caller may request, in bytes. Bounds the `vec![0; payload]`
+    /// allocation (then cloned per peer): an unbounded value aborts the process on OOM.
+    #[validate(range(min = 1))]
+    pub max_payload_bytes: u32,
+    /// Max benchmark sessions a caller may request, bounding the task fan-out.
+    #[validate(range(min = 1))]
+    pub max_sessions: u32,
+    /// Max combined base allocation (payload × sessions) across all concurrent sessions, in
+    /// bytes. The networking layer further clones each payload per peer, so this caps the
+    /// aggregate before that amplification rather than relying on the per-field limits alone.
+    #[validate(range(min = 1))]
+    pub max_total_bytes: u64,
+    /// Max benchmark duration a caller may request, in seconds (only applies to the `Duration`
+    /// kind). Without it an untrusted value drives a sustained per-peer send loop for up to the
+    /// whole server request timeout, turning the endpoint into a network-flood primitive.
+    #[validate(range(min = 1))]
+    pub max_duration_secs: u64,
+    /// Max benchmark runs allowed to execute concurrently on a node. Each run spawns up to
+    /// `max_sessions` sessions, every one allocating a payload the networking layer clones per
+    /// peer, so N in-flight requests multiply peak memory and outbound peer traffic by N. The
+    /// endpoint takes no rate-limiter permit, so concurrency is bounded here instead; it is a
+    /// diagnostic, so serializing runs is acceptable.
+    #[validate(range(min = 1))]
+    pub max_concurrent_runs: usize,
+}
+
+impl Default for BandwidthBenchmarkConfig {
+    fn default() -> Self {
+        Self {
+            max_payload_bytes: 1 << 28, // 256 MiB
+            max_sessions: 256,
+            max_total_bytes: 1 << 30, // 1 GiB
+            max_duration_secs: 60,
+            max_concurrent_runs: 1,
+        }
+    }
 }
 
 impl ConfigTracing for CoreConfig {

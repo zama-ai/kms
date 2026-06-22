@@ -297,8 +297,20 @@ impl MetaStoreStatusServiceImpl {
             0
         };
 
-        let max_results = max_results.unwrap_or(100) as usize; // Kept small for early store_guard lock release
-        let end_index = std::cmp::min(start_index + max_results, request_ids.len());
+        // Normalize the page size. Treat non-positive values as unset (a negative would become
+        // ~usize::MAX when cast; 0 would return an empty page while still emitting a
+        // non-advancing next_page_token, looping a token-following client forever) and clamp
+        // the positive side so a single request can't force the whole store to be materialized
+        // under the read lock. Saturate the addition too: release builds have no
+        // overflow-checks, so the raw `start_index + max_results` could otherwise wrap into an
+        // inverted slice range below.
+        const DEFAULT_PAGE_SIZE: usize = 100;
+        const MAX_PAGE_SIZE: usize = 1000;
+        let max_results = max_results
+            .filter(|n| *n > 0)
+            .map(|n| (n as usize).min(MAX_PAGE_SIZE))
+            .unwrap_or(DEFAULT_PAGE_SIZE);
+        let end_index = std::cmp::min(start_index.saturating_add(max_results), request_ids.len());
 
         // Monitor pagination bounds
         tracing::debug!(
@@ -310,18 +322,17 @@ impl MetaStoreStatusServiceImpl {
             max_results
         );
 
-        let paginated_ids = if start_index < request_ids.len() {
-            &request_ids[start_index..end_index]
-        } else {
-            // Edge case: pagination goes beyond available data
+        // `get` yields None for any out-of-range or inverted (start > end) range, so a page
+        // token past the end returns an empty slice instead of panicking.
+        let paginated_ids = request_ids.get(start_index..end_index).unwrap_or_else(|| {
             tracing::warn!(
-                "Pagination start_index ({}) >= total requests ({}) for {:?} store - returning empty slice",
+                "Pagination start_index ({}) beyond total requests ({}) for {:?} store - returning empty slice",
                 start_index,
                 request_ids.len(),
                 store_type
             );
             &[]
-        };
+        });
 
         // Batch collect all request data while holding lock once
         let mut request_data: Vec<(_, (RequestProcessingStatus, Option<String>))> = Vec::new();

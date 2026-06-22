@@ -303,6 +303,7 @@ impl SessionMaker {
         let mut role_assignment_map = HashMap::new();
         let mut ca_certs_map = HashMap::new();
 
+        let num_nodes = info.mpc_nodes.len();
         for node in &info.mpc_nodes {
             let mpc_url = url::Url::parse(&node.external_url)
                 .map_err(|e| anyhow::anyhow!("url parsing error for party: {}", e))?;
@@ -312,10 +313,33 @@ impl SessionMaker {
             let port = mpc_url
                 .port()
                 .ok_or_else(|| anyhow::anyhow!("missing port"))?;
-            role_assignment_map.insert(
-                Role::indexed_from_one(node.party_id as usize),
-                Identity::new(hostname.to_string(), port, Some(node.mpc_identity.clone())),
-            );
+            // Defense-in-depth: `indexed_from_one` asserts (panics) on 0. `ContextInfo::verify`
+            // normally validates this first, but guard here so a future caller can't reach it.
+            let party_id = node.party_id as usize;
+            if party_id < 1 || party_id > num_nodes {
+                return Err(anyhow::anyhow!(
+                    "party_id {} out of range 1..={} in context {}",
+                    node.party_id,
+                    num_nodes,
+                    info.context_id()
+                ));
+            }
+            // A duplicate (in-range) party_id would silently overwrite a prior entry, yielding
+            // a role assignment with fewer parties than nodes. verify() rejects duplicates
+            // upstream; reject here too so this stays safe if a caller skips verify().
+            if role_assignment_map
+                .insert(
+                    Role::indexed_from_one(party_id),
+                    Identity::new(hostname.to_string(), port, Some(node.mpc_identity.clone())),
+                )
+                .is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "duplicate party_id {} in context {}",
+                    node.party_id,
+                    info.context_id()
+                ));
+            }
 
             if let Some(ca_cert) = &node.ca_cert {
                 let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)

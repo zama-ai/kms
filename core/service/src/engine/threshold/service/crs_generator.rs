@@ -359,9 +359,7 @@ impl<
         };
 
         let crs_start_timer = Instant::now();
-        let pke_params = params
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params();
+        let pke_params = params.compact_pk_enc_params();
         let extra_data_for_compute = extra_data.clone();
         let domain_for_compute = eip712_domain.clone();
         let generate_pp = async {

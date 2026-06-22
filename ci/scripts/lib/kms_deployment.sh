@@ -211,6 +211,16 @@ deploy_threshold_mode() {
             log_info "TLS enabled for threshold mode (target: ${TARGET})"
         fi
 
+        # Enable the ServiceMonitor (scraped by kube-prometheus-stack) and
+        # prefix metric names with ci_ so the central Prometheus can separate
+        # CI metrics from production series.
+        if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+            HELM_ARGS+=(
+                --set kmsCore.serviceMonitor.enabled=true
+                --set kmsCore.serviceMonitor.metricNamePrefix=ci_
+            )
+        fi
+
         # Performance testing specific overrides
         if [[ "${is_performance_testing}" == "true" ]]; then
             log_info "Performance testing mode - ENABLE_TLS=${ENABLE_TLS}, DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
@@ -361,6 +371,14 @@ deploy_centralized_mode() {
         --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
+
+    # Same ServiceMonitor / ci_ metric-prefix enablement as threshold mode.
+    if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+        HELM_ARGS+=(
+            --set kmsCore.serviceMonitor.enabled=true
+            --set kmsCore.serviceMonitor.metricNamePrefix=ci_
+        )
+    fi
 
     # Performance testing specific overrides
     if [[ "${is_performance_testing}" == "true" ]]; then

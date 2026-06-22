@@ -34,7 +34,6 @@ use tfhe::{
 };
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
-    parameters::DKGParams,
     public_keysets::FhePubKeySet,
     test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_client_key},
 };
@@ -218,9 +217,7 @@ async fn read_public_key() {
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
 
-    let pbs_params: ClassicPBSParameters = TEST_PARAM
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
+    let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let client_key = tfhe::ClientKey::generate(config);
     let public_key = CompactPublicKey::new(&client_key);
@@ -259,12 +256,8 @@ async fn write_central_keys() {
         .unwrap()
         .into();
 
-    let pbs_params: ClassicPBSParameters =
-        param.get_params_basics_handle().to_classic_pbs_parameters();
-    let sns_params = match param {
-        DKGParams::WithoutSnS(_) => panic!("expect sns"),
-        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
-    };
+    let pbs_params: ClassicPBSParameters = param.classic_pbs();
+    let sns_params = param.sns().expect("sns param").sns_params();
     let config =
         ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
     let client_key = tfhe::ClientKey::generate(config);
@@ -359,12 +352,8 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             .unwrap()
             .into();
 
-    let pbs_params: ClassicPBSParameters =
-        param.get_params_basics_handle().to_classic_pbs_parameters();
-    let sns_params = match param {
-        DKGParams::WithoutSnS(_) => panic!("expect sns"),
-        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
-    };
+    let pbs_params: ClassicPBSParameters = param.classic_pbs();
+    let sns_params = param.sns().expect("sns param").sns_params();
     let config =
         ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
     let client_key = tfhe::ClientKey::generate(config);
@@ -805,9 +794,7 @@ fn setup_threshold_store(
         HashMap::new(),
     );
 
-    let pbs_params: ClassicPBSParameters = TEST_PARAM
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
+    let pbs_params: ClassicPBSParameters = TEST_PARAM.classic_pbs();
 
     let mut rng = AesRng::seed_from_u64(100);
     // TODO(dp): should probably switch over to compressed keys here (and below).
