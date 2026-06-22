@@ -34,7 +34,11 @@
 //! Any meta store that is NOT used for decryption (user or public) should be unlimited and MUST ensure that all data elements are present.
 
 use kms_grpc::RequestId;
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+    sync::Arc,
+};
 use thiserror::Error;
 use tracing;
 
@@ -203,16 +207,16 @@ impl<T> From<&StoredEntry<T>> for EntryState<T> {
 /// Data structure that stores elements that are being processed and their status (Pending, Done, Deleted).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done], if there are sufficiently many.
 pub struct MetaStore<T> {
-    // The maximum amount of entries in total (finished and unfinished)
+    /// The maximum amount of entries in total (finished and unfinished)
     capacity: usize,
-    // The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
+    /// The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
     min_cache: usize,
-    // Storage of all elements in the system
+    /// Storage of all elements in the system
     storage: HashMap<RequestId, StoredEntry<T>>,
-    // Queue of all elements that have been completed. Deleted elements are NOT included in this queue.
+    /// Queue of all elements that have been completed, i.e. `Done(Ok(...)` or `Done(Err(...)`. That is, `Deleted` elements are NOT included in this queue.
     complete_queue: Vec<RequestId>,
-    // Number of tombstoned (`Deleted`) entries still occupying `storage`.
-    deleted_count: usize,
+    /// The set of entries that has been `Deleted` (i.e. tombstoned).
+    deleted_set: HashSet<RequestId>,
 }
 
 impl<T> MetaStore<T> {
@@ -227,7 +231,7 @@ impl<T> MetaStore<T> {
             min_cache,
             storage: HashMap::with_capacity(capacity),
             complete_queue: Vec::with_capacity(min_cache),
-            deleted_count: 0,
+            deleted_set: HashSet::new(),
         }
     }
 
@@ -238,7 +242,7 @@ impl<T> MetaStore<T> {
             min_cache: usize::MAX,
             storage: HashMap::new(),
             complete_queue: Vec::new(),
-            deleted_count: 0,
+            deleted_set: HashSet::new(),
         }
     }
 
@@ -258,7 +262,7 @@ impl<T> MetaStore<T> {
             min_cache: usize::MAX,
             storage,
             complete_queue: completed_queue,
-            deleted_count: 0,
+            deleted_set: HashSet::new(),
         }
     }
 
@@ -266,22 +270,21 @@ impl<T> MetaStore<T> {
         self.storage.contains_key(request_id)
     }
 
-    /// Verify the invariant that storage.len() >= complete_queue.len() + deleted_count
+    /// Verify the invariant that storage.len() >= complete_queue.len() + deleted_set.len()
     /// (i.e. the processing count is non-negative).
     fn verify_invariant(&self) -> bool {
-        let is_valid = self.storage.len() >= self.complete_queue.len() + self.deleted_count;
+        let is_valid = self.storage.len() >= self.complete_queue.len() + self.deleted_set.len();
         if !is_valid {
             tracing::error!(
-                "INVARIANT VIOLATION: storage.len() ({}) < complete_queue.len() ({}) + deleted_count ({})",
+                "INVARIANT VIOLATION: storage.len() ({}) < complete_queue.len() ({}) + deleted_set.len() ({})",
                 self.storage.len(),
                 self.complete_queue.len(),
-                self.deleted_count
+                self.deleted_set.len()
             );
         }
         is_valid
     }
 
-    #[allow(unknown_lints)]
     /// Insert a new element, throwing an error if the element already exists or if the system is fully loaded.
     ///
     /// On success, returns a [`MetaStorePermit`] granting the caller the right to
@@ -505,7 +508,7 @@ impl<T> MetaStore<T> {
         let old = std::mem::replace(cell, StoredEntry::Deleted);
         // `old` is Pending or Done here (the Deleted case errored above), so this
         // is always a fresh transition into a tombstone.
-        self.deleted_count += 1;
+        self.deleted_set.insert(req_id);
         if matches!(old, StoredEntry::Done(_, _),) {
             self.complete_queue.retain(|id| id != &req_id);
         }
@@ -555,7 +558,7 @@ impl<T> MetaStore<T> {
         let old = std::mem::replace(cell, StoredEntry::Deleted);
         // `old` is Pending or Done here (the Deleted case errored above), so this
         // is always a fresh transition into a tombstone.
-        self.deleted_count += 1;
+        self.deleted_set.insert(*request_id);
         if matches!(old, StoredEntry::Done(_, _)) {
             self.complete_queue.retain(|id| id != request_id);
         }
@@ -592,7 +595,7 @@ impl<T> MetaStore<T> {
         self.storage
             .len()
             .saturating_sub(self.complete_queue.len())
-            .saturating_sub(self.deleted_count)
+            .saturating_sub(self.deleted_set.len())
     }
 
     /// Get completed request IDs. That is, this excludes request IDs that have been deleted or are pending.
@@ -605,9 +608,7 @@ impl<T> MetaStore<T> {
     pub(crate) fn get_processing_request_ids(&self) -> Vec<RequestId> {
         self.storage
             .iter()
-            .filter(|(id, e)| {
-                !matches!(e, StoredEntry::Deleted) && !self.complete_queue.contains(id)
-            })
+            .filter(|(_, e)| matches!(e, StoredEntry::Pending(_)))
             .map(|(id, _)| *id)
             .collect()
     }
