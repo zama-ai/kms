@@ -278,6 +278,11 @@ pub(crate) async fn do_destroy_mpc_context(
             cur_client
                 .destroy_mpc_context(DestroyMpcContextRequest {
                     context_id: Some(context_cloned),
+                    // Destroying a context without its epochs leaves their secret shares behind (see the
+                    // DestroyMpcContext RPC docs). This CLI path currently does not pass in epoch IDs. @reviewers: do
+                    // we need to require the list of associated epoch IDs here too? I think yes, but the question is
+                    // where do operators fetch the epoch IDs?
+                    epoch_ids: vec![],
                 })
                 .await
         });
