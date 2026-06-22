@@ -1109,16 +1109,35 @@ pub mod tests {
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
     fn pure_tfhers_test() {
+        use tfhe::shortint::parameters::ReRandomizationConfiguration;
+        use tfhe::shortint::parameters::ReRandomizationParameters;
+
         let params = *crate::tfhe_internals::parameters::BC_PARAMS_NO_SNS;
         let classic_pbs = params.classic_pbs();
         let dedicated_cpk_params = params.dedicated_pk_params().unwrap();
         let compression_params = params.compression().unwrap();
-        let re_rand_ks_params = params.rerand_params().unwrap();
 
         let config = tfhe::ConfigBuilder::with_custom_parameters(classic_pbs)
             .use_dedicated_compact_public_key_parameters(dedicated_cpk_params)
-            .enable_compression(compression_params)
-            .enable_ciphertext_re_randomization(re_rand_ks_params);
+            .enable_compression(compression_params);
+
+        let config = match params.rerand_configuration() {
+            Some(ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch) => {
+                // Legacy rerand: the dedicated CPK carries the rerand KSK params.
+                let rerand_params = params
+                    .rerand_params()
+                    .expect("legacy rerand configuration carries rerand KSK params");
+                config.enable_ciphertext_re_randomization(rerand_params)
+            }
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch) => {
+                // Derived rerand: the CPK is derived from the compute parameters,
+                // so no key-switching parameters are needed.
+                config.enable_ciphertext_re_randomization(
+                    ReRandomizationParameters::DerivedCPKWithoutKeySwitch,
+                )
+            }
+            None => config,
+        };
 
         let client_key = tfhe::ClientKey::generate(config.clone());
         let server_key = tfhe::ServerKey::new(&client_key);
