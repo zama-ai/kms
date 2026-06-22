@@ -710,7 +710,7 @@ mod tests {
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
                 base_kms,
-                preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                preproc_buckets: MetaStore::new_unlimited(),
                 preproc_factory: Arc::new(Mutex::new(create_memory_factory())),
                 num_sessions_preproc: 2,
                 session_maker,

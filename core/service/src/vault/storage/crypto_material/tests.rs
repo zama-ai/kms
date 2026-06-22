@@ -145,7 +145,7 @@ async fn write_crs() {
     let req_id = derive_request_id("write_crs").unwrap();
     let default_epoch_id = *DEFAULT_EPOCH_ID;
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
 
     // insert the meta-store entry and use the resulting permit to drive the
     // write — this is the only legal way to call write_crs.
@@ -280,7 +280,7 @@ async fn write_central_keys() {
         server_key,
     }));
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
 
     // Insert + capture permit, then write.
     let permit = {
@@ -380,7 +380,7 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
         server_key,
     }));
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
     let permit = {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap()
@@ -429,7 +429,7 @@ async fn write_threshold_keys_sunshine() {
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set.clone()));
 
     let permit = {
@@ -466,7 +466,7 @@ async fn write_threshold_keys_meta_update() {
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
 
     let permit = {
         let mut guard = meta_store.write().await;
@@ -537,7 +537,8 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
     // A second keyset; the throwaway storage is unused, only the key material is.
     let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b);
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
+
     let permit_a = add_req_to_meta_store(&meta_store, &req_a, "test")
         .await
         .unwrap();
@@ -597,7 +598,8 @@ async fn write_threshold_keys_failed_storage() {
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
+
     let pub_storage = crypto_storage.inner.public_storage.clone();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
     let permit = {
@@ -709,7 +711,8 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     let (_, _, compressed_keyset, compact_pk, key_info) =
         generate_compressed_keys(&req_id, &req_id, 50);
 
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
+
     let permit = {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap()
@@ -1398,7 +1401,7 @@ async fn write_backup_keys() {
         Some(make_unencrypted_backup_vault()),
     );
     let recovery = dummy_recovery_material("write_backup_keys");
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
 
     let req_id = recovery.custodian_context().context_id;
     let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
@@ -1432,7 +1435,8 @@ async fn write_backup_keys_no_vault() {
     let storage = fresh_ram_storage();
     let recovery = dummy_recovery_material("write_backup_keys_no_vault");
     let req_id = recovery.custodian_context().context_id;
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
+
     let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
         .await
         .unwrap();
@@ -1454,7 +1458,7 @@ async fn update_meta_store_storage_outcomes() {
     let req_ok = derive_request_id("ums_ok").unwrap();
     let req_backup = derive_request_id("ums_backup").unwrap();
     let req_writing = derive_request_id("ums_writing").unwrap();
-    let meta_store: Arc<RwLock<MetaStore<u32>>> = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let meta_store = MetaStore::new_unlimited();
 
     let permit_ok = add_req_to_meta_store(&meta_store, &req_ok, TEST_METRIC)
         .await

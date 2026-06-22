@@ -1539,7 +1539,7 @@ pub(crate) mod tests {
                     None,
                     HashMap::new(),
                 ),
-                reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new(10, 10))),
+                reshare_pubinfo_meta_store: MetaStore::new(10, 10),
                 tracker: Arc::new(TaskTracker::new()),
                 rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
                 _reshare: PhantomData,

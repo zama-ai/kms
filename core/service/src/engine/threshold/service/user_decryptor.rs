@@ -414,7 +414,7 @@ impl<
         Self {
             base_kms,
             crypto_storage,
-            user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            user_decrypt_meta_store: MetaStore::new_unlimited(),
             session_maker,
             tracker,
             rate_limiter,
@@ -746,9 +746,8 @@ mod tests {
         );
 
         let key_id = RequestId::new_random(rng);
-        let mut key_store = MetaStore::new_unlimited();
-        let meta_store_permit = key_store.insert(&key_id).unwrap();
-        let key_meta_store = Arc::new(RwLock::new(key_store));
+        let key_meta_store = MetaStore::new_unlimited();
+        let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
         let user_decryptor =
             RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())

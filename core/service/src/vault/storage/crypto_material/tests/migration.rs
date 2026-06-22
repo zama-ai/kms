@@ -291,9 +291,7 @@ fn seeded_meta_store(
     old_key_id: &RequestId,
     old_meta: &KeyGenMetadata,
 ) -> Arc<RwLock<MetaStore<KeyGenMetadata>>> {
-    Arc::new(RwLock::new(MetaStore::new_from_map(
-        std::iter::once((*old_key_id, old_meta.clone())).collect(),
-    )))
+    MetaStore::new_from_map(std::iter::once((*old_key_id, old_meta.clone())).collect())
 }
 
 #[tokio::test]

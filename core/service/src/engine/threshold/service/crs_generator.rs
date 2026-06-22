@@ -617,7 +617,7 @@ mod tests {
             Self {
                 base_kms,
                 crypto_storage,
-                crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                crs_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
                 ongoing,

@@ -1187,7 +1187,7 @@ mod tests {
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
             session_maker,
         );
 
@@ -1277,7 +1277,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
             let response = context_manager.new_mpc_context(request).await;
@@ -1312,7 +1312,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1344,7 +1344,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1397,7 +1397,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1427,7 +1427,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1520,7 +1520,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1570,7 +1570,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
             let request = Request::new(NewMpcContextRequest {
@@ -1600,7 +1600,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1663,7 +1663,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1906,7 +1906,7 @@ mod tests {
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage,
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
             session_maker,
         );
 
@@ -1948,7 +1948,7 @@ mod tests {
         let context_manager = CentralizedContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
         );
 
         // Initially, the cache should be empty
@@ -2042,7 +2042,7 @@ mod tests {
         let context_manager = CentralizedContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
         );
 
         // Initially, context should not exist
@@ -2088,7 +2088,7 @@ mod tests {
         let context_manager = CentralizedContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
         );
 
         // Create multiple contexts

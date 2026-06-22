@@ -1944,8 +1944,8 @@ mod tests {
             Self {
                 base_kms,
                 crypto_storage,
-                preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                preproc_buckets: MetaStore::new_unlimited(),
+                dkg_pubinfo_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
                 ongoing,

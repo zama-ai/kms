@@ -130,8 +130,9 @@ impl MetaStoreError {
 ///
 /// Returned by [`MetaStore::insert`]. Required by [`MetaStore::update`] and
 /// [`MetaStore::delete`] to perform the mutation. If the holder drops the
-/// permit without consuming it, the entry is left in `Pending`, and any
-/// other caller can finish or remove it via [`MetaStore::try_delete`].
+/// permit without consuming it, its `Drop` hands the entry to the store's
+/// reaper, which resolves the orphaned `Pending` as `Done(Err)` (see
+/// [`reaper_loop`]) rather than leaving it stuck `Pending`.
 ///
 /// "Permit alive" is tracked by the strong count of an internal `Arc<()>`:
 /// while the permit exists, `Arc::strong_count` of the entry's claim arc is
@@ -383,8 +384,8 @@ impl<T> MetaStore<T> {
     ///
     /// On success, returns a [`MetaStorePermit`] granting the caller the right to
     /// later [`update`] or [`delete`] this entry. Hold the permit until the
-    /// mutation or drop it if the work is abandoned (other callers can recover via
-    /// `try_delete`).
+    /// mutation; if it is dropped with the work abandoned, the store's reaper
+    /// resolves the orphaned entry as `Done(Err)` (see [`reaper_loop`]).
     ///
     /// Elements can trivially be inserted until the store reaches its [capacity].
     /// Once the store is full, old completed elements are evicted, but only once we have at least [min_cache] of them.
@@ -753,6 +754,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Get the number of deleted (tombstoned) items
+    #[allow(dead_code)]
     pub(crate) fn get_deleted_count(&self) -> usize {
         self.deleted_set.len()
     }
@@ -1112,6 +1114,40 @@ pub(crate) async fn retrieve_from_meta_store<T>(
     }
 }
 
+/// Bare constructors for synchronous unit tests. Unlike the public constructors, these return the
+/// `MetaStore` itself (not `Arc<RwLock<..>>`) and do **not** spawn a reaper task
+/// — the channel receiver is dropped, so no Tokio runtime is required and a
+/// dropped permit simply leaves an orphaned `Pending`. Reaper behavior is
+/// exercised separately by the `#[tokio::test]` reaper tests.
+#[cfg(test)]
+impl<T> MetaStore<T> {
+    fn new_inner(capacity: usize, min_cache: usize) -> Self {
+        Self::inner_new(
+            capacity,
+            min_cache,
+            Vec::with_capacity(min_cache),
+            HashMap::with_capacity(capacity),
+        )
+        .0
+    }
+
+    fn new_unlimited_inner() -> Self {
+        Self::inner_new(usize::MAX, usize::MAX, Vec::new(), HashMap::new()).0
+    }
+
+    fn new_from_map_inner(map: HashMap<RequestId, T>) -> Self {
+        let mut complete_queue = Vec::new();
+        let storage = map
+            .into_iter()
+            .map(|(key, value)| {
+                complete_queue.push(key);
+                (key, StoredEntry::done(Ok(Arc::new(value))))
+            })
+            .collect();
+        Self::inner_new(usize::MAX, usize::MAX, complete_queue, storage).0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1197,7 +1233,7 @@ mod tests {
 
     #[test]
     fn double_insert() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id: RequestId = derive_request_id("meta_store").unwrap();
         let _p = meta_store.insert(&id).unwrap();
         assert!(meta_store.insert(&id).is_err());
@@ -1205,7 +1241,7 @@ mod tests {
 
     #[test]
     fn too_many_elements() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id1: RequestId = derive_request_id("1").unwrap();
         let id2: RequestId = derive_request_id("2").unwrap();
         let id3: RequestId = derive_request_id("3").unwrap();
@@ -1216,7 +1252,7 @@ mod tests {
 
     #[test]
     fn auto_remove() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id1: RequestId = derive_request_id("1").unwrap();
         let id2: RequestId = derive_request_id("2").unwrap();
         let id3: RequestId = derive_request_id("3").unwrap();
@@ -1237,7 +1273,7 @@ mod tests {
 
     #[test]
     fn try_delete_blocked_by_live_permit() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id: RequestId = derive_request_id("locked-del").unwrap();
         let permit = meta_store.insert(&id).unwrap();
         assert!(meta_store.try_delete(&id).is_err());
@@ -1251,7 +1287,7 @@ mod tests {
 
     #[test]
     fn delete_consumes_permit() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id: RequestId = derive_request_id("perm-del").unwrap();
         let permit = meta_store.insert(&id).unwrap();
         let prev = meta_store.delete(permit).unwrap();
@@ -1266,7 +1302,7 @@ mod tests {
 
     #[test]
     fn error_variants() {
-        let mut store: MetaStore<String> = MetaStore::new(1, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(1, 1);
         let id = derive_request_id("err-variant").unwrap();
         let permit = store.insert(&id).unwrap();
         assert!(matches!(
@@ -1313,7 +1349,7 @@ mod tests {
     fn lock_entry_requires_released_insert_permit() {
         // The insert permit holds the claim, so the entry cannot be re-locked
         // until that permit is dropped.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-pending").unwrap();
         let insert_permit = store.insert(&id).unwrap();
         assert!(matches!(
@@ -1334,7 +1370,7 @@ mod tests {
     #[test]
     fn lock_then_update_completes_entry() {
         // A relocked Pending entry can be completed through the new permit.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-update").unwrap();
         drop(store.insert(&id).unwrap());
         let permit = store.lock_entry(&id).unwrap();
@@ -1347,7 +1383,7 @@ mod tests {
     fn lock_entry_on_done_then_delete() {
         // A completed entry has a free claim and can be locked, then deleted
         // through that permit; deletion drops it from the completed queue.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-done-del").unwrap();
         insert_done_ok(&mut store, &id, "v");
         assert_eq!(store.get_completed_count(), 1);
@@ -1362,7 +1398,7 @@ mod tests {
     fn lock_entry_blocks_try_delete_until_released() {
         // A permit acquired via `lock_entry` on a still-Pending entry blocks a
         // permit-less `try_delete` just like the original insert permit does.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-blocks-del").unwrap();
         drop(store.insert(&id).unwrap());
         let permit = store.lock_entry(&id).unwrap();
@@ -1376,7 +1412,7 @@ mod tests {
 
     #[test]
     fn lock_entry_on_deleted_cannot_update() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-deleted").unwrap();
         drop(store.insert(&id).unwrap());
         assert!(store.try_delete(&id).is_ok());
@@ -1388,7 +1424,7 @@ mod tests {
 
     #[test]
     fn try_delete_done_returns_previous_value() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("try-del-done").unwrap();
         insert_done_ok(&mut store, &id, "payload");
         assert_eq!(store.get_completed_count(), 1);
@@ -1405,7 +1441,7 @@ mod tests {
     fn reserve_creates_fresh_then_finalize_completes() {
         // No entry yet: reserve creates a Pending placeholder (not yet queued),
         // and finalize drives it to Done and records it as completed.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("reserve-fresh").unwrap();
         let permit = reserve(&mut store, &id).unwrap();
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
@@ -1419,7 +1455,7 @@ mod tests {
     fn reserve_locks_existing_done_then_finalize_overwrites() {
         // Existing Done: reserve locks it in place (value preserved), finalize
         // overwrites it while keeping the single completion-queue slot.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("reserve-existing").unwrap();
         insert_done_ok(&mut store, &id, "v1");
         let permit = reserve(&mut store, &id).unwrap();
@@ -1435,7 +1471,7 @@ mod tests {
         // While one caller holds a permit (here from a prior reserve), a second
         // reserve is rejected — this is the cross-step mutual exclusion that
         // prevents two concurrent migrations from racing on the same id.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("reserve-locked").unwrap();
         insert_done_ok(&mut store, &id, "v");
         let permit = reserve(&mut store, &id).unwrap();
@@ -1450,7 +1486,7 @@ mod tests {
 
     #[test]
     fn reserve_rejects_deleted_entry() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("reserve-deleted").unwrap();
         insert_done_ok(&mut store, &id, "v");
         store.try_delete(&id).unwrap();
@@ -1465,7 +1501,7 @@ mod tests {
         // Aborting a freshly created reservation must remove the entry outright
         // (NOT tombstone it), so a retry can recreate it. This is the failure
         // path of copy_compressed_key_to_original.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("abort-fresh").unwrap();
         let permit = reserve(&mut store, &id).unwrap();
         store.abort_reservation(permit);
@@ -1480,7 +1516,7 @@ mod tests {
     fn abort_reservation_preserves_existing_done() {
         // Aborting a reservation that locked an existing Done leaves the prior
         // value and its completion-queue slot intact.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("abort-existing").unwrap();
         insert_done_ok(&mut store, &id, "original");
         let permit = reserve(&mut store, &id).unwrap();
@@ -1496,7 +1532,7 @@ mod tests {
         // Mirrors recovery when a prior migration created a Pending reservation
         // but its permit was dropped without finalize/abort (e.g. a task panic):
         // the orphan has no live permit, so a retry's reserve adopts it.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("reserve-orphan").unwrap();
         drop(reserve(&mut store, &id).unwrap()); // permit dropped, entry left Pending
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
@@ -1511,7 +1547,7 @@ mod tests {
         // capacity 2, min_cache 1: two completed entries, the oldest reserved.
         // Inserting a third must evict the *younger* unreserved one, not the
         // reserved oldest, so the reservation's finalize still works.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let old = derive_request_id("evict-reserved-old").unwrap();
         let young = derive_request_id("evict-reserved-young").unwrap();
         insert_done_ok(&mut store, &old, "old");
@@ -1540,7 +1576,7 @@ mod tests {
         // capacity 2, min_cache 1. Two completed entries, both reserved, so the
         // store is full (len > min_cache) yet nothing is safe to evict ->
         // CapacityFull rather than corrupting a reserved entry.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let a = derive_request_id("full-a").unwrap();
         let b = derive_request_id("full-b").unwrap();
         insert_done_ok(&mut store, &a, "a");
@@ -1562,7 +1598,7 @@ mod tests {
     #[test]
     fn eviction_preserves_min_cache() {
         // capacity 2, min_cache 2: never evict, even when full.
-        let mut store: MetaStore<String> = MetaStore::new(2, 2);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 2);
         let a = derive_request_id("mincache-a").unwrap();
         let b = derive_request_id("mincache-b").unwrap();
         insert_done_ok(&mut store, &a, "a");
@@ -1580,7 +1616,7 @@ mod tests {
     fn try_delete_blocked_on_reserved_done() {
         // A permit held on a Done entry (via reserve) blocks a permit-less
         // try_delete, just like it does for a Pending entry.
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("try-del-reserved").unwrap();
         insert_done_ok(&mut store, &id, "v");
         let permit = reserve(&mut store, &id).unwrap();
@@ -1601,7 +1637,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(a, "A".to_string());
         map.insert(b, "B".to_string());
-        let store = MetaStore::new_from_map(map);
+        let store = MetaStore::new_from_map_inner(map);
 
         assert_eq!(store.get_capacity(), usize::MAX);
         assert_eq!(store.get_current_count(), 2);
@@ -1619,7 +1655,7 @@ mod tests {
 
     #[test]
     fn count_and_listing_accessors() {
-        let mut store: MetaStore<String> = MetaStore::new_unlimited();
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
         let pending1 = derive_request_id("c-p1").unwrap();
         let _p1 = store.insert(&pending1).unwrap();
         let pending2 = derive_request_id("c-p2").unwrap();
@@ -1657,7 +1693,7 @@ mod tests {
 
     #[test]
     fn deleted_ids_are_listed_and_excluded_from_completed() {
-        let mut store: MetaStore<String> = MetaStore::new_unlimited();
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
         let kept = derive_request_id("d-kept").unwrap();
         let gone = derive_request_id("d-gone").unwrap();
         insert_done_ok(&mut store, &kept, "keep");
@@ -1673,7 +1709,7 @@ mod tests {
 
     #[test]
     fn processing_count_excludes_deleted() {
-        let mut store: MetaStore<String> = MetaStore::new_unlimited();
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
         let pending = derive_request_id("pc-pending").unwrap();
         let permit = store.insert(&pending).unwrap();
         let done = derive_request_id("pc-done").unwrap();
@@ -1727,7 +1763,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_overwriting_claim_overwrites_existing() {
-        let mut ms = MetaStore::<String>::new(2, 1);
+        let mut ms = MetaStore::<String>::new_inner(2, 1);
         let id = derive_request_id("woc-commit").unwrap();
         // The claim requires a pre-existing entry; seed one as the migration
         // target would already be present in the store.
@@ -1754,7 +1790,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_overwriting_claim_absent_entry_errors_without_creating() {
-        let store = RwLock::new(MetaStore::<String>::new(2, 1));
+        let store = RwLock::new(MetaStore::<String>::new_inner(2, 1));
         let id = derive_request_id("woc-absent").unwrap();
 
         // No entry exists: the claim fails with NotFound and `work` never runs,
@@ -1771,7 +1807,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_overwriting_claim_preserves_existing_on_failure() {
-        let mut ms = MetaStore::<String>::new(2, 1);
+        let mut ms = MetaStore::<String>::new_inner(2, 1);
         let id = derive_request_id("woc-preserve").unwrap();
         insert_done_ok(&mut ms, &id, "original");
         let store = RwLock::new(ms);
@@ -1786,7 +1822,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_not_in_meta_store_rejects_known_ids() {
-        let store = RwLock::new(MetaStore::<String>::new(4, 1));
+        let store = RwLock::new(MetaStore::<String>::new_inner(4, 1));
         let id = derive_request_id("ensure-known").unwrap();
 
         // Absent id: the fail-fast check passes.
@@ -1817,7 +1853,7 @@ mod tests {
     /// queued, counted, and listed as failed.
     #[test]
     fn fail_if_orphaned_fails_dropped_pending() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("orphan").unwrap();
         let permit = store.insert(&id).unwrap();
         drop(permit); // abandoned: claim strong_count drops back to 1
@@ -1832,7 +1868,7 @@ mod tests {
     /// id that was reclaimed and reused after an abandonment message was enqueued.
     #[test]
     fn fail_if_orphaned_skips_live_permit() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("live").unwrap();
         let _permit = store.insert(&id).unwrap(); // still held
         assert!(!store.fail_if_orphaned(&id, "nope".to_string()));
@@ -1844,7 +1880,7 @@ mod tests {
     /// alone.
     #[test]
     fn fail_if_orphaned_skips_done_deleted_and_missing() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
 
         let done = derive_request_id("done").unwrap();
         insert_done_ok(&mut store, &done, "ok");
@@ -1877,7 +1913,7 @@ mod tests {
     /// outcome causes the orphaned entry to be failed asynchronously.
     #[tokio::test]
     async fn reaper_fails_orphaned_permit_on_drop() {
-        let store = MetaStore::<String>::new_with_reaper(4, 1);
+        let store = MetaStore::<String>::new(4, 1);
         let id = derive_request_id("reap-drop").unwrap();
 
         let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
@@ -1893,7 +1929,7 @@ mod tests {
     /// recorded result survives.
     #[tokio::test]
     async fn reaper_leaves_completed_request_untouched() {
-        let store = MetaStore::<String>::new_with_reaper(4, 1);
+        let store = MetaStore::<String>::new(4, 1);
         let id = derive_request_id("reap-ok").unwrap();
 
         let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
@@ -1910,11 +1946,11 @@ mod tests {
         assert_done_ok(&*store.read().await, &id, &"v".to_string());
     }
 
-    /// An unlimited store built with a reaper still fails orphaned entries on
-    /// drop — the case where it matters most, since unlimited stores never evict.
+    /// An unlimited store still fails orphaned entries on drop — the case where
+    /// it matters most, since unlimited stores never evict.
     #[tokio::test]
-    async fn unlimited_with_reaper_fails_orphaned_on_drop() {
-        let store = MetaStore::<String>::new_unlimited_with_reaper();
+    async fn unlimited_store_reaps_orphaned_on_drop() {
+        let store = MetaStore::<String>::new_unlimited();
         let id = derive_request_id("unlimited-reap").unwrap();
         let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
         drop(permit);
@@ -1924,14 +1960,14 @@ mod tests {
         );
     }
 
-    /// A from-map store built with a reaper keeps its pre-seeded `Done(Ok)`
-    /// entries and still reaps newly-orphaned ones.
+    /// A from-map store keeps its pre-seeded `Done(Ok)` entries and still reaps
+    /// newly-orphaned ones.
     #[tokio::test]
-    async fn from_map_with_reaper_preserves_seed_and_reaps_new() {
+    async fn from_map_store_preserves_seed_and_reaps_new() {
         let seeded = derive_request_id("seeded").unwrap();
         let mut map = HashMap::new();
         map.insert(seeded, "preset".to_string());
-        let store = MetaStore::<String>::new_from_map_with_reaper(map);
+        let store = MetaStore::<String>::new_from_map(map);
 
         // Pre-seeded entry is intact.
         assert_done_ok(&*store.read().await, &seeded, &"preset".to_string());
@@ -1949,7 +1985,7 @@ mod tests {
     /// under the same id, then completed successfully.
     #[test]
     fn redo_failed_resets_and_allows_retry() {
-        let mut store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("redo").unwrap();
         insert_done_err(&mut store, &id, "boom");
         assert_eq!(store.get_failed_request_ids(), vec![id]);
@@ -1971,7 +2007,7 @@ mod tests {
     /// in-flight, tombstoned, and absent ids.
     #[test]
     fn redo_failed_rejects_non_failed_states() {
-        let mut store: MetaStore<String> = MetaStore::new(3, 1);
+        let mut store: MetaStore<String> = MetaStore::new_inner(3, 1);
 
         // Done(Ok): a good result must not be discarded.
         let ok = derive_request_id("ok").unwrap();
@@ -2011,7 +2047,7 @@ mod tests {
     /// once it has succeeded, re-submitting is rejected with `AlreadyExists`.
     #[tokio::test]
     async fn add_or_redo_failed_in_meta_store_lifecycle() {
-        let store = RwLock::new(MetaStore::<String>::new(2, 1));
+        let store = RwLock::new(MetaStore::<String>::new_inner(2, 1));
         let id = derive_request_id("redo-helper").unwrap();
 
         // First submission inserts a fresh entry, which then fails.
@@ -2042,7 +2078,7 @@ mod tests {
     /// behavior for non-failed states.
     #[tokio::test]
     async fn add_or_redo_failed_in_meta_store_rejects_in_flight() {
-        let store = RwLock::new(MetaStore::<String>::new(2, 1));
+        let store = RwLock::new(MetaStore::<String>::new_inner(2, 1));
         let id = derive_request_id("redo-inflight").unwrap();
         let _permit = add_or_redo_failed_in_meta_store(&store, &id, "test")
             .await
