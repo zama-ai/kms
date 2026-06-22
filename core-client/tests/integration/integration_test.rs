@@ -1795,18 +1795,42 @@ fn build_kms_custodian() -> Result<PathBuf> {
         );
     }
 
-    // Cargo emits one JSON object per line; the artifact for our bin carries the absolute path to the freshly built
-    // executable.
-    let custodian_bin = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    parse_custodian_bin(&String::from_utf8_lossy(&output.stdout))
+        .context("cargo build did not report a kms-custodian executable")
+}
+
+// Find the `kms-custodian` executable path in cargo's `--message-format=json` output.
+fn parse_custodian_bin(stdout: &str) -> Option<PathBuf> {
+    serde_json::Deserializer::from_str(stdout)
+        .into_iter::<serde_json::Value>()
+        .filter_map(|msg| msg.ok())
         .find_map(|msg| {
             (msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "kms-custodian")
                 .then(|| msg["executable"].as_str().map(PathBuf::from))
                 .flatten()
         })
-        .context("cargo build did not report a kms-custodian executable")?;
-    Ok(custodian_bin)
+}
+
+#[cfg(test)]
+const CARGO_JSON_FIXTURE: &str = r#"{"reason":"compiler-artifact","package_id":"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.22","manifest_path":"/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-ident-1.0.22/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"unicode_ident","src_path":"/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-ident-1.0.22/src/lib.rs","edition":"2018","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"1","debuginfo":"line-tables-only","debug_assertions":true,"overflow_checks":true,"test":false},"features":[],"filenames":["/repo/target/debug/deps/libunicode_ident-6a5967fbdebe44b4.rlib","/repo/target/debug/deps/libunicode_ident-6a5967fbdebe44b4.rmeta"],"executable":null,"fresh":true}
+{"reason":"compiler-artifact","package_id":"path+file:///repo/core/service#kms@0.14.0-0","manifest_path":"/repo/core/service/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"kms-custodian","src_path":"/repo/core/service/src/bin/kms-custodian.rs","edition":"2024","doc":true,"doctest":false,"test":true},"profile":{"opt_level":"3","debuginfo":"line-tables-only","debug_assertions":true,"overflow_checks":true,"test":false},"features":["default","non-wasm"],"filenames":["/repo/target/debug/kms-custodian"],"executable":"/repo/target/debug/kms-custodian","fresh":false}
+{"reason":"build-finished","success":true}"#;
+
+#[test]
+fn parse_custodian_bin_picks_executable_from_artifact_line() {
+    assert_eq!(
+        parse_custodian_bin(CARGO_JSON_FIXTURE),
+        Some(PathBuf::from("/repo/target/debug/kms-custodian")),
+    );
+}
+
+#[test]
+fn parse_custodian_bin_returns_none_when_absent() {
+    // Same stream with the bin artifact removed: nothing for us to find.
+    let stdout = r#"{"reason":"compiler-artifact","package_id":"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.22","target":{"kind":["lib"],"crate_types":["lib"],"name":"unicode_ident"},"executable":null,"fresh":true}
+{"reason":"build-finished","success":true}"#;
+
+    assert_eq!(parse_custodian_bin(stdout), None);
 }
 
 async fn generate_custodian_keys_to_file(
