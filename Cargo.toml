@@ -137,7 +137,6 @@ criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking f
 crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }  # Big integer operations for crypto - LOW RISK: RustCrypto org
 dashmap = "=6.2.1"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
-escargot = "=0.5.15" # Interact with cargo without spawning external processes. MEDIUM RISK: single maintainer, 8M downloads, test-only dependency.
 futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations

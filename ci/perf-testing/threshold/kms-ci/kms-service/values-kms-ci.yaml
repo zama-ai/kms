@@ -11,6 +11,12 @@ kmsCoreClient:
   image:
     tag: <version>
 
+kubeUtils:
+  image:
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.0
+    pullPolicy: Always
+
 kmsCore:
   image:
     name: hub.zama.org/ghcr/zama-ai/kms/core-service

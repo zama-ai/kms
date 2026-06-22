@@ -366,8 +366,14 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed]
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `-u`/`--uncompressed`: Fetch legacy uncompressed public key material instead of the default compressed keyset.
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the external signature and just download the material.
 
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
 
@@ -459,8 +465,14 @@ After this migration completes, the old key ID can be used without `--uncompress
 
 It is also possible to fetch the result of a key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> [--compressed]
+$ cargo run -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `-u`/`--uncompressed`: Fetch legacy uncompressed public key material instead of the default compressed keyset.
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the external signature and just download the material.
 
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
 
@@ -480,8 +492,13 @@ Note that this operation does *NOT* run a secure distributed CRS generation prot
 
 It is also possible to fetch the result of an insecure CRS generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID>
+$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the external signature and just download the material.
 
 Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
 
@@ -497,8 +514,13 @@ Note that this operation runs the secure distributed CRS generation protocol, wh
 
 It is also possible to fetch the result of a CRS generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUEST_ID>
+$ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip verification of the external signature and just download the material.
 
 Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
 
@@ -558,8 +580,14 @@ Note that the key must have been previously generated using the (secure or insec
 
 It is also possible to fetch the result of a public decryption through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> public-decrypt-result --request-id <REQUEST_ID>
+$ cargo run -- -f <path-to-toml-config-file> public-decrypt-result --request-id <REQUEST_ID> [--handle <HANDLE>]... [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
+
+Optional arguments:
+ - `--handle <HANDLE>`: External ciphertext handle (hex-encoded, optionally with a "0x" prefix) from the original request, used to verify the external signature. Repeat the flag once per ciphertext in the batch. Required unless `--no-verify` is set, since handles are request-specific and cannot be defaulted from the config; the command fails when they are omitted.
+ - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
+ - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
+ - `--no-verify`: Skip all verification of the fetched responses (both the internal KMS-node signatures and the external signature) and just return them.
 
 Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<PublicDecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
 
