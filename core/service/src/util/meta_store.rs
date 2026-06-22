@@ -585,6 +585,11 @@ impl<T> MetaStore<T> {
         self.complete_queue.len()
     }
 
+    /// Get the number of deleted (tombstoned) items
+    pub(crate) fn get_deleted_count(&self) -> usize {
+        self.deleted_set.len()
+    }
+
     /// Get the number of items currently being processed (i.e. `Pending`).
     ///
     /// This excludes both completed entries and tombstoned (`Deleted`) entries;
@@ -599,8 +604,8 @@ impl<T> MetaStore<T> {
     }
 
     /// Get completed request IDs. That is, this excludes request IDs that have been deleted or are pending.
-    pub(crate) fn get_completed_request_ids(&self) -> &[RequestId] {
-        &self.complete_queue
+    pub(crate) fn get_completed_request_ids(&self) -> impl Iterator<Item = &RequestId> + '_ {
+        self.complete_queue.iter()
     }
 
     /// Get processing request IDs (not yet completed)
@@ -629,16 +634,9 @@ impl<T> MetaStore<T> {
             .collect()
     }
 
-    /// Get deleted request IDs (requests that have been deleted)
-    /// WARNING: This is a slow operation
-    pub(crate) fn get_deleted_request_ids(&self) -> Vec<RequestId> {
-        self.storage
-            .iter()
-            .filter_map(|(id, state)| match state {
-                StoredEntry::Deleted => Some(*id),
-                _ => None,
-            })
-            .collect()
+    /// Get deleted request IDs (requests that have been tombstoned).
+    pub(crate) fn get_deleted_request_ids(&self) -> impl Iterator<Item = &RequestId> + '_ {
+        self.deleted_set.iter()
     }
 }
 
@@ -1389,7 +1387,7 @@ mod tests {
         assert_done_ok(&store, &a, &"A".to_string());
         assert_done_ok(&store, &b, &"B".to_string());
 
-        let completed = store.get_completed_request_ids();
+        let completed: Vec<_> = store.get_completed_request_ids().copied().collect();
         assert_eq!(completed.len(), 2);
         assert!(completed.contains(&a) && completed.contains(&b));
     }
@@ -1414,7 +1412,7 @@ mod tests {
         assert_eq!(store.get_processing_count(), 2);
 
         // Completed vs processing partition.
-        let completed = store.get_completed_request_ids();
+        let completed: Vec<_> = store.get_completed_request_ids().copied().collect();
         assert_eq!(completed.len(), 2);
         assert!(completed.contains(&ok) && completed.contains(&err));
 
@@ -1427,7 +1425,8 @@ mod tests {
         assert_eq!(failed, vec![err]);
 
         // No deletions yet.
-        assert!(store.get_deleted_request_ids().is_empty());
+        assert_eq!(store.get_deleted_count(), 0);
+        assert!(store.get_deleted_request_ids().next().is_none());
         assert_done_err(&store, &err, "boom");
     }
 
@@ -1440,10 +1439,10 @@ mod tests {
         insert_done_ok(&mut store, &gone, "remove");
         store.try_delete(&gone).unwrap();
 
-        let deleted = store.get_deleted_request_ids();
-        assert_eq!(deleted, vec![gone]);
+        assert_eq!(store.get_deleted_count(), 1);
+        assert!(store.get_deleted_request_ids().any(|id| *id == gone));
         // The deleted entry leaves the completed queue; the survivor stays.
-        let completed = store.get_completed_request_ids();
+        let completed: Vec<_> = store.get_completed_request_ids().copied().collect();
         assert_eq!(completed, vec![kept]);
     }
 
