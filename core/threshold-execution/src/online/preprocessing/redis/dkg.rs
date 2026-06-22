@@ -58,9 +58,7 @@ where
         session: &mut BaseSession,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
-        let num_bits_required = params
-            .get_params_basics_handle()
-            .total_bits_required(keyset_config);
+        let num_bits_required = params.total_bits_required(keyset_config);
 
         self.append_bits(
             SecureBitGenEven::gen_bits_even(num_bits_required, preprocessing, session).await?,
