@@ -171,8 +171,10 @@ async fn do_context_switch(
 
     // delete the new context
     {
+        // This context was created without an epoch transition of its own (decryption above reused
+        // the existing key/epoch), so it has no associated epochs to remove.
         let req = internal_client
-            .destroy_mpc_context_request(&new_context_id)
+            .destroy_mpc_context_request(&new_context_id, &[])
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
