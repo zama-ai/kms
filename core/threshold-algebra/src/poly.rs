@@ -424,15 +424,26 @@ where
 {
     type Output = Poly<F>;
     fn sub(self, other: Poly<F>) -> Self::Output {
-        let mut res = Poly::<F>::zeros(std::cmp::max(self.coefs.len(), other.coefs.len()));
-        for (idx, coef) in self.coefs.iter().enumerate() {
-            res.coefs[idx] = *coef;
+        if self.coefs.len() >= other.coefs.len() {
+            // Reuse self's allocation (the common case, mirroring `Add`): self[i] -= other[i].
+            let mut res = self;
+            for (idx, coef) in other.coefs.iter().enumerate() {
+                res.coefs[idx] -= *coef;
+            }
+            res.compress();
+            res
+        } else {
+            // `other` is strictly longer: allocate a result of its length, copy self in, subtract.
+            let mut res = Poly::<F>::zeros(other.coefs.len());
+            for (idx, coef) in self.coefs.iter().enumerate() {
+                res.coefs[idx] = *coef;
+            }
+            for (idx, coef) in other.coefs.iter().enumerate() {
+                res.coefs[idx] -= *coef;
+            }
+            res.compress();
+            res
         }
-        for (idx, coef) in other.coefs.iter().enumerate() {
-            res.coefs[idx] -= *coef;
-        }
-        res.compress();
-        res
     }
 }
 
@@ -617,7 +628,21 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
     lagrange_polys: impl AsRef<[Poly<F>]>,
     values: &[F],
 ) -> anyhow::Result<Poly<F>> {
-    let lagrange_polys = lagrange_polys.as_ref();
+    lagrange_interpolation_with_polys_into(lagrange_polys.as_ref(), values, Vec::new())
+}
+
+/// Like [`lagrange_interpolation_with_polys`] but accumulates into `coefs` — a buffer the caller can
+/// recycle across calls — instead of allocating a fresh one.
+///
+/// This runs once per bit, ring_size times per opened value, so it is a reconstruction hot spot. The
+/// hinted reconstruction loop threads one buffer through every bit (see `ReconScratch`), turning a
+/// per-bit allocation into a per-value one; the returned poly's backing `Vec` is `coefs` (grown), so
+/// the caller can reclaim it with `into_container()` for the next call.
+pub fn lagrange_interpolation_with_polys_into<F: Field>(
+    lagrange_polys: &[Poly<F>],
+    values: &[F],
+    mut coefs: Vec<F>,
+) -> anyhow::Result<Poly<F>> {
     if lagrange_polys.len() != values.len() {
         return Err(anyhow_error_and_log(
             "Lagrange interpolation failure: mismatch between number of points and values"
@@ -625,12 +650,11 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
         ));
     }
 
-    // res = Σ_i lagrange_polys[i] * values[i], accumulated coefficient-wise into a single buffer. This function runs
-    // once per bit, ring_size times per opened value, so this is a hot spot for reconstruction.
-    //
-    // Each Lagrange basis poly over these `n` points has degree exactly n-1 (n coefficients), so the interpolant has at
-    // most `n` coefficients.
-    let mut coefs = vec![F::ZERO; lagrange_polys.len()];
+    // res = Σ_i lagrange_polys[i] * values[i], accumulated coefficient-wise into the reused buffer.
+    // Each Lagrange basis poly over these `n` points has degree exactly n-1 (n coefficients), so the
+    // interpolant has at most `n` coefficients. `clear` + `resize` keeps the buffer's capacity warm.
+    coefs.clear();
+    coefs.resize(lagrange_polys.len(), F::ZERO);
     for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
         for (acc, lc) in coefs.iter_mut().zip(li.coefs.iter()) {
             *acc += *lc * *vi;
@@ -645,14 +669,16 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
 /// avoid cloning it. The loop consumes its running remainder, so `a` is cloned
 /// only once we know we need to iterate.
 ///
-/// Returns the low-degree remainder `r1` and its Bézout cofactor `t1` with
-/// respect to the original `b`.
-fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
+/// Returns the low-degree remainder `r1` and its Bézout cofactor with respect to the original `b`.
+/// The cofactor is `None` when the EEA loop never ran (the trivial unit cofactor `1`, i.e. the
+/// no-error case) — letting the caller skip both allocating a one-coefficient `Poly` and the
+/// redundant divide-by-1 — and `Some(t1)` once the loop has iterated.
+fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Option<Poly<F>>) {
     let mut r1 = b;
 
     if r1.deg() < stop {
-        // `b` already satisfies the target degree bound, with cofactor 1.
-        return (r1, Poly::one());
+        // `b` already satisfies the target degree bound, with the unit cofactor 1.
+        return (r1, None);
     }
 
     let mut r0 = a.clone();
@@ -672,7 +698,7 @@ fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Pol
         t1 = t2;
     }
 
-    (r1, t1)
+    (r1, Some(t1))
 }
 
 /// Common tail of [`gao_decoding`] and [`gao_decoding_with_field_hints`].
@@ -708,22 +734,27 @@ fn gao_decoding_common<F: Field>(
     let gcd_stop = (n + k) / 2;
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
-    // abort early if we have too many errors
-    if q0.deg() > max_errors {
-        return Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Allowed at most {max_errors} errors but xgcd factor degree indicates {}.",
-            q0.deg()
-        )));
-    }
-
     // h is called f_1(x) in the Gao paper.
-    let (h, rem) = if q0.deg() == 0 && q0.coef(0) != F::ZERO {
-        // q0 is a nonzero constant c (the common no-error case: the xgcd cofactor is the unit poly).
-        // Then q1 / q0 = q1 * c⁻¹ exactly, with zero remainder — divide by the scalar in place
-        // instead of allocating a fresh quotient via long division.
-        (q1 / &q0.coef(0), Poly::zero())
-    } else {
-        q1 / &q0
+    let (h, rem) = match q0 {
+        // No-error case: the cofactor is the unit poly, so h = q1 / 1 = q1 with zero remainder.
+        // Its degree (0) trivially satisfies the error bound, and dividing by 1 is a no-op we skip.
+        None => (q1, Poly::zero()),
+        Some(q0) => {
+            // abort early if we have too many errors
+            if q0.deg() > max_errors {
+                return Err(anyhow_error_and_log(format!(
+                    "Gao decoding failure: Allowed at most {max_errors} errors but xgcd factor degree indicates {}.",
+                    q0.deg()
+                )));
+            }
+            if q0.deg() == 0 && q0.coef(0) != F::ZERO {
+                // q0 is a nonzero constant c: q1 / q0 = q1 * c⁻¹ exactly, with zero remainder —
+                // divide by the scalar in place instead of allocating a fresh quotient.
+                (q1 / &q0.coef(0), Poly::zero())
+            } else {
+                q1 / &q0
+            }
+        }
     };
 
     if !rem.is_zero() {
@@ -799,6 +830,30 @@ pub fn gao_decoding_with_field_hints<F: Field>(
     lagrange_polys: &[Poly<F>],
     vanishing_poly: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
+    gao_decoding_with_field_hints_into(
+        points,
+        values,
+        k,
+        max_errors,
+        lagrange_polys,
+        vanishing_poly,
+        Vec::new(),
+    )
+}
+
+/// Like [`gao_decoding_with_field_hints`] but threads a recyclable interpolation buffer (`interp_buf`)
+/// into [`lagrange_interpolation_with_polys_into`], so the per-bit reconstruction loop reuses one
+/// allocation instead of allocating per bit. In the no-error case the returned poly's backing `Vec`
+/// is `interp_buf` (grown), so the caller can reclaim it via `into_container()` for the next call.
+pub fn gao_decoding_with_field_hints_into<F: Field>(
+    points: &[F],
+    values: &[F],
+    k: usize,
+    max_errors: usize,
+    lagrange_polys: &[Poly<F>],
+    vanishing_poly: &Poly<F>,
+    interp_buf: Vec<F>,
+) -> anyhow::Result<Poly<F>> {
     let n = points.len();
 
     if values.len() != points.len() {
@@ -807,8 +862,9 @@ pub fn gao_decoding_with_field_hints<F: Field>(
         ));
     }
 
-    // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
-    let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
+    // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis
+    // and the recycled buffer.
+    let r = lagrange_interpolation_with_polys_into(lagrange_polys, values, interp_buf)?;
 
     // partial_xgcd only clones "G" if the EEA loop actually runs, which is quite rare.
     gao_decoding_common(n, k, max_errors, r, vanishing_poly)

@@ -1,6 +1,6 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
-    poly::{BitWiseEval, Poly, gao_decoding, gao_decoding_with_field_hints, lagrange_polynomials},
+    poly::{BitWiseEval, Poly, gao_decoding, gao_decoding_with_field_hints_into, lagrange_polynomials},
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
@@ -170,6 +170,9 @@ struct ReconScratch<F: Field> {
     binary_shares: Vec<Share<F>>,
     /// `error_correction_with_field_hints` y-values (share values fed to Gao decoding).
     ys: Vec<F>,
+    /// Lagrange-interpolation coefficient buffer, threaded into `gao_decoding_with_field_hints_into`
+    /// and reclaimed from the returned poly each bit, so interpolation reuses one allocation.
+    interp: Vec<F>,
     /// `apply_bit_correction` byte view of the error-corrected bit polynomial.
     bitwise: BitwisePoly,
 }
@@ -180,6 +183,7 @@ impl<F: Field> ReconScratch<F> {
         Self {
             binary_shares: Vec::new(),
             ys: Vec::new(),
+            interp: Vec::new(),
             bitwise: BitwisePoly::default(),
         }
     }
@@ -413,6 +417,8 @@ where
         compute_binary_shares(&shares_with_validity, bit_idx, &mut scratch.binary_shares);
         let num_new_bot = initial_length - scratch.binary_shares.len();
 
+        // Hand the recycled interpolation buffer to the decoder; it comes back inside `fi_mod2`.
+        let interp_buf = std::mem::take(&mut scratch.interp);
         let fi_mod2 = if !validity_changed {
             // All parties still valid — use the precomputed field hints.
             error_correction_with_field_hints(
@@ -421,6 +427,7 @@ where
                 max_errorsors - num_new_bot,
                 &hints.field_hints,
                 &mut scratch.ys,
+                interp_buf,
             )?
         } else {
             // Some parties were evicted — recompute field hints for the new valid set
@@ -438,6 +445,7 @@ where
                 max_errorsors - num_new_bot,
                 fallback_field_hints.as_ref().unwrap(),
                 &mut scratch.ys,
+                interp_buf,
             )?
         };
 
@@ -449,6 +457,8 @@ where
             &mut res,
             &mut scratch.bitwise,
         );
+        // Reclaim the interpolation buffer's allocation for the next bit (see `ReconScratch::interp`).
+        scratch.interp = fi_mod2.into_container();
         if !evicted.is_empty() {
             validity_changed = true;
             // Invalidate fallback hints so they get recomputed for the new valid set.
@@ -523,6 +533,8 @@ pub fn error_correction<F: Field>(
 ///
 /// `field_hints` must have been built from the same __ordered list__ of parties that own the `shares`.
 // `ys` is a scratch buffer only. If decoding fails, callers must not rely on its contents.
+// `interp_buf` is a recyclable interpolation buffer; the returned poly's backing `Vec` is it (grown)
+// in the no-error case, so callers can reclaim it via `into_container()` for the next call.
 #[allow(unknown_lints)] // `non_local_effect_before_error_return` is a dylint-only lint
 #[allow(non_local_effect_before_error_return)]
 pub fn error_correction_with_field_hints<F: Field>(
@@ -531,17 +543,19 @@ pub fn error_correction_with_field_hints<F: Field>(
     max_errorsors: usize,
     field_hints: &FieldHints<F>,
     ys: &mut Vec<F>,
+    interp_buf: Vec<F>,
 ) -> anyhow::Result<ShamirFieldPoly<F>> {
     ys.clear();
     ys.extend(shares.iter().map(|s| s.value()));
 
-    gao_decoding_with_field_hints(
+    gao_decoding_with_field_hints_into(
         &field_hints.embedded_points,
         ys,
         degree + 1,
         max_errorsors,
         &field_hints.lagrange_polys,
         &field_hints.vanishing_poly,
+        interp_buf,
     )
 }
 
@@ -716,7 +730,7 @@ mod tests {
         let hints = FieldHints::new(&parties).unwrap();
         let mut ys = Vec::new();
         let secret_poly_with_hints =
-            error_correction_with_field_hints(&shares, threshold, max_errors, &hints, &mut ys)
+            error_correction_with_field_hints(&shares, threshold, max_errors, &hints, &mut ys, Vec::new())
                 .unwrap();
         assert_eq!(secret_poly_with_hints, f);
     }

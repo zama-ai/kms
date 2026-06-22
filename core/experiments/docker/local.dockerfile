@@ -12,6 +12,7 @@ COPY . .
 ARG FEATURES
 
 RUN mkdir -p /app/ddec/bin
+ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
 RUN cargo install --locked --path core/experiments --root . --bins --no-default-features --features=${FEATURES}
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
     # NOTE: if we're in a workspace then we need to set a different path

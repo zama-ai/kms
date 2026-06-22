@@ -449,16 +449,11 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE
         if exp == Z::BIT_LENGTH {
             return self.is_zero();
         }
-        let bit_checks: Vec<_> = self
-            .coefs
-            .iter()
-            .filter_map(|c| {
-                let bit = (*c) & ((Z::ONE << exp) - Z::ONE);
-                if bit == Z::ZERO { None } else { Some(bit) }
-            })
-            .collect();
-
-        bit_checks.is_empty()
+        // True iff every coefficient has its low `exp` bits clear. Allocation-free: this runs in the
+        // reconstruction Hensel-lift inner loop (once per share per bit, in `error_correction`), so
+        // the previous `filter_map(..).collect::<Vec<_>>().is_empty()` allocated a Vec every call.
+        let mask = (Z::ONE << exp) - Z::ONE;
+        self.coefs.iter().all(|c| (*c & mask) == Z::ZERO)
     }
 }
 
