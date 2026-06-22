@@ -1387,7 +1387,7 @@ impl<
         )
         .await?;
 
-        match (*res).clone() {
+        match res.as_ref() {
             EpochOutput::PRSSInitOnly => {
                 tracing::info!(
                     "New Epoch with only PRSS initialization for request ID {:?}.",
@@ -1414,18 +1414,18 @@ impl<
                             // which must be kept stable (in particular, ServerKey must be before PublicKey)
                             let key_digests = res
                                 .key_digest_map
-                                .into_iter()
+                                .iter()
                                 .sorted_by_key(|x| x.0)
                                 .map(|(key, digest)| KeyDigest {
                                     key_type: key.to_string(),
-                                    digest,
+                                    digest: digest.clone(),
                                 })
                                 .collect::<Vec<_>>();
                             reshare_responses.push(KeyGenResult {
                                 request_id: Some(res.key_id.into()),
                                 preprocessing_id: Some(res.preprocessing_id.into()),
                                 key_digests,
-                                external_signature: res.external_signature,
+                                external_signature: res.external_signature.clone(),
                             });
                         }
                         KeyGenMetadata::LegacyV0(_res) => {
@@ -1452,9 +1452,9 @@ impl<
                             );
                             crs_responses.push(CrsGenResult {
                                 request_id: Some(crs.crs_id.into()),
-                                crs_digest: crs.crs_digest,
+                                crs_digest: crs.crs_digest.clone(),
                                 max_num_bits: crs.max_num_bits,
-                                external_signature: crs.external_signature,
+                                external_signature: crs.external_signature.clone(),
                             });
                         }
                         CrsGenMetadata::LegacyV0(_crs) => {

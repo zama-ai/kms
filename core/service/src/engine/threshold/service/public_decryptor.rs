@@ -10,7 +10,6 @@ use algebra::{
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
-    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
@@ -36,7 +35,7 @@ use threshold_execution::{
     tfhe_internals::private_keysets::PrivateKeySet,
 };
 use threshold_types::session_id::SessionId;
-use tokio::sync::{OwnedRwLockReadGuard, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 use tracing::Instrument;

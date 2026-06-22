@@ -155,7 +155,7 @@ pub async fn get_crs_gen_result_impl<
 
     let crs_info = retrieve_from_meta_store(&service.crs_meta_map, &request_id, op_tag).await?;
 
-    match (*crs_info).clone() {
+    match crs_info.as_ref() {
         CrsGenMetadata::LegacyV0(_) => {
             // This is a legacy result, we cannot return the crs_digest or external_signature
             // as they're signed using a different SolStruct and hashed using a different domain separator
@@ -190,9 +190,9 @@ pub async fn get_crs_gen_result_impl<
 
             Ok(Response::new(CrsGenResult {
                 request_id: Some(request_id.into()),
-                crs_digest: crs_info.crs_digest,
+                crs_digest: crs_info.crs_digest.clone(),
                 max_num_bits: crs_info.max_num_bits,
-                external_signature: crs_info.external_signature,
+                external_signature: crs_info.external_signature.clone(),
             }))
         }
     }

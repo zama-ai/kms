@@ -770,7 +770,7 @@ impl<
         let key_gen_res =
             retrieve_from_meta_store(&self.dkg_pubinfo_meta_store, &request_id, op_tag).await?;
 
-        match (*key_gen_res).clone() {
+        match key_gen_res.as_ref() {
             KeyGenMetadata::Current(res) => {
                 if res.key_id != request_id {
                     return Err(MetricedError::new(
@@ -789,11 +789,11 @@ impl<
                 // which must be kept stable (in particular, ServerKey must be before PublicKey)
                 let key_digests = res
                     .key_digest_map
-                    .into_iter()
+                    .iter()
                     .sorted_by_key(|x| x.0)
                     .map(|(key, digest)| KeyDigest {
                         key_type: key.to_string(),
-                        digest,
+                        digest: digest.clone(),
                     })
                     .collect::<Vec<_>>();
 
@@ -801,7 +801,7 @@ impl<
                     request_id: Some(request_id.into()),
                     preprocessing_id: Some(res.preprocessing_id.into()),
                     key_digests,
-                    external_signature: res.external_signature,
+                    external_signature: res.external_signature.clone(),
                 }))
             }
             KeyGenMetadata::LegacyV0(_res) => {
