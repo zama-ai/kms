@@ -23,10 +23,7 @@ use crate::{
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
-use sha3::{
-    Shake256,
-    digest::{ExtendableOutput, Update, XofReader},
-};
+use shake::{ExtendableOutput, Shake256, Update, XofReader};
 use std::marker::PhantomData;
 use std::num::Wrapping;
 use std::{
