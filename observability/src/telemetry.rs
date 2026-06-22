@@ -136,7 +136,7 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(config: &T) -> Result<(), anyh
     let metric_labels = METRICS.labels();
     if metric_labels.is_empty() {
         info!(
-            "Metrics: no static labels configured (set {METRICS_LABELS_ENV} to distinguish deployments, e.g. kind-CI)"
+            "Metrics: no static labels configured (set {METRICS_LABELS_ENV} to distinguish deployments, e.g. deployment_profile=kind-ci)"
         );
     } else {
         info!(
