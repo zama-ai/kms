@@ -13,14 +13,8 @@
 //! # Entry lifecycle
 //!
 //! `insert` → [`MetaStorePermit`] → (`update` to finish | `delete` to tombstone),
-//! both consuming the permit. A permit dropped without being consumed leaves the
-//! entry `Pending`; [`try_delete`](MetaStore::try_delete) reclaims it. Stores
-//! constructed via the `new_*_with_reaper` family
-//! ([`new_with_reaper`](MetaStore::new_with_reaper),
-//! [`new_unlimited_with_reaper`](MetaStore::new_unlimited_with_reaper),
-//! [`new_from_map_with_reaper`](MetaStore::new_from_map_with_reaper)) go further:
-//! a dropped permit asks the reaper to fail the orphaned entry (`Done(Err)`) so
-//! abandoned requests surface to clients instead of hanging `Pending` forever.
+//! both consuming the permit. A permit dropped without being consumed results in the
+//! entry resolving with a failure and storing an appropriate error string as the result.
 //! A failed entry can then be retried under the same id via
 //! [`redo_failed`](MetaStore::redo_failed).
 //! [`lock_entry`](MetaStore::lock_entry) mints a permit for an existing entry
@@ -41,36 +35,30 @@
 //!
 //! Any meta store that is NOT used for decryption (user or public) should be unlimited and MUST ensure that all data elements are present.
 
+use crate::engine::utils::MetricedError;
+use anyhow::anyhow;
 use kms_grpc::RequestId;
+use std::fmt::{self};
+use std::sync::Weak;
 use std::{
     collections::{HashMap, HashSet},
     marker::PhantomData,
     sync::Arc,
 };
 use thiserror::Error;
+use tokio::sync::{RwLock, mpsc};
 use tracing;
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "non-wasm")] {
-        use crate::engine::utils::MetricedError;
-        use anyhow::anyhow;
-        use std::fmt::{self};
-        use std::sync::Weak;
-        use tokio::sync::{mpsc, RwLock};
-    }
-}
 
 /// Operation metric attached to a [`MetaStorePermit`] minted by the inherent
 /// [`MetaStore`] methods. The helper layer (e.g. [`add_req_to_meta_store`])
 /// overwrites it with the caller's per-request metric, so this default only
 /// surfaces for permits created by direct inherent calls (tests, migration).
-#[cfg(feature = "non-wasm")]
 const OP_META_STORE_REAP: &str = "meta_store_reap";
 
 /// Errors returned by [`MetaStore`] operations.
 ///
 /// Each variant has a stable `tonic::Code` mapping via [`MetaStoreError::code`]
-/// (non-wasm only), so callers can convert into a `MetricedError` without
+/// so callers can convert into a `MetricedError` without
 /// hand-coding the code per callsite.
 #[derive(Error, Debug)]
 pub(crate) enum MetaStoreError {
@@ -104,7 +92,6 @@ pub(crate) enum MetaStoreError {
     Invariant(String),
 }
 
-#[cfg(feature = "non-wasm")]
 impl MetaStoreError {
     /// gRPC code that best describes the failure to a remote caller.
     pub(crate) fn code(&self) -> tonic::Code {
@@ -155,20 +142,33 @@ pub struct MetaStorePermit<T> {
     /// Lightweight type used to tracking the permit, automatically dropped when the permit is dropped.
     _claim: Arc<()>,
     /// Sender to the store's reaper task, cloned from [`MetaStore::reaper_tx`] at
-    /// mint time. `Some` only when the store was built via
-    /// [`MetaStore::new_with_reaper`]. Set to `None` by [`defuse`](Self::defuse)
-    /// once the holder records an outcome, so a clean drop does not reap.
-    #[cfg(feature = "non-wasm")]
-    reaper: Option<mpsc::UnboundedSender<(RequestId, &'static str)>>,
+    /// mint time.
+    reaper: mpsc::UnboundedSender<(RequestId, &'static str)>,
+    /// An initially false flag that the permit holder must set to true via [`defuse`] after consuming the permit, so the reaper knows not to fail the entry on drop.
+    defused: bool,
     /// Operation metric reported by the reaper if this permit is dropped without
     /// recording an outcome. See [`OP_META_STORE_REAP`].
-    #[cfg(feature = "non-wasm")]
     op: &'static str,
     /// Needed to prevent permits of same `req_id` to be used in another MetaStore of different type `T`.
     _phantom: PhantomData<T>,
 }
 
 impl<T> MetaStorePermit<T> {
+    fn new(
+        req_id: RequestId,
+        claim: Arc<()>,
+        reaper: mpsc::UnboundedSender<(RequestId, &'static str)>,
+    ) -> Self {
+        Self {
+            req_id,
+            _claim: claim,
+            reaper,
+            defused: false,
+            op: OP_META_STORE_REAP,
+            _phantom: PhantomData,
+        }
+    }
+
     pub(crate) fn req_id(&self) -> &RequestId {
         &self.req_id
     }
@@ -176,35 +176,25 @@ impl<T> MetaStorePermit<T> {
     /// Disarm the drop-reaper after the holder has recorded (or is about to
     /// record) this entry's outcome, so dropping the permit does not enqueue a
     /// spurious abandonment failure. Called by every permit-consuming method.
-    /// A no-op in wasm builds, which have no reaper.
     fn defuse(&mut self) {
-        #[cfg(feature = "non-wasm")]
-        {
-            self.reaper = None;
-        }
+        self.defused = true;
     }
 }
 
 /// On drop, a permit that was never consumed (i.e. not [`defuse`](MetaStorePermit::defuse)d)
 /// asks the store's reaper to fail the now-orphaned `Pending` entry, so an
 /// abandoned request surfaces as `Done(Err)` instead of being stuck `Pending`
-/// forever. Best-effort and never panics: the send is non-blocking, and a closed
-/// channel (store shutting down) is ignored. When the store has no reaper
-/// attached, `reaper` is `None` and drop is inert — preserving the original
-/// "dropped permit leaves the entry `Pending`" behavior.
+/// forever.
 impl<T> Drop for MetaStorePermit<T> {
     fn drop(&mut self) {
-        #[cfg(feature = "non-wasm")]
-        if let Some(tx) = self.reaper.take() {
-            // Release our claim on the entry *before* notifying the reaper. The
-            // reaper decides "orphaned" via `Arc::strong_count == 1`, so our
-            // reference must already be gone when it looks; otherwise, on a
-            // multi-threaded runtime it could observe our still-live claim,
-            // judge the entry still permit-held, and skip it — leaving it stuck
-            // `Pending`. Swapping in a throwaway `Arc` drops the shared claim now.
-            drop(std::mem::replace(&mut self._claim, Arc::new(())));
-            let _ = tx.send((self.req_id, self.op));
+        if self.defused {
+            return;
         }
+        // Release our claim on the entry *before* notifying the reaper. The
+        // reaper decides "orphaned" via `Arc::strong_count == 1`, so our
+        // reference must already be gone when it looks.
+        drop(std::mem::replace(&mut self._claim, Arc::new(())));
+        let _ = self.reaper.send((self.req_id, self.op));
     }
 }
 
@@ -277,49 +267,65 @@ pub struct MetaStore<T> {
     complete_queue: Vec<RequestId>,
     /// The set of entries that has been `Deleted` (i.e. tombstoned).
     deleted_set: HashSet<RequestId>,
-    /// Sender cloned into every minted [`MetaStorePermit`]; `Some` when the store
-    /// was built via [`MetaStore::new_with_reaper`]. When `None`, dropped permits
-    /// leave their entry `Pending` (the original behavior).
-    #[cfg(feature = "non-wasm")]
-    reaper_tx: Option<mpsc::UnboundedSender<(RequestId, &'static str)>>,
+    /// Sender cloned into every minted [`MetaStorePermit`].
+    reaper_tx: mpsc::UnboundedSender<(RequestId, &'static str)>,
 }
 
 impl<T> MetaStore<T> {
+    fn inner_new(
+        capacity: usize,
+        min_cache: usize,
+        complete_queue: Vec<RequestId>,
+        storage: HashMap<RequestId, StoredEntry<T>>,
+    ) -> (Self, mpsc::UnboundedReceiver<(RequestId, &'static str)>) {
+        let (reaper_tx, reaper_rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                capacity,
+                min_cache,
+                storage,
+                complete_queue,
+                deleted_set: HashSet::new(),
+                reaper_tx,
+            },
+            reaper_rx,
+        )
+    }
     /// Creates a new MetaStore with a given capacity and minimal cache size.
     /// This should be used for decryption types, i.e. where results don't need to be persistent permanently.
     /// Concretely the MetaStore will be able to hold [capacity] of total elements,
     /// of which we can be sure that at least [min_cache] elements are kept in the cache after completion
     /// (assuming that at least [min_cache] have been completed).
     /// The cache may be larger than [min_cache], but the total capacity will be limited to [capacity]
-    pub(crate) fn new(capacity: usize, min_cache: usize) -> Self {
-        Self {
+    pub(crate) fn new(capacity: usize, min_cache: usize) -> Arc<RwLock<Self>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let (store, rx) = Self::inner_new(
             capacity,
             min_cache,
-            storage: HashMap::with_capacity(capacity),
-            complete_queue: Vec::with_capacity(min_cache),
-            deleted_set: HashSet::new(),
-            #[cfg(feature = "non-wasm")]
-            reaper_tx: None,
-        }
+            Vec::with_capacity(min_cache),
+            HashMap::with_capacity(capacity),
+        );
+        Self::spawn_reaper(store, rx)
     }
 
     /// Creates a new MetaStore with unlimited capacity and cache size.
     /// This should be used for non-decryption types of the MetaStore.
     /// That is, where we need to ensure all requests and results are persisted permanently.
-    pub(crate) fn new_unlimited() -> Self {
-        Self {
-            capacity: usize::MAX,
-            min_cache: usize::MAX,
-            storage: HashMap::new(),
-            complete_queue: Vec::new(),
-            deleted_set: HashSet::new(),
-            #[cfg(feature = "non-wasm")]
-            reaper_tx: None,
-        }
+    pub(crate) fn new_unlimited() -> Arc<RwLock<Self>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let (store, rx) = Self::inner_new(usize::MAX, usize::MAX, Vec::new(), HashMap::new());
+        Self::spawn_reaper(store, rx)
     }
 
     /// Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
-    pub(crate) fn new_from_map(map: HashMap<RequestId, T>) -> Self {
+    pub(crate) fn new_from_map(map: HashMap<RequestId, T>) -> Arc<RwLock<Self>>
+    where
+        T: Send + Sync + 'static,
+    {
         let mut completed_queue = Vec::new();
         let storage = map
             .into_iter()
@@ -328,16 +334,8 @@ impl<T> MetaStore<T> {
                 (key, StoredEntry::done(Ok(Arc::new(value))))
             })
             .collect();
-
-        Self {
-            capacity: usize::MAX,
-            min_cache: usize::MAX,
-            storage,
-            complete_queue: completed_queue,
-            deleted_set: HashSet::new(),
-            #[cfg(feature = "non-wasm")]
-            reaper_tx: None,
-        }
+        let (store, rx) = Self::inner_new(usize::MAX, usize::MAX, completed_queue, storage);
+        Self::spawn_reaper(store, rx)
     }
 
     /// Wrap an already-built `MetaStore` in its shared `Arc<RwLock<..>>` and
@@ -345,63 +343,21 @@ impl<T> MetaStore<T> {
     /// recording an outcome fails its orphaned `Pending` entry (`Done(Err)`)
     /// instead of leaving it stuck `Pending` forever (see [`reaper_loop`]).
     ///
-    /// Returns the wrapped handle rather than a bare `MetaStore` because the
-    /// reaper needs a (weak) reference to the shared store, which only exists
-    /// once wrapped — so wiring it up at construction time is the only way to
-    /// guarantee no permit is ever minted before the reaper is in place.
-    ///
     /// Must be called from within a Tokio runtime (it spawns the reaper task).
-    /// Prefer the `new_*_with_reaper` constructors, which combine building and
-    /// wrapping; this is their shared implementation.
-    #[cfg(feature = "non-wasm")]
-    fn spawn_reaper(mut store: Self) -> Arc<RwLock<Self>>
+    fn spawn_reaper(
+        store: Self,
+        rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    ) -> Arc<RwLock<Self>>
     where
         T: Send + Sync + 'static,
     {
-        let (tx, rx) = mpsc::unbounded_channel();
-        // Set the sender before sharing the store, so no lock is needed and every
-        // permit minted afterwards carries it.
-        store.reaper_tx = Some(tx);
+        // Return the wrapped handle rather than a bare `MetaStore` because the
+        // reaper needs a (weak) reference to the shared store, which only exists
+        // once wrapped — so wiring it up at construction time is the only way to
+        // guarantee no permit is ever minted before the reaper is in place.
         let store = Arc::new(RwLock::new(store));
         tokio::spawn(reaper_loop(Arc::downgrade(&store), rx));
         store
-    }
-
-    /// Like [`new`](Self::new), but returns the store already wrapped in
-    /// `Arc<RwLock<..>>` with a drop-reaper attached (see
-    /// [`spawn_reaper`](Self::spawn_reaper)). Must run within a Tokio runtime.
-    #[cfg(feature = "non-wasm")]
-    pub(crate) fn new_with_reaper(capacity: usize, min_cache: usize) -> Arc<RwLock<Self>>
-    where
-        T: Send + Sync + 'static,
-    {
-        Self::spawn_reaper(Self::new(capacity, min_cache))
-    }
-
-    /// Like [`new_unlimited`](Self::new_unlimited), but returns the store already
-    /// wrapped in `Arc<RwLock<..>>` with a drop-reaper attached. Even unlimited
-    /// (non-decryption) stores benefit: a dropped permit there would otherwise
-    /// leave a `Pending` entry that is *never* evicted, so a client polling that
-    /// id sees `Unavailable` forever. Must run within a Tokio runtime.
-    #[cfg(feature = "non-wasm")]
-    pub(crate) fn new_unlimited_with_reaper() -> Arc<RwLock<Self>>
-    where
-        T: Send + Sync + 'static,
-    {
-        Self::spawn_reaper(Self::new_unlimited())
-    }
-
-    /// Like [`new_from_map`](Self::new_from_map), but returns the store already
-    /// wrapped in `Arc<RwLock<..>>` with a drop-reaper attached. The pre-seeded
-    /// `Done(Ok)` entries are untouched by the reaper (it only fails orphaned
-    /// `Pending`); later inserts gain the abandonment safety net. Must run within
-    /// a Tokio runtime.
-    #[cfg(feature = "non-wasm")]
-    pub(crate) fn new_from_map_with_reaper(map: HashMap<RequestId, T>) -> Arc<RwLock<Self>>
-    where
-        T: Send + Sync + 'static,
-    {
-        Self::spawn_reaper(Self::new_from_map(map))
     }
 
     pub(crate) fn exists(&self, request_id: &RequestId) -> bool {
@@ -488,15 +444,7 @@ impl<T> MetaStore<T> {
             }
         }
         let claim = Arc::new(());
-        let permit = MetaStorePermit {
-            req_id: *request_id,
-            _claim: Arc::clone(&claim),
-            #[cfg(feature = "non-wasm")]
-            reaper: self.reaper_tx.clone(),
-            #[cfg(feature = "non-wasm")]
-            op: OP_META_STORE_REAP,
-            _phantom: PhantomData,
-        };
+        let permit = MetaStorePermit::new(*request_id, Arc::clone(&claim), self.reaper_tx.clone());
         self.storage
             .insert(*request_id, StoredEntry::Pending(claim));
         Ok(permit)
@@ -534,15 +482,11 @@ impl<T> MetaStore<T> {
                 }
             }
         };
-        Ok(MetaStorePermit {
-            req_id: *request_id,
-            _claim: claim,
-            #[cfg(feature = "non-wasm")]
-            reaper: self.reaper_tx.clone(),
-            #[cfg(feature = "non-wasm")]
-            op: OP_META_STORE_REAP,
-            _phantom: PhantomData,
-        })
+        Ok(MetaStorePermit::new(
+            *request_id,
+            claim,
+            self.reaper_tx.clone(),
+        ))
     }
 
     /// Sets the value of an already existing element. Consumes the permit.
@@ -729,7 +673,6 @@ impl<T> MetaStore<T> {
     /// No-op (returns `false`) for any other state: already `Done`, `Deleted`,
     /// absent, or still permit-held — the last case guards against an id that was
     /// reclaimed and reused after the abandonment message was enqueued.
-    #[cfg(feature = "non-wasm")]
     fn fail_if_orphaned(&mut self, req_id: &RequestId, reason: String) -> bool {
         let is_orphaned_pending = matches!(
             self.storage.get(req_id),
@@ -756,16 +699,7 @@ impl<T> MetaStore<T> {
     /// This is the decryption-store counterpart to a fresh [`insert`](Self::insert):
     /// a request that previously failed — including one failed by the reaper
     /// after its permit was dropped (see
-    /// [`fail_if_orphaned`](Self::fail_if_orphaned)) — can be redone without
-    /// minting a new id.
-    ///
-    /// Errors with:
-    /// - [`NotFound`](MetaStoreError::NotFound) if the entry does not exist,
-    /// - [`Locked`](MetaStoreError::Locked) if it is still in flight (`Pending`,
-    ///   or `Done` with a live permit outstanding),
-    /// - [`CannotUpdate`](MetaStoreError::CannotUpdate) if it was tombstoned
-    ///   (`Deleted`) or already succeeded (`Done(Ok)` — a good result must not be
-    ///   discarded).
+    /// [`fail_if_orphaned`](Self::fail_if_orphaned)).
     pub(crate) fn redo_failed(
         &mut self,
         req_id: &RequestId,
@@ -773,11 +707,13 @@ impl<T> MetaStore<T> {
         match self.storage.get(req_id) {
             None => return Err(MetaStoreError::NotFound { req_id: *req_id }),
             Some(StoredEntry::Deleted) => {
-                return Err(MetaStoreError::CannotUpdate { req_id: *req_id })
+                return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
             }
-            Some(StoredEntry::Pending(_)) => return Err(MetaStoreError::Locked { req_id: *req_id }),
+            Some(StoredEntry::Pending(_)) => {
+                return Err(MetaStoreError::Locked { req_id: *req_id });
+            }
             Some(StoredEntry::Done(Ok(_), _)) => {
-                return Err(MetaStoreError::CannotUpdate { req_id: *req_id })
+                return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
             }
             Some(StoredEntry::Done(Err(_), arc)) => {
                 // A failed entry can still be permit-held (reserved via
@@ -793,15 +729,7 @@ impl<T> MetaStore<T> {
         let claim = Arc::new(());
         self.storage
             .insert(*req_id, StoredEntry::Pending(Arc::clone(&claim)));
-        Ok(MetaStorePermit {
-            req_id: *req_id,
-            _claim: claim,
-            #[cfg(feature = "non-wasm")]
-            reaper: self.reaper_tx.clone(),
-            #[cfg(feature = "non-wasm")]
-            op: OP_META_STORE_REAP,
-            _phantom: PhantomData,
-        })
+        Ok(MetaStorePermit::new(*req_id, claim, self.reaper_tx.clone()))
     }
 
     /// Get the maximum capacity of this MetaStore
@@ -879,7 +807,6 @@ impl<T> MetaStore<T> {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn add_req_to_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -900,7 +827,6 @@ pub(crate) async fn add_req_to_meta_store<T>(
 /// store lock (see [`MetaStore::fail_if_orphaned`]) and records an async error
 /// metric. Exits when the store has been dropped (the [`Weak`] no longer
 /// upgrades) or when every sender — the store's and all permits' — is gone.
-#[cfg(feature = "non-wasm")]
 async fn reaper_loop<T>(
     store: Weak<RwLock<MetaStore<T>>>,
     mut rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
@@ -930,7 +856,6 @@ async fn reaper_loop<T>(
 ///
 /// Intended to be called *before* expensive setup/computation so a request for
 /// an already-known id is rejected early, without claiming a permit.
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn ensure_not_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -945,7 +870,6 @@ pub(crate) async fn ensure_not_in_meta_store<T>(
 /// Acquire a permit for an *existing* entry, acquiring & releasing the write
 /// lock internally and mapping the failure to a [`MetricedError`] for gRPC
 /// propagation. The lock-an-existing-entry analogue of [`add_req_to_meta_store`].
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn lock_entry_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -973,7 +897,6 @@ pub(crate) async fn lock_entry_in_meta_store<T>(
 /// Insert and retry happen under a single write-lock span, so the
 /// check-and-reset is atomic. Intended for the decryption request paths, where a
 /// client re-submitting an id whose prior attempt failed should be able to retry.
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn add_or_redo_failed_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -998,7 +921,6 @@ pub(crate) async fn add_or_redo_failed_in_meta_store<T>(
     Ok(permit)
 }
 
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn update_req_in_meta_store<
     T,
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
@@ -1016,7 +938,6 @@ pub(crate) async fn update_req_in_meta_store<
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn update_ok_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit<T>,
@@ -1033,7 +954,6 @@ pub(crate) async fn update_ok_req_in_meta_store<T>(
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn update_err_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit<T>,
@@ -1053,7 +973,6 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn delete_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit<T>,
@@ -1079,7 +998,6 @@ pub(crate) async fn delete_in_meta_store<T>(
 /// [`MetaStoreError`] is returned rather than being recorded here — letting
 /// fire-and-forget callers map it through `handle_unreturnable_error` with their
 /// own `ERR_ASYNC` semantics.
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn try_delete_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -1102,7 +1020,6 @@ pub(crate) async fn try_delete_in_meta_store<T>(
 /// `work` returns `(value, payload)`: `value` is stored under `req_id`;
 /// `payload` is returned to the caller (e.g. to update an out-of-store cache
 /// only after the commit succeeds).
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn with_overwriting_claim<T, R, F>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -1145,7 +1062,6 @@ where
 ///
 /// Acquires the read lock only for the duration of the snapshot, so writers are
 /// not blocked.
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn retrieve_from_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     req_id: &RequestId,
@@ -1250,7 +1166,7 @@ mod tests {
 
     #[test]
     fn sunshine() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
         assert!(!meta_store.exists(&request_id));
 
@@ -1262,7 +1178,7 @@ mod tests {
 
     #[test]
     fn test_kickout_of_errors() {
-        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id1: RequestId = derive_request_id("1").unwrap();
         let id2: RequestId = derive_request_id("2").unwrap();
         let id3: RequestId = derive_request_id("3").unwrap();
@@ -1780,7 +1696,6 @@ mod tests {
         assert_eq!(store.get_current_count(), 3);
     }
 
-    #[cfg(feature = "non-wasm")]
     #[test]
     fn error_code_mapping() {
         let id = RequestId::zeros();
@@ -1810,7 +1725,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn with_overwriting_claim_overwrites_existing() {
         let mut ms = MetaStore::<String>::new(2, 1);
@@ -1838,7 +1752,6 @@ mod tests {
         assert_eq!(store.read().await.get_completed_count(), 1);
     }
 
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn with_overwriting_claim_absent_entry_errors_without_creating() {
         let store = RwLock::new(MetaStore::<String>::new(2, 1));
@@ -1856,7 +1769,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn with_overwriting_claim_preserves_existing_on_failure() {
         let mut ms = MetaStore::<String>::new(2, 1);
@@ -1872,7 +1784,6 @@ mod tests {
         assert_eq!(store.read().await.get_completed_count(), 1);
     }
 
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn ensure_not_in_meta_store_rejects_known_ids() {
         let store = RwLock::new(MetaStore::<String>::new(4, 1));
@@ -1904,7 +1815,6 @@ mod tests {
     /// An orphaned `Pending` entry (insert permit dropped without an outcome) is
     /// transitioned to `Done(Err)` and becomes a fully-fledged completed entry:
     /// queued, counted, and listed as failed.
-    #[cfg(feature = "non-wasm")]
     #[test]
     fn fail_if_orphaned_fails_dropped_pending() {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
@@ -1920,7 +1830,6 @@ mod tests {
 
     /// While a permit is still live the entry must not be reaped: this guards an
     /// id that was reclaimed and reused after an abandonment message was enqueued.
-    #[cfg(feature = "non-wasm")]
     #[test]
     fn fail_if_orphaned_skips_live_permit() {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
@@ -1933,7 +1842,6 @@ mod tests {
     /// Reaping is a no-op for any non-orphaned-`Pending` state: an already
     /// completed entry is not overwritten, and tombstoned / absent ids are left
     /// alone.
-    #[cfg(feature = "non-wasm")]
     #[test]
     fn fail_if_orphaned_skips_done_deleted_and_missing() {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
@@ -1955,7 +1863,6 @@ mod tests {
 
     /// Poll until `id` becomes `Done(Err)` or a ~1s budget elapses, giving the
     /// background reaper task time to run.
-    #[cfg(feature = "non-wasm")]
     async fn wait_for_done_err(store: &Arc<RwLock<MetaStore<String>>>, id: &RequestId) -> bool {
         for _ in 0..200 {
             if let Some(EntryState::Done(Err(_))) = store.read().await.retrieve(id) {
@@ -1968,7 +1875,6 @@ mod tests {
 
     /// End-to-end: with a reaper attached, dropping a permit without recording an
     /// outcome causes the orphaned entry to be failed asynchronously.
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn reaper_fails_orphaned_permit_on_drop() {
         let store = MetaStore::<String>::new_with_reaper(4, 1);
@@ -1985,7 +1891,6 @@ mod tests {
 
     /// A permit consumed normally is defused, so its drop must not reap: the
     /// recorded result survives.
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn reaper_leaves_completed_request_untouched() {
         let store = MetaStore::<String>::new_with_reaper(4, 1);
@@ -2007,7 +1912,6 @@ mod tests {
 
     /// An unlimited store built with a reaper still fails orphaned entries on
     /// drop — the case where it matters most, since unlimited stores never evict.
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn unlimited_with_reaper_fails_orphaned_on_drop() {
         let store = MetaStore::<String>::new_unlimited_with_reaper();
@@ -2022,7 +1926,6 @@ mod tests {
 
     /// A from-map store built with a reaper keeps its pre-seeded `Done(Ok)`
     /// entries and still reaps newly-orphaned ones.
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn from_map_with_reaper_preserves_seed_and_reaps_new() {
         let seeded = derive_request_id("seeded").unwrap();
@@ -2044,7 +1947,6 @@ mod tests {
 
     /// A failed entry can be reset to `Pending` via `redo_failed` and retried
     /// under the same id, then completed successfully.
-    #[cfg(feature = "non-wasm")]
     #[test]
     fn redo_failed_resets_and_allows_retry() {
         let mut store: MetaStore<String> = MetaStore::new(2, 1);
@@ -2067,7 +1969,6 @@ mod tests {
 
     /// `redo_failed` refuses to discard a successful result and rejects
     /// in-flight, tombstoned, and absent ids.
-    #[cfg(feature = "non-wasm")]
     #[test]
     fn redo_failed_rejects_non_failed_states() {
         let mut store: MetaStore<String> = MetaStore::new(3, 1);
@@ -2108,7 +2009,6 @@ mod tests {
     /// `add_or_redo_failed_in_meta_store`: a first request inserts fresh; after it
     /// fails, re-submitting the same id retries it and the permit completes it;
     /// once it has succeeded, re-submitting is rejected with `AlreadyExists`.
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn add_or_redo_failed_in_meta_store_lifecycle() {
         let store = RwLock::new(MetaStore::<String>::new(2, 1));
@@ -2140,7 +2040,6 @@ mod tests {
     /// `add_or_redo_failed_in_meta_store` rejects re-submission of an in-flight
     /// (`Pending`) id with `AlreadyExists`, preserving `add_req_to_meta_store`'s
     /// behavior for non-failed states.
-    #[cfg(feature = "non-wasm")]
     #[tokio::test]
     async fn add_or_redo_failed_in_meta_store_rejects_in_flight() {
         let store = RwLock::new(MetaStore::<String>::new(2, 1));
