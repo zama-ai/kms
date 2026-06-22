@@ -1507,14 +1507,7 @@ impl DkgParamsAvailable {
 pub const BC_PARAMS_SNS: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
-    meta: MetaParameters {
-        backend: Backend::Cpu,
-        compute_parameters: AtomicPatternParameters::Standard(PBSParameters::PBS(tfhe::shortint::parameters::current_params::V1_6_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)),
-        dedicated_compact_public_key_parameters: Some(DedicatedCompactPublicKeyParameters { pke_params: tfhe::shortint::parameters::current_params::V1_6_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128, ksk_params:  tfhe::shortint::parameters::current_params::V1_6_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128, re_randomization_parameters: Some(tfhe::shortint::parameters::current_params::V1_6_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128) }),
-        compression_parameters: Some(tfhe::shortint::parameters::current_params::V1_6_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
-        noise_squashing_parameters: Some(MetaNoiseSquashingParameters{ parameters: tfhe::shortint::parameters::current_params::V1_6_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128, compression_parameters: Some(tfhe::shortint::parameters::current_params::V1_6_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128) }),
-        rerand_configuration: Some(tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch),
-    },
+    meta: tfhe::shortint::parameters::v1_6::meta::cpu::V1_6_META_PARAM_CPU_2_2_KS_PBS_PKE_TO_SMALL_ZKV2_TUNIFORM_2M128,
     secret_key_deviations: None,
 };
 
@@ -1643,11 +1636,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
                 ks_base_log: DecompositionBaseLog(37),
                 destination_key: EncryptionKeyChoice::Small,
             },
-            re_randomization_parameters: Some(ShortintKeySwitchingParameters {
-                ks_level: DecompositionLevelCount(1),
-                ks_base_log: DecompositionBaseLog(17),
-                destination_key: EncryptionKeyChoice::Big,
-            }),
+            re_randomization_parameters: None,
         }),
         compression_parameters: Some(CompressionParameters::Classic(ClassicCompressionParameters {
             br_level: DecompositionLevelCount(1),
@@ -1693,30 +1682,11 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
             }),
         }),
         rerand_configuration: Some(
-            tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch,
+            tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
         ),
     },
     secret_key_deviations: None,
 };
-
-/// Derived-rerand test parameters: [`PARAMS_TEST_BK_SNS`] with re-randomization
-/// switched from the legacy dedicated-CPK-plus-KSK mode to the derived
-/// (`DerivedCompactPublicKeyWithoutKeySwitch`) mode. The compute parameters are
-/// already KS_PBS / `Big`-key with `glwe_sk_num_bits == 1 * 256 == 256` (a power
-/// of two), so they satisfy the derived-mode invariants enforced by
-/// [`DKGParams::check_conformance`] and `MetaParameters::is_valid`. Test/bench
-/// only — deliberately not reachable over the gRPC `FheParameter` enum.
-#[cfg(any(test, feature = "testing"))]
-pub static PARAMS_TEST_BK_SNS_DERIVED_RERAND: LazyLock<DKGParams> = LazyLock::new(|| {
-    let mut params = PARAMS_TEST_BK_SNS;
-    // Derived mode forbids a rerand KSK on the dedicated (encryption) CPK.
-    if let Some(cpk) = params.meta.dedicated_compact_public_key_parameters.as_mut() {
-        cpk.re_randomization_parameters = None;
-    }
-    params.meta.rerand_configuration =
-        Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch);
-    params
-});
 
 /// Benchmark-only parameters: not reachable over the gRPC `FheParameter` enum (used by the experiments CLI and tests).
 pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams {
@@ -1977,7 +1947,7 @@ mod tests {
     /// the small (PBS_KS) key is rejected.
     #[test]
     fn check_conformance_derived_rerand() {
-        let p = *PARAMS_TEST_BK_SNS_DERIVED_RERAND;
+        let p = PARAMS_TEST_BK_SNS;
 
         p.check_conformance()
             .expect("derived-rerand test params should be conformant");

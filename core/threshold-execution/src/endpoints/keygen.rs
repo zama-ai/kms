@@ -1031,7 +1031,6 @@ pub mod tests {
                 BC_PARAMS_NO_SNS, DKGParams, NIST_PARAMS_P8_NO_SNS_FGLWE,
                 NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_FGLWE,
                 NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, PARAMS_TEST_BK_SNS,
-                PARAMS_TEST_BK_SNS_DERIVED_RERAND,
             },
             test_feature::to_hl_client_key,
             utils::tests::reconstruct_glwe_secret_key_from_file,
@@ -1345,28 +1344,6 @@ pub mod tests {
         .await
     }
 
-    /// Derived-CPK re-randomization on the test params: runs the DKG, assembles
-    /// the server key (exercising the `DerivedCPKWithoutKeySwitch` branch of
-    /// `public_keysets.rs`), and round-trips re-randomization (`run_rerand`)
-    /// against the derived CPK embedded in the server key.
-    #[tokio::test]
-    async fn keygen_params_test_bk_sns_derived_rerand_f4() {
-        run_keygen_test::<4>(
-            *PARAMS_TEST_BK_SNS_DERIVED_RERAND,
-            5,
-            1,
-            KeygenTestConfig {
-                run_switch_and_squash: true,
-                run_shortint_with_compact: true,
-                run_fheuint: true,
-                run_fheuint_with_compression: true,
-                run_rerand: true,
-                run_compressed: false,
-            },
-        )
-        .await
-    }
-
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore] // Ignored because we run the same test for degree 4 extension
@@ -1440,64 +1417,6 @@ pub mod tests {
             threshold,
             true,
             false,
-        );
-
-        run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
-    }
-
-    /// Real-preprocessing DKG on the derived-rerand test params.
-    /// `run_real_dkg_and_save` asserts the DKG drains its preprocessing to zero,
-    /// which guards the Phase-2 budget for the derived rerand compact public key
-    /// (the budget must match exactly what keygen consumes). `run_rerand: true`
-    /// then round-trips re-randomization against the derived CPK.
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test]
-    async fn integration_keygen_params_test_bk_sns_derived_rerand_f4() {
-        const EXTENSION_DEGREE: usize = 4;
-        let params = *PARAMS_TEST_BK_SNS_DERIVED_RERAND;
-        let num_parties = 4;
-        let threshold = 1;
-        let temp_dir = tempfile::tempdir().unwrap();
-        let tag = {
-            let mut tag = tfhe::Tag::default();
-            tag.set_data("hello tag".as_bytes());
-            tag
-        };
-
-        run_real_dkg_and_save::<EXTENSION_DEGREE>(
-            params,
-            tag.clone(),
-            num_parties,
-            threshold,
-            temp_dir.path(),
-            KeySetConfig::default(),
-            true,
-        )
-        .await;
-
-        run_switch_and_squash::<EXTENSION_DEGREE>(
-            temp_dir.path(),
-            params,
-            tag.clone(),
-            num_parties,
-            threshold,
-        );
-
-        run_tfhe_computation_shortint::<EXTENSION_DEGREE>(
-            temp_dir.path(),
-            params,
-            num_parties,
-            threshold,
-            true,
-        );
-
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
-            temp_dir.path(),
-            params,
-            num_parties,
-            threshold,
-            true,
-            true,
         );
 
         run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
