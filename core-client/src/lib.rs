@@ -855,8 +855,8 @@ pub struct PublicDecryptResultParameters {
     pub request_id: RequestId,
     /// External ciphertext handle(s) (hex-encoded) from the original request, used to
     /// verify the external signature. Repeat the flag once per ciphertext in the batch.
-    /// When omitted, the result is fetched but NOT verified (an error is logged), since
-    /// handles are request-specific and cannot be defaulted from the config.
+    /// Required unless `--no-verify` is set: handles are request-specific and cannot be
+    /// defaulted from the config, so the command fails when they are omitted.
     /// Can optionally have a "0x" prefix.
     #[clap(long = "handle")]
     pub external_handles: Vec<String>,
@@ -870,7 +870,8 @@ pub struct PublicDecryptResultParameters {
     /// must match the epoch of the original request or verification fails.
     #[clap(long)]
     pub epoch_id: Option<EpochId>,
-    /// Skip verification of the external signature and just return the fetched responses.
+    /// Skip all verification of the fetched responses — both the internal KMS-node
+    /// signatures and the external signature — and just return them.
     #[clap(long, default_value_t = false)]
     pub no_verify: bool,
 }
@@ -2352,20 +2353,23 @@ pub async fn execute_cmd(
 
             // External-signature verification requires the request's EIP-712 domain
             // (from config) plus the per-request ciphertext handles (from `--handle`).
-            // Without `--handle`, or with `--no-verify`, we fetch without verifying.
+            // Verification is mandatory: we only skip it when `--no-verify` is set,
+            // and otherwise fail rather than returning unverified plaintexts.
             let verification = if result_parameters.no_verify {
                 tracing::error!(
                     "--no-verify set: fetching public decryption result WITHOUT verification"
                 );
                 None
-            } else if result_parameters.external_handles.is_empty() {
-                tracing::error!(
-                    "no --handle provided: fetching public decryption result WITHOUT \
-                     verification (ciphertext handles are required to verify the external \
-                     signature)"
-                );
-                None
             } else {
+                if result_parameters.external_handles.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no --handle provided: ciphertext handles are required to verify the \
+                         external signature of a public decryption result. Pass --handle once \
+                         per ciphertext in the batch, or pass --no-verify to fetch without \
+                         verification."
+                    )
+                    .into());
+                }
                 let external_handles = result_parameters
                     .external_handles
                     .iter()

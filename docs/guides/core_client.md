@@ -584,10 +584,10 @@ $ cargo run -- -f <path-to-toml-config-file> public-decrypt-result --request-id 
 ```
 
 Optional arguments:
- - `--handle <HANDLE>`: External ciphertext handle (hex-encoded, optionally with a "0x" prefix) from the original request, used to verify the external signature. Repeat the flag once per ciphertext in the batch. When omitted, the result is fetched but NOT verified (an error is logged), since handles are request-specific and cannot be defaulted from the config.
+ - `--handle <HANDLE>`: External ciphertext handle (hex-encoded, optionally with a "0x" prefix) from the original request, used to verify the external signature. Repeat the flag once per ciphertext in the batch. Required unless `--no-verify` is set, since handles are request-specific and cannot be defaulted from the config; the command fails when they are omitted.
  - `--context-id <CONTEXT_ID>`: Context ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default context when omitted; must match the context of the original request or verification fails.
  - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
- - `--no-verify`: Skip verification of the external signature and just return the fetched responses.
+ - `--no-verify`: Skip all verification of the fetched responses (both the internal KMS-node signatures and the external signature) and just return them.
 
 Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<PublicDecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
 
