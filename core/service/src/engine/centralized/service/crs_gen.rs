@@ -72,12 +72,6 @@ pub async fn crs_gen_impl<
         ));
     }
 
-    // check that the request ID is not used yet
-    // and then insert the request ID only if it's unused
-    // all validation must be done before inserting the request ID.
-    let meta_permit =
-        add_req_to_meta_store(&service.crs_meta_map, &verified.req_id, op_tag).await?;
-
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
     let sk = service
@@ -91,7 +85,11 @@ pub async fn crs_gen_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
-
+    // check that the request ID is not used yet
+    // and then insert the request ID only if it's unused
+    // all validation must be done before inserting the request ID.
+    let meta_permit =
+        add_req_to_meta_store(&service.crs_meta_map, &verified.req_id, op_tag).await?;
     let rng = service.base_kms.new_rng().await;
 
     let req_id = verified.req_id;

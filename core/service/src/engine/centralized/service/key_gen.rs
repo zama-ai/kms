@@ -286,7 +286,7 @@ pub async fn get_key_gen_result_impl<
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
     let key_gen_res = retrieve_from_meta_store(&service.key_meta_map, &request_id, op_tag).await?;
-    match (*key_gen_res).clone() {
+    match key_gen_res.as_ref() {
         KeyGenMetadata::Current(res) => {
             if request_id != res.key_id {
                 return Err(MetricedError::new(
@@ -302,11 +302,11 @@ pub async fn get_key_gen_result_impl<
             }
             let key_digests = res
                 .key_digest_map
-                .into_iter()
+                .iter()
                 .sorted_by_key(|x| x.0)
                 .map(|(key, digest)| KeyDigest {
                     key_type: key.to_string(),
-                    digest,
+                    digest: digest.clone(),
                 })
                 .collect::<Vec<_>>();
 
@@ -314,7 +314,7 @@ pub async fn get_key_gen_result_impl<
                 request_id: Some(request_id.into()),
                 preprocessing_id: Some(res.preprocessing_id.into()),
                 key_digests,
-                external_signature: res.external_signature,
+                external_signature: res.external_signature.clone(),
             }))
         }
         KeyGenMetadata::LegacyV0(_res) => {
