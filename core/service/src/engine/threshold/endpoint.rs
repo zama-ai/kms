@@ -240,8 +240,9 @@ impl_endpoint! {
 
             // Validate the whole request before mutating anything: a request with valid epoch_ids
             // but a missing/malformed context_id must not erase epochs and only then fail context
-            // parsing. We validate by reference so the original request can be forwarded to the
-            // context manager unchanged.
+            // parsing.
+            //
+            // Note: we extract the inner message and later re-wrap it in `Request::new(inner)`.
             let proto_context_id = inner
                 .context_id
                 .as_ref()
