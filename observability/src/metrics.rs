@@ -8,12 +8,11 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// Label keys for the duration histogram (must match all tag keys used by callers).
-/// The first key (`operation_type`) holds the operation name (e.g. OP_KEYGEN_REQUEST). It is named
-/// `operation_type` rather than `operation` for backward compatibility: this is the label existing
-/// Grafana dashboards and alerts query, so it must not be renamed. The `*_operations_total` counters
-/// and the payload-size histogram use `operation` for the same value — a historical naming
-/// difference that is kept on purpose (see `metrics.md`).
+/// Label keys for the duration histogram; every tag key a caller may set must appear here.
+/// `operation_type` (index 0) carries the operation name (e.g. OP_KEYGEN_REQUEST). The
+/// `*_operations_total`/`*_operation_errors_total` counters and the payload-size histogram expose the
+/// operation name under `operation` instead. Both label names are part of the metrics' external
+/// contract that dashboards and alerts query, and are intentionally kept distinct; see `metrics.md`.
 const DURATION_LABEL_KEYS: &[&str] = &[
     TAG_OPERATION_TYPE,
     TAG_PARTY_ID,
@@ -960,8 +959,8 @@ mod tests {
             .iter()
             .find(|metric| {
                 metric.get_label().iter().any(|label| {
-                    // Locate the seeded sample by its operation name, which lives under the
-                    // `operation_type` label (kept for backward compatibility with dashboards).
+                    // Locate the seeded sample by its operation name, which the duration histogram
+                    // exposes under the `operation_type` label.
                     label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
                 })
             })

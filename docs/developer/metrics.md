@@ -145,11 +145,10 @@ Track the distribution of values:
   from other paths whenever a payload size is worth tracking.
 
 > **Label naming — `operation` vs `operation_type`.** The counters (`*_operations_total`,
-> `*_operation_errors_total`) and `kms_payload_size_bytes` carry the operation name under the
-> `operation` label, while the **duration** histogram carries it under `operation_type`. This
-> difference is historical: `operation_type` is what existing Grafana dashboards and alerts already
-> query, so it is deliberately **not** renamed (doing so would break observability for every KMS
-> party). Treat the two as equivalent "operation name" keys for their respective metrics.
+> `*_operation_errors_total`) and `kms_payload_size_bytes` expose the operation name under the
+> `operation` label; the **duration** histogram exposes it under `operation_type`. Both label names
+> are part of the metrics' external contract that dashboards and alerts query, and are intentionally
+> kept distinct. Treat them as equivalent "operation name" keys for their respective metrics.
 
 Both histograms use **explicit buckets** tuned to KMS workloads (`kms_operation_duration_ms`: 1 ms →
 5 min; `kms_payload_size_bytes`: 1 KiB → 64 GiB). Prometheus' default buckets top out at ~10 (tuned for
@@ -338,8 +337,7 @@ server logs them at startup so operators can confirm how a deployment is tagged.
 - Keep tag keys short and consistent
 - Common tags from `metrics_names`:
   - `operation`: the operation name (gRPC method) — label on the counters and the payload-size histogram
-  - `operation_type`: the operation name on the **duration** histogram (named `operation_type` for
-    backward compatibility — see the note under "Histograms")
+  - `operation_type`: the operation name on the **duration** histogram (see the note under "Histograms")
   - `error`: standardized error type
   - `party_id`: identifies the MPC party
 - Avoid introducing new tag keys without adding them to `metrics_names`.
