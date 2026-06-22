@@ -28,7 +28,7 @@ use tfhe::FheTypes;
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
         SecureOnlineNoiseFloodDecryption, SmallOfflineNoiseFloodSession,
         decrypt_using_noiseflooding, secure_decrypt_using_bitdec,
     },
@@ -80,9 +80,7 @@ pub trait NoiseFloodDecryptor: Send + Sync {
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
@@ -102,9 +100,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
@@ -117,7 +113,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
             Self::Prep,
             SecureOnlineNoiseFloodDecryption,
             T,
-        >(noiseflood_session, server_key, ck, ct, secret_key_share)
+        >(noiseflood_session, ct, secret_key_share)
         .await
     }
 }
@@ -182,7 +178,13 @@ impl<
         );
 
         let keys = fhe_keys;
-        let decomp_key = keys.decompression_key();
+        // Only the SmallCompressed format needs the decompression key to deserialize.
+        // Fetching it would lazily decompress the (multi-GiB) keyset, so avoid it for
+        // the Big*/SmallExpanded formats that don't use it.
+        let decomp_key = match ct_format {
+            CiphertextFormat::SmallCompressed => keys.decompression_key(),
+            _ => None,
+        };
         let low_level_ct = spawn_compute_bound(move || {
             deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
         })
@@ -200,14 +202,15 @@ impl<
                     })?;
                 let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
 
-                Dec::decrypt(
-                    &mut noiseflood_session,
-                    keys.integer_server_key(),
-                    keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?,
-                    low_level_ct,
-                    keys.private_keys.clone(),
-                )
-                .await
+                // Only `Small` ciphertexts need switch&squash; the closure (and hence the
+                // lazy key decompression it triggers) does not run for the Big* variants.
+                let ct = low_level_ct.with_sns_keys(|| {
+                    let server_key = keys.integer_server_key();
+                    let ck = keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?;
+                    Ok((server_key, ck))
+                })?;
+
+                Dec::decrypt(&mut noiseflood_session, ct, keys.private_keys.clone()).await
             }
             DecryptionMode::BitDecSmall => {
                 let mut session = session_maker
@@ -741,9 +744,7 @@ mod tests {
 
         async fn decrypt<T>(
             noiseflood_session: &mut Self::Prep,
-            _server_key: Arc<tfhe::integer::ServerKey>,
-            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-            _ct: LowLevelCiphertext,
+            _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
         ) -> anyhow::Result<(HashMap<String, T>, Duration)>
         where

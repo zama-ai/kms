@@ -123,6 +123,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
 
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
+    let mut durations_to_get_responses = Vec::new();
 
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let start = tokio::time::Instant::now();
@@ -146,7 +147,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
         let domain = domain.clone();
 
         // start timing measurement for this request
-        timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
+        let request_start = tokio::time::Instant::now();
+        timings_start.insert(req_id, request_start); // start timing for this request
 
         join_set.spawn(async move {
             // DECRYPTION REQUEST
@@ -202,7 +204,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 start.elapsed()
             );
 
-            let resp_response_vec = get_public_decrypt_responses(
+            let (resp_response_vec, time_to_get_responses) = get_public_decrypt_responses(
                 &core_endpoints_resp,
                 Some(PubDecVerificationMaterial::Request(dec_req)),
                 Some(ptxt),
@@ -211,29 +213,35 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 num_expected_responses,
                 &*internal_client.read().await,
                 &kms_addrs,
-                start,
+                request_start,
             )
             .await?;
 
             let res = format!("{resp_response_vec:x?}");
-            Ok((req_id, res))
+            Ok((req_id, res, time_to_get_responses))
         });
     }
 
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        let (req_id, resp_msg) = result??;
+        let (req_id, resp_msg, time_to_get_responses) = result??;
         let elapsed = timings_start
             .remove(&req_id)
             .unwrap_or_else(|| {
                 panic!("programmer error, req_id {req_id} should have been inserted to timing map")
             })
             .elapsed();
+        durations_to_get_responses.push(time_to_get_responses);
         durations.push(elapsed);
         result_vec.push((Some(req_id), resp_msg));
     }
 
-    print_timings("public decrypt", &mut durations, start);
+    print_timings(
+        "public decrypt",
+        &durations,
+        &durations_to_get_responses,
+        start,
+    );
 
     Ok(result_vec)
 }
@@ -265,6 +273,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
+    let mut durations_to_get_responses = Vec::new();
     let start = tokio::time::Instant::now();
 
     for i in 0..num_requests {
@@ -286,7 +295,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         let domain = domain.clone();
 
         // start timing measurement for this request
-        timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
+        let request_start = tokio::time::Instant::now();
+        timings_start.insert(req_id, request_start); // start timing for this request
 
         // USER_DECRYPTION REQUEST
         join_set.spawn(async move {
@@ -352,11 +362,6 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 let req_id_clone = user_decrypt_req.request_id.as_ref().ok_or_else(|| anyhow::anyhow!("request_id not set in user decrypt request"))?.clone();
 
                 resp_tasks.spawn(async move {
-                    // Sleep to give the server some time to complete decryption
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                    ))
-                    .await;
 
                     let mut response = cur_client
                         .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
@@ -416,11 +421,13 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 );
             }
 
+            let time_to_get_responses = request_start.elapsed();
+
             tracing::info!(
-                "{:?} ###! Received {} user decrypt responses. Since start {:?}",
+                "{:?} ###! Received {} user decrypt responses. Since request start {:?}",
                 req_id.as_str(),
                 resp_response_vec.len(),
-                start.elapsed()
+                time_to_get_responses
             );
 
             let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
@@ -473,12 +480,12 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 start.elapsed()
             );
 
-            Ok((req_id, res))
+            Ok((req_id, res, time_to_get_responses))
         });
     }
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        let (req_id, resp_msg) = result??;
+        let (req_id, resp_msg, time_to_get_responses) = result??;
         let elapsed = timings_start
             .remove(&req_id)
             .unwrap_or_else(|| {
@@ -486,10 +493,16 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
             })
             .elapsed();
         durations.push(elapsed);
+        durations_to_get_responses.push(time_to_get_responses);
         result_vec.push((Some(req_id), resp_msg));
     }
 
-    print_timings("user decrypt", &mut durations, start);
+    print_timings(
+        "user decrypt",
+        &durations,
+        &durations_to_get_responses,
+        start,
+    );
 
     Ok(result_vec)
 }
@@ -529,7 +542,7 @@ pub(crate) async fn get_public_decrypt_responses(
     internal_client: &Client,
     kms_addrs: &[alloy_primitives::Address],
     start: tokio::time::Instant,
-) -> anyhow::Result<Vec<PublicDecryptionResponse>> {
+) -> anyhow::Result<(Vec<PublicDecryptionResponse>, tokio::time::Duration)> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
@@ -538,12 +551,6 @@ pub(crate) async fn get_public_decrypt_responses(
         let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-            ))
-            .await;
-
             let mut response = cur_client
                 .get_public_decryption_result(tonic::Request::new(request_id.into()))
                 .await;
@@ -600,11 +607,12 @@ pub(crate) async fn get_public_decrypt_responses(
         );
     }
 
+    let time_to_get_responses = start.elapsed();
     tracing::info!(
         "{:?} ###! Received {} public decrypt responses. Since start {:?}",
         request_id.as_str(),
         resp_response_vec.len(),
-        start.elapsed()
+        time_to_get_responses
     );
 
     resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
@@ -698,5 +706,5 @@ pub(crate) async fn get_public_decrypt_responses(
         }
     }
 
-    Ok(resp_response_vec)
+    Ok((resp_response_vec, time_to_get_responses))
 }
