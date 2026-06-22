@@ -185,8 +185,9 @@ schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintaine
 serde = { version = "1.0.228", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
 serde_json = "=1.0.150"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
-sha2 = "=0.10.9"  # SHA-2 hash functions - LOW RISK: RustCrypto org, 100M+ downloads
-sha3 = "=0.10.9"  # SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downloads
+sha2 = "=0.11.0"  # SHA-2 hash functions - LOW RISK: RustCrypto org, 100M+ downloads
+sha3 = "=0.12.0"  # SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downloads
+shake = "=0.1.0"  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads
 signature = "=2.2.0"  # Digital signature traits - LOW RISK: RustCrypto org, 50M+ downloads
 statrs = "=0.18.0"  # Statistical functions - LOW RISK: starts-dev team
 strum = "=0.27.1"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
