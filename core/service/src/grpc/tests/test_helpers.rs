@@ -6,8 +6,6 @@ use crate::grpc::metastore_status_service::MetaStoreStatusServiceImpl;
 use crate::util::meta_store::MetaStore;
 use kms_grpc::RequestId;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Creates a test service with all stores available and configured with standard test capacities
 pub fn create_test_service() -> MetaStoreStatusServiceImpl {
