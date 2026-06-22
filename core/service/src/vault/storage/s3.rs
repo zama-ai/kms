@@ -149,7 +149,11 @@ impl S3Storage {
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
+        let size = buf.len() as f64;
         s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
+
+        // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
 
         Ok(())
     }
@@ -802,7 +806,7 @@ mod tests {
     use crate::vault::storage::tests::{
         test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
         test_store_bytes_does_not_overwrite_existing_bytes,
-        test_store_data_does_not_overwrite_existing_data,
+        test_store_data_does_not_overwrite_existing_data, test_store_data_records_payload_size,
     };
 
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
@@ -825,6 +829,7 @@ mod tests {
             create_s3_storage(StorageType::PUB, std::stringify!(s3_storage_helper_methods)).await;
         test_storage_read_store_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
+        test_store_data_records_payload_size(&mut pub_storage).await;
     }
 
     #[tokio::test]

@@ -382,7 +382,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.priv_storage,
         &SIGNING_KEY_ID,
         args.deterministic,
-        args.signing_key_party_id.get(),
+        args.signing_key_party_id,
         args.tls_subject.clone(),
         args.tls_wildcard,
     )
