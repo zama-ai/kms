@@ -1471,7 +1471,7 @@ pub mod tests {
             threshold,
             temp_dir.path(),
             KeySetConfig::default(),
-            false,
+            true,
         )
         .await;
 

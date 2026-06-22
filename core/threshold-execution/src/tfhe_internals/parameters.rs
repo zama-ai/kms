@@ -467,9 +467,9 @@ impl DKGParams {
         // key, no KSK) configurations. `MetaParameters::is_valid` (checked above)
         // already enforces the structural invariants of each mode — in
         // particular, in derived mode any dedicated *encryption* CPK must carry no
-        // rerand KSK (`re_randomization_parameters: None`). Here we add the
-        // also enforce that derived mode requires KS_PBS / Big-key
-        // compute parameters: the derived rerand CPK reuses the compute large key,
+        // rerand KSK (`re_randomization_parameters: None`). Here we also enforce
+        // that derived mode requires KS_PBS / Big-key compute parameters: the
+        // derived rerand CPK reuses the compute large key,
         // so encryption must be under the large (`Big`) key.
         if let Some(rerand) = self.meta.rerand_configuration.as_ref() {
             match rerand {
