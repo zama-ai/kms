@@ -1299,10 +1299,17 @@ async fn integration_test_commands(
                     no_verify: false,
                 })
             }
-            CCCommand::PublicDecrypt(_) => {
+            CCCommand::PublicDecrypt(ref cipher_args) => {
+                // Reconstruct the same distinct per-ciphertext handles the request builder
+                // used (`integration_test_handles`), so the external-signature verification
+                // path runs instead of the unverified fetch.
+                let external_handles = integration_test_handles(cipher_args.get_batch_size())
+                    .iter()
+                    .map(hex::encode)
+                    .collect();
                 CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
                     request_id: req_id.unwrap(),
-                    external_handles: vec![],
+                    external_handles,
                     context_id: None,
                     epoch_id: None,
                     no_verify: false,
@@ -1412,10 +1419,17 @@ async fn integration_test_commands_default_keys(
         let req_id = results[0].0;
 
         let get_res_command = match command {
-            CCCommand::PublicDecrypt(_) => {
+            CCCommand::PublicDecrypt(ref cipher_args) => {
+                // Reconstruct the same distinct per-ciphertext handles the request builder
+                // used (`integration_test_handles`), so the external-signature verification
+                // path runs instead of the unverified fetch.
+                let external_handles = integration_test_handles(cipher_args.get_batch_size())
+                    .iter()
+                    .map(hex::encode)
+                    .collect();
                 CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
                     request_id: req_id.unwrap(),
-                    external_handles: vec![],
+                    external_handles,
                     context_id: None,
                     epoch_id: None,
                     no_verify: false,

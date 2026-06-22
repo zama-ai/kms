@@ -132,14 +132,24 @@ pub struct Eip712DomainConfig {
 impl Eip712DomainConfig {
     /// Build an [`alloy_sol_types::Eip712Domain`] from the configured fields.
     pub fn to_domain(&self) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
-        let verifying_contract =
-            alloy_primitives::Address::from_str(self.verifying_contract.trim_start_matches("0x"))
-                .map_err(|e| {
-                anyhow::anyhow!(
-                    "invalid verifying_contract '{}' in default_domain: {e}",
-                    self.verifying_contract
-                )
-            })?;
+        // Accept the address with or without a `0x`/`0X` prefix by going through
+        // `parse_hex` (as `salt` does below); `Address::from_str` only strips a lowercase
+        // `0x`, so a `0X`-prefixed address would otherwise be rejected.
+        let verifying_contract_bytes = parse_hex(&self.verifying_contract).map_err(|e| {
+            anyhow::anyhow!(
+                "invalid verifying_contract '{}' in default_domain: {e}",
+                self.verifying_contract
+            )
+        })?;
+        let verifying_contract = alloy_primitives::Address::try_from(
+            verifying_contract_bytes.as_slice(),
+        )
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "invalid verifying_contract '{}' in default_domain: must be exactly 20 bytes",
+                self.verifying_contract
+            )
+        })?;
         let salt = match &self.salt {
             Some(s) => {
                 let bytes = parse_hex(s)?;
@@ -1098,6 +1108,22 @@ fn dummy_handle() -> Vec<u8> {
     vec![23_u8; 32]
 }
 
+/// Distinct placeholder ciphertext handles for a public-decryption batch — one entry per
+/// ciphertext. The handles within a batch must differ because a handle identifies a
+/// specific ciphertext/plaintext. Shared by the request builder and the integration tests
+/// so both agree on the exact handle list the external signature is computed over.
+pub fn integration_test_handles(count: usize) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|i| {
+            // 32-byte placeholder, made unique by encoding the batch index into the
+            // leading bytes (kept <= 32 bytes, as required by the signing-message builder).
+            let mut handle = dummy_handle();
+            handle[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            handle
+        })
+        .collect()
+}
+
 /// Derive the `extra_data` payload from an optional context/epoch, falling back to
 /// [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`] when not supplied. This is the single
 /// source of truth for how the core-client builds `extra_data` (RFC-005 v2), used both
@@ -1875,15 +1901,20 @@ pub async fn execute_cmd(
                 }
             };
 
-            let ct_batch = vec![
-                TypedCiphertext {
-                    ciphertext,
-                    fhe_type: ptxt.fhe_type,
-                    external_handle: dummy_handle(),
-                    ciphertext_format: ct_format.into(),
-                };
-                cipher_args.get_batch_size()
-            ];
+            // Build one ciphertext per batch entry, each with a *distinct* external handle
+            // (a handle identifies a specific ciphertext/plaintext, so they must differ).
+            let fhe_type = ptxt.fhe_type;
+            let ciphertext_format: i32 = ct_format.into();
+            let ct_batch: Vec<TypedCiphertext> =
+                integration_test_handles(cipher_args.get_batch_size())
+                    .into_iter()
+                    .map(|external_handle| TypedCiphertext {
+                        ciphertext: ciphertext.clone(),
+                        fhe_type,
+                        external_handle,
+                        ciphertext_format,
+                    })
+                    .collect();
 
             do_public_decrypt(
                 &mut rng,
