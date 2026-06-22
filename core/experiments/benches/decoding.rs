@@ -71,7 +71,7 @@ fn bench_decode_z128(c: &mut Criterion) {
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+                let f_zero = sharing.error_reconstruct(threshold, max_err).unwrap();
                 assert_eq!(f_zero, secret);
             });
         });
@@ -94,7 +94,7 @@ fn bench_decode_z64(c: &mut Criterion) {
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+                let f_zero = sharing.error_reconstruct(threshold, max_err).unwrap();
                 assert_eq!(f_zero, secret);
             });
         });
@@ -141,14 +141,18 @@ fn bench_decode_par_z64(c: &mut Criterion) {
                         None => {
                             sharings
                                 .iter()
-                                .map(|sharing| sharing.err_reconstruct(threshold, max_err).unwrap())
+                                .map(|sharing| {
+                                    sharing.error_reconstruct(threshold, max_err).unwrap()
+                                })
                                 .collect_vec();
                         }
                         Some(chunk_size) => {
                             sharings
                                 .par_iter()
                                 .with_min_len(chunk_size)
-                                .map(|sharing| sharing.err_reconstruct(threshold, max_err).unwrap())
+                                .map(|sharing| {
+                                    sharing.error_reconstruct(threshold, max_err).unwrap()
+                                })
                                 .collect_into_vec(&mut f_zero);
                         }
                     }
@@ -173,7 +177,7 @@ fn bench_decode_large_field(c: &mut Criterion) {
             let secret = LevelOne::from_u128(2345);
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
             b.iter(|| {
-                let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+                let f_zero = sharing.error_reconstruct(threshold, max_err).unwrap();
                 assert_eq!(f_zero, secret);
             });
         });

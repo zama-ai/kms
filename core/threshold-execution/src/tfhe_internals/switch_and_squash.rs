@@ -50,7 +50,7 @@ mod tests {
         constants::SMALL_TEST_KEY_PATH,
         tests::ensure_test_data_setup,
         tfhe_internals::{
-            parameters::{AugmentedCiphertextParameters, DKGParams, PARAMS_TEST_BK_SNS},
+            parameters::{AugmentedCiphertextParameters, PARAMS_TEST_BK_SNS},
             switch_and_squash::from_expanded_msg,
             test_feature::KeySet,
         },
@@ -149,8 +149,8 @@ mod tests {
     /// in the encryption ends up being negative
     #[test]
     fn negative_wrapping() {
-        if let DKGParams::WithSnS(params) = PARAMS_TEST_BK_SNS {
-            let ciphertext_parameters = params.regular_params.ciphertext_parameters;
+        {
+            let ciphertext_parameters = PARAMS_TEST_BK_SNS.classic_pbs();
             let delta_half = 1
                 << ((u128::BITS as u128 - 1_u128)
                     - ciphertext_parameters.total_block_bits() as u128);
@@ -167,8 +167,6 @@ mod tests {
             let msg = u128::MAX - delta_half - 1;
             let res = from_expanded_msg(msg, ciphertext_parameters.total_block_bits() as usize);
             assert_eq!((1 << ciphertext_parameters.total_block_bits()) - 1, res.0);
-        } else {
-            panic!("Wrong type of parameters, expected one with SnS")
         }
     }
 

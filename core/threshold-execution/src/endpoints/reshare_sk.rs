@@ -12,7 +12,7 @@ use crate::{
         compression_decompression_key::CompressionPrivateKeyShares,
         glwe_key::GlweSecretKeyShare,
         lwe_key::LweSecretKeyShare,
-        parameters::{DKGParams, DKGParamsBasics, DkgMode},
+        parameters::{DKGParams, DkgMode},
         private_keysets::{
             CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
             PrivateKeySet,
@@ -47,27 +47,28 @@ impl ResharePreprocRequired {
         parameters: DKGParams,
         oprf_key_present: bool,
     ) -> Self {
-        let params = parameters.get_params_basics_handle();
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
 
-        match parameters.get_params_basics_handle().get_dkg_mode() {
+        match parameters.dkg_mode() {
             DkgMode::Z64 => {
-                num_randoms_64 += params.lwe_hat_dimension().0;
-                num_randoms_64 += params.lwe_dimension().0;
+                num_randoms_64 += parameters.lwe_hat_dimension().0;
+                num_randoms_64 += parameters.lwe_dimension().0;
                 if oprf_key_present {
-                    num_randoms_64 += params.lwe_dimension().0;
+                    num_randoms_64 += parameters.lwe_dimension().0;
                 }
-                num_randoms_64 += params.glwe_sk_num_bits() + params.compression_sk_num_bits()
+                num_randoms_64 +=
+                    parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits()
             }
             DkgMode::Z128 => {
-                num_randoms_128 += params.lwe_hat_dimension().0;
-                num_randoms_128 += params.lwe_dimension().0;
+                num_randoms_128 += parameters.lwe_hat_dimension().0;
+                num_randoms_128 += parameters.lwe_dimension().0;
                 if oprf_key_present {
-                    num_randoms_128 += params.lwe_dimension().0;
+                    num_randoms_128 += parameters.lwe_dimension().0;
                 }
-                num_randoms_128 += params.glwe_sk_num_bits() + params.compression_sk_num_bits();
-                if let DKGParams::WithSnS(p) = parameters {
+                num_randoms_128 +=
+                    parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits();
+                if let Some(p) = parameters.sns() {
                     num_randoms_128 += p.glwe_sk_num_bits_sns() + p.sns_compression_sk_num_bits();
                 }
             }
@@ -360,7 +361,7 @@ where
     let reshare = R::default();
     let mut input_share = input_share.into();
     // Reshare the GLWE sns key
-    let glwe_secret_key_share_sns_as_lwe = if let DKGParams::WithSnS(sns_params) = parameters {
+    let glwe_secret_key_share_sns_as_lwe = if let Some(sns_params) = parameters.sns() {
         let expected_key_size = sns_params.glwe_sk_num_bits_sns();
         let maybe_key = input_share.as_mut().and_then(|s| {
             s.glwe_secret_key_share_sns_as_lwe
@@ -380,11 +381,9 @@ where
         (false, None)
     };
 
-    let basic_params_handle = parameters.get_params_basics_handle();
-
     // Reshare the LWE compute key
-    let expected_key_size = basic_params_handle.lwe_dimension().0;
-    let lwe_compute_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode() {
+    let expected_key_size = parameters.lwe_dimension().0;
+    let lwe_compute_secret_key_share = match parameters.dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
@@ -430,10 +429,9 @@ where
     };
 
     // Reshare the LWE PKe key
-    let expected_key_size = basic_params_handle.lwe_hat_dimension().0;
-    let polynomial_size = basic_params_handle.polynomial_size();
-    let lwe_encryption_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode()
-    {
+    let expected_key_size = parameters.lwe_hat_dimension().0;
+    let polynomial_size = parameters.polynomial_size();
+    let lwe_encryption_secret_key_share = match parameters.dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
@@ -480,8 +478,8 @@ where
 
     // Reshare the dedicated OPRF LWE key only when the old keyset has one.
     let oprf_secret_key_share = if oprf_key_present {
-        let expected_key_size = basic_params_handle.lwe_dimension().0;
-        match parameters.get_params_basics_handle().get_dkg_mode() {
+        let expected_key_size = parameters.lwe_dimension().0;
+        match parameters.dkg_mode() {
             DkgMode::Z64 => {
                 let maybe_key = input_share
                     .as_mut()
@@ -530,8 +528,8 @@ where
     };
 
     // Reshare the GLWE compute key
-    let expected_key_size = basic_params_handle.glwe_sk_num_bits();
-    let glwe_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode() {
+    let expected_key_size = parameters.glwe_sk_num_bits();
+    let glwe_secret_key_share = match parameters.dkg_mode() {
         DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
@@ -585,116 +583,122 @@ where
     };
 
     // Reshare the GLWE compression key
-    let glwe_secret_key_share_compression = if let Some(compression_params) =
-        basic_params_handle.get_compression_decompression_params()
-    {
-        let polynomial_size = compression_params
-            .raw_compression_parameters
-            .packing_ks_polynomial_size;
-        let expected_key_size = basic_params_handle.compression_sk_num_bits();
-        (
-            true,
-            match parameters.get_params_basics_handle().get_dkg_mode() {
-                DkgMode::Z64 => {
-                    // Extract the GLWE secret key share for the compression scheme if any
-                    let maybe_key = input_share
-                        .as_mut()
-                        .and_then(|s| {
-                            s.glwe_secret_key_share_compression.as_mut().map(
-                                |compression_sk_share| {
-                                    compression_sk_share
-                                        .try_cast_mut_to_z64()
-                                        .map(|key| key.post_packing_ks_key.data.as_mut())
-                                },
+    let glwe_secret_key_share_compression =
+        if let Some(compression_params) = parameters.compression_decompression_params() {
+            let polynomial_size = compression_params
+                .raw_compression_parameters
+                .packing_ks_polynomial_size;
+            let expected_key_size = parameters.compression_sk_num_bits();
+            (
+                true,
+                match parameters.dkg_mode() {
+                    DkgMode::Z64 => {
+                        // Extract the GLWE secret key share for the compression scheme if any
+                        let maybe_key = input_share
+                            .as_mut()
+                            .and_then(|s| {
+                                s.glwe_secret_key_share_compression.as_mut().map(
+                                    |compression_sk_share| {
+                                        compression_sk_share
+                                            .try_cast_mut_to_z64()
+                                            .map(|key| key.post_packing_ks_key.data.as_mut())
+                                    },
+                                )
+                            })
+                            .transpose()
+                            .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+                        let data = reshare
+                            .execute(
+                                sessions,
+                                &mut preproc64,
+                                &mut R::MaybeExpectedInputShares::from(maybe_key),
+                                expected_key_size,
                             )
-                        })
-                        .transpose()
-                        .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                    let data = reshare
-                        .execute(
-                            sessions,
-                            &mut preproc64,
-                            &mut R::MaybeExpectedInputShares::from(maybe_key),
-                            expected_key_size,
-                        )
-                        .await?;
-                    data.into().map(|data| {
-                        CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
-                            post_packing_ks_key: GlweSecretKeyShare {
-                                data,
-                                polynomial_size,
-                            },
-                            params: CompressionParameters::Classic(
-                                compression_params.raw_compression_parameters,
-                            ),
-                        })
-                    })
-                }
-                DkgMode::Z128 => {
-                    // Extract the GLWE secret key share for the compression scheme if any
-                    let maybe_key = input_share
-                        .as_mut()
-                        .and_then(|s| {
-                            s.glwe_secret_key_share_compression.as_mut().map(
-                                |compression_sk_share| {
-                                    compression_sk_share
-                                        .try_cast_mut_to_z128()
-                                        .map(|key| key.post_packing_ks_key.data.as_mut())
+                            .await?;
+                        data.into().map(|data| {
+                            CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
+                                post_packing_ks_key: GlweSecretKeyShare {
+                                    data,
+                                    polynomial_size,
                                 },
+                                params: CompressionParameters::Classic(
+                                    compression_params.raw_compression_parameters,
+                                ),
+                            })
+                        })
+                    }
+                    DkgMode::Z128 => {
+                        // Extract the GLWE secret key share for the compression scheme if any
+                        let maybe_key = input_share
+                            .as_mut()
+                            .and_then(|s| {
+                                s.glwe_secret_key_share_compression.as_mut().map(
+                                    |compression_sk_share| {
+                                        compression_sk_share
+                                            .try_cast_mut_to_z128()
+                                            .map(|key| key.post_packing_ks_key.data.as_mut())
+                                    },
+                                )
+                            })
+                            .transpose()
+                            .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+                        let data = reshare
+                            .execute(
+                                sessions,
+                                &mut preproc128,
+                                &mut R::MaybeExpectedInputShares::from(maybe_key),
+                                expected_key_size,
                             )
+                            .await?;
+                        data.into().map(|data| {
+                            CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                                post_packing_ks_key: GlweSecretKeyShare {
+                                    data,
+                                    polynomial_size,
+                                },
+                                params: CompressionParameters::Classic(
+                                    compression_params.raw_compression_parameters,
+                                ),
+                            })
                         })
-                        .transpose()
-                        .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                    let data = reshare
-                        .execute(
-                            sessions,
-                            &mut preproc128,
-                            &mut R::MaybeExpectedInputShares::from(maybe_key),
-                            expected_key_size,
-                        )
-                        .await?;
-                    data.into().map(|data| {
-                        CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
-                            post_packing_ks_key: GlweSecretKeyShare {
-                                data,
-                                polynomial_size,
-                            },
-                            params: CompressionParameters::Classic(
-                                compression_params.raw_compression_parameters,
-                            ),
-                        })
-                    })
-                }
-            },
-        )
-    } else {
-        (false, None)
-    };
+                    }
+                },
+            )
+        } else {
+            (false, None)
+        };
 
     // Reshare the GLWE sns compression key
-    let glwe_sns_compression_key_as_lwe = match parameters {
-        DKGParams::WithoutSnS(_) => (false, None),
-        DKGParams::WithSnS(params_sns) => {
-            if params_sns.sns_compression_params.is_some() {
-                let expected_key_size = params_sns.compression_sk_num_bits();
-                let maybe_key = input_share.as_mut().and_then(|s| {
-                    s.glwe_sns_compression_key_as_lwe
-                        .as_mut()
-                        .map(|key| key.data.as_mut())
-                });
-                let data = reshare
-                    .execute(
-                        sessions,
-                        &mut preproc128,
-                        &mut R::MaybeExpectedInputShares::from(maybe_key),
-                        expected_key_size,
-                    )
-                    .await?;
-                (true, data.into().map(|data| LweSecretKeyShare { data }))
-            } else {
-                (false, None)
-            }
+    let glwe_sns_compression_key_as_lwe = if let Some(params_sns) = parameters.sns() {
+        if params_sns.sns_compression_params().is_some() {
+            // NOTE (bugfix): this reshares the SnS *compression* key, so it must
+            // be sized with the SnS compression key size. The legacy code used
+            // `compression_sk_num_bits()`, which on the old `DKGParamsSnS`
+            // delegated to the *regular* compression params — the wrong key size.
+            // It went unnoticed because the only parameter set ever resharded in
+            // tests (`PARAMS_TEST_BK_SNS`) has identical regular and SnS
+            // compression dimensions (256 == 256), masking the discrepancy.
+            // Fixed here to use the SnS compression key size.
+            let expected_key_size = params_sns.sns_compression_sk_num_bits();
+            let maybe_key = input_share.as_mut().and_then(|s| {
+                s.glwe_sns_compression_key_as_lwe
+                    .as_mut()
+                    .map(|key| key.data.as_mut())
+            });
+            let data = reshare
+                .execute(
+                    sessions,
+                    &mut preproc128,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            (true, data.into().map(|data| LweSecretKeyShare { data }))
+        } else {
+            (false, None)
         }
+    } else {
+        (false, None)
     };
 
     match (
@@ -743,7 +747,7 @@ where
                 oprf_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
-                parameters: basic_params_handle.to_classic_pbs_parameters(),
+                parameters: parameters.classic_pbs(),
                 glwe_secret_key_share_compression,
                 glwe_sns_compression_key_as_lwe,
             }))
@@ -771,8 +775,10 @@ mod tests {
     use crate::tests::helper::tests_and_benches::{
         execute_protocol_small, execute_protocol_two_sets,
     };
-    use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
-    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
+    use crate::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use crate::tfhe_internals::test_feature::{
+        ClientKeyView, KeySet, keygen_all_party_shares_from_client_key,
+    };
     use crate::{
         constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
@@ -1073,7 +1079,9 @@ mod tests {
             let mut keyset: KeySet =
                 read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
             truncate_client_keys(&mut keyset, new_params);
-            let oprf_key_present = keyset.get_raw_oprf_client_key().is_some();
+            let oprf_key_present = ClientKeyView::new(&keyset.client_key)
+                .raw_oprf_client_key()
+                .is_some();
             let (mut party_keyshare, expected_sk, _key_shares) =
                 if let Some(session_set_1) = session_set_1.as_ref() {
                     let (key_shares, expected_sk) = generate_key_with_error_in_s1(
@@ -1241,10 +1249,17 @@ mod tests {
         Ok(())
     }
 
+    //TODO(https://github.com/zama-ai/kms-internal/issues/3050)
     // We return test params to use to truncate the keys
     fn get_truncated_client_keys_params(params: DKGParams) -> DKGParams {
-        let new_sns_params = if let DKGParams::WithSnS(sns_params) = params {
-            let mut new_sns_params = sns_params.sns_params;
+        // Keep the original SnS compression parameters (untruncated) so the
+        // reshare test actually exercises the SnS-compression-key path. The
+        // regular compression is dropped below (`None`), so the regular and SnS
+        // compression key sizes differ — which is what would catch a regression
+        // of the SnS-compression-key sizing (see `reshare_sk`).
+        let original_sns_compression = params.sns().and_then(|s| s.sns_compression_params());
+        let new_sns_params = if let Some(sns_params) = params.sns() {
+            let mut new_sns_params = sns_params.sns_params();
 
             let sns_private_key_len = 8;
             let sns_poly_size = tfhe::shortint::prelude::PolynomialSize(1);
@@ -1268,11 +1283,7 @@ mod tests {
         } else {
             None
         };
-        let params = PBSParameters::PBS(
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
-        );
+        let params = PBSParameters::PBS(params.classic_pbs());
         let test_lwe_dim = params.lwe_dimension().0.min(8);
         let test_glwe_dim = params.glwe_dimension().0.min(1);
         let test_poly_size = params.polynomial_size().0.min(10);
@@ -1297,31 +1308,33 @@ mod tests {
             modulus_switch_noise_reduction_params: ModulusSwitchType::Standard,
         };
 
-        let regular_params = DKGParamsRegular {
+        DKGParams {
             dkg_mode: DkgMode::Z128,
             sec: 128,
-            ciphertext_parameters: new_pbs_params,
-            dedicated_compact_public_key_parameters: None,
-            compression_decompression_parameters: None,
-            cpk_re_randomization_ksk_params: None,
+            meta: tfhe::shortint::parameters::MetaParameters {
+                backend: tfhe::shortint::parameters::Backend::Cpu,
+                compute_parameters: tfhe::shortint::parameters::AtomicPatternParameters::Standard(
+                    PBSParameters::PBS(new_pbs_params),
+                ),
+                dedicated_compact_public_key_parameters: None,
+                compression_parameters: None,
+                noise_squashing_parameters: new_sns_params.map(|parameters| {
+                    tfhe::shortint::parameters::MetaNoiseSquashingParameters {
+                        parameters,
+                        compression_parameters: original_sns_compression,
+                    }
+                }),
+                rerand_configuration: None,
+            },
             secret_key_deviations: None,
-        };
-
-        if let Some(new_sns_params) = new_sns_params {
-            DKGParams::WithSnS(DKGParamsSnS {
-                regular_params,
-                sns_params: new_sns_params,
-                sns_compression_params: None,
-            })
-        } else {
-            DKGParams::WithoutSnS(regular_params)
         }
     }
 
+    // TODO(https://github.com/zama-ai/kms-internal/issues/3050)
     // We truncate the keys in the keyset to make the test faster
     // to match the sizes in the target parameters
     fn truncate_client_keys(keyset: &mut KeySet, target_params: DKGParams) {
-        let new_sns_private_key = if let DKGParams::WithSnS(sns_params) = target_params {
+        let new_sns_private_key = if let Some(sns_params) = target_params.sns() {
             let (raw_sns_private_key, _) = keyset
                 .client_key
                 .clone()
@@ -1343,13 +1356,18 @@ mod tests {
                 tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                     NoiseSquashingPrivateKey::from_raw_parts(
                         new_raw_sns_private_key,
-                        sns_params.sns_params,
+                        sns_params.sns_params(),
                     ),
                 ),
             )
         } else {
             None
         };
+
+        // Keep the original SnS compression key (untruncated) so the reshare
+        // exercises the SnS-compression-key path; its size differs from the
+        // dropped regular compression key.
+        let sns_compression_key = keyset.client_key.clone().into_raw_parts().4;
 
         let (glwe_raw, lwe_raw, _, _) = match keyset
             .client_key
@@ -1367,8 +1385,6 @@ mod tests {
             }
         };
 
-        let target_params = target_params.get_params_basics_handle();
-
         let test_lwe_dim = target_params.lwe_dimension().0;
         let test_glwe_dim = target_params.glwe_dimension().0;
         let test_poly_size = target_params.polynomial_size().0;
@@ -1385,7 +1401,7 @@ mod tests {
         let sck = StandardAtomicPatternClientKey::from_raw_parts(
             new_glwe_raw,
             new_lwe_raw,
-            PBSParameters::PBS(target_params.to_classic_pbs_parameters()),
+            PBSParameters::PBS(target_params.classic_pbs()),
             None,
         );
         let sck = tfhe::shortint::ClientKey {
@@ -1398,7 +1414,7 @@ mod tests {
             None,
             None,
             new_sns_private_key,
-            None,
+            sns_compression_key,
             None,
             None,
             tfhe::Tag::default(),
@@ -1429,7 +1445,7 @@ mod tests {
             });
             let first_bit_sharing = ShamirSharings::create(bit_shares);
             let rec = first_bit_sharing
-                .err_reconstruct(threshold, max_errors)
+                .error_reconstruct(threshold, max_errors)
                 .unwrap();
             let inner_rec = rec.to_scalar().unwrap();
             out.push(inner_rec)
@@ -1551,11 +1567,9 @@ mod tests {
     {
         // generate the key shares
         let mut rng = AesRng::seed_from_u64(4242);
-        let mut key_shares = keygen_all_party_shares_from_keyset(
-            &keyset,
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
+        let mut key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params.classic_pbs(),
             &mut rng,
             num_parties,
             threshold,
@@ -1640,14 +1654,16 @@ mod tests {
             }
         }
         // sanity check that we can still reconstruct
-        let expected_sk = (
-            keyset
-                .get_raw_glwe_client_sns_key_as_lwe()
-                .unwrap()
-                .into_container(),
-            keyset.get_raw_lwe_client_key().to_owned().into_container(),
-            keyset.get_raw_glwe_client_key().to_owned().into_container(),
-        );
+        let expected_sk = {
+            let eck = ClientKeyView::new(&keyset.client_key);
+            (
+                eck.raw_glwe_client_sns_key_as_lwe()
+                    .unwrap()
+                    .into_container(),
+                eck.raw_lwe_client_key().to_owned().into_container(),
+                eck.raw_glwe_client_key().to_owned().into_container(),
+            )
+        };
         // We have at most 1 error, the one we just added
         let rec_sk = reconstruct_sk(key_shares.clone(), threshold, 1);
         assert_eq!(rec_sk, expected_sk);

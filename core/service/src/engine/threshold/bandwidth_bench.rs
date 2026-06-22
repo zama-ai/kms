@@ -1,0 +1,232 @@
+use std::{collections::HashMap, ops::AddAssign, sync::Arc, time::Duration};
+
+use itertools::Itertools;
+use kms_grpc::{
+    ContextId,
+    kms::v1::{
+        BandwidthBenchmarkRequest, BandwidthBenchmarkResponse, BandwidthKind, LatencyInfo,
+        PeerBandwidthInfo,
+    },
+};
+use threshold_networking::health_check::{BenchKind, HealthCheckStatus};
+use tokio::sync::Semaphore;
+use tonic::{Request, Response, Status};
+
+use crate::{
+    conf::BandwidthBenchmarkConfig,
+    engine::{
+        threshold::service::session::ImmutableSessionMaker,
+        validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
+    },
+};
+
+/// Creates the permit pool that bounds concurrent [`run_bandwidth_benchmark`] executions to
+/// `max_concurrent_runs`. One pool is held per server instance (not a process-global), so multiple
+/// in-process nodes (e.g. in tests) stay independent.
+pub(crate) fn new_bandwidth_bench_limiter(max_concurrent_runs: usize) -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(max_concurrent_runs))
+}
+
+pub(crate) async fn run_bandwidth_benchmark(
+    request: Request<BandwidthBenchmarkRequest>,
+    session_maker: ImmutableSessionMaker,
+    bandwidth_bench_limiter: Arc<Semaphore>,
+    config: &BandwidthBenchmarkConfig,
+) -> Result<Response<BandwidthBenchmarkResponse>, Status> {
+    let request = request.into_inner();
+    tracing::info!("Received bandwidth benchmark request: {:?}", request);
+    let context_id: ContextId =
+        parse_optional_grpc_request_id(&request.context_id, RequestIdParsingErr::Context)?;
+    // Bound these fields before casting: they are untrusted u32s that drive a per-session
+    // `vec![0; payload_size]` allocation (cloned per peer) and a task-spawn loop, so a crafted
+    // request could otherwise exhaust memory/tasks.
+    if request.payload_size_per_session > config.max_payload_bytes {
+        return Err(Status::invalid_argument(format!(
+            "payload_size_per_session {} exceeds the maximum of {} bytes",
+            request.payload_size_per_session, config.max_payload_bytes
+        )));
+    }
+    if request.number_sessions == 0 || request.number_sessions > config.max_sessions {
+        return Err(Status::invalid_argument(format!(
+            "number_sessions {} must be in 1..={}",
+            request.number_sessions, config.max_sessions
+        )));
+    }
+    // Cap the aggregate base allocation across sessions (product can't overflow u64: both
+    // operands are already bounded u32s above).
+    let total_bytes =
+        u64::from(request.payload_size_per_session) * u64::from(request.number_sessions);
+    if total_bytes > config.max_total_bytes {
+        return Err(Status::invalid_argument(format!(
+            "payload_size_per_session * number_sessions ({total_bytes} bytes) exceeds the maximum of {} bytes",
+            config.max_total_bytes
+        )));
+    }
+    let payload_size = request.payload_size_per_session as usize;
+    let num_sessions = request.number_sessions as usize;
+    let kind: BandwidthKind = request.kind.try_into().map_err(|e| {
+        Status::invalid_argument(format!(
+            "Invalid bandwidth benchmark kind {}: {}",
+            request.kind, e
+        ))
+    })?;
+    let duration = match kind {
+        BandwidthKind::Once => BenchKind::Once,
+        BandwidthKind::Duration => {
+            // Bound the (untrusted) duration: it drives a sustained send loop per peer, so an
+            // unbounded value floods peers for the whole server request timeout.
+            if request.duration > config.max_duration_secs {
+                return Err(Status::invalid_argument(format!(
+                    "duration {} exceeds the maximum of {} seconds",
+                    request.duration, config.max_duration_secs
+                )));
+            }
+            BenchKind::Duration(Duration::from_secs(request.duration))
+        }
+    };
+
+    // Bound concurrent benchmark runs. Acquired after the input validation above so that
+    // non-retryable `InvalidArgument` errors take precedence, then held for the rest of the
+    // handler so the heavy work below (session creation, per-session payload allocation, and the
+    // per-peer send loop) cannot be multiplied by an unbounded number of in-flight requests.
+    // Reject rather than queue once the small pool is exhausted, mirroring how the other expensive
+    // endpoints surface back-pressure via the rate limiter.
+    let _permit = bandwidth_bench_limiter.try_acquire_owned().map_err(|_| {
+        Status::resource_exhausted(
+            "too many concurrent bandwidth benchmark requests in flight; retry later",
+        )
+    })?;
+
+    let mut join_set = tokio::task::JoinSet::new();
+    for _ in 0..num_sessions {
+        let session = session_maker
+            .get_healthcheck_session(&context_id)
+            .await
+            .map_err(|e| {
+                Status::internal(format!(
+                    "Failed to create health check session for context {}: {}",
+                    context_id, e
+                ))
+            })?;
+        join_set.spawn(async move {
+            session
+                .run_bandwidth_benchmark(payload_size, duration)
+                .await
+        });
+    }
+
+    let mut results = HashMap::new();
+
+    while let Some(result) = join_set.join_next().await {
+        let result = result
+            .map_err(|e| {
+                Status::internal(format!("Failed to join bandwidth benchmark task: {}", e))
+            })?
+            .map_err(|e| Status::internal(format!("Bandwidth benchmark task failed: {}", e)))?;
+        for ((role, id), (bytes_sent, duration, status)) in result {
+            let (entry_sent, entry_duration, entry_status) = results
+                .entry((role, id))
+                .or_insert_with(|| (0, vec![], vec![]));
+            entry_sent.add_assign(bytes_sent);
+            entry_duration.push(duration);
+            entry_status.extend(status);
+        }
+    }
+
+    let peers_info = results
+        .into_iter()
+        .map(|((role, id), (bytes_sent, durations, status))| {
+            // Fill up the latency struct
+            let latency = make_latency(status)
+                .inspect_err(|e| tracing::warn!("Error computing latency info: {}", e))
+                .ok();
+            let duration = match kind {
+                BandwidthKind::Once => durations
+                    .into_iter()
+                    .map(|d| d.as_secs())
+                    .max()
+                    .unwrap_or(0),
+                BandwidthKind::Duration => {
+                    (durations.iter().sum::<Duration>().as_secs_f64() / durations.len() as f64)
+                        as u64
+                }
+            };
+            PeerBandwidthInfo {
+                peer_id: role.one_based() as u32,
+                endpoint: id.hostname().to_string(),
+                bytes_sent: bytes_sent as u64,
+                duration,
+                latency,
+            }
+        })
+        .collect_vec();
+
+    tracing::info!("Bandwidth benchmark completed. Results: {:?}", peers_info);
+
+    Ok(Response::new(BandwidthBenchmarkResponse { peers_info }))
+}
+
+fn make_latency(status: Vec<HealthCheckStatus>) -> Result<LatencyInfo, String> {
+    let latencies: Vec<u128> = status
+        .iter()
+        .map(|s| match s {
+            HealthCheckStatus::Ok(duration) => Ok(duration.as_millis()),
+            HealthCheckStatus::Error(_) => {
+                Err("Some error sending at least one payload".to_string())
+            }
+            HealthCheckStatus::TimeOut(_) => {
+                Err("Timeout sending at least one payload".to_string())
+            }
+        })
+        .try_collect()?;
+
+    let sorted_latencies = latencies.into_iter().sorted().collect_vec();
+
+    let average = (sorted_latencies.iter().sum::<u128>() as f64 / status.len() as f64) as u64;
+    let p50_idx = status.len() / 2;
+    let p50 = sorted_latencies.get(p50_idx).copied().unwrap_or(0) as u64;
+    let p90_idx = (status.len() * 90) / 100;
+    let p90 = sorted_latencies.get(p90_idx).copied().unwrap_or(0) as u64;
+    let p99_idx = (status.len() * 99) / 100;
+    let p99 = sorted_latencies.get(p99_idx).copied().unwrap_or(0) as u64;
+    let slowest = sorted_latencies.last().copied().unwrap_or(0) as u64;
+    let fastest = sorted_latencies.first().copied().unwrap_or(0) as u64;
+
+    Ok(LatencyInfo {
+        average,
+        p50,
+        p90,
+        p99,
+        slowest,
+        fastest,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bandwidth_bench_limiter_bounds_concurrency() {
+        let max_concurrent_runs = BandwidthBenchmarkConfig::default().max_concurrent_runs;
+        let limiter = new_bandwidth_bench_limiter(max_concurrent_runs);
+        // The pool is intentionally small so concurrent runs are bounded.
+        assert_eq!(limiter.available_permits(), max_concurrent_runs);
+
+        // Hold every permit, then a further acquisition must be rejected rather than queued,
+        // which is what makes `run_bandwidth_benchmark` return `ResourceExhausted` under load.
+        let mut held = Vec::new();
+        for _ in 0..max_concurrent_runs {
+            held.push(
+                Arc::clone(&limiter)
+                    .try_acquire_owned()
+                    .expect("a permit should be available"),
+            );
+        }
+        assert!(Arc::clone(&limiter).try_acquire_owned().is_err());
+
+        // Releasing a permit frees capacity for the next run.
+        held.pop();
+        assert!(Arc::clone(&limiter).try_acquire_owned().is_ok());
+    }
+}

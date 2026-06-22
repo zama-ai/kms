@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tfhe_versionable_0_7::Versionize as Versionize_0_7;
+use tfhe_versionable_0_8::Versionize as Versionize_0_8;
 
 use backward_compatibility::{
     data_dir, dir_for_version,
@@ -16,7 +16,7 @@ use backward_compatibility::{
         ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
         SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
     },
-    Testcase, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, Testcase,
 };
 
 // Parameters set for tests in kms-core 0.9, found in `PARAMS_TEST_BK_SNS`. However, for stability
@@ -89,7 +89,7 @@ macro_rules! define_store_versioned_test_fn {
         }
     };
 }
-define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_7);
+define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_8);
 
 /// Stores the auxiliary data in `dir`, encoded in bincode, using the right tfhe-versionable version
 macro_rules! define_store_versioned_auxiliary_fn {
@@ -114,7 +114,7 @@ macro_rules! define_store_versioned_auxiliary_fn {
         }
     };
 }
-define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_7);
+define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_8);
 
 pub fn store_metadata<T, P>(new_data: &Vec<Testcase<T>>, path: P)
 where

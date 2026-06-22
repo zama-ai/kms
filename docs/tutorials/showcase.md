@@ -32,7 +32,8 @@ In a different terminal, we can now interact with the running cores from the pre
 in the config file used in the next step.
 3. Then, generate a set of private and public FHE keys by running the following command, pointing to your desired config file after the `-f` flag:
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
+    $ PREPROC_ID=$(cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-preproc-key-gen | grep request_id | cut -d'"' -f4)
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen --preproc-id "$PREPROC_ID"
     ```
     The command will print plenty of logs and return the `key-id` that we require in the following step. The output looks like this, where `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` is the `key-id`:
     ```

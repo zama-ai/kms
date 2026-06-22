@@ -15,18 +15,24 @@ use tfhe::{
     shortint::{
         self, ClassicPBSParameters, PBSParameters,
         client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-        list_compression::{
-            CompressionPrivateKeys, NoiseSquashingCompressionKey,
-            NoiseSquashingCompressionPrivateKey,
-        },
+        list_compression::{CompressionPrivateKeys, NoiseSquashingCompressionPrivateKey},
         parameters::CompressionParameters,
     },
     xof_key_set::CompressedXofKeySet,
     zk::CompactPkeCrs,
 };
+use tfhe::{
+    XofSeed,
+    core_crypto::{
+        commons::math::random::RandomGenerator,
+        prelude::{DefaultRandomGenerator, GlweSecretKeyOwned, LweSecretKeyOwned},
+    },
+};
 use tokio::{task::JoinSet, time::timeout_at};
 
 use crate::network_value::NetworkValue;
+use crate::random::secret_rng_from_seed;
+use crate::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::{
     runtime::sessions::{
         base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
@@ -37,6 +43,7 @@ use crate::{
         lwe_key::LweSecretKeyShare, parameters::DkgMode, private_keysets::LweSecretKeyShareEnum,
     },
 };
+use algebra::structure_traits::ErrorCorrect;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
@@ -44,13 +51,13 @@ use algebra::{
         shamir::{InputOp, ShamirSharings},
         share::Share,
     },
-    structure_traits::{Ring, RingWithExceptionalSequence},
+    structure_traits::{BaseRing, Ring, RingWithExceptionalSequence},
 };
 use error_utils::anyhow_error_and_log;
 use threshold_types::role::Role;
 
 use super::{
-    parameters::{DKGParams, DKGParamsBasics},
+    parameters::DKGParams,
     private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
     public_keysets::FhePubKeySet,
 };
@@ -64,9 +71,21 @@ pub struct KeySet {
     pub public_keys: FhePubKeySet,
 }
 
-impl KeySet {
-    pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+/// A light borrowing wrapper around a [`tfhe::ClientKey`] that exposes the raw secret-key
+/// containers. Extraction only needs the client key, so this lets callers that hold only a
+/// `ClientKey` (e.g. reconstructed keys) reuse the same logic without materializing a full
+/// `KeySet` (and its expensive `ServerKey`).
+pub struct ClientKeyView<'a> {
+    ck: &'a tfhe::ClientKey,
+}
+
+impl<'a> ClientKeyView<'a> {
+    pub fn new(ck: &'a tfhe::ClientKey) -> Self {
+        Self { ck }
+    }
+
+    pub fn raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
+        let (inner_client_key, _, _, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -82,8 +101,8 @@ impl KeySet {
 
     /// Returns the dedicated OPRF private LWE secret key embedded in the
     /// `ClientKey`, or `None` if the keyset was generated without one.
-    pub fn get_raw_oprf_client_key(&self) -> Option<LweSecretKey<Vec<u64>>> {
-        let (_, _, _, _, _, _, oprf_private_key, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_oprf_client_key(&self) -> Option<LweSecretKey<Vec<u64>>> {
+        let (_, _, _, _, _, _, oprf_private_key, _) = self.ck.clone().into_raw_parts();
         oprf_private_key.map(|sk| match sk.into_raw_parts().into_raw_parts() {
             tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(lwe) => lwe,
             tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
@@ -92,23 +111,23 @@ impl KeySet {
         })
     }
 
-    pub fn get_raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
+    pub fn raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
         // We should have this key even if the compact PKE parameters are empty
         // because we want to match the behaviour of a normal DKG.
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
         } else {
-            self.get_raw_lwe_client_key()
+            self.raw_lwe_client_key()
         }
     }
 
-    pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
+        let (_, _, compression_sk, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -117,8 +136,8 @@ impl KeySet {
         }
     }
 
-    pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
+        let (inner_client_key, _, _, _, _, _, _, _) = self.ck.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -132,27 +151,29 @@ impl KeySet {
         }
     }
 
-    pub fn get_raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, noise_squashing_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
+        let (_, _, _, noise_squashing_key, _, _, _, _) = self.ck.clone().into_raw_parts();
         noise_squashing_key.map(|sns_key| sns_key.into_raw_parts().into_raw_parts().0)
     }
 
-    pub fn get_raw_glwe_client_sns_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
-        self.get_raw_glwe_client_sns_key()
-            .map(|inner| inner.into_lwe_secret_key())
-    }
-
-    pub fn get_raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, _, sns_compression_key, _, _, _) = self.client_key.clone().into_raw_parts();
+    pub fn raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
+        let (_, _, _, _, sns_compression_key, _, _, _) = self.ck.clone().into_raw_parts();
         sns_compression_key
             .map(|sns_compression_key| sns_compression_key.into_raw_parts().into_raw_parts().0)
     }
 
-    pub fn get_raw_sns_compression_client_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
-        self.get_raw_sns_compression_client_key()
+    pub fn raw_glwe_client_sns_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
+        self.raw_glwe_client_sns_key()
             .map(|inner| inner.into_lwe_secret_key())
     }
 
+    pub fn raw_sns_compression_client_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
+        self.raw_sns_compression_client_key()
+            .map(|inner| inner.into_lwe_secret_key())
+    }
+}
+
+impl KeySet {
     pub fn get_cpu_params(&self) -> anyhow::Result<ClassicPBSParameters> {
         match self.client_key.computation_parameters() {
             shortint::AtomicPatternParameters::Standard(pbsparameters) => match pbsparameters {
@@ -310,14 +331,10 @@ where
 {
     let config = params.to_tfhe_config();
     let seed_bytes = Seed(rng.r#gen()).0.to_le_bytes().to_vec();
-    let security_bits = params.get_params_basics_handle().get_sec() as u32;
+    let security_bits = params.sec() as u32;
 
     // If pmax is not set (e.g. test parameters), use 1.0 to allow any HW.
-    let pmax = params
-        .get_params_basics_handle()
-        .get_sk_deviations()
-        .map(|x| x.pmax)
-        .unwrap_or(1.0);
+    let pmax = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
     let max_norm_hwt = NormalizedHammingWeightBound::new(pmax)
         .ok_or_else(|| anyhow!("Invalid Hamming Weight bound, range must be ]0.5,1.0]"))?;
 
@@ -359,93 +376,71 @@ struct RawKeyContainers {
 /// the other parties would continue to transfer_pk and would panic because they
 /// would receive something different from a PK.
 fn extract_key_containers(
-    keyset: Option<&KeySet>,
+    client_key: Option<&tfhe::ClientKey>,
     params: DKGParams,
 ) -> anyhow::Result<RawKeyContainers> {
-    let params_basic_handle = params.get_params_basics_handle();
+    let client_key = client_key.map(ClientKeyView::new);
 
-    let lwe_sk_container64: Vec<u64> = keyset
-        .map(|s| s.clone().get_raw_lwe_client_key().into_container())
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
+    let lwe_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .map(|ck| ck.raw_lwe_client_key().into_container())
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_dimension().0]);
 
-    let lwe_encryption_sk_container64: Vec<u64> = keyset
-        .map(|s| {
-            s.clone()
-                .get_raw_lwe_encryption_client_key()
-                .into_container()
-        })
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_hat_dimension().0]);
+    let lwe_encryption_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .map(|ck| ck.raw_lwe_encryption_client_key().into_container())
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_hat_dimension().0]);
 
-    let glwe_sk_container64: Vec<u64> = keyset
-        .map(|s| s.clone().get_raw_glwe_client_key().into_container())
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.glwe_sk_num_bits()]);
+    let glwe_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .map(|ck| ck.raw_glwe_client_key().into_container())
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.glwe_sk_num_bits()]);
 
-    let sns_sk_container128: Option<Vec<u128>> = if let DKGParams::WithSnS(params_sns) = params {
-        Some(
-            keyset
-                .and_then(|s| {
-                    s.clone()
-                        .get_raw_glwe_client_sns_key()
-                        .map(|x| x.into_container())
-                })
-                .unwrap_or_else(|| vec![Numeric::ZERO; params_sns.glwe_sk_num_bits_sns()]),
-        )
-    } else {
-        None
-    };
+    let sns_sk_container128: Option<Vec<u128>> = params.sns().map(|params_sns| {
+        client_key
+            .as_ref()
+            .and_then(|ck| ck.raw_glwe_client_sns_key().map(|x| x.into_container()))
+            .unwrap_or_else(|| vec![Numeric::ZERO; params_sns.glwe_sk_num_bits_sns()])
+    });
 
     // Check compression key consistency
-    if let Some(ks) = keyset
-        && ks.get_raw_compression_client_key().is_none()
-        && params_basic_handle
-            .get_compression_decompression_params()
-            .is_some()
+    if let Some(ck) = &client_key
+        && ck.raw_compression_client_key().is_none()
+        && params.compression_decompression_params().is_some()
     {
         anyhow::bail!("Compression client key is missing when parameter is available")
     }
 
-    let compression_sk_container64: Option<Vec<u64>> = match keyset {
-        Some(s) => {
-            if params_basic_handle
-                .get_compression_decompression_params()
-                .is_none()
-            {
+    let compression_sk_container64: Option<Vec<u64>> = match &client_key {
+        Some(ck) => {
+            if params.compression_decompression_params().is_none() {
                 None
             } else {
-                s.clone()
-                    .get_raw_compression_client_key()
-                    .map(|x| x.into_container())
+                ck.raw_compression_client_key().map(|x| x.into_container())
             }
         }
         None => {
-            if params_basic_handle
-                .get_compression_decompression_params()
-                .is_none()
-            {
+            if params.compression_decompression_params().is_none() {
                 None
             } else {
-                Some(vec![
-                    Numeric::ZERO;
-                    params_basic_handle.compression_sk_num_bits()
-                ])
+                Some(vec![Numeric::ZERO; params.compression_sk_num_bits()])
             }
         }
     };
 
-    let sns_compression_sk_container128: Option<Vec<u128>> = match keyset {
-        Some(s) => {
-            if params_basic_handle.get_sns_compression_params().is_none() {
+    let sns_compression_sk_container128: Option<Vec<u128>> = match &client_key {
+        Some(ck) => {
+            if params.sns_compression_params().is_none() {
                 None
             } else {
-                s.clone()
-                    .get_raw_sns_compression_client_key()
+                ck.raw_sns_compression_client_key()
                     .map(|x| x.into_container())
             }
         }
         None => {
-            if let DKGParams::WithSnS(params_sns) = params {
+            if let Some(params_sns) = params.sns() {
                 params_sns
-                    .sns_compression_params
+                    .sns_compression_params()
                     .map(|_sns_compression_params| {
                         vec![Numeric::ZERO; params_sns.sns_compression_sk_num_bits()]
                     })
@@ -455,9 +450,10 @@ fn extract_key_containers(
         }
     };
 
-    let oprf_sk_container64: Vec<u64> = keyset
-        .and_then(|s| s.get_raw_oprf_client_key().map(|k| k.into_container()))
-        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]);
+    let oprf_sk_container64: Vec<u64> = client_key
+        .as_ref()
+        .and_then(|ck| ck.raw_oprf_client_key().map(|k| k.into_container()))
+        .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_dimension().0]);
 
     Ok(RawKeyContainers {
         lwe_sk_container64,
@@ -478,17 +474,16 @@ fn extract_key_containers(
 async fn share_client_key_material<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
     session: &mut S,
     params: DKGParams,
-    keyset: Option<&KeySet>,
+    client_key: Option<&tfhe::ClientKey>,
 ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params.get_params_basics_handle();
     let own_role = session.my_role();
     let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
 
-    let raw_keys = extract_key_containers(keyset, params)?;
+    let raw_keys = extract_key_containers(client_key, params)?;
 
     // Share lwe_sk
     tracing::debug!(
@@ -655,22 +650,23 @@ where
 
     tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
 
-    let glwe_secret_key_share_compression = params_basic_handle
-        .get_compression_decompression_params()
-        .map(|compression_params| {
-            let params = compression_params.raw_compression_parameters;
-            CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
-                post_packing_ks_key: GlweSecretKeyShare {
-                    data: glwe_compression_key_shares128,
-                    polynomial_size: params.packing_ks_polynomial_size,
-                },
-                params: CompressionParameters::Classic(params),
-            })
-        });
+    let glwe_secret_key_share_compression =
+        params
+            .compression_decompression_params()
+            .map(|compression_params| {
+                let params = compression_params.raw_compression_parameters;
+                CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                    post_packing_ks_key: GlweSecretKeyShare {
+                        data: glwe_compression_key_shares128,
+                        polynomial_size: params.packing_ks_polynomial_size,
+                    },
+                    params: CompressionParameters::Classic(params),
+                })
+            });
 
     let glwe_sns_compression_key_as_lwe =
-        params_basic_handle
-            .get_sns_compression_params()
+        params
+            .sns_compression_params()
             .map(|_sns_compression_params| LweSecretKeyShare {
                 data: glwe_sns_compression_key_shares128,
             });
@@ -687,10 +683,10 @@ where
         })),
         glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
             data: glwe_key_shares128,
-            polynomial_size: params_basic_handle.polynomial_size(),
+            polynomial_size: params.polynomial_size(),
         }),
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
-        parameters: params_basic_handle.to_classic_pbs_parameters(),
+        parameters: params.classic_pbs(),
         glwe_secret_key_share_compression,
         glwe_sns_compression_key_as_lwe,
     })
@@ -710,13 +706,11 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params.get_params_basics_handle();
-
     // This only supports Z128 DKG for now
-    if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
+    if params.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.get_dkg_mode()
+            params.dkg_mode()
         );
     }
 
@@ -732,7 +726,8 @@ where
     };
 
     // Share private keys with all parties
-    let private_key_set = share_client_key_material(session, params, keyset.as_ref()).await?;
+    let private_key_set =
+        share_client_key_material(session, params, keyset.as_ref().map(|s| &s.client_key)).await?;
 
     // Transfer the public key set
     let transferred_pub_key =
@@ -758,13 +753,11 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let params_basic_handle = params.get_params_basics_handle();
-
     // This only supports Z128 DKG for now
-    if params_basic_handle.get_dkg_mode() != DkgMode::Z128 {
+    if params.dkg_mode() != DkgMode::Z128 {
         anyhow::bail!(
             "Incompatible DKG mode, expected Z128 got {:?}",
-            params_basic_handle.get_dkg_mode()
+            params.dkg_mode()
         );
     }
 
@@ -773,16 +766,13 @@ where
     let own_role = session.my_role();
 
     // Party 1 generates the compressed keyset
-    let (keyset, compressed_keyset) = if own_role.one_based() == INPUT_PARTY_ID {
+    let (client_key, compressed_keyset) = if own_role.one_based() == INPUT_PARTY_ID {
         tracing::info!("Compressed keyset generated by input party {}", own_role);
         let config = params.to_tfhe_config();
 
         // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
         // and use a pmax=1 which should allow for any HW.
-        let max_norm_hwt = params_basic_handle
-            .get_sk_deviations()
-            .map(|d| d.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|d| d.pmax).unwrap_or(1.0);
         let max_norm_hwt =
             tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
 
@@ -792,36 +782,337 @@ where
         let (client_key, compressed_xof_keyset) = tfhe::xof_key_set::CompressedXofKeySet::generate(
             config,
             private_seed_bytes,
-            params_basic_handle.get_sec() as u32,
+            params.sec() as u32,
             max_norm_hwt,
             tag,
         )
         .expect("Failed to generate compressed keyset");
 
-        // Create a temporary KeySet to use the existing helper functions
-        let public_key = tfhe::CompactPublicKey::new(&client_key);
-        let server_key = tfhe::ServerKey::new(&client_key);
-        let keyset = KeySet {
-            client_key,
-            public_keys: FhePubKeySet {
-                public_key,
-                server_key,
-            },
-        };
-
-        (Some(keyset), Some(compressed_xof_keyset))
+        (Some(client_key), Some(compressed_xof_keyset))
     } else {
         (None, None)
     };
 
     // Share private keys with all parties
-    let private_key_set = share_client_key_material(session, params, keyset.as_ref()).await?;
+    let private_key_set = share_client_key_material(session, params, client_key.as_ref()).await?;
 
     // Transfer the compressed keyset
     let transferred_compressed_keyset =
         transfer_compressed_keyset(session, compressed_keyset, INPUT_PARTY_ID).await?;
 
     Ok((transferred_compressed_keyset, private_key_set))
+}
+
+/// Opens a list of secret-key bit-shares (over any base ring `Z`) to a single party.
+///
+/// Returns `Some(bits)` for `output_party` and `None` for every other party. The opened
+/// entries are validated to be bits (mirroring [`reconstruct_bit_vec`]) and returned as `u64`
+/// regardless of the ring, since each entry is a single bit. All parties must call this
+/// together as it is an interactive opening.
+async fn insecure_open_bits<Z, S, const EXTENSION_DEGREE: usize>(
+    session: &S,
+    shares: &[Share<ResiduePoly<Z, EXTENSION_DEGREE>>],
+    output_party: &Role,
+) -> anyhow::Result<Option<Vec<u64>>>
+where
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let degree = session.threshold() as usize;
+    let values = shares.iter().map(|x| x.value()).collect_vec();
+    let opened = SecureRobustOpen::default()
+        .robust_open_list_to(session, values, degree, output_party)
+        .await?;
+    match opened {
+        Some(values) => {
+            let mut bits = Vec::with_capacity(values.len());
+            for v in values {
+                // `to_scalar` additionally checks the higher coefficients are zero.
+                let scalar = v.to_scalar()?;
+                // The secret-key entries must be bits; mirror `reconstruct_bit_vec`'s check.
+                if scalar * (Z::ONE - scalar) != Z::ZERO {
+                    anyhow::bail!(
+                        "reconstruction failed in insecure_open_bits: expected a bit but found {scalar}"
+                    );
+                }
+                bits.push(if scalar == Z::ZERO { 0_u64 } else { 1_u64 });
+            }
+            Ok(Some(bits))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Dispatches the opening of an [`LweSecretKeyShareEnum`] (Z64 or Z128) to `output_party`,
+/// returning the reconstructed bits as `u64` (the secret key entries are bits in either ring).
+async fn insecure_open_lwe_enum_to<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
+    session: &S,
+    share: &LweSecretKeyShareEnum<EXTENSION_DEGREE>,
+    output_party: &Role,
+) -> anyhow::Result<Option<Vec<u64>>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    match share {
+        LweSecretKeyShareEnum::Z64(inner) => {
+            insecure_open_bits(session, &inner.data, output_party).await
+        }
+        LweSecretKeyShareEnum::Z128(inner) => {
+            insecure_open_bits(session, &inner.data, output_party).await
+        }
+    }
+}
+
+/// Insecure compressed keygen that recycles an *existing* private keyset (the `UseExisting`
+/// migration flow). Party 1 opens the existing secret-key shares to reconstruct the full
+/// client key, generates a fresh [`CompressedXofKeySet`] consistent with that key, then
+/// re-secret-shares the (same) secret key to all parties and broadcasts the compressed keyset.
+///
+/// This mirrors [`initialize_compressed_key_material`] but reconstructs the key instead of
+/// sampling a fresh one, so the resulting keyset keeps the original secret key. Like the rest
+/// of this module it is only compiled under `test`/`testing` and is meant for testing/dev; the
+/// service only reaches it from the `insecure`-gated keygen path.
+pub async fn insecure_initialize_compressed_key_material_from_existing<
+    S: BaseSessionHandles,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    params: DKGParams,
+    tag: tfhe::Tag,
+    existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
+) -> anyhow::Result<(
+    tfhe::xof_key_set::CompressedXofKeySet,
+    PrivateKeySet<EXTENSION_DEGREE>,
+)>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    // This only supports Z128 DKG for now
+    if params.dkg_mode() != DkgMode::Z128 {
+        anyhow::bail!(
+            "Incompatible DKG mode, expected Z128 got {:?}",
+            params.dkg_mode()
+        );
+    }
+
+    // Keys are big so we use rayon for (de)serialization
+    session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
+
+    // Party 1 reconstructs the existing client key by opening all the secret-key shares to it.
+    let opt_client_key =
+        insecure_reconstruct_client_key_to_party1(session, params, tag, existing_private_keyset)
+            .await?;
+
+    // Party 1 generates a fresh compressed keyset from the reconstructed key (same secret key,
+    // new public-key randomness).
+    let (client_key, compressed_keyset) = if let Some(client_key) = opt_client_key {
+        tracing::info!(
+            "Compressed keyset re-generated from existing key by input party {}",
+            session.my_role()
+        );
+        let security_bits = params.sec() as u32;
+
+        // Same domain separators as `CompressedXofKeySet::generate`; the public seed is drawn
+        // from the private seed exactly as `generate_with_separators` does. We skip the client
+        // key generation because we already have the reconstructed key.
+        let private_seed: u128 = session.rng().r#gen();
+        let mut private_generator = RandomGenerator::<DefaultRandomGenerator>::new(
+            XofSeed::new_u128(private_seed, *b"TFHEKGen"),
+        );
+        let mut public_seed_bytes = vec![0u8; security_bits.div_ceil(8) as usize];
+        private_generator.fill_slice_with_random_uniform(&mut public_seed_bytes);
+        let public_seed = XofSeed::new(public_seed_bytes, *b"TFHE_GEN");
+
+        let compressed_xof_keyset = CompressedXofKeySet::generate_with_pre_seeded_generator(
+            public_seed,
+            &client_key,
+            private_generator,
+        )
+        .map_err(|e| anyhow!("failed to generate compressed keyset from existing key: {e:?}"))?;
+
+        (Some(client_key), Some(compressed_xof_keyset))
+    } else {
+        (None, None)
+    };
+
+    // Re-share the (same) private keys with all parties
+    let private_key_set = share_client_key_material(session, params, client_key.as_ref()).await?;
+
+    // Transfer the compressed keyset
+    let transferred_compressed_keyset =
+        transfer_compressed_keyset(session, compressed_keyset, INPUT_PARTY_ID).await?;
+
+    Ok((transferred_compressed_keyset, private_key_set))
+}
+
+/// Opens all secret-key shares of an existing private keyset to party 1, which then rebuilds
+/// the full [`tfhe::ClientKey`]. Returns `Some(client_key)` on party 1 and `None` elsewhere.
+/// All parties must call this together as it performs interactive openings.
+async fn insecure_reconstruct_client_key_to_party1<
+    S: BaseSessionHandles,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    params: DKGParams,
+    tag: tfhe::Tag,
+    existing: &PrivateKeySet<EXTENSION_DEGREE>,
+) -> anyhow::Result<Option<tfhe::ClientKey>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let output_party = Role::indexed_from_one(INPUT_PARTY_ID);
+
+    // Polynomial sizes and parameters are share metadata available to every party.
+    let glwe_poly_size = match &existing.glwe_secret_key_share {
+        GlweSecretKeyShareEnum::Z64(inner) => inner.polynomial_size,
+        GlweSecretKeyShareEnum::Z128(inner) => inner.polynomial_size,
+    };
+    let compression_poly_size =
+        existing
+            .glwe_secret_key_share_compression
+            .as_ref()
+            .map(|c| match c {
+                CompressionPrivateKeySharesEnum::Z64(inner) => {
+                    inner.post_packing_ks_key.polynomial_size
+                }
+                CompressionPrivateKeySharesEnum::Z128(inner) => {
+                    inner.post_packing_ks_key.polynomial_size
+                }
+            });
+    let sns_params = params.sns();
+
+    // Open every component to party 1, in a fixed order (identical across parties).
+    let lwe_bits = insecure_open_lwe_enum_to(
+        session,
+        &existing.lwe_compute_secret_key_share,
+        &output_party,
+    )
+    .await?;
+    let lwe_enc_bits = insecure_open_lwe_enum_to(
+        session,
+        &existing.lwe_encryption_secret_key_share,
+        &output_party,
+    )
+    .await?;
+    let oprf_bits = match &existing.oprf_secret_key_share {
+        Some(share) => insecure_open_lwe_enum_to(session, share, &output_party).await?,
+        None => None,
+    };
+    let glwe_bits =
+        insecure_open_glwe_enum_to(session, &existing.glwe_secret_key_share, &output_party).await?;
+    let compression_bits = match &existing.glwe_secret_key_share_compression {
+        Some(CompressionPrivateKeySharesEnum::Z64(inner)) => {
+            insecure_open_bits(session, &inner.post_packing_ks_key.data, &output_party).await?
+        }
+        Some(CompressionPrivateKeySharesEnum::Z128(inner)) => {
+            insecure_open_bits(session, &inner.post_packing_ks_key.data, &output_party).await?
+        }
+        None => None,
+    };
+    // SnS secret keys live in `u128` containers, so widen the (bit-valued) opened entries.
+    let sns_bits = match &existing.glwe_secret_key_share_sns_as_lwe {
+        Some(share) => insecure_open_bits(session, &share.data, &output_party)
+            .await?
+            .map(|bits| bits.into_iter().map(|b| b as u128).collect::<Vec<_>>()),
+        None => None,
+    };
+    let sns_compression_bits = match &existing.glwe_sns_compression_key_as_lwe {
+        Some(share) => insecure_open_bits(session, &share.data, &output_party)
+            .await?
+            .map(|bits| bits.into_iter().map(|b| b as u128).collect::<Vec<_>>()),
+        None => None,
+    };
+
+    // Only party 1 holds the opened values; everyone else returns None.
+    let Some(lwe_bits) = lwe_bits else {
+        return Ok(None);
+    };
+
+    let lwe_secret_key = LweSecretKeyOwned::from_container(lwe_bits);
+    let glwe_secret_key = GlweSecretKeyOwned::from_container(
+        glwe_bits.ok_or_else(|| anyhow!("party 1 missing reconstructed glwe key"))?,
+        glwe_poly_size,
+    );
+    let dedicated_compact_private_key = Some(LweSecretKeyOwned::from_container(
+        lwe_enc_bits.ok_or_else(|| anyhow!("party 1 missing reconstructed encryption key"))?,
+    ));
+    let compression_key = match (compression_bits, compression_poly_size) {
+        (Some(bits), Some(poly_size)) => Some(GlweSecretKeyOwned::from_container(bits, poly_size)),
+        _ => None,
+    };
+    let sns_secret_key = match (sns_bits, sns_params) {
+        (Some(bits), Some(sns_params)) => Some(GlweSecretKeyOwned::from_container(
+            bits,
+            sns_params.polynomial_size_sns(),
+        )),
+        _ => None,
+    };
+    let sns_compression_secret_key = match (
+        sns_compression_bits,
+        sns_params.and_then(|p| p.sns_compression_params()),
+    ) {
+        (Some(bits), Some(sns_compression_params)) => {
+            Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
+                GlweSecretKeyOwned::from_container(
+                    bits,
+                    sns_compression_params.packing_ks_polynomial_size,
+                ),
+                sns_compression_params,
+            ))
+        }
+        _ => None,
+    };
+    // Ensure the reconstructed client key carries an OPRF secret key, matching the secure
+    // `UseExisting` flow (see `ensure_oprf_secret_key_share_z128`): older keysets may lack the
+    // dedicated OPRF share, so party 1 samples a fresh binary LWE key of the same dimension.
+    // The subsequent re-sharing step distributes it to every party.
+    let oprf_private_lwe_sk = Some(match oprf_bits {
+        Some(bits) => LweSecretKeyOwned::from_container(bits),
+        None => {
+            let seed: u128 = session.rng().r#gen();
+            let mut secret_generator = secret_rng_from_seed(seed);
+            LweSecretKey::generate_new_binary(params.lwe_dimension(), &mut secret_generator)
+        }
+    });
+
+    let client_key = to_hl_client_key(
+        &params,
+        tag,
+        lwe_secret_key,
+        glwe_secret_key,
+        dedicated_compact_private_key,
+        compression_key,
+        sns_secret_key,
+        sns_compression_secret_key,
+        oprf_private_lwe_sk,
+    )?;
+
+    Ok(Some(client_key))
+}
+
+/// Dispatches the opening of a [`GlweSecretKeyShareEnum`] (Z64 or Z128) to `output_party`,
+/// returning the reconstructed bits as `u64`.
+async fn insecure_open_glwe_enum_to<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
+    session: &S,
+    share: &GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
+    output_party: &Role,
+) -> anyhow::Result<Option<Vec<u64>>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    match share {
+        GlweSecretKeyShareEnum::Z64(inner) => {
+            insecure_open_bits(session, &inner.data, output_party).await
+        }
+        GlweSecretKeyShareEnum::Z128(inner) => {
+            insecure_open_bits(session, &inner.data, output_party).await
+        }
+    }
 }
 
 pub async fn transfer_pub_key<S: BaseSessionHandles>(
@@ -840,7 +1131,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
     }
 }
 
-pub async fn transfer_compressed_keyset<S: BaseSessionHandles>(
+async fn transfer_compressed_keyset<S: BaseSessionHandles>(
     session: &S,
     compressed_keyset: Option<tfhe::xof_key_set::CompressedXofKeySet>,
     input_party_id: usize,
@@ -852,22 +1143,6 @@ pub async fn transfer_compressed_keyset<S: BaseSessionHandles>(
         NetworkValue::CompressedXofKeySet(keyset) => Ok(*keyset),
         e => Err(anyhow_error_and_log(format!(
             "Expected CompressedXofKeySet network message but got {}",
-            e.network_type_name()
-        )))?,
-    }
-}
-
-pub async fn transfer_sns_compression_key<S: BaseSessionHandles>(
-    session: &S,
-    key: Option<NoiseSquashingCompressionKey>,
-    input_party_id: usize,
-) -> anyhow::Result<NoiseSquashingCompressionKey> {
-    let key_networkval = key.map(|inner| NetworkValue::<Z128>::SnsCompressionKey(Box::new(inner)));
-    let network_val = transfer_network_value(session, key_networkval, input_party_id).await?;
-    match network_val {
-        NetworkValue::SnsCompressionKey(k) => Ok(*k),
-        e => Err(anyhow_error_and_log(format!(
-            "Expected SnsCompressionKey network message but got {}",
             e.network_type_name()
         )))?,
     }
@@ -971,11 +1246,7 @@ pub fn to_hl_client_key(
     sns_compression_secret_key: Option<NoiseSquashingCompressionPrivateKey>,
     oprf_private_lwe_sk: Option<LweSecretKey<Vec<u64>>>,
 ) -> anyhow::Result<tfhe::ClientKey> {
-    let regular_params = match params {
-        DKGParams::WithSnS(p) => p.regular_params,
-        DKGParams::WithoutSnS(p) => *p,
-    };
-    let ciphertext_params = regular_params.ciphertext_parameters;
+    let ciphertext_params = params.classic_pbs();
 
     let sck = StandardAtomicPatternClientKey::from_raw_parts(
         glwe_secret_key,
@@ -989,10 +1260,9 @@ pub fn to_hl_client_key(
 
     //If necessary generate a dedicated compact private key
     let dedicated_compact_private_key =
-        if let (Some(dedicated_compact_private_key), Some(pk_params)) = (
-            dedicated_compact_private_key,
-            regular_params.get_dedicated_pk_params(),
-        ) {
+        if let (Some(dedicated_compact_private_key), Some(pk_params)) =
+            (dedicated_compact_private_key, params.dedicated_pk_params())
+        {
             Some((
                 tfhe::integer::CompactPrivateKey::from_raw_parts(
                     tfhe::shortint::CompactPrivateKey::from_raw_parts(
@@ -1007,10 +1277,9 @@ pub fn to_hl_client_key(
         };
 
     //If necessary generate a dedicated compression private key
-    let compression_key = if let (Some(compression_private_key), Some(params)) = (
-        compression_key,
-        regular_params.get_compression_decompression_params(),
-    ) {
+    let compression_key = if let (Some(compression_private_key), Some(params)) =
+        (compression_key, params.compression_decompression_params())
+    {
         let polynomial_size = compression_private_key.polynomial_size();
         Some(
             tfhe::integer::compression_keys::CompressionPrivateKeys::from_raw_parts(
@@ -1028,19 +1297,19 @@ pub fn to_hl_client_key(
     };
 
     // If necessary generate a dedicated noise squashing private key
-    let noise_squashing_key = match (sns_secret_key, params) {
-        (None, DKGParams::WithoutSnS(_)) => None,
-        (None, DKGParams::WithSnS(_)) => {
+    let noise_squashing_key = match (sns_secret_key, params.sns()) {
+        (None, None) => None,
+        (None, Some(_)) => {
             anyhow::bail!("missing noise squashing secret key")
         }
-        (Some(_), DKGParams::WithoutSnS(_)) => {
+        (Some(_), None) => {
             anyhow::bail!("missing noise squashing parameters")
         }
-        (Some(sns_sk), DKGParams::WithSnS(sns_params)) => Some(
+        (Some(sns_sk), Some(sns_params)) => Some(
             tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                 tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                     sns_sk,
-                    sns_params.sns_params,
+                    sns_params.sns_params(),
                 ),
             ),
         ),
@@ -1063,7 +1332,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        regular_params.get_rerand_params().map(Into::into),
+        params.rerand_params().map(Into::into),
         oprf_private_key,
         tag,
     ))
@@ -1107,8 +1376,8 @@ where
 /// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
 /// passed as input.
 // TODO(dp): is this slow?
-pub fn keygen_all_party_shares_from_keyset<R, const EXTENSION_DEGREE: usize>(
-    keyset: &KeySet,
+pub fn keygen_all_party_shares_from_client_key<R, const EXTENSION_DEGREE: usize>(
+    client_key: &tfhe::ClientKey,
     parameters: ClassicPBSParameters,
     rng: &mut R,
     num_parties: usize,
@@ -1119,13 +1388,14 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     R: Rng + CryptoRng,
 {
-    let lwe_secret_key = keyset.get_raw_lwe_client_key();
+    let client_key = ClientKeyView::new(client_key);
+    let lwe_secret_key = client_key.raw_lwe_client_key();
 
-    let lwe_encryption_secret_key = keyset.get_raw_lwe_encryption_client_key();
-    let glwe_secret_key = keyset.get_raw_glwe_client_key();
-    let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-    let glwe_secret_key_sns_compression_as_lwe = keyset.get_raw_sns_compression_client_key_as_lwe();
-    let oprf_secret_key = keyset.get_raw_oprf_client_key();
+    let lwe_encryption_secret_key = client_key.raw_lwe_encryption_client_key();
+    let glwe_secret_key = client_key.raw_glwe_client_key();
+    let glwe_secret_key_sns_as_lwe = client_key.raw_glwe_client_sns_key_as_lwe().unwrap();
+    let glwe_secret_key_sns_compression_as_lwe = client_key.raw_sns_compression_client_key_as_lwe();
+    let oprf_secret_key = client_key.raw_oprf_client_key();
     keygen_all_party_shares(
         lwe_secret_key,
         lwe_encryption_secret_key,
@@ -1394,12 +1664,9 @@ pub fn combine_and_run_sns_compression_test(
         None => new_client_key.generate_server_key(),
     };
 
-    let (sns_params, sns_compression_params) = match params {
-        DKGParams::WithoutSnS(_) => panic!("SNS compression test requires DKGParams with SnS"),
-        DKGParams::WithSnS(dkgparams_sn_s) => (
-            dkgparams_sn_s.sns_params,
-            dkgparams_sn_s.sns_compression_params.unwrap(),
-        ),
+    let (sns_params, sns_compression_params) = match params.sns() {
+        None => panic!("SNS compression test requires DKGParams with SnS"),
+        Some(sns) => (sns.sns_params(), sns.sns_compression_params().unwrap()),
     };
     assert!(sns_compression_key.is_conformant(&(sns_params, sns_compression_params).into()));
     let int_sns_compression_key =
@@ -1424,17 +1691,37 @@ pub fn combine_and_run_sns_compression_test(
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::sessions::session_parameters::GenericParameterHandles;
+    use crate::runtime::sessions::small_session::SmallSession128;
+    use crate::runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles};
+    use crate::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use crate::tfhe_internals::private_keysets::{
+        GlweSecretKeyShareEnum, LweSecretKeyShareEnum, PrivateKeySet,
+    };
+    use crate::tfhe_internals::test_feature::{
+        KeySet, initialize_compressed_key_material,
+        insecure_initialize_compressed_key_material_from_existing,
+    };
+    use crate::tfhe_internals::utils::reconstruct_bit_vec;
+    use crate::{constants::REAL_KEY_PATH, tests::ensure_real_keys_setup};
+    use aes_prng::AesRng;
+    use algebra::base_ring::{Z64, Z128};
+    use algebra::galois_rings::common::ResiduePoly;
+    use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use algebra::sharing::share::Share;
+    use algebra::structure_traits::Ring;
+    use rand::SeedableRng;
+    use std::collections::HashMap;
+    use test_utils::read_element;
     use tfhe::{
         FheUint8,
         prelude::{CiphertextList, FheDecrypt},
         set_server_key,
     };
-
-    use crate::{
-        constants::REAL_KEY_PATH, tests::ensure_real_keys_setup,
-        tfhe_internals::test_feature::KeySet,
-    };
-    use test_utils::read_element;
+    use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
+    use threshold_types::session_id::SessionId;
+    use tokio::task::JoinSet;
 
     // TODO does not work with test key. Enable if test keys get updated
     // // #[test]
@@ -1446,6 +1733,108 @@ mod tests {
     fn sunshine_hl_keys_real() {
         ensure_real_keys_setup();
         sunshine_hl_keys(REAL_KEY_PATH);
+    }
+
+    /// Verifies the insecure `UseExisting` compressed keygen: generate an "existing" compressed
+    /// keyset, then regenerate a compressed keyset from it. The regenerated keyset must be a
+    /// valid keyset that all parties agree on, and the re-shared private keyset must reconstruct
+    /// to the *same* secret key as the original (the migration must preserve the secret).
+    #[tokio::test]
+    async fn insecure_compressed_keygen_from_existing_preserves_secret() {
+        const EXT: usize = ResiduePolyF4Z128::EXTENSION_DEGREE;
+        let num_parties = 4;
+        let threshold = 1;
+        let params = PARAMS_TEST_BK_SNS;
+
+        let roles = generate_fixed_roles(num_parties);
+        let runtime = DistributedTestRuntime::<ResiduePolyF4Z128, _, EXT>::new(
+            roles.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
+        let session_id = SessionId::from(1);
+
+        let task = |mut session: SmallSession128<EXT>| async move {
+            let tag = tfhe::Tag::default();
+            // The "existing" keyset.
+            let (_compressed_a, sk_a) =
+                initialize_compressed_key_material::<_, EXT>(&mut session, params, tag.clone())
+                    .await
+                    .unwrap();
+            // Regenerate a compressed keyset from the existing secret key.
+            let (compressed_b, sk_b) = insecure_initialize_compressed_key_material_from_existing::<
+                _,
+                EXT,
+            >(&mut session, params, tag, &sk_a)
+            .await
+            .unwrap();
+            (session.my_role(), compressed_b, sk_a, sk_b)
+        };
+
+        let mut tasks = JoinSet::new();
+        for party in roles {
+            let session = runtime
+                .small_session_for_party(
+                    session_id,
+                    party,
+                    Some(AesRng::seed_from_u64(party.one_based() as u64 + 128)),
+                )
+                .await;
+            tasks.spawn(task(session));
+        }
+
+        let mut results = Vec::new();
+        while let Some(out) = tasks.join_next().await {
+            results.push(out.unwrap());
+        }
+        assert_eq!(results.len(), num_parties);
+
+        // Every party must end up with a valid, decompressable compressed keyset.
+        for (role, compressed_b, _, _) in &results {
+            compressed_b.decompress().unwrap_or_else(|e| {
+                panic!("party {role} produced an invalid compressed keyset: {e:?}")
+            });
+        }
+
+        // Reconstruct the GLWE secret key (Z128) from the original shares and from the re-shared
+        // shares and assert they match: the migration must preserve the secret key.
+        let mut glwe_a: HashMap<Role, Vec<Share<ResiduePoly<Z128, EXT>>>> = HashMap::new();
+        let mut glwe_b: HashMap<Role, Vec<Share<ResiduePoly<Z128, EXT>>>> = HashMap::new();
+        let mut lwe_a: HashMap<Role, Vec<Share<ResiduePoly<Z64, EXT>>>> = HashMap::new();
+        let mut lwe_b: HashMap<Role, Vec<Share<ResiduePoly<Z64, EXT>>>> = HashMap::new();
+
+        let extract_glwe = |sk: &PrivateKeySet<EXT>| match &sk.glwe_secret_key_share {
+            GlweSecretKeyShareEnum::Z128(inner) => inner.data.clone(),
+            GlweSecretKeyShareEnum::Z64(_) => panic!("expected glwe shares to be z128"),
+        };
+        let extract_lwe = |sk: &PrivateKeySet<EXT>| match &sk.lwe_compute_secret_key_share {
+            LweSecretKeyShareEnum::Z64(inner) => inner.data.clone(),
+            LweSecretKeyShareEnum::Z128(_) => panic!("expected lwe compute shares to be z64"),
+        };
+
+        for (role, _, sk_a, sk_b) in &results {
+            glwe_a.insert(*role, extract_glwe(sk_a));
+            glwe_b.insert(*role, extract_glwe(sk_b));
+            lwe_a.insert(*role, extract_lwe(sk_a));
+            lwe_b.insert(*role, extract_lwe(sk_b));
+        }
+
+        let glwe_bits = glwe_a.values().next().unwrap().len();
+        let lwe_bits = lwe_a.values().next().unwrap().len();
+        let glwe_key_a = reconstruct_bit_vec::<Z128, EXT>(glwe_a, glwe_bits, threshold as usize);
+        let glwe_key_b = reconstruct_bit_vec::<Z128, EXT>(glwe_b, glwe_bits, threshold as usize);
+        let lwe_key_a = reconstruct_bit_vec::<Z64, EXT>(lwe_a, lwe_bits, threshold as usize);
+        let lwe_key_b = reconstruct_bit_vec::<Z64, EXT>(lwe_b, lwe_bits, threshold as usize);
+
+        assert_eq!(
+            glwe_key_a, glwe_key_b,
+            "UseExisting migration must preserve the GLWE secret key"
+        );
+        assert_eq!(
+            lwe_key_a, lwe_key_b,
+            "UseExisting migration must preserve the LWE compute secret key"
+        );
     }
 
     /// Helper method for validating conversion to high level API keys.

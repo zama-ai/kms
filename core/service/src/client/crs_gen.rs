@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_CRS;
-use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
+
 use alloy_sol_types::Eip712Domain;
+use hashing::hash_versioned;
 use kms_grpc::ContextId;
 use kms_grpc::EpochId;
 use kms_grpc::RequestId;
@@ -107,7 +108,7 @@ impl Client {
             }
 
             // check the digest
-            let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+            let actual_digest = hash_versioned(&DSEP_PUBDATA_CRS, &pp)?;
             if result.crs_digest != actual_digest {
                 tracing::warn!(
                     "crs_handle {} does not match the computed digest {}; discarding the CRS",
@@ -204,7 +205,7 @@ impl Client {
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         let pp = self.get_crs(&request_id, storage).await?;
-        let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+        let actual_digest = hash_versioned(&DSEP_PUBDATA_CRS, &pp)?;
         if actual_digest != crs_gen_result.crs_digest {
             tracing::warn!(
                 "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
@@ -262,16 +263,16 @@ pub(crate) mod tests {
     use threshold_execution::tfhe_internals::parameters::DKGParams;
 
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
-        let dkg_params_handle = dkg_params.get_params_basics_handle();
+        let dkg_params_handle = dkg_params;
 
-        let cks = tfhe::integer::ClientKey::new(dkg_params_handle.to_classic_pbs_parameters());
+        let cks = tfhe::integer::ClientKey::new(dkg_params_handle.classic_pbs());
 
         // If there is indeed a dedicated compact pk, we need to generate the corresponding
         // keys to expand when encrypting later on
         let pk = if dkg_params_handle.has_dedicated_compact_pk_params() {
             // Generate the secret key PKE encrypts to
             let compact_private_key = tfhe::integer::public_key::CompactPrivateKey::new(
-                dkg_params_handle.get_compact_pk_enc_params(),
+                dkg_params_handle.compact_pk_enc_params(),
             );
             // Generate the corresponding public key
             let pk = tfhe::integer::public_key::CompactPublicKey::new(&compact_private_key);
@@ -286,7 +287,7 @@ pub(crate) mod tests {
 
         let max_msg_len = pp.max_num_messages().0;
         let msgs = (0..max_msg_len)
-            .map(|i| i as u64 % dkg_params_handle.get_message_modulus().0)
+            .map(|i| i as u64 % dkg_params_handle.message_modulus().0)
             .collect::<Vec<_>>();
 
         let metadata = vec![23_u8, 42];
@@ -305,14 +306,11 @@ pub(crate) mod tests {
         // We're using test parameters because they're unique to KMS
         // and have more constraints. The normal parameters should always be tested by tfhe-rs.
         let dkg_params = TEST_PARAM;
-        let params_h = dkg_params.get_params_basics_handle();
+        let params_h = dkg_params;
 
-        let config =
-            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
-                .use_dedicated_compact_public_key_parameters(
-                    params_h.get_dedicated_pk_params().unwrap(),
-                )
-                .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(params_h.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params_h.dedicated_pk_params().unwrap())
+            .build();
 
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
         verify_pp(&dkg_params, &crs);
@@ -331,17 +329,14 @@ pub(crate) mod tests {
         let request_id = RequestId::default();
         let domain = Eip712Domain::default();
         let dkg_params = TEST_PARAM;
-        let params_h = dkg_params.get_params_basics_handle();
-        let config =
-            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
-                .use_dedicated_compact_public_key_parameters(
-                    params_h.get_dedicated_pk_params().unwrap(),
-                )
-                .build();
+        let params_h = dkg_params;
+        let config = tfhe::ConfigBuilder::with_custom_parameters(params_h.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params_h.dedicated_pk_params().unwrap())
+            .build();
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
 
         // Create a CrsGenResult with an invalid signature
-        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
         let result = CrsGenResult {
             request_id: Some(request_id.into()),
             crs_digest: crs_digest.clone(),

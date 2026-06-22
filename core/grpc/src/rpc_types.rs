@@ -759,29 +759,37 @@ impl TypedPlaintext {
     pub fn as_bool(&self) -> bool {
         if self.fhe_type != FheTypes::Bool as i32 {
             tracing::warn!(
-                "Plaintext is not of type Bool or has more than 1 Byte. Returning the least significant bit as Bool"
+                "Plaintext is not of type Bool. Returning the least significant bit as Bool"
             );
         }
-        if self.bytes[0] > 1 {
+        if self.bytes.is_empty() {
+            tracing::warn!("Bool Plaintext has no bytes. Returning false (0).");
+        }
+        let first = self.bytes.first().copied().unwrap_or(0);
+        if first > 1 {
             tracing::warn!(
                 "Plaintext should be Bool (0 or 1), but was bigger ({}). Returning the least significant bit as Bool.",
-                self.bytes[0]
+                first
             );
         }
-        self.bytes[0] % 2 == 1
+        first % 2 == 1
     }
 
     pub fn as_u4(&self) -> u8 {
         if self.fhe_type != FheTypes::Uint4 as i32 {
             tracing::warn!("Plaintext is not of type u4. Returning the value modulo 16");
         }
-        if self.bytes[0] > 15 {
+        if self.bytes.is_empty() {
+            tracing::warn!("U4 Plaintext has no bytes. Returning 0.");
+        }
+        let first = self.bytes.first().copied().unwrap_or(0);
+        if first > 15 {
             tracing::warn!(
                 "Plaintext should be u4, but was bigger ({}). Returning the value modulo 16.",
-                self.bytes[0]
+                first
             );
         }
-        self.bytes[0] % 16
+        first % 16
     }
 
     pub fn as_u8(&self) -> u8 {
@@ -790,11 +798,11 @@ impl TypedPlaintext {
         }
         if self.bytes.len() != 1 {
             tracing::warn!(
-                "U8 Plaintext should have 1 Byte, but was bigger ({} Bytes). Returning the least significant Byte",
+                "U8 Plaintext should have exactly 1 Byte, but had {} Bytes. Returning the first Byte (or 0 if empty)",
                 self.bytes.len()
             );
         }
-        self.bytes[0]
+        self.bytes.first().copied().unwrap_or(0)
     }
 
     pub fn as_u16(&self) -> u16 {
@@ -991,21 +999,36 @@ impl TryFrom<TypedPlaintext> for FheTypes {
 impl TryFrom<TypedPlaintext> for Vec<u8> {
     type Error = anyhow::Error;
     fn try_from(value: TypedPlaintext) -> anyhow::Result<Self> {
-        match value.fhe_type()? {
-            FheTypes::Bool => Ok(vec![value.bytes[0] % 2]),
-            FheTypes::Uint4 => Ok(vec![value.bytes[0] % 16]),
-            FheTypes::Uint8 => Ok(vec![value.bytes[0]]),
-            FheTypes::Uint16 => Ok(value.bytes[0..2].to_vec()),
-            FheTypes::Uint32 => Ok(value.bytes[0..4].to_vec()),
-            FheTypes::Uint64 => Ok(value.bytes[0..8].to_vec()),
-            FheTypes::Uint128 => Ok(value.bytes[0..16].to_vec()),
-            FheTypes::Uint160 => Ok(value.bytes[0..20].to_vec()),
-            FheTypes::Uint256 => Ok(value.bytes[0..32].to_vec()),
-            FheTypes::Uint512 => Ok(value.bytes[0..64].to_vec()),
-            FheTypes::Uint1024 => Ok(value.bytes[0..128].to_vec()),
-            FheTypes::Uint2048 => Ok(value.bytes[0..256].to_vec()),
+        let fhe_type = value.fhe_type()?;
+        // Leading bytes each type consumes. Guard the length first so a short `bytes` vec
+        // (attacker-supplied) yields an error rather than panicking on the slice below.
+        let required = match fhe_type {
+            FheTypes::Bool | FheTypes::Uint4 | FheTypes::Uint8 => 1,
+            FheTypes::Uint16 => 2,
+            FheTypes::Uint32 => 4,
+            FheTypes::Uint64 => 8,
+            FheTypes::Uint128 => 16,
+            FheTypes::Uint160 => 20,
+            FheTypes::Uint256 => 32,
+            FheTypes::Uint512 => 64,
+            FheTypes::Uint1024 => 128,
+            FheTypes::Uint2048 => 256,
             _ => anyhow::bail!("Unsupported fhe_type in TypedPlaintext: {}", value.fhe_type),
+        };
+        if value.bytes.len() < required {
+            anyhow::bail!(
+                "TypedPlaintext of type {:?} needs at least {} bytes, got {}",
+                fhe_type,
+                required,
+                value.bytes.len()
+            );
         }
+        Ok(match fhe_type {
+            FheTypes::Bool => vec![value.bytes[0] % 2],
+            FheTypes::Uint4 => vec![value.bytes[0] % 16],
+            FheTypes::Uint8 => vec![value.bytes[0]],
+            _ => value.bytes[0..required].to_vec(),
+        })
     }
 }
 
@@ -1164,6 +1187,38 @@ mod tests {
         assert_eq!(TypedPlaintext::from_u2048(u2048_val).as_u2048(), u2048_val);
         let u2048_val = tfhe::integer::bigint::U2048::from(12345_u64);
         assert_eq!(TypedPlaintext::from_u2048(u2048_val).as_u2048(), u2048_val);
+    }
+
+    #[test]
+    fn test_typed_plaintext_short_bytes_do_not_panic() {
+        // Robustness: a malformed (too-short) `bytes` vec must not panic on indexed access.
+        let empty_u256 = TypedPlaintext {
+            bytes: vec![],
+            fhe_type: FheTypes::Uint256 as i32,
+        };
+        // TryFrom must return an error, not panic on the out-of-range slice.
+        assert!(Vec::<u8>::try_from(empty_u256).is_err());
+
+        // Scalar accessors degrade to 0 rather than panicking on empty bytes.
+        let empty_bool = TypedPlaintext {
+            bytes: vec![],
+            fhe_type: FheTypes::Bool as i32,
+        };
+        assert!(!empty_bool.as_bool());
+        let empty_u8 = TypedPlaintext {
+            bytes: vec![],
+            fhe_type: FheTypes::Uint8 as i32,
+        };
+        assert_eq!(empty_u8.as_u8(), 0);
+        let empty_u4 = TypedPlaintext {
+            bytes: vec![],
+            fhe_type: FheTypes::Uint4 as i32,
+        };
+        assert_eq!(empty_u4.as_u4(), 0);
+
+        // A well-formed value still round-trips through TryFrom.
+        let ok = Vec::<u8>::try_from(TypedPlaintext::from_u32(0x0403_0201)).unwrap();
+        assert_eq!(ok, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
     #[test]

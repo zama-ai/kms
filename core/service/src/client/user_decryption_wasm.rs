@@ -12,6 +12,7 @@ use crate::engine::validation::{
     validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
+use algebra::error_correction::ReconstructionHints;
 use algebra::{
     base_ring::{Z64, Z128},
     error_correction::MemoizedExceptionals,
@@ -276,10 +277,7 @@ impl Client {
             )));
         }
 
-        let pbs_params = self
-            .params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params = self.params.classic_pbs();
 
         tracing::info!(
             "User decryption response reconstruction with mode: {:?}. deg={degree}, #shares={amount_shares}",
@@ -301,6 +299,12 @@ impl Client {
                         )));
                     }
                     let mut decrypted_blocks = Vec::new();
+                    let pivot = if let Some(pivot) = sharings.first() {
+                        pivot
+                    } else {
+                        return Ok(Vec::new());
+                    };
+                    let hints = ReconstructionHints::new(pivot, degree)?;
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
                         match reconstruct_w_errors_sync(
@@ -309,6 +313,7 @@ impl Client {
                             degree,
                             num_parties - amount_shares,
                             &cur_block_shares,
+                            &hints,
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
@@ -356,6 +361,12 @@ impl Client {
                             "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
                         )));
                     }
+                    let pivot = if let Some(pivot) = sharings.first() {
+                        pivot
+                    } else {
+                        return Ok(Vec::new());
+                    };
+                    let hints = ReconstructionHints::new(pivot, degree)?;
 
                     let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
@@ -366,6 +377,7 @@ impl Client {
                             degree,
                             num_parties - amount_shares,
                             &cur_block_shares,
+                            &hints,
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
@@ -391,10 +403,7 @@ impl Client {
                             &pbs_params,
                             fhe_types_to_num_blocks(
                                 fhe_type,
-                                &self
-                                    .params
-                                    .get_params_basics_handle()
-                                    .to_classic_pbs_parameters(),
+                                &self.params.classic_pbs(),
                                 packing_factor,
                             )?,
                         )?,
@@ -526,6 +535,12 @@ impl Client {
             }
 
             let mut decrypted_blocks = Vec::new();
+            let pivot = if let Some(pivot) = sharings.first() {
+                pivot
+            } else {
+                return Ok(Vec::new());
+            };
+            let hints = ReconstructionHints::new(pivot, degree)?;
             for cur_block_shares in sharings {
                 // NOTE: this performs optimistic reconstruction
                 match reconstruct_w_errors_sync(
@@ -534,6 +549,7 @@ impl Client {
                     degree,
                     num_parties - amount_shares,
                     &cur_block_shares,
+                    &hints,
                 ) {
                     Ok(Some(r)) => decrypted_blocks.push(r),
                     Ok(None) => {
@@ -566,22 +582,12 @@ impl Client {
         let mut out = vec![];
 
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
-            let pbs_params = self
-                .params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters();
+            let pbs_params = self.params.classic_pbs();
 
             let recon_blocks = reconstruct_packed_message(
                 Some(decrypted_blocks),
                 &pbs_params,
-                fhe_types_to_num_blocks(
-                    fhe_type,
-                    &self
-                        .params
-                        .get_params_basics_handle()
-                        .to_classic_pbs_parameters(),
-                    packing_factor,
-                )?,
+                fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?,
             )?;
 
             out.push(decrypted_blocks_to_plaintext(
@@ -607,10 +613,7 @@ impl Client {
 
         let mut out = vec![];
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
-            let pbs_params = self
-                .params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters();
+            let pbs_params = self.params.classic_pbs();
 
             let mut ptxts64 = Vec::new();
 
@@ -665,15 +668,9 @@ impl Client {
             let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
             // taking agg_resp[0] is safe since batch_count before exists
             let fhe_type = agg_resp[0].signcrypted_ciphertexts[batch_i].fhe_type()?;
-            let num_shares = fhe_types_to_num_blocks(
-                fhe_type,
-                &self
-                    .params
-                    .get_params_basics_handle()
-                    .to_classic_pbs_parameters(),
-                packing_factor,
-            )?
-            .div_ceil(intra_share_packing);
+            let num_shares =
+                fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?
+                    .div_ceil(intra_share_packing);
             let mut sharings = Vec::new();
             for _i in 0..num_shares {
                 sharings.push(ShamirSharings::new());

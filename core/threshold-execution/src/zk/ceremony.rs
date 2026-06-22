@@ -1579,9 +1579,7 @@ mod tests {
             compute_witness_dim(&param_v0_11_zkv2, Some(max_bit_size)).unwrap()
         );
 
-        let param_v1_zkv2 = BC_PARAMS_NO_SNS
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params();
+        let param_v1_zkv2 = BC_PARAMS_NO_SNS.compact_pk_enc_params();
         assert_eq!(
             5952,
             compute_witness_dim(&param_v1_zkv2, Some(max_bit_size)).unwrap()

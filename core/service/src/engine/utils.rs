@@ -646,11 +646,13 @@ thread_local! {
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
-    use crate::engine::base::{KeyGenMetadataInner, safe_serialize_hash_element_versioned};
+    use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
+
     use aes_prng::AesRng;
+    use hashing::hash_versioned;
     use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
     use rand::SeedableRng;
     use std::collections::{BTreeMap, HashMap};
@@ -1242,24 +1244,16 @@ mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
-        let pbs_params: ClassicPBSParameters = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params: ClassicPBSParameters = params.classic_pbs();
         let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
         let client_key = tfhe::ClientKey::generate(config);
         let server_key = client_key.generate_server_key();
         let public_key = tfhe::CompactPublicKey::new(&client_key);
 
-        let server_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &server_key,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &public_key,
-        )
-        .unwrap();
+        let server_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
 
         store_versioned_at_request_id(
             storage,
@@ -1295,18 +1289,14 @@ mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
-        let max_norm_hwt = params
-            .get_params_basics_handle()
-            .get_sk_deviations()
-            .map(|x| x.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let tag = key_id.into();
 
         let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
             config,
             vec![42, 43, 44, 45],
-            params.get_params_basics_handle().get_sec() as u32,
+            params.sec() as u32,
             max_norm_hwt,
             tag,
         )
@@ -1318,16 +1308,10 @@ mod tests {
             .into_raw_parts()
             .0;
 
-        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compressed_keyset,
-        )
-        .unwrap();
-        let public_key_digest = safe_serialize_hash_element_versioned(
-            &crate::engine::base::DSEP_PUBDATA_KEY,
-            &compact_public_key,
-        )
-        .unwrap();
+        let compressed_keyset_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compact_public_key).unwrap();
 
         store_versioned_at_request_id(
             storage,

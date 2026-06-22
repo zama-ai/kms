@@ -25,6 +25,7 @@ use algebra::{
 use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -627,8 +628,12 @@ where
         let prss_setup = self.prss_setup.clone();
         let mask_ctr = self.counters.mask_ctr;
 
+        // Each element is computed from an independent counter, so the batch is
+        // assembled in parallel. Element `idx` uses `ctr = mask_ctr + idx` (and
+        // `ctr + 1`).
         let res = spawn_compute_bound(move || {
-        (mask_ctr..mask_ctr + (amount as u128)).map(|ctr| {
+        (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        let ctr = mask_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -651,7 +656,7 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
-            Ok(res)}).try_collect()
+            Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
     }).instrument(tracing::Span::current()).await??;
 
         // increase counter by two for each element generated, since we have two phi calls above
@@ -671,8 +676,11 @@ where
         let prss_setup = self.prss_setup.clone();
         let prss_ctr = self.counters.prss_ctr;
 
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = prss_ctr + idx`.
         let res = spawn_compute_bound(move ||{
-            (prss_ctr..prss_ctr + (amount as u128)).map(|ctr| {
+            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        let ctr = prss_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -692,7 +700,7 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
-        Ok(res)}).try_collect()
+        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
     }).instrument(tracing::Span::current()).await??;
 
         self.counters.prss_ctr += amount as u128;
@@ -718,8 +726,11 @@ where
         let prss_setup = self.prss_setup.clone();
         let przs_ctr = self.counters.przs_ctr;
 
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = przs_ctr + idx`.
         let res = spawn_compute_bound(move ||{
-            (przs_ctr..przs_ctr + (amount as u128)).map(|ctr| {
+            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
+        let ctr = przs_ctr + idx as u128;
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -741,7 +752,7 @@ where
                 return Err(anyhow_error_and_log(format!("Called przs.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
-        Ok(res)}).try_collect()
+        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
 }).instrument(tracing::Span::current()).await??;
 
         self.counters.przs_ctr += amount as u128;
@@ -1130,7 +1141,7 @@ mod tests {
     use crate::tests::ensure_test_data_setup;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
-    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
+    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_client_key};
     use crate::tfhe_internals::utils::expanded_encrypt;
     use crate::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
@@ -1295,9 +1306,14 @@ mod tests {
         let roles = generate_fixed_roles(num_parties);
 
         // generate key shares for all parties
-        let key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key(
+            &keyset.client_key,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
 
         set_server_key(keyset.public_keys.server_key.clone());
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg, 8).unwrap();
@@ -2488,7 +2504,7 @@ mod tests {
             .map(|idx| {
                 let reconstruct =
                     ShamirSharings::create(results.iter().map(|shares| shares[idx]).collect())
-                        .err_reconstruct(degree, max_error);
+                        .error_reconstruct(degree, max_error);
                 assert!(
                     reconstruct.is_ok(),
                     "Failed to reconstruct at idx {idx}: {reconstruct:?}"
