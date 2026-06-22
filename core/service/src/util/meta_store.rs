@@ -980,10 +980,10 @@ pub(crate) async fn delete_in_meta_store<T>(
     request_metric: &'static str,
 ) -> bool {
     let req_id = permit.req_id;
-    MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
     match meta_store.write().await.delete(permit) {
         Ok(_) => true,
         Err(e) => {
+            MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
             tracing::error!(
                 "Failed to delete request ID {req_id} from meta-store, with error message {e}"
             );
