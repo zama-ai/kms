@@ -340,7 +340,7 @@ service CoreServiceEndpoint {
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
   // * Each entry in `epoch_ids` must be a valid [`RequestId`].
   // ## Post-condition:
-  // * The `context_id` in `request` can no longer be used. Any MPC context data associated with it, that may have existed, has been purged from both memory and disc.
+  // * The `context_id` in `request` can no longer be used. Any MPC context data associated with it, that may have existed, has been purged from both memory and disk.
   // * Each epoch in `epoch_ids` that existed has had its private key shares and PRSS data purged from both memory and disk.
   // * Epochs NOT listed in `epoch_ids` are left untouched, even if they belong to the destroyed context.
   rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
