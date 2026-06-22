@@ -465,7 +465,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     // Instead of processing one party at a time, collect multiple responses
     // and attempt reconstruction less frequently to reduce O(n×m) complexity
 
-    // Pick the reconstruction function and the share-count needed for reconstruction. The sync mode need degree + 2t.
+    // Pick the reconstruction function and the share-count needed for reconstruction. The sync mode needs degree + 2t.
     // Same for the robust async mode. The weaker async branch however can reconstruct from as few as degree + t shares.
     let t = threshold as usize;
     let (reconstruct_fn, attempt_bound): (ReconsFunc<Z>, usize) = match network_mode {
