@@ -685,6 +685,24 @@ pub mod tests {
         assert!(reretrieved_store.is_err());
     }
 
+    /// Storing typed data must record its serialized size into the payload-size histogram,
+    /// keyed by the element's `Named::NAME` (see `CoreMetrics::observe_size`).
+    pub async fn test_store_data_records_payload_size<S: Storage>(storage: &mut S) {
+        let data = TestType { i: 46 };
+        let req_id = derive_request_id("payload_size_test").unwrap();
+
+        let before = observability::metrics::METRICS.payload_size_sample_count(TestType::NAME);
+        store_versioned_at_request_id(storage, &req_id, &data, "TestType")
+            .await
+            .unwrap();
+        let after = observability::metrics::METRICS.payload_size_sample_count(TestType::NAME);
+        // `>` not an exact count: parallel tests share the global METRICS.
+        assert!(
+            after > before,
+            "storing data must record a payload-size sample (before={before}, after={after})"
+        );
+    }
+
     pub async fn test_epoch_methods<S: StorageExt>(storage: &mut S) {
         // create two epochs and write two objects on each epoch
         let mut rng = AesRng::seed_from_u64(12121212);
