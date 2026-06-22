@@ -936,8 +936,7 @@ impl<
                 anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
             }
         }
-        let custodian_meta_store =
-            Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
+        let custodian_meta_store = MetaStore::new_from_map_with_reaper(validation_material);
         let tracker = Arc::new(TaskTracker::new());
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
@@ -975,9 +974,12 @@ impl<
         }
         tracing::info!("Successfully updated backup vault when booting");
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
-        let user_dec_meta_store =
-            Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
-        let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
+        // The `*_with_reaper` constructors attach a reaper so an abandoned
+        // request (a permit dropped without recording an outcome) surfaces as
+        // `Done(Err)` instead of hanging `Pending` forever — applied to every
+        // store, since the unlimited ones never evict an orphaned `Pending`.
+        let user_dec_meta_store = MetaStore::new_with_reaper(DEC_CAPACITY, MIN_DEC_CACHE);
+        let pub_dec_meta_store = MetaStore::new_with_reaper(DEC_CAPACITY, MIN_DEC_CACHE);
         let telemetry_conf = config
             .telemetry
             .unwrap_or_else(|| TelemetryConfig::builder().build());
@@ -996,15 +998,13 @@ impl<
             CentralizedKms {
                 base_kms,
                 crypto_storage,
-                epoch_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
-                preprocessing_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(
-                    HashMap::new(),
-                ))),
-                key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
+                epoch_ids: MetaStore::new_from_map_with_reaper(HashMap::new()),
+                preprocessing_meta_store: MetaStore::new_from_map_with_reaper(HashMap::new()),
+                key_meta_map: MetaStore::new_from_map_with_reaper(public_key_info),
                 ongoing_key_gen: Arc::new(Mutex::new(HashMap::new())),
                 pub_dec_meta_store,
                 user_dec_meta_store,
-                crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                crs_meta_map: MetaStore::new_from_map_with_reaper(crs_info),
                 ongoing_crs_gen: Arc::new(Mutex::new(HashMap::new())),
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,

@@ -72,7 +72,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store,
+            update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -535,13 +536,12 @@ impl<
                 )
             })?;
 
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
+        // Below we write to the meta-store, leaving this [req_id] in the
+        // "Started" (Pending) state. The management task updates it on every
+        // outcome path; should the permit ever be dropped without an update, the
+        // store's reaper fails the entry rather than leaving it Pending forever.
         let meta_permit =
-            add_req_to_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
+            add_or_redo_failed_in_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;

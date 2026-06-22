@@ -62,7 +62,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store,
             update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
@@ -337,14 +337,16 @@ impl<
                 )
             })?;
 
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        let meta_permit =
-            add_req_to_meta_store(&self.pub_dec_meta_store, &req_id, OP_PUBLIC_DECRYPT_REQUEST)
-                .await?;
+        // Below we write to the meta-store, leaving this [req_id] in the
+        // "Started" (Pending) state. The management task updates it on every
+        // outcome path; should the permit ever be dropped without an update, the
+        // store's reaper fails the entry rather than leaving it Pending forever.
+        let meta_permit = add_or_redo_failed_in_meta_store(
+            &self.pub_dec_meta_store,
+            &req_id,
+            OP_PUBLIC_DECRYPT_REQUEST,
+        )
+        .await?;
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let mut dec_tasks = Vec::new();
 
@@ -702,7 +704,15 @@ fn format_public_request(request: &PublicDecryptionRequest) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use crate::{
+        consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
+        cryptography::signatures::gen_sig_keys,
+        dummy_domain,
+        engine::threshold::service::session::SessionMaker,
+        vault::storage::{crypto_material::PublicKeySet, ram},
+    };
     use aes_prng::AesRng;
+    use kms_grpc::RequestId;
     use kms_grpc::{
         kms::v1::TypedCiphertext,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -711,14 +721,6 @@ mod tests {
     use threshold_execution::{
         runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
-    };
-
-    use crate::{
-        consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
-        cryptography::signatures::gen_sig_keys,
-        dummy_domain,
-        engine::threshold::service::session::SessionMaker,
-        vault::storage::{crypto_material::PublicKeySet, ram},
     };
 
     use super::*;

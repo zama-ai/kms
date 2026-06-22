@@ -10,7 +10,7 @@ use crate::engine::validation::{
     validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
-    add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
+    add_or_redo_failed_in_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
 };
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
@@ -100,7 +100,7 @@ pub async fn user_decrypt_impl<
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let mut rng = service.base_kms.new_rng().await;
-    let meta_permit = add_req_to_meta_store(
+    let meta_permit = add_or_redo_failed_in_meta_store(
         &service.user_dec_meta_store,
         &request_id,
         OP_USER_DECRYPT_REQUEST,
@@ -267,9 +267,9 @@ pub async fn public_decrypt_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
-    // if the request already exists, then return the AlreadyExists error
-    // otherwise attempt to insert it to the meta store
-    let meta_permit = add_req_to_meta_store(
+    // Insert a fresh entry; if the id previously failed, it is retried instead
+    // of rejected, while a successful or in-flight id still returns AlreadyExists.
+    let meta_permit = add_or_redo_failed_in_meta_store(
         &service.pub_dec_meta_store,
         &request_id,
         OP_PUBLIC_DECRYPT_REQUEST,
