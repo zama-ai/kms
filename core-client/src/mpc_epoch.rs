@@ -1,6 +1,6 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
-    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain,
+    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
     keygen::check_uncompressed_keyset_ext_signature, s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
@@ -122,8 +122,12 @@ pub(crate) async fn do_new_epoch(
         .as_ref()
         .map(|previous_epoch| previous_epoch.convert_to_grpc(fhe_params))
         .transpose()?;
+    // The EIP-712 domain comes from the config (falling back to `dummy_domain`), so the
+    // request built here and the reshared-keyset signature check below verify against the
+    // same domain — consistent with the keygen/CRS commands.
+    let default_domain = cc_conf.default_domain()?;
     let domain = if new_epoch_params.previous_epoch_params.is_some() {
-        Some(dummy_domain())
+        Some(default_domain.clone())
     } else {
         None
     };
@@ -358,7 +362,7 @@ pub(crate) async fn do_new_epoch(
                         &preproc_id,
                         &key_id,
                         &signature,
-                        &dummy_domain(),
+                        &default_domain,
                         request.extra_data.clone(),
                         kms_addrs,
                     )?;
@@ -373,7 +377,7 @@ pub(crate) async fn do_new_epoch(
                         &preproc_id,
                         &key_id,
                         &signature,
-                        &dummy_domain(),
+                        &default_domain,
                         request.extra_data.clone(),
                         kms_addrs,
                     )?;
