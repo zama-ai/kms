@@ -74,8 +74,9 @@ prometheus:
           password:
             name: grafana-cloud-prom-auth
             key: password
-        # Safety net: only ship series from the KMS namespaces. The (anchored)
-        # `kms-test.*` also matches the kind-local default namespace `kms-test`.
+        # Safety net: only ship series from the KMS namespaces. Prometheus anchors relabel
+        # regexes on both ends, so `kms-test.*` keeps only namespaces beginning with `kms-test`
+        # — the kind-local default `kms-test` plus the `kms-test-<type>` matrices.
         writeRelabelConfigs:
           - sourceLabels: [namespace]
             regex: "kms-test.*"
