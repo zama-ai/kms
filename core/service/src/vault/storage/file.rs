@@ -521,6 +521,7 @@ pub mod tests {
         test_storage_read_store_methods(&mut priv_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut priv_storage).await;
+        test_store_data_records_payload_size(&mut pub_storage).await;
     }
 
     /// Test that files don't get silently overwritten

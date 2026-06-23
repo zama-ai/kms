@@ -139,7 +139,7 @@ fn bench_decode_par_z64(c: &mut Criterion) {
                     let mut f_zero = Vec::new();
                     match chunk_size {
                         None => {
-                            sharings
+                            let _ = sharings
                                 .iter()
                                 .map(|sharing| {
                                     sharing.error_reconstruct(threshold, max_err).unwrap()

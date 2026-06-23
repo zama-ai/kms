@@ -18,8 +18,8 @@ use tfhe::shortint::parameters::{
     MetaNoiseSquashingParameters, MetaParameters, ModulusSwitchNoiseReductionParams,
     ModulusSwitchType, NoiseEstimationMeasureBound, NoiseSquashingClassicParameters,
     NoiseSquashingCompressionParameters, NoiseSquashingParameters, PBSOrder, PBSParameters,
-    PolynomialSize, RSigmaFactor, ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
-    Variance,
+    PolynomialSize, RSigmaFactor, ReRandomizationConfiguration, ReRandomizationParameters,
+    ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
 };
 use tfhe::shortint::{CarryModulus, MaxNoiseLevel, MessageModulus};
 
@@ -339,9 +339,34 @@ impl DKGParams {
             .map(|d| (d.pke_params, d.ksk_params))
     }
 
+    /// The *legacy* re-randomization KSK parameters, i.e. the key-switching
+    /// parameters carried by the dedicated CPK to reach the compute (Big) key.
+    /// Only ever `Some` in the `LegacyDedicatedCompactPublicKeyWithKeySwitch`
+    /// configuration — in `DerivedCompactPublicKeyWithoutKeySwitch` mode there is
+    /// no rerand KSK, so a conformant derived set always returns `None` here (see
+    /// `MetaParameters::is_valid`). Use [`Self::uses_derived_rerand`] to tell the
+    /// two rerand modes apart.
     pub fn rerand_params(&self) -> Option<ShortintKeySwitchingParameters> {
         self.dedicated_compact_pk_parameters()
             .and_then(|d| d.re_randomization_parameters)
+    }
+
+    /// The re-randomization configuration (`Legacy` vs `Derived`), if any.
+    /// This is independent of [`Self::has_dedicated_compact_pk_params`]: the
+    /// *encryption* CPK and the rerand mode are separate `MetaParameters` fields.
+    pub fn rerand_configuration(&self) -> Option<ReRandomizationConfiguration> {
+        self.meta.rerand_configuration
+    }
+
+    /// Whether re-randomization uses the derived-CPK (no-keyswitch) mode, where
+    /// the rerand compact public key is derived from the compute (Big) key and no
+    /// rerand KSK is generated. Contrast with the legacy mode, which reuses the
+    /// dedicated encryption CPK plus a KSK onto the compute key.
+    pub fn uses_derived_rerand(&self) -> bool {
+        matches!(
+            self.meta.rerand_configuration,
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch)
+        )
     }
 
     /// Mirrors `parameters.rs`: the rerand KSK reuses the PKSK (and so needs no
@@ -395,6 +420,19 @@ impl DKGParams {
         )
     }
 
+    /// CPK encryption parameters for the *derived* re-randomization compact
+    /// public key. Unlike [`Self::compact_pk_enc_params`] (which returns the
+    /// dedicated *encryption* CPK params when present), these are *always*
+    /// derived from the compute parameters — the derived rerand CPK encrypts
+    /// under the compute (`Big`) key regardless of any dedicated encryption CPK.
+    /// Only meaningful in `DerivedCompactPublicKeyWithoutKeySwitch` mode; the
+    /// `Big`-key requirement is enforced by [`Self::check_conformance`].
+    pub fn derived_rerand_cpk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
+        <ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(self.classic_pbs())
+            .try_into()
+            .expect("PBS parameters yield valid CPK encryption parameters")
+    }
+
     /// Validates the KMS-level invariants that
     /// the accessors rely on (classic PBS via [`Self::classic_pbs`],
     /// TUniform noise via the `*_tuniform_bound` helpers, classic compression /
@@ -424,19 +462,28 @@ impl DKGParams {
             anyhow::bail!("KMS only supports the TUniform noise distribution");
         }
 
-        // TODO: KMS currently only supports the legacy re-randomization configuration
-        // (`LegacyDedicatedCompactPublicKeyWithKeySwitch`). Lift this restriction once
-        // the other `ReRandomizationConfiguration` variants are wired through keygen.
-        if let Some(rerand) = self.meta.rerand_configuration.as_ref()
-            && !matches!(
-                rerand,
-                tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch
-            )
-        {
-            anyhow::bail!(
-                "KMS only supports the legacy re-randomization configuration \
-                 (LegacyDedicatedCompactPublicKeyWithKeySwitch)"
-            );
+        // Re-randomization: KMS supports both the legacy (dedicated CPK + rerand
+        // KSK onto the compute key) and the derived (CPK derived from the compute
+        // key, no KSK) configurations. `MetaParameters::is_valid` (checked above)
+        // already enforces the structural invariants of each mode — in
+        // particular, in derived mode any dedicated *encryption* CPK must carry no
+        // rerand KSK (`re_randomization_parameters: None`). Here we also enforce
+        // that derived mode requires KS_PBS / Big-key compute parameters: the
+        // derived rerand CPK reuses the compute large key,
+        // so encryption must be under the large (`Big`) key.
+        if let Some(rerand) = self.meta.rerand_configuration.as_ref() {
+            match rerand {
+                ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch => {}
+                ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch => {
+                    if self.encryption_key_choice() != EncryptionKeyChoice::Big {
+                        anyhow::bail!(
+                            "Derived re-randomization \
+                             (DerivedCompactPublicKeyWithoutKeySwitch) requires KS_PBS \
+                             (Big-key) compute parameters"
+                        );
+                    }
+                }
+            }
         }
 
         // Compression, if present, must be classic with TUniform noise.
@@ -713,10 +760,22 @@ impl DKGParams {
         } else {
             config
         };
-        let config = if let Some(rerand_params) = self.rerand_params() {
-            config.enable_ciphertext_re_randomization(rerand_params)
-        } else {
-            config
+        let config = match self.meta.rerand_configuration {
+            Some(ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch) => {
+                // Legacy rerand: the dedicated CPK carries the rerand KSK params.
+                let rerand_params = self
+                    .rerand_params()
+                    .expect("legacy rerand configuration carries rerand KSK params");
+                config.enable_ciphertext_re_randomization(rerand_params)
+            }
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch) => {
+                // Derived rerand: the CPK is derived from the compute parameters,
+                // so no key-switching parameters are needed.
+                config.enable_ciphertext_re_randomization(
+                    ReRandomizationParameters::DerivedCPKWithoutKeySwitch,
+                )
+            }
+            None => config,
         };
         config.build()
     }
@@ -764,6 +823,35 @@ impl DKGParams {
             0
         } else {
             self.lwe_hat_dimension().0 * self.decomposition_level_count_rerand_ksk().0
+        };
+        NoiseInfo {
+            amount,
+            bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+        }
+    }
+
+    /// Noise for the *derived* re-randomization compact public key.
+    ///
+    /// In `DerivedCompactPublicKeyWithoutKeySwitch` mode the rerand CPK is a
+    /// fresh compact public key generated over the compute (`Big`) key — it is
+    /// NOT the dedicated encryption CPK (which lives over the small / dedicated
+    /// key) nor a key-switch. Generating a compact public key over a key of
+    /// dimension `d` consumes `d` noise elements (see
+    /// `generate_lwe_compact_public_key`), and the CPK derived from the compute
+    /// parameters encrypts under the large key, so `d == glwe_sk_num_bits` with
+    /// the compute GLWE noise. (Equality with the derived CPK's
+    /// `encryption_lwe_dimension` / `encryption_noise_distribution` holds because
+    /// `check_conformance` requires `encryption_key_choice == Big` for derived
+    /// rerand.)
+    ///
+    /// Zero in the legacy / no-rerand modes: there the rerand CPK is the
+    /// dedicated encryption CPK (budgeted via [`Self::num_needed_noise_pk`]) plus
+    /// a KSK (budgeted via [`Self::num_needed_noise_rerand_ksk`]).
+    pub fn num_needed_noise_rerand_pk(&self) -> NoiseInfo {
+        let amount = if self.uses_derived_rerand() {
+            self.glwe_sk_num_bits()
+        } else {
+            0
         };
         NoiseInfo {
             amount,
@@ -965,6 +1053,7 @@ impl DKGParams {
                 n += self.num_needed_noise_msnrk().num_bits_needed();
                 n += self.num_needed_noise_decompression_key().num_bits_needed();
                 n += self.num_needed_noise_rerand_ksk().num_bits_needed();
+                n += self.num_needed_noise_rerand_pk().num_bits_needed();
             }
             KeySetConfig::DecompressionOnly => {
                 n += self.num_needed_noise_decompression_key().num_bits_needed();
@@ -1066,6 +1155,7 @@ impl DKGParams {
                     self.num_needed_noise_pksk(),
                     self.num_needed_noise_decompression_key(),
                     self.num_needed_noise_rerand_ksk(),
+                    self.num_needed_noise_rerand_pk(),
                 ],
             ),
             KeySetConfig::DecompressionOnly => {
@@ -1417,14 +1507,7 @@ impl DkgParamsAvailable {
 pub const BC_PARAMS_SNS: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
-    meta: MetaParameters {
-        backend: Backend::Cpu,
-        compute_parameters: AtomicPatternParameters::Standard(PBSParameters::PBS(tfhe::shortint::parameters::current_params::V1_6_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)),
-        dedicated_compact_public_key_parameters: Some(DedicatedCompactPublicKeyParameters { pke_params: tfhe::shortint::parameters::current_params::V1_6_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128, ksk_params:  tfhe::shortint::parameters::current_params::V1_6_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128, re_randomization_parameters: Some(tfhe::shortint::parameters::current_params::V1_6_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128) }),
-        compression_parameters: Some(tfhe::shortint::parameters::current_params::V1_6_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
-        noise_squashing_parameters: Some(MetaNoiseSquashingParameters{ parameters: tfhe::shortint::parameters::current_params::V1_6_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128, compression_parameters: Some(tfhe::shortint::parameters::current_params::V1_6_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128) }),
-        rerand_configuration: Some(tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch),
-    },
+    meta: tfhe::shortint::parameters::v1_6::meta::cpu::V1_6_META_PARAM_CPU_2_2_KS_PBS_PKE_TO_SMALL_ZKV2_TUNIFORM_2M128,
     secret_key_deviations: None,
 };
 
@@ -1553,11 +1636,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
                 ks_base_log: DecompositionBaseLog(37),
                 destination_key: EncryptionKeyChoice::Small,
             },
-            re_randomization_parameters: Some(ShortintKeySwitchingParameters {
-                ks_level: DecompositionLevelCount(1),
-                ks_base_log: DecompositionBaseLog(17),
-                destination_key: EncryptionKeyChoice::Big,
-            }),
+            re_randomization_parameters: None,
         }),
         compression_parameters: Some(CompressionParameters::Classic(ClassicCompressionParameters {
             br_level: DecompositionLevelCount(1),
@@ -1603,7 +1682,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
             }),
         }),
         rerand_configuration: Some(
-            tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch,
+            tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
         ),
     },
     secret_key_deviations: None,
@@ -1775,7 +1854,6 @@ pub static NIST_PARAMS_P32_NO_SNS_FGLWE: LazyLock<DKGParams> =
 mod tests {
     use super::*;
     use crate::keyset_config::{KeySetConfig, StandardKeySetConfig};
-    use crate::tfhe_internals::parameters_old::DKGParamsOld;
     use strum::IntoEnumIterator;
 
     // `KeySetConfig` does not implement `Debug`, so we carry an explicit label
@@ -1811,7 +1889,8 @@ mod tests {
                     + p.num_needed_noise_compression_key().num_bits_needed()
                     + p.num_needed_noise_msnrk().num_bits_needed()
                     + p.num_needed_noise_decompression_key().num_bits_needed()
-                    + p.num_needed_noise_rerand_ksk().num_bits_needed();
+                    + p.num_needed_noise_rerand_ksk().num_bits_needed()
+                    + p.num_needed_noise_rerand_pk().num_bits_needed();
                 if let Some(sns) = p.sns() {
                     n += sns.all_bk_sns_noise().num_bits_needed()
                         + sns.num_needed_noise_msnrk_sns().num_bits_needed()
@@ -1860,311 +1939,48 @@ mod tests {
         );
     }
 
-    /// Asserts that the flattened `DKGParams` produces byte-for-byte the same
-    /// triples / bits / randomness / noise budgets as the legacy `DKGParams`,
-    /// for every constant in `DkgParamsAvailable` and every `KeySetConfig`.
-    /// Pins each hand-written `*` constant (and each `*_NO_SNS` derived
-    /// via `remove_sns_parameters`) to the authoritative `DKGParams::from(<legacy>)`
-    /// translation, so any transcription error in the literals fails here with a
-    /// precise diff rather than silently shipping wrong parameters.
+    /// Derived-CPK re-randomization: the derived test set is conformant and
+    /// recognized as derived, the budget gains exactly `glwe_sk_num_bits` of
+    /// GLWE-domain rerand-PK noise while preserving the
+    /// `total_bits == num_raw_bits + Σnoise` invariant, and a derived set over
+    /// the small (PBS_KS) key is rejected.
     #[test]
-    fn new_consts_match_from_old() {
-        use crate::tfhe_internals::parameters_old as old;
-        // SnS sets (const literals)
-        assert_eq!(
-            BC_PARAMS_SNS,
-            DKGParams::from(old::BC_PARAMS_SNS_OLD),
-            "BC_PARAMS_SNS"
-        );
-        assert_eq!(
-            BC_PARAMS_NIGEL_SNS,
-            DKGParams::from(old::BC_PARAMS_NIGEL_SNS_OLD),
-            "BC_PARAMS_NIGEL_SNS"
-        );
-        assert_eq!(
-            PARAMS_TEST_BK_SNS,
-            DKGParams::from(old::PARAMS_TEST_BK_SNS_OLD),
-            "PARAMS_TEST_BK_SNS"
-        );
-        assert_eq!(
-            NIST_PARAMS_P8_SNS_LWE,
-            DKGParams::from(old::NIST_PARAMS_P8_SNS_LWE_OLD),
-            "NIST_PARAMS_P8_SNS_LWE"
-        );
-        assert_eq!(
-            NIST_PARAMS_P32_SNS_LWE,
-            DKGParams::from(old::NIST_PARAMS_P32_SNS_LWE_OLD),
-            "NIST_PARAMS_P32_SNS_LWE"
-        );
-        assert_eq!(
-            NIST_PARAMS_P8_SNS_FGLWE,
-            DKGParams::from(old::NIST_PARAMS_P8_SNS_FGLWE_OLD),
-            "NIST_PARAMS_P8_SNS_FGLWE"
-        );
-        assert_eq!(
-            NIST_PARAMS_P32_SNS_FGLWE,
-            DKGParams::from(old::NIST_PARAMS_P32_SNS_FGLWE_OLD),
-            "NIST_PARAMS_P32_SNS_FGLWE"
-        );
-        // non-SnS sets (derived via remove_sns_parameters)
-        assert_eq!(
-            *BC_PARAMS_NO_SNS,
-            DKGParams::from(old::BC_PARAMS_NO_SNS_OLD),
-            "BC_PARAMS_NO_SNS"
-        );
-        assert_eq!(
-            *BC_PARAMS_NIGEL_NO_SNS,
-            DKGParams::from(old::BC_PARAMS_NIGEL_NO_SNS_OLD),
-            "BC_PARAMS_NIGEL_NO_SNS"
-        );
-        assert_eq!(
-            *NIST_PARAMS_P8_NO_SNS_LWE,
-            DKGParams::from(old::NIST_PARAMS_P8_NO_SNS_LWE_OLD),
-            "NIST_PARAMS_P8_NO_SNS_LWE"
-        );
-        assert_eq!(
-            *NIST_PARAMS_P32_NO_SNS_LWE,
-            DKGParams::from(old::NIST_PARAMS_P32_NO_SNS_LWE_OLD),
-            "NIST_PARAMS_P32_NO_SNS_LWE"
-        );
-        assert_eq!(
-            *NIST_PARAMS_P8_NO_SNS_FGLWE,
-            DKGParams::from(old::NIST_PARAMS_P8_NO_SNS_FGLWE_OLD),
-            "NIST_PARAMS_P8_NO_SNS_FGLWE"
-        );
-        assert_eq!(
-            *NIST_PARAMS_P32_NO_SNS_FGLWE,
-            DKGParams::from(old::NIST_PARAMS_P32_NO_SNS_FGLWE_OLD),
-            "NIST_PARAMS_P32_NO_SNS_FGLWE"
-        );
-    }
+    fn check_conformance_derived_rerand() {
+        let p = PARAMS_TEST_BK_SNS;
 
-    #[test]
-    fn budgets_match_legacy_for_all_params() {
-        for variant in DkgParamsAvailable::iter() {
-            let old: DKGParamsOld = variant.to_old_version();
-            let new = DKGParams::from(old);
-            let h = old.get_params_basics_handle();
-            let label = format!("{variant:?}");
+        p.check_conformance()
+            .expect("derived-rerand test params should be conformant");
+        assert!(p.uses_derived_rerand());
+        assert!(matches!(
+            p.rerand_configuration(),
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch)
+        ));
 
-            // ---- config-dependent totals + aggregate noise ----
-            for (ksc, ksc_label) in all_keyset_configs() {
-                // `num_raw_bits` INTENTIONALLY diverges from legacy for SnS
-                // params with `secret_key_deviations` (see the disclaimer on
-                // `DKGParams::num_raw_bits`): the SnS keys are now counted
-                // with sampling overhead (`*_to_sample`), exactly like the
-                // regular keys. The expected new value is the legacy value plus
-                // the raw->to_sample correction for the SnS keys (which is 0
-                // when the params carry no deviations, i.e. raw == to_sample).
-                let legacy_raw = h.num_raw_bits(ksc);
-                let expected_raw = if let (Some(sns), KeySetConfig::Standard(_)) = (new.sns(), ksc)
-                {
-                    legacy_raw
-                        + (sns.glwe_sk_num_bits_sns_to_sample() - sns.glwe_sk_num_bits_sns())
-                        + (sns.sns_compression_sk_num_bits_to_sample()
-                            - sns.sns_compression_sk_num_bits())
-                } else {
-                    legacy_raw
-                };
-                assert_eq!(
-                    new.num_raw_bits(ksc),
-                    expected_raw,
-                    "num_raw_bits for {label} / {ksc_label}"
-                );
+        // The derived rerand CPK is generated over the compute Big key, so it
+        // needs exactly `glwe_sk_num_bits` GLWE-domain noise elements, while the
+        // legacy rerand KSK budget is 0.
+        assert_eq!(p.num_needed_noise_rerand_pk().amount, p.glwe_sk_num_bits());
+        assert_eq!(p.num_needed_noise_rerand_ksk().amount, 0);
 
-                // The fix restores the intended invariant for ALL params (it was
-                // broken for SnS-with-deviations under the legacy code):
-                //   total_bits_required == num_raw_bits + Σ(noise bits)
-                // where the noise productions are exactly those the DKG
-                // orchestrator splits out (`all_*_noise` + the SnS noises;
-                // `msnrk_sns` is already folded into `all_lwe_noise`).
-                if let KeySetConfig::Standard(_) = ksc {
-                    let mut noise_bits = new.all_lwe_noise(ksc).num_bits_needed()
-                        + new.all_glwe_noise(ksc).num_bits_needed()
-                        + new.all_compression_ksk_noise(ksc).num_bits_needed()
-                        + new.all_lwe_hat_noise(ksc).num_bits_needed();
-                    if let Some(sns) = new.sns() {
-                        noise_bits += sns.all_bk_sns_noise().num_bits_needed()
-                            + sns.num_needed_noise_sns_compression_key().num_bits_needed();
-                    }
-                    assert_eq!(
-                        new.total_bits_required(ksc),
-                        new.num_raw_bits(ksc) + noise_bits,
-                        "invariant total_bits == num_raw_bits + noise for {label} / {ksc_label}"
-                    );
-                }
+        // Budget invariant still holds with the extra rerand-PK noise.
+        let cfg = KeySetConfig::Standard(StandardKeySetConfig::default());
+        assert_eq!(
+            p.total_bits_required(cfg),
+            p.num_raw_bits(cfg) + expected_noise_bits(&p, cfg),
+            "total_bits_required != num_raw_bits + noise for derived rerand"
+        );
 
-                assert_eq!(
-                    new.total_bits_required(ksc),
-                    h.total_bits_required(ksc),
-                    "total_bits_required mismatch for {label} / {ksc_label}"
-                );
-                assert_eq!(
-                    new.total_triples_required(ksc),
-                    h.total_triples_required(ksc),
-                    "total_triples_required mismatch for {label} / {ksc_label}"
-                );
-                assert_eq!(
-                    new.total_randomness_required(ksc),
-                    h.total_randomness_required(ksc),
-                    "total_randomness_required mismatch for {label} / {ksc_label}"
-                );
-
-                let aggregate = [
-                    (
-                        new.all_lwe_noise(ksc),
-                        h.all_lwe_noise(ksc),
-                        "all_lwe_noise",
-                    ),
-                    (
-                        new.all_lwe_hat_noise(ksc),
-                        h.all_lwe_hat_noise(ksc),
-                        "all_lwe_hat_noise",
-                    ),
-                    (
-                        new.all_glwe_noise(ksc),
-                        h.all_glwe_noise(ksc),
-                        "all_glwe_noise",
-                    ),
-                    (
-                        new.all_compression_ksk_noise(ksc),
-                        h.all_compression_ksk_noise(ksc),
-                        "all_compression_ksk_noise",
-                    ),
-                ];
-                for (got, exp, name) in aggregate {
-                    assert_eq!(
-                        got.amount, exp.amount,
-                        "{name}.amount for {label} / {ksc_label}"
-                    );
-                    assert_eq!(
-                        got.num_bits_needed(),
-                        exp.num_bits_needed(),
-                        "{name}.num_bits_needed for {label} / {ksc_label}"
-                    );
-                }
-            }
-
-            // ---- config-independent per-key noise ----
-            let per_key = [
-                (new.num_needed_noise_pk(), h.num_needed_noise_pk(), "pk"),
-                (new.num_needed_noise_ksk(), h.num_needed_noise_ksk(), "ksk"),
-                (
-                    new.num_needed_noise_pksk(),
-                    h.num_needed_noise_pksk(),
-                    "pksk",
-                ),
-                (new.num_needed_noise_bk(), h.num_needed_noise_bk(), "bk"),
-                (
-                    new.num_needed_noise_compression_key(),
-                    h.num_needed_noise_compression_key(),
-                    "compression_key",
-                ),
-                (
-                    new.num_needed_noise_decompression_key(),
-                    h.num_needed_noise_decompression_key(),
-                    "decompression_key",
-                ),
-                (
-                    new.num_needed_noise_rerand_ksk(),
-                    h.num_needed_noise_rerand_ksk(),
-                    "rerand_ksk",
-                ),
-                (
-                    new.num_needed_noise_msnrk(),
-                    h.num_needed_noise_msnrk(),
-                    "msnrk",
-                ),
-            ];
-            for (got, exp, name) in per_key {
-                assert_eq!(
-                    got.amount, exp.amount,
-                    "num_needed_noise_{name}.amount for {label}"
-                );
-                assert_eq!(
-                    got.num_bits_needed(),
-                    exp.num_bits_needed(),
-                    "num_needed_noise_{name}.num_bits_needed for {label}"
-                );
-            }
-
-            // ---- secret-key sampling counts ----
-            assert_eq!(
-                new.lwe_sk_num_bits_to_sample(),
-                h.lwe_sk_num_bits_to_sample(),
-                "lwe_sk_num_bits_to_sample for {label}"
-            );
-            assert_eq!(
-                new.lwe_hat_sk_num_bits_to_sample(),
-                h.lwe_hat_sk_num_bits_to_sample(),
-                "lwe_hat_sk_num_bits_to_sample for {label}"
-            );
-            assert_eq!(
-                new.glwe_sk_num_bits_to_sample(),
-                h.glwe_sk_num_bits_to_sample(),
-                "glwe_sk_num_bits_to_sample for {label}"
-            );
-            assert_eq!(
-                new.compression_sk_num_bits_to_sample(),
-                h.compression_sk_num_bits_to_sample(),
-                "compression_sk_num_bits_to_sample for {label}"
-            );
-
-            // ---- SnS-specific budget pieces ----
-            if let DKGParamsOld::WithSnS(old_sns) = old {
-                let sns = new.sns().expect("flattened params must expose an SnS view");
-                assert_eq!(
-                    sns.glwe_sk_num_bits_sns(),
-                    old_sns.glwe_sk_num_bits_sns(),
-                    "glwe_sk_num_bits_sns for {label}"
-                );
-                assert_eq!(
-                    sns.glwe_sk_num_bits_sns_to_sample(),
-                    old_sns.glwe_sk_num_bits_sns_to_sample(),
-                    "glwe_sk_num_bits_sns_to_sample for {label}"
-                );
-                assert_eq!(
-                    sns.sns_compression_sk_num_bits(),
-                    old_sns.sns_compression_sk_num_bits(),
-                    "sns_compression_sk_num_bits for {label}"
-                );
-                assert_eq!(
-                    sns.sns_compression_sk_num_bits_to_sample(),
-                    old_sns.sns_compression_sk_num_bits_to_sample(),
-                    "sns_compression_sk_num_bits_to_sample for {label}"
-                );
-
-                let (a, b) = (sns.all_bk_sns_noise(), old_sns.all_bk_sns_noise());
-                assert_eq!(a.amount, b.amount, "all_bk_sns_noise.amount for {label}");
-                assert_eq!(
-                    a.num_bits_needed(),
-                    b.num_bits_needed(),
-                    "all_bk_sns_noise.num_bits_needed for {label}"
-                );
-
-                let (a, b) = (
-                    sns.num_needed_noise_sns_compression_key(),
-                    old_sns.num_needed_noise_sns_compression_key(),
-                );
-                assert_eq!(
-                    a.amount, b.amount,
-                    "num_needed_noise_sns_compression_key.amount for {label}"
-                );
-                assert_eq!(
-                    a.num_bits_needed(),
-                    b.num_bits_needed(),
-                    "num_needed_noise_sns_compression_key.num_bits_needed for {label}"
-                );
-            } else {
-                assert!(
-                    !new.supports_sns(),
-                    "WithoutSnS must map to no SnS view for {label}"
-                );
-            }
-
-            // Every shipped parameter set must pass conformance.
-            new.check_conformance()
-                .unwrap_or_else(|e| panic!("check_conformance failed for {label}: {e}"));
+        // Derived rerand requires KS_PBS / Big-key compute parameters: forcing
+        // the compute encryption key to Small must be rejected.
+        let mut bad = p;
+        if let AtomicPatternParameters::Standard(PBSParameters::PBS(pbs)) =
+            &mut bad.meta.compute_parameters
+        {
+            pbs.encryption_key_choice = EncryptionKeyChoice::Small;
         }
+        assert!(
+            bad.check_conformance().is_err(),
+            "derived rerand with Small-key compute params must be rejected"
+        );
     }
 }

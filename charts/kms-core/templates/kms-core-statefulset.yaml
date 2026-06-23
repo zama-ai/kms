@@ -537,6 +537,11 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
+            {{- if .Values.kmsCore.metricsLabels }}
+            # Tags every KMS metric (e.g. deployment_profile=kind-ci) so scrapers can tell deployments apart.
+            - name: KMS_METRICS_LABELS
+              value: {{ .Values.kmsCore.metricsLabels | quote }}
+            {{- end }}
             {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:

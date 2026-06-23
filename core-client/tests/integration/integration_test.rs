@@ -242,6 +242,7 @@ fn generate_centralized_cli_config(
         num_majority: 1,
         num_reconstruct: 1,
         fhe_params: Some(fhe_params),
+        default_domain: None,
     };
     write_core_client_toml(&config_path, &cfg)?;
     Ok(config_path)
@@ -515,6 +516,7 @@ fn generate_threshold_cli_config(
         num_majority: majority,
         num_reconstruct: majority,
         fhe_params: Some(fhe_params),
+        default_domain: None,
     };
     write_core_client_toml(&config_path, &cfg)?;
     Ok(config_path)
@@ -901,6 +903,7 @@ async fn setup_party_resharing_servers(
         num_majority: 2,
         num_reconstruct: 3,
         fhe_params: Some(fhe_params),
+        default_domain: None,
     };
     write_core_client_toml(&config_path_1234, &cfg_1234)?;
 
@@ -939,6 +942,7 @@ async fn setup_party_resharing_servers(
         num_majority: 2,
         num_reconstruct: 3,
         fhe_params: Some(fhe_params),
+        default_domain: None,
     };
     write_core_client_toml(&config_path_5634, &cfg_5634)?;
 
@@ -998,7 +1002,6 @@ fn cipher_params(
         parallel_requests: 1,
         ciphertext_output_path,
         inter_request_delay_ms: 0,
-        extra_data: None,
     }
 }
 
@@ -1173,7 +1176,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1181,7 +1183,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
     ];
 
@@ -1244,7 +1245,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1252,7 +1252,6 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
     ];
 
@@ -1286,23 +1285,50 @@ async fn integration_test_commands(
                 CCCommand::KeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
                     uncompressed: key_gen_parameters.shared_args.uncompressed,
+                    context_id: None,
+                    epoch_id: None,
+                    no_verify: false,
                 })
             }
             CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
                     uncompressed: key_gen_parameters.shared_args.uncompressed,
+                    context_id: None,
+                    epoch_id: None,
+                    no_verify: false,
                 })
             }
-            CCCommand::PublicDecrypt(_) => CCCommand::PublicDecryptResult(ResultParameters {
+            CCCommand::PublicDecrypt(ref cipher_args) => {
+                // Reconstruct the same distinct per-ciphertext handles the request builder
+                // used (`integration_test_handles`), so the external-signature verification
+                // path runs instead of the unverified fetch.
+                let external_handles = integration_test_handles(cipher_args.get_batch_size())
+                    .iter()
+                    .map(hex::encode)
+                    .collect();
+                CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
+                    request_id: req_id.unwrap(),
+                    external_handles,
+                    context_id: None,
+                    epoch_id: None,
+                    no_verify: false,
+                })
+            }
+            CCCommand::CrsGen(_) => CCCommand::CrsGenResult(CrsGenResultParameters {
                 request_id: req_id.unwrap(),
+                context_id: None,
+                epoch_id: None,
+                no_verify: false,
             }),
-            CCCommand::CrsGen(_) => CCCommand::CrsGenResult(ResultParameters {
-                request_id: req_id.unwrap(),
-            }),
-            CCCommand::InsecureCrsGen(_) => CCCommand::InsecureCrsGenResult(ResultParameters {
-                request_id: req_id.unwrap(),
-            }),
+            CCCommand::InsecureCrsGen(_) => {
+                CCCommand::InsecureCrsGenResult(CrsGenResultParameters {
+                    request_id: req_id.unwrap(),
+                    context_id: None,
+                    epoch_id: None,
+                    no_verify: false,
+                })
+            }
             _ => CCCommand::DoNothing(NoParameters {}),
         };
 
@@ -1393,9 +1419,22 @@ async fn integration_test_commands_default_keys(
         let req_id = results[0].0;
 
         let get_res_command = match command {
-            CCCommand::PublicDecrypt(_) => CCCommand::PublicDecryptResult(ResultParameters {
-                request_id: req_id.unwrap(),
-            }),
+            CCCommand::PublicDecrypt(ref cipher_args) => {
+                // Reconstruct the same distinct per-ciphertext handles the request builder
+                // used (`integration_test_handles`), so the external-signature verification
+                // path runs instead of the unverified fetch.
+                let external_handles = integration_test_handles(cipher_args.get_batch_size())
+                    .iter()
+                    .map(hex::encode)
+                    .collect();
+                CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
+                    request_id: req_id.unwrap(),
+                    external_handles,
+                    context_id: None,
+                    epoch_id: None,
+                    no_verify: false,
+                })
+            }
             _ => CCCommand::DoNothing(NoParameters {}),
         };
 
@@ -2015,6 +2054,7 @@ async fn custodian_backup_recovery(
 /// Mirror of shipped client TOML layout: unknown top-level or `[[cores]]` keys fail the test.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Presence validated by deny_unknown_fields; only some fields asserted in tests
 struct StrictCheckedInCoreClientToml {
     kms_type: String,
     num_parties: usize,
@@ -2023,6 +2063,18 @@ struct StrictCheckedInCoreClientToml {
     decryption_mode: Option<String>,
     fhe_params: Option<String>,
     cores: Vec<StrictCheckedInCoreToml>,
+    default_domain: Option<StrictCheckedInDomainToml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Presence validated by deny_unknown_fields
+struct StrictCheckedInDomainToml {
+    name: String,
+    version: String,
+    chain_id: u64,
+    verifying_contract: String,
+    salt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3207,7 +3259,6 @@ async fn test_threshold_reshare() -> Result<()> {
             ciphertext_output_path: None,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
-            extra_data: None,
         })),
         200,
     );
