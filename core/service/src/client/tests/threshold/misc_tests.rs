@@ -6,6 +6,8 @@ use crate::client::test_tools::{
     await_server_ready, check_port_is_closed, get_health_client, get_status,
 };
 use crate::client::tests::common::send_dec_reqs;
+#[cfg(feature = "slow_tests")]
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::threshold::service::RealThresholdKms;
@@ -514,20 +516,19 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             if party_ids_to_skip.contains(&(*i as usize)) {
                 continue;
             }
-            let mut cur_client = env.clients.get(i).unwrap().clone();
+            let cur_client = env.clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
-                let mut response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-                while response.is_err()
-                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    response = cur_client
-                        .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                }
+                let response = retrying_poll(
+                    cur_client,
+                    req_id_clone.clone(),
+                    "public decryption result",
+                    PollConfig::default(),
+                    |client, request| {
+                        Box::pin(async move { client.get_public_decryption_result(request).await })
+                    },
+                )
+                .await;
                 (req_id_clone, response.unwrap().into_inner())
             });
         }
@@ -587,20 +588,19 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
             if !party_ids_to_skip.contains(&(*i as usize)) {
                 continue;
             }
-            let mut cur_client = env.clients.get(i).unwrap().clone();
+            let cur_client = env.clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
-                let mut response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-                while response.is_err()
-                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    response = cur_client
-                        .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                }
+                let response = retrying_poll(
+                    cur_client,
+                    req_id_clone.clone(),
+                    "public decryption result",
+                    PollConfig::default(),
+                    |client, request| {
+                        Box::pin(async move { client.get_public_decryption_result(request).await })
+                    },
+                )
+                .await;
 
                 (req_id_clone, response.as_ref().unwrap_err().code())
             });

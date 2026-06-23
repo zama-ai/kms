@@ -764,8 +764,8 @@ where
                 )
             })?;
 
-        match (dkg_params, session_type) {
-            (DKGParams::WithoutSnS(_), SessionType::Small) => {
+        match (dkg_params.supports_sns(), session_type) {
+            (false, SessionType::Small) => {
                 let prss_setup = self
                     .data
                     .prss_setup
@@ -808,7 +808,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithoutSnS(_), SessionType::Large) => {
+            (false, SessionType::Large) => {
                 let result_store = self.data.dkg_preproc_store_regular.clone();
                 let my_future = || async move {
                     let sessions = create_large_sessions(base_sessions);
@@ -840,7 +840,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), SessionType::Small) => {
+            (true, SessionType::Small) => {
                 let prss_setup = self
                     .data
                     .prss_setup
@@ -881,7 +881,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), SessionType::Large) => {
+            (true, SessionType::Large) => {
                 let result_store = self.data.dkg_preproc_store_sns.clone();
                 let my_future = || async move {
                     let sessions = create_large_sessions(base_sessions);
@@ -986,8 +986,8 @@ where
             })?;
 
         let key_store = self.data.key_store.clone();
-        match (dkg_params, preproc_sid) {
-            (DKGParams::WithoutSnS(_), Some(id)) => {
+        match (dkg_params.supports_sns(), preproc_sid) {
+            (false, Some(id)) => {
                 let (_, (params, mut preproc)) =
                     self.data.dkg_preproc_store_regular.remove(&id).ok_or_else(|| {
                         tonic::Status::new(
@@ -1028,7 +1028,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithoutSnS(_), None) => {
+            (false, None) => {
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
@@ -1053,7 +1053,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), Some(id)) => {
+            (true, Some(id)) => {
                 let (_, (params, mut preproc)) =
                     self.data.dkg_preproc_store_sns.remove(&id).ok_or_else(|| {
                         tonic::Status::new(
@@ -1094,7 +1094,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), None) => {
+            (true, None) => {
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {

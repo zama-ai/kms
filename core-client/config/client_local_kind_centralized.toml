@@ -32,3 +32,13 @@ address = "localhost:50100"
 s3_endpoint = "http://localhost:9000/kms-public"
 # The folder at the S3 endpoint where the data is stored
 object_folder = "PUB"
+
+# Default EIP-712 domain used both when *building* requests (full-flow commands) and
+# when *verifying* fetched results (the `*Result` commands). These values match the
+# built-in default; adjust them to match the domain used by whoever issued the request.
+[default_domain]
+name = "Authorization token"
+version = "1"
+chain_id = 8006
+verifying_contract = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
+# salt = "..." # optional, hex-encoded 32 bytes

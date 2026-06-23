@@ -702,12 +702,14 @@ where
     }
 
     for (storage_index, subject) in parties.into_iter().enumerate() {
-        ensure_threshold_server_signing_key_for_party(
+        ensure_threshold_server_signing_key_exists(
             &mut pub_storages[storage_index],
             &mut priv_storages[storage_index],
             request_id,
             deterministic,
-            storage_index + 1,
+            // 1-based party id; NonZeroUsize by construction (saturates on overflow).
+            // computes storage_index + 1
+            std::num::NonZeroUsize::MIN.saturating_add(storage_index),
             subject,
             tls_wildcard,
         )
@@ -722,13 +724,14 @@ where
 /// This is used by deployment paths where the storage backend already selects
 /// the physical party destination (for example with a per-party storage
 /// prefix). The `party_id` remains the logical 1-based party identifier used
-/// for deterministic test seeding and certificate/log context.
+/// for deterministic test seeding and certificate/log context; the
+/// `NonZeroUsize` type enforces at the boundary that it cannot be 0.
 pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     request_id: &RequestId,
     deterministic: bool,
-    party_id: usize,
+    party_id: std::num::NonZeroUsize,
     subject: String,
     tls_wildcard: bool,
 ) -> anyhow::Result<()>
@@ -736,36 +739,7 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    ensure_threshold_server_signing_key_for_party(
-        pub_storage,
-        priv_storage,
-        request_id,
-        deterministic,
-        party_id,
-        subject,
-        tls_wildcard,
-    )
-    .await
-}
-
-async fn ensure_threshold_server_signing_key_for_party<PubS, PrivS>(
-    pub_storage: &mut PubS,
-    priv_storage: &mut PrivS,
-    request_id: &RequestId,
-    deterministic: bool,
-    party_id: usize,
-    subject: String,
-    tls_wildcard: bool,
-) -> anyhow::Result<()>
-where
-    PubS: Storage,
-    PrivS: Storage,
-{
-    if party_id == 0 {
-        anyhow::bail!("party ID cannot be 0 in the threshold setting")
-    }
-
-    let mut rng = get_rng(deterministic, Some(party_id as u64));
+    let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
 
     // Check if keys already exist with error handling
     let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
@@ -1101,9 +1075,7 @@ where
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares_from_client_key(
         &keyset.client_key,
-        dkg_params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters(),
+        dkg_params.classic_pbs(),
         &mut rng,
         amount_parties,
         threshold,
@@ -1341,9 +1313,7 @@ where
 
     // Generate the public parameters - foundation for the entire cryptographic system
     // PANICS: If parameter generation fails - cannot proceed with insecure parameters
-    let pke_params = dkg_params
-        .get_params_basics_handle()
-        .get_compact_pk_enc_params();
+    let pke_params = dkg_params.compact_pk_enc_params();
 
     // Any sid will work for testing
     let sid = SessionId::from(0u128);

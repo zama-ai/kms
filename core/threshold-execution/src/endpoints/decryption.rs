@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tfhe::{
     integer::{
         BooleanBlock, IntegerCiphertext, IntegerRadixCiphertext, RadixCiphertext,
@@ -10,16 +12,7 @@ use tfhe::{
 #[cfg(feature = "non-wasm")]
 pub use super::decryption_non_wasm::*;
 
-#[derive(
-    Copy,
-    Clone,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    derive_more::Display,
-    Debug,
-    clap::ValueEnum,
-)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize, Debug, clap::ValueEnum)]
 pub enum DecryptionMode {
     /// nSmall Noise Flooding, this is the default
     #[default]
@@ -40,6 +33,12 @@ impl DecryptionMode {
             DecryptionMode::BitDecSmall => "BitDecSmall",
             DecryptionMode::BitDecLarge => "BitDecLarge",
         }
+    }
+}
+
+impl fmt::Display for DecryptionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str_name())
     }
 }
 
@@ -171,17 +170,12 @@ mod tests {
     };
 
     use super::SnsRadixOrBoolCiphertext;
-    use crate::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
+    use crate::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
     #[test]
     fn test_packing_factor() {
-        let block_param: ClassicPBSParameters = PARAMS_TEST_BK_SNS
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
-        let sns_param = match PARAMS_TEST_BK_SNS {
-            DKGParams::WithoutSnS(_) => panic!("expected pbs params"),
-            DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
-        };
+        let block_param: ClassicPBSParameters = PARAMS_TEST_BK_SNS.classic_pbs();
+        let sns_param = PARAMS_TEST_BK_SNS.sns().expect("sns params").sns_params();
         let config = ConfigBuilder::with_custom_parameters(block_param)
             .enable_noise_squashing(sns_param)
             .build();

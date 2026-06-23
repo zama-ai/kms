@@ -279,7 +279,9 @@ pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize
     (lwe_dimension.0, lwe_dimension.0)
 }
 
-/// Generates the lwe public key share from an existing secret key share
+/// Generates the (encryption) lwe public key share from an existing secret key
+/// share, using the standard public-key noise budget
+/// ([`DKGParams::num_needed_noise_pk`]).
 pub(crate) async fn generate_lwe_public_key_shared<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -296,11 +298,41 @@ pub(crate) async fn generate_lwe_public_key_shared<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let basic_handle = params.get_params_basics_handle();
+    generate_lwe_public_key_shared_with_noise(
+        params.num_needed_noise_pk(),
+        mpc_encryption_rng,
+        lwe_secret_key_share,
+        session,
+        preprocessing,
+    )
+    .await
+}
+
+/// Generates an lwe compact public key share over `lwe_secret_key_share`, drawing
+/// exactly `noise` from preprocessing. Used both for the encryption public key
+/// (via [`generate_lwe_public_key_shared`]) and for the *derived* re-randomization
+/// public key, which is generated over the compute (`Big`) key with the
+/// [`DKGParams::num_needed_noise_rerand_pk`] budget.
+pub(crate) async fn generate_lwe_public_key_shared_with_noise<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ParallelByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    noise: NoiseInfo,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
     let my_role = session.my_role();
 
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
-    let NoiseInfo { amount, bound } = basic_handle.num_needed_noise_pk();
+    let NoiseInfo { amount, bound } = noise;
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(amount, bound)?
         .iter()
