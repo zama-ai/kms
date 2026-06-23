@@ -27,8 +27,10 @@ pub trait Networking<R: RoleTrait> {
 
     async fn get_current_round(&self) -> usize;
 
+    #[cfg(feature = "testing")]
     async fn get_num_byte_sent(&self) -> usize;
 
+    #[cfg(feature = "testing")]
     async fn get_num_byte_received(&self) -> anyhow::Result<usize>;
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.

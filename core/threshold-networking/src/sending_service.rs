@@ -482,6 +482,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
 
+        #[cfg(feature = "testing")]
         {
             let mut sent = self.num_byte_sent.write().await;
             *sent += tag.len() + value.len();
@@ -643,10 +644,12 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         self.inner_get_network_mode()
     }
 
+    #[cfg(feature = "testing")]
     async fn get_num_byte_sent(&self) -> usize {
         *self.num_byte_sent.read().await
     }
 
+    #[cfg(feature = "testing")]
     async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
         if let Some(num_byte_received) = NETWORK_RECEIVED_MEASUREMENT.get(&self.session_id) {
             Ok(num_byte_received.load(std::sync::atomic::Ordering::Relaxed))

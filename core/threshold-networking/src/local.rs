@@ -266,10 +266,12 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         self.network_mode
     }
 
+    #[cfg(feature = "testing")]
     async fn get_num_byte_sent(&self) -> usize {
         0
     }
 
+    #[cfg(feature = "testing")]
     async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
         Ok(0)
     }

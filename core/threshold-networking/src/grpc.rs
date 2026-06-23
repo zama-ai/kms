@@ -909,6 +909,7 @@ impl NetworkingImpl {
 // We do the measurement of received bytes here because
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
+#[cfg(feature = "testing")]
 pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, AtomicUsize>> =
     LazyLock::new(DashMap::new);
 
@@ -1071,14 +1072,17 @@ impl Gnetworking for NetworkingImpl {
         // Tally received bytes. Take only a shared shard lock on the common
         // path (session already present) and bump an atomic; fall back to an
         // exclusive lock only to create the counter on the first message.
-        let received_bytes = request.tag.len() + request.value.len();
-        if let Some(counter) = NETWORK_RECEIVED_MEASUREMENT.get(&tag.session_id) {
-            counter.fetch_add(received_bytes, Ordering::Relaxed);
-        } else {
-            NETWORK_RECEIVED_MEASUREMENT
-                .entry(tag.session_id)
-                .or_insert_with(|| AtomicUsize::new(0))
-                .fetch_add(received_bytes, Ordering::Relaxed);
+        #[cfg(feature = "testing")]
+        {
+            let received_bytes = request.tag.len() + request.value.len();
+            if let Some(counter) = NETWORK_RECEIVED_MEASUREMENT.get(&tag.session_id) {
+                counter.fetch_add(received_bytes, Ordering::Relaxed);
+            } else {
+                NETWORK_RECEIVED_MEASUREMENT
+                    .entry(tag.session_id)
+                    .or_insert_with(|| AtomicUsize::new(0))
+                    .fetch_add(received_bytes, Ordering::Relaxed);
+            }
         }
 
         // First try with only read lock to avoid blocking
