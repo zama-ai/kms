@@ -1,7 +1,7 @@
 #[cfg(feature = "testing")]
 use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
@@ -269,20 +269,20 @@ pub(crate) async fn do_new_mpc_context(
 pub(crate) async fn do_destroy_mpc_context(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     context_id: &ContextId,
+    epoch_ids: &[EpochId],
 ) -> anyhow::Result<()> {
+    // The KMS destroys exactly the epochs it is given; be careful.
+    let proto_epoch_ids: Vec<_> = epoch_ids.iter().map(|id| (*id).into()).collect();
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let context_cloned = (*context_id).into();
+        let epoch_ids_cloned = proto_epoch_ids.clone();
         req_tasks.spawn(async move {
             cur_client
                 .destroy_mpc_context(DestroyMpcContextRequest {
                     context_id: Some(context_cloned),
-                    // Destroying a context without its epochs leaves their secret shares behind (see the
-                    // DestroyMpcContext RPC docs). This CLI path currently does not pass in epoch IDs. @reviewers: do
-                    // we need to require the list of associated epoch IDs here too? I think yes, but the question is
-                    // where do operators fetch the epoch IDs?
-                    epoch_ids: vec![],
+                    epoch_ids: epoch_ids_cloned,
                 })
                 .await
         });
