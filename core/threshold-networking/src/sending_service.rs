@@ -37,6 +37,7 @@ use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
 use super::ggen::SendValueRequest;
+#[cfg(feature = "testing")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 

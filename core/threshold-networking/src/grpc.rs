@@ -21,8 +21,8 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, OnceLock, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 use threshold_types::party::{MpcIdentity, RoleAssignment};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
@@ -910,8 +910,9 @@ impl NetworkingImpl {
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
 #[cfg(feature = "testing")]
-pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, AtomicUsize>> =
-    LazyLock::new(DashMap::new);
+pub static NETWORK_RECEIVED_MEASUREMENT: std::sync::LazyLock<
+    DashMap<SessionId, std::sync::atomic::AtomicUsize>,
+> = std::sync::LazyLock::new(DashMap::new);
 
 fn parse_identity_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,
@@ -1080,7 +1081,7 @@ impl Gnetworking for NetworkingImpl {
             } else {
                 NETWORK_RECEIVED_MEASUREMENT
                     .entry(tag.session_id)
-                    .or_insert_with(|| AtomicUsize::new(0))
+                    .or_insert_with(|| std::sync::atomic::AtomicUsize::new(0))
                     .fetch_add(received_bytes, Ordering::Relaxed);
             }
         }
