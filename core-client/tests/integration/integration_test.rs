@@ -23,7 +23,6 @@ use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
-#[cfg(feature = "threshold_tests")]
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use tracing::info;
 use validator::Validate;
@@ -38,12 +37,9 @@ use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
-// Additional imports for reshare test (only needed with threshold_tests feature)
-#[cfg(feature = "threshold_tests")]
+// Additional imports for reshare test
 use hashing::hash_versioned;
-#[cfg(feature = "threshold_tests")]
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-#[cfg(feature = "threshold_tests")]
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
@@ -310,9 +306,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// * `PathBuf` - Path to generated CLI config file (for --config flag)
 ///
 /// # Note
-/// Requires `threshold_tests` feature. Tests using this must be marked with:
-/// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
-///
 /// This helper enables `ensure_default_prss=true` during server startup. For Test params,
 /// pre-generated PRSS from `test-material` may be copied and reused when present.
 ///
@@ -322,7 +315,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// # Example
 /// ```no_run
 /// #[tokio::test]
-/// #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
 ///         setup_isolated_threshold_cli_test_with_prss("my_prss_test", 4).await?;
@@ -330,7 +322,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///     Ok(())
 /// }
 /// ```
-#[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
@@ -421,7 +412,7 @@ async fn setup_isolated_threshold_cli_test_default(
 /// PRSS is ensured at server startup: if the default epoch is missing, startup initializes it;
 /// otherwise existing PRSS is reused. Default threshold context and key material still come
 /// from `test-material/default`, but `PrssSetupCombined` is not copied up front.
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
@@ -615,6 +606,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 /// - Config path for context 2 (servers 5,6,4,3)
 ///
 /// TODO: add possibility for dynamic party number setup
+#[cfg(feature = "slow_tests")]
 async fn setup_party_resharing_servers(
     test_name: &str,
 ) -> Result<(
@@ -1533,9 +1525,8 @@ async fn restore_from_backup(config_path: &Path, test_path: &Path) -> Result<()>
     Ok(())
 }
 
-/// Helper to run preprocessing and keygen via CLI (isolated version)
-/// Only used by PRSS tests which are gated by threshold_tests feature
-#[cfg(feature = "threshold_tests")]
+/// Helper to run preprocessing and keygen via CLI (isolated version).
+/// Used by PRSS-based keygen tests (some run per-PR, some gated by `slow_tests`).
 async fn real_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1584,7 +1575,7 @@ async fn real_preproc_and_keygen(
 /// Uses `PartialPreprocKeyGen` with reduced offline generation to keep runtime
 /// manageable for Default FHE parameters in CI while still exercising the
 /// keygen flow.
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 async fn real_partial_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1743,7 +1734,6 @@ async fn real_preproc_and_keygen_with_context(
 }
 
 /// Helper to run reshare operation via CLI (isolated version)
-#[cfg(feature = "threshold_tests")]
 async fn reshare(
     config_path: &Path,
     test_path: &Path,
@@ -2341,7 +2331,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 }
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 #[tokio::test]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
@@ -2360,7 +2350,7 @@ async fn test_threshold_insecure() -> Result<()> {
 }
 
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 #[tokio::test]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2381,7 +2371,6 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
-#[cfg(feature = "threshold_tests")]
 #[tokio::test]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2510,7 +2499,6 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// Test threshold insecure key generation via CLI using the default key format.
 ///
 /// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
-#[cfg(feature = "threshold_tests")]
 #[tokio::test]
 async fn test_threshold_insecure_default_keygen() -> Result<()> {
     init_logging();
@@ -2530,7 +2518,7 @@ async fn test_threshold_insecure_default_keygen() -> Result<()> {
 /// Mirrors `test_threshold_default_preproc_keygen` in `integration_test.rs`.
 /// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 #[tokio::test]
 async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2554,7 +2542,6 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 1. Insecure keygen produces a key
 /// 2. The context can be switched to a new context ID
 /// 3. A public-decrypt request succeeds in the new context
-#[cfg(feature = "threshold_tests")]
 #[tokio::test]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
@@ -2752,7 +2739,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
 // Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 #[tokio::test]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
@@ -2840,7 +2827,6 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
 #[tokio::test]
-#[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
 
@@ -2902,8 +2888,8 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 ///
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
+#[cfg(feature = "slow_tests")]
 #[tokio::test]
-#[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
 
@@ -3063,7 +3049,7 @@ mod docker_harness {
     /// **Requires:** Docker Compose + locally buildable KMS images (`DOCKER_BUILD_TEST_CORE_CLIENT=1`).
     #[test_context(DockerComposeThresholdTestNoInitSixParty)]
     #[tokio::test]
-    #[cfg_attr(not(feature = "threshold_tests"), ignore)]
+    #[cfg_attr(not(feature = "slow_tests"), ignore)]
     async fn test_threshold_mpc_context_switch_6_docker(
         ctx: &DockerComposeThresholdTestNoInitSixParty,
     ) -> Result<()> {
@@ -3128,7 +3114,6 @@ mod docker_harness {
 /// 5. Run Crs generation
 /// 6. Compute digests of the key materials
 /// 7. Execute resharing command
-#[cfg(feature = "threshold_tests")]
 #[tokio::test]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();

@@ -93,22 +93,18 @@ tonic-prost-build.workspace = true
 ignored = ["kms", "strum"]
 
 [features]
-# Enables threshold PRSS tests in `integration_test`.
-# These are the threshold tests that require PRSS infrastructure:
-#   preproc+keygen, MPC context init/switch, reshare, full-gen preproc.
-# Un-ignores tests guarded with `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`.
-# Compiles setup helpers that run threshold servers with `ensure_default_prss=true`.
+# Compiles + runs the handful of threshold integration tests that are too slow
+# to run locally by default (full preproc+keygen, 6-party MPC context switch,
+# nightly preproc-keygen). Follows the workspace-wide `slow_tests` convention
+# (see core/service, core/threshold-execution). CI opts in via `-F slow_tests`.
 #
 # This flag only gates code/tests; it does NOT generate key material by itself.
-# Material requirements:
-# - Test params: missing PRSS can be initialized live at server startup.
-# - Default params: pre-generated PRSS is required in `test-material/default`
-#   (run `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13`);
-#   missing PRSS is a hard error.
-# - Some tests generate PRSS during the test itself (via NewEpoch/new_prss_isolated)
-#   and therefore do not require pre-generated startup PRSS.
+# Some gated tests use Default params, which require pre-generated material in
+# `test-material/default` (run
+# `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13`);
+# missing Default material is a hard error.
 # Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
-threshold_tests = ["testing"]
+slow_tests = ["testing"]
 # Enable tests that require a running Kind/Kubernetes cluster.
 kind_tests = ["testing"]
 testing = ["threshold-execution/testing"]
