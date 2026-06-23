@@ -265,14 +265,6 @@ impl_endpoint! {
                 .map(|id| parse_grpc_request_id::<EpochId>(id, RequestIdParsingErr::Epoch))
                 .collect::<Result<Vec<EpochId>, _>>()?;
 
-            // @reviewers: Deleting the context and associated epoch ids spans both epoch and context managers. Epoch
-            // deletion lives in the epoch manager because it must also purge the in-memory FHE key cache which is owned
-            // by the threshold crypto storage; the context manager only holds the base storage and cannot reach that
-            // cache.
-            // This is a pretty big wart imo. If contexts and epochs are managed in lockstep the two managers should
-            // probably be fused, or the epoch manager should be part of the context manager. Or are there legit use
-            // cases where one is used without the other?
-            //
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
             // state is "shares gone, context metadata lingers" rather than "context gone, shares still on disk".
