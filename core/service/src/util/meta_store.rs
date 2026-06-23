@@ -200,7 +200,7 @@ impl<T> Drop for MetaStorePermit<T> {
 }
 
 /// Public-facing snapshot of an entry's state.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum EntryState<T> {
     /// Entry exists, but is being worked on (either being computed or being deleted)
     Pending,
@@ -300,18 +300,9 @@ impl<T> StoredEntry<T> {
     fn is_permit_held(&self) -> bool {
         Arc::strong_count(&self.claim) > 1
     }
-
-    /// Return the settled result if the entry is `Done`, otherwise `None`.
-    /// This is useful for callers needing to match on the status of a StoredEntry.
-    fn done_result(&self) -> Option<Result<Arc<T>, String>> {
-        match &*self.result_tx.borrow() {
-            EntryState::Done(result) => Some(result.clone()),
-            EntryState::Pending | EntryState::Deleted => None,
-        }
-    }
 }
 
-impl<T> From<&StoredEntry<T>> for EntryState<T> {
+impl<T: Clone> From<&StoredEntry<T>> for EntryState<T> {
     fn from(stored: &StoredEntry<T>) -> Self {
         stored.result_tx.borrow().clone()
     }
@@ -772,7 +763,7 @@ impl<T> MetaStore<T> {
                 EntryStatus::Done => {
                     // Only a previously *failed* entry may be retried; a
                     // successful `Done(Ok)` is not restartable.
-                    if !matches!(entry.done_result(), Some(Err(_))) {
+                    if !matches!(&*entry.result_tx.borrow(), EntryState::Done(Err(_))) {
                         return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
                     }
                     // A failed entry can still be permit-held (reserved via
@@ -847,7 +838,7 @@ impl<T> MetaStore<T> {
         self.complete_queue
             .iter()
             .filter_map(|id| match self.storage.get(id) {
-                Some(e) if matches!(e.done_result(), Some(Err(_))) => Some(*id),
+                Some(entry) if matches!(&*entry.result_tx.borrow(), EntryState::Done(Err(_))) => Some(*id),
                 Some(_) => None,
                 None => {
                     tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
@@ -1210,19 +1201,16 @@ pub(crate) async fn retrieve_from_meta_store_with_timeout<T>(
         match guard.storage.get(req_id) {
             // Absent or tombstoned: the same `NotFound` the snapshot path returns.
             None => return Err(entry_not_found_or_deleted(req_id, metric_scope)),
-            Some(entry) => match entry.status() {
-                EntryStatus::Deleted => {
+            Some(entry) => match &*entry.result_tx.borrow() {
+                EntryState::Pending => {
+                    // Still pending: take a receiver so we can await completion
+                    // off-lock (subscribing under the lock, so no publish is missed).
+                    entry.result_tx.subscribe()
+                }
+                EntryState::Done(res) => return metriced_result(res.clone(), req_id, metric_scope),
+                EntryState::Deleted => {
                     return Err(entry_not_found_or_deleted(req_id, metric_scope));
                 }
-                EntryStatus::Done => {
-                    let result = entry
-                        .done_result()
-                        .expect("a `Done` entry always has its result published");
-                    return metriced_result(result, req_id, metric_scope);
-                }
-                // Still pending: take a receiver so we can await completion
-                // off-lock (subscribing under the lock, so no publish is missed).
-                EntryStatus::Pending => entry.result_tx.subscribe(),
             },
         }
         // lock dropped here
