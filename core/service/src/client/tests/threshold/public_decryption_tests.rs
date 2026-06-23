@@ -113,15 +113,16 @@ async fn test_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
 ) {
     decryption_threshold(
         DEFAULT_PARAM,
@@ -134,34 +135,7 @@ async fn default_decryption_threshold(
         parallelism,
         amount_parties,
         None,
-        None,
-    )
-    .await;
-}
-
-// Same as default_decryption_threshold but BitDecSmall, which exercises the mult_list/open_list path heavily.
-#[cfg(feature = "slow_tests")]
-#[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
-#[tokio::test(flavor = "multi_thread")]
-async fn default_decryption_threshold_bitdec(
-    #[case] msg: Vec<TestingPlaintext>,
-    #[case] parallelism: usize,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-) {
-    decryption_threshold(
-        DEFAULT_PARAM,
-        key_id,
-        msg,
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: false,
-        },
-        parallelism,
-        amount_parties,
-        None,
-        Some(DecryptionMode::BitDecSmall),
+        Some(decryption_mode),
     )
     .await;
 }
