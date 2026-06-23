@@ -230,7 +230,7 @@ enum EntryStatus {
     Deleted,
 }
 
-/// A single meta-store entry, contianing a lifecycle `status`, the locking `claim`, and the
+/// A single meta-store entry, containing a lifecycle `status`, the locking `claim`, and the
 /// result channel `result_tx`.
 ///
 /// `claim` is the locking primitive: an `Arc<()>` whose strong count reveals
@@ -303,12 +303,6 @@ impl<T> StoredEntry<T> {
             },
             EntryStatus::Pending | EntryStatus::Deleted => None,
         }
-    }
-}
-
-impl<T> From<StoredEntry<T>> for EntryState<T> {
-    fn from(stored: StoredEntry<T>) -> Self {
-        EntryState::from(&stored)
     }
 }
 
@@ -1196,7 +1190,6 @@ pub(crate) async fn retrieve_from_meta_store<T>(
 /// Like [`retrieve_from_meta_store`] but blocking up to `wait_secs` for a
 /// `Pending` entry to settle.
 ///
-/// Performs a single, non-blocking read and returns immediately:
 /// - `Done(Ok)`  → `Arc<T>`.
 /// - `Pending`   → `Unavailable`; the result is not ready yet and the caller
 ///   (client) is expected to retry later.
