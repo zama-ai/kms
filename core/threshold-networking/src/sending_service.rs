@@ -14,6 +14,7 @@ use crate::ggen::Status;
 use backoff::SystemClock;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
+use bytes::Bytes;
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
@@ -37,16 +38,21 @@ use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use threshold_types::network::{NetworkMode, Networking};
 
-pub struct ArcSendValueRequest {
-    tag: Arc<Vec<u8>>,
-    value: Arc<Vec<u8>>,
+/// A queued outbound message. Holds [`Bytes`] (not `Arc<Vec<u8>>`) so that
+/// materializing a `SendValueRequest` from it — including on every retry — is
+/// an O(1) refcount bump rather than a full copy of the payload.
+pub struct OutboundMessage {
+    tag: Bytes,
+    value: Bytes,
 }
 
-impl ArcSendValueRequest {
-    fn deep_clone(&self) -> SendValueRequest {
+impl OutboundMessage {
+    /// Cheap conversion into a `SendValueRequest`; `Bytes::clone` bumps a
+    /// refcount and does not copy the underlying buffer.
+    fn to_request(&self) -> SendValueRequest {
         SendValueRequest {
-            tag: self.tag.as_ref().clone(),
-            value: self.value.as_ref().clone(),
+            tag: self.tag.clone(),
+            value: self.value.clone(),
         }
     }
 }
@@ -68,14 +74,14 @@ pub trait SendingService: Send + Sync {
         other_identity: &Identity,
         other_role_kind: RoleKind,
         aborted: Arc<DashSet<RoleKind>>,
-    ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
+    ) -> anyhow::Result<UnboundedSender<OutboundMessage>>;
 
     ///Adds multiple connections at once
     async fn add_connections<R: RoleTrait>(
         &self,
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
-        HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        HashMap<RoleKind, UnboundedSender<OutboundMessage>>,
         Arc<DashSet<RoleKind>>,
     )>;
 }
@@ -210,7 +216,7 @@ impl GrpcSendingService {
     }
 
     async fn run_network_task(
-        mut receiver: UnboundedReceiver<ArcSendValueRequest>,
+        mut receiver: UnboundedReceiver<OutboundMessage>,
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
         other_role_kind: RoleKind,
@@ -230,7 +236,7 @@ impl GrpcSendingService {
             }
 
             let send_fn = || async {
-                let value = value.deep_clone();
+                let value = value.to_request();
                 network_channel
                     .clone()
                     .send_value(value)
@@ -334,9 +340,9 @@ impl SendingService for GrpcSendingService {
         other_identity: &Identity,
         other_role_kind: RoleKind,
         aborted: Arc<DashSet<RoleKind>>,
-    ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
+    ) -> anyhow::Result<UnboundedSender<OutboundMessage>> {
         // 1. Create channel first (no allocation issues)
-        let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
+        let (sender, receiver) = unbounded_channel::<OutboundMessage>();
 
         // 2. Connect to party (can fail, so do before any spawning)
         let network_channel = self.connect_to_party(other_identity).await?;
@@ -367,7 +373,7 @@ impl SendingService for GrpcSendingService {
         &self,
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
-        HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        HashMap<RoleKind, UnboundedSender<OutboundMessage>>,
         Arc<DashSet<RoleKind>>,
     )> {
         let mut result = HashMap::with_capacity(others.len());
@@ -422,7 +428,7 @@ pub struct NetworkSession {
     pub(crate) session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
-    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<OutboundMessage>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub(crate) receiving_channels: MessageQueueStore,
@@ -458,7 +464,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()> {
+    async fn send(&self, value: Bytes, receiver: &R) -> anyhow::Result<()> {
         // Lock the counter to ensure no modifications happens while sending
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
@@ -469,7 +475,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             round_counter,
         };
 
-        let tag = Arc::new(
+        let tag = Bytes::from(
             bc2wrap::serialize(&tagged_value)
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
@@ -478,7 +484,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             let mut sent = self.num_byte_sent.write().await;
             *sent += tag.len() + value.len();
         }
-        let request = ArcSendValueRequest { tag, value };
+        let request = OutboundMessage { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(&receiver.get_role_kind()) {
@@ -494,7 +500,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
     /// Thus sending and receiving MUST not be interleaved.
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes> {
         // Lock the counter to ensure no modifications happens while receiving
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
@@ -641,7 +647,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
     async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
         if let Some(num_byte_received) = NETWORK_RECEIVED_MEASUREMENT.get(&self.session_id) {
-            Ok(*num_byte_received)
+            Ok(num_byte_received.load(std::sync::atomic::Ordering::Relaxed))
         } else {
             Err(anyhow_error_and_log(format!(
                 "Couldn't find session {} in the NETWORK_RECEIVED_MEASUREMENT",
@@ -674,6 +680,7 @@ impl NetworkSession {
 #[cfg(test)]
 mod tests {
     use dashmap::{DashMap, DashSet};
+    use prost::bytes::Bytes;
     use tokio::sync::mpsc::channel;
     use tokio::sync::{Mutex, RwLock};
     use tokio::task::JoinSet;
@@ -760,7 +767,7 @@ mod tests {
                     .unwrap();
 
                 let msg = vec![1u8; 10];
-                let arc_msg = Arc::new(msg.clone());
+                let arc_msg = Bytes::from(msg.clone());
 
                 // First send
                 tracing::info!("Sending ONCE");
@@ -967,7 +974,7 @@ mod tests {
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
                     round_counter: 0,
-                    value: expected_clone,
+                    value: Bytes::from(expected_clone),
                 })
                 .await
                 .unwrap();
@@ -980,7 +987,7 @@ mod tests {
         // try to send to a role that is not in the role assignment should fail
         {
             let e = session
-                .send(Arc::new(vec![1, 2, 3]), &Role::indexed_from_one(3))
+                .send(Bytes::from(vec![1, 2, 3]), &Role::indexed_from_one(3))
                 .await
                 .unwrap_err();
             assert!(e.to_string().contains("Missing local channel for"));
@@ -999,19 +1006,19 @@ mod tests {
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
                     round_counter: 3,
-                    value: vec![],
+                    value: Bytes::new(),
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
                     round_counter: 4,
-                    value: vec![],
+                    value: Bytes::new(),
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
                     round_counter: 5,
-                    value: expected_clone,
+                    value: Bytes::from(expected_clone),
                 })
                 .await
                 .unwrap();
@@ -1093,7 +1100,7 @@ mod tests {
                     .make_network_session(sid, &role_assignment, role, NetworkMode::Sync)
                     .await
                     .unwrap();
-                let msg = Arc::new(expected_message.get(&role).unwrap().clone());
+                let msg = Bytes::from(expected_message.get(&role).unwrap().clone());
                 for other in others.keys() {
                     network_session.send(msg.clone(), other).await.unwrap();
                 }
@@ -1133,8 +1140,8 @@ mod tests {
     /// See here for context: https://github.com/zama-ai/kms-internal/issues/2948
     #[tokio::test(flavor = "multi_thread")]
     async fn test_run_network_task_does_not_drop_receiver_on_completed() {
-        use super::ArcSendValueRequest;
         use super::GrpcSendingService;
+        use super::OutboundMessage;
         use crate::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
         use crate::ggen::{
             HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse, Status,
@@ -1210,7 +1217,7 @@ mod tests {
         );
 
         // Create channel and shared state
-        let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
+        let (sender, receiver) = unbounded_channel::<OutboundMessage>();
         let completed_parties = Arc::new(DashSet::new());
         let role_kind = threshold_types::role::Role::indexed_from_one(1).get_role_kind();
 
@@ -1229,9 +1236,9 @@ mod tests {
         ));
 
         // Send first message — triggers Status::Completed
-        let msg = ArcSendValueRequest {
-            tag: Arc::new(vec![1, 2, 3]),
-            value: Arc::new(vec![4, 5, 6]),
+        let msg = OutboundMessage {
+            tag: Bytes::from(vec![1, 2, 3]),
+            value: Bytes::from(vec![4, 5, 6]),
         };
         assert!(sender.send(msg).is_ok(), "first send should succeed");
 
@@ -1250,9 +1257,9 @@ mod tests {
         // Send a second message — with the old `break` bug, this would fail
         // because the receiver was dropped. With the fix, the receiver is
         // still alive (draining), so this succeeds.
-        let msg2 = ArcSendValueRequest {
-            tag: Arc::new(vec![7, 8, 9]),
-            value: Arc::new(vec![10, 11, 12]),
+        let msg2 = OutboundMessage {
+            tag: Bytes::from(vec![7, 8, 9]),
+            value: Bytes::from(vec![10, 11, 12]),
         };
         assert!(
             sender.send(msg2).is_ok(),
@@ -1380,7 +1387,7 @@ mod tests {
         };
 
         let expected = vec![42u8; 8];
-        let expected_clone = expected.clone();
+        let expected_clone = Bytes::from(expected.clone());
         // Send the message *after* the first tick has fired (1s) but before the grace-period
         // sleep (another 1s) elapses,
         tokio::spawn(async move {

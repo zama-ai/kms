@@ -16,10 +16,11 @@ use crate::constants::{
 use crate::ggen::Status;
 use crate::health_check::HealthCheckSession;
 use async_trait::async_trait;
+use bytes::Bytes;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
@@ -546,7 +547,7 @@ impl GrpcNetworkingManager {
 // so that messages that haven't been pickup up using receive() calls will get dropped
 #[derive(Debug)]
 pub struct NetworkRoundValue {
-    pub value: Vec<u8>,
+    pub value: Bytes,
     pub round_counter: usize,
 }
 
@@ -910,7 +911,7 @@ impl NetworkingImpl {
 // We do the measurement of received bytes here because
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
-pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, usize>> =
+pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, AtomicUsize>> =
     LazyLock::new(DashMap::new);
 
 fn parse_identity_from_cert(
@@ -1069,15 +1070,18 @@ impl Gnetworking for NetworkingImpl {
             tag.round_counter
         );
 
-        match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
-            dashmap::Entry::Occupied(mut occupied_entry) => {
-                let entry = occupied_entry.get_mut();
-                *entry += request.tag.len() + request.value.len()
-            }
-            dashmap::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(request.tag.len() + request.value.len());
-            }
-        };
+        // Tally received bytes. Take only a shared shard lock on the common
+        // path (session already present) and bump an atomic; fall back to an
+        // exclusive lock only to create the counter on the first message.
+        let received_bytes = request.tag.len() + request.value.len();
+        if let Some(counter) = NETWORK_RECEIVED_MEASUREMENT.get(&tag.session_id) {
+            counter.fetch_add(received_bytes, Ordering::Relaxed);
+        } else {
+            NETWORK_RECEIVED_MEASUREMENT
+                .entry(tag.session_id)
+                .or_insert_with(|| AtomicUsize::new(0))
+                .fetch_add(received_bytes, Ordering::Relaxed);
+        }
 
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
@@ -1153,6 +1157,8 @@ impl Gnetworking for NetworkingImpl {
         let send_result = tokio::time::timeout(
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
+                // `request.value` is a zero-copy `Bytes` slice of the decoded
+                // request body; move it through the queue without copying.
                 value: request.value,
                 round_counter: tag.round_counter,
             }),

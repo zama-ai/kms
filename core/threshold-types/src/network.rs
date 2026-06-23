@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::role::RoleTrait;
 use async_trait::async_trait;
+use bytes::Bytes;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NetworkMode {
@@ -13,9 +13,9 @@ pub enum NetworkMode {
 /// Requirements for networking interface.
 #[async_trait]
 pub trait Networking<R: RoleTrait> {
-    async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()>;
+    async fn send(&self, value: Bytes, receiver: &R) -> anyhow::Result<()>;
 
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>>;
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes>;
 
     /// Increase the round counter
     ///

@@ -23,10 +23,7 @@ use algebra::{
 };
 use error_utils::anyhow_error_and_log;
 use itertools::{Itertools, izip};
-use std::{
-    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use threshold_types::opening::ExternalOpeningInfo;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::{Role, TwoSetsRole};
@@ -657,12 +654,12 @@ where
 
             // Send the masked shares to parties in set 2
             // except myself if I am in both sets
-            let values_to_send = Arc::new(NetworkValue::VecRingValue(vj.clone()).to_network());
+            let values_to_send = NetworkValue::VecRingValue(vj.clone()).to_network();
             for party in two_sets_session.get_all_sorted_roles() {
                 if party.is_set2() && party != &two_sets_session.my_role() {
                     two_sets_session
                         .network()
-                        .send(Arc::clone(&values_to_send), party)
+                        .send(values_to_send.clone(), party)
                         .await?;
                 }
             }

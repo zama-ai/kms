@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use error_utils::anyhow_error_and_log;
 
 use super::*;
@@ -119,7 +120,7 @@ type SimulatedPairwiseChannels<R> = Arc<
 
 #[async_trait]
 impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
-    async fn send(&self, val: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
+    async fn send(&self, val: Bytes, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner, *receiver))
@@ -136,7 +137,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
         let tagged_value = LocalTaggedValue {
             send_counter: *net_round,
-            value: val.as_ref().clone(),
+            value: val.to_vec(),
         };
 
         let mut already_sent = self.already_sent.lock().await;
@@ -152,7 +153,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         tx.send(tagged_value).map_err(|e| e.into())
     }
 
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes> {
         let (_, rx) = self
             .pairwise_channels
             .get(&(*sender, self.owner))
@@ -186,7 +187,9 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
                 .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel"))?;
         }
 
-        Ok(tagged_value.value)
+        // In-process/test transport: the local queue stores `Vec<u8>`, so wrap
+        // it (one copy, local only) to match the `Bytes` return contract.
+        Ok(Bytes::from(tagged_value.value))
     }
 
     async fn increase_round_counter(&self) {
@@ -316,7 +319,7 @@ mod tests {
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice.send(Arc::new(value.to_network()), &bob).await
+            net_alice.send(value.to_network(), &bob).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -352,7 +355,7 @@ mod tests {
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
             net_party_1_set_2
-                .send(Arc::new(value.to_network()), &role_1_set_1)
+                .send(value.to_network(), &role_1_set_1)
                 .await
         });
 
@@ -368,7 +371,7 @@ mod tests {
 
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
 
-        let value = Arc::new(NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network());
+        let value = NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network();
         // First send should succeed
         let result1 = net_alice.send(value.clone(), &bob).await;
         assert!(result1.is_ok());

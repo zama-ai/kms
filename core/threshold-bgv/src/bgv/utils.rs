@@ -3,6 +3,7 @@ use crate::algebra::ntt::*;
 use crate::bgv::basics::*;
 use crate::bgv::ddec::keygen_shares;
 use algebra::sharing::share::Share;
+use bytes::Bytes;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::CryptoRng;
@@ -43,7 +44,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
         let num_parties = session.num_parties();
 
         tracing::debug!("Sending pk to all other parties");
-        let send_pk = Arc::new(bc2wrap::serialize(&pubkey_raw).map_err(|e| {
+        let send_pk = Bytes::from(bc2wrap::serialize(&pubkey_raw).map_err(|e| {
             anyhow_error_and_log(format!("failed to serialize PublicBgvKeySet: {e}"))
         })?);
 
@@ -52,7 +53,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
             if to_send_role != input_party_id {
                 let networking = Arc::clone(session.network());
 
-                let send_pk = Arc::clone(&send_pk);
+                let send_pk = send_pk.clone();
                 set.spawn(async move {
                     let _ = networking
                         .send(send_pk, &Role::indexed_from_one(to_send_role))
@@ -111,10 +112,7 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
 
                 set.spawn(async move {
                     let _ = networking
-                        .send(
-                            Arc::new(send_sk.to_network()),
-                            &Role::indexed_from_zero(to_send_role),
-                        )
+                        .send(send_sk.to_network(), &Role::indexed_from_zero(to_send_role))
                         .await;
                 });
             }

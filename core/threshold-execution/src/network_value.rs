@@ -11,6 +11,7 @@ use crate::{
     zk::ceremony,
 };
 use algebra::structure_traits::{Ring, Zero};
+use bytes::Bytes;
 use error_utils::anyhow_error_and_log;
 use hashing::{DomainSep, serialize_hash_element};
 use serde::{Deserialize, Serialize};
@@ -185,12 +186,12 @@ impl<Z: Ring> NetworkValue<Z> {
     // Note we do not offload the serialization to rayon as
     // benchmark show serialization is fast
     // and sending to rayon implies a clone which makes it significantly slower
-    pub fn to_network(&self) -> Vec<u8> {
-        bc2wrap::serialize(self).unwrap()
+    pub fn to_network(&self) -> Bytes {
+        Bytes::from(bc2wrap::serialize(self).unwrap())
     }
 
     pub async fn from_network(
-        serialized: anyhow::Result<Vec<u8>>,
+        serialized: anyhow::Result<Bytes>,
         serialization_runtime: DeSerializationRunTime,
     ) -> anyhow::Result<Self> {
         match serialization_runtime {
@@ -238,7 +239,6 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::Arc;
 
     use super::*;
     use crate::{
@@ -275,11 +275,8 @@ mod tests {
             assert_eq!(*received_key, pk);
         });
 
-        let task2 = tokio::spawn(async move {
-            net_alice
-                .send(Arc::new(value.to_network()), &bob.clone())
-                .await
-        });
+        let task2 =
+            tokio::spawn(async move { net_alice.send(value.to_network(), &bob.clone()).await });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }
