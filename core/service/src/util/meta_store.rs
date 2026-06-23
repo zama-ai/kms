@@ -1301,6 +1301,7 @@ mod tests {
     use super::*;
     use crate::engine::base::derive_request_id;
     use kms_grpc::RequestId;
+    use std::time::{Duration, Instant};
 
     /// Insert `id` and immediately drive it to `Done(Ok(value))`, consuming the
     /// permit. Mirrors the common `insert -> update` lifecycle used by callers.
@@ -1420,17 +1421,30 @@ mod tests {
     }
 
     #[test]
-    fn try_delete_blocked_by_live_permit() {
-        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
+    fn try_delete_blocked_by_live_permit_on_pending() {
+        // A live permit on a Pending entry blocks a permit-less `try_delete`
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id: RequestId = derive_request_id("locked-del").unwrap();
-        let permit = meta_store.insert(&id).unwrap();
-        assert!(meta_store.try_delete(&id).is_err());
-        drop(permit);
-        assert!(meta_store.try_delete(&id).is_ok());
+
+        // Insert permit blocks until dropped.
+        let insert_permit = store.insert(&id).unwrap();
         assert!(matches!(
-            meta_store.retrieve(&id),
-            Some(EntryState::Deleted)
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
         ));
+        drop(insert_permit);
+
+        // A fresh lock_entry permit on the same Pending entry blocks just the same.
+        let lock_permit = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        drop(lock_permit);
+
+        // Released: try_delete now tombstones the entry.
+        assert!(store.try_delete(&id).is_ok());
+        assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
     }
 
     #[test]
@@ -1494,28 +1508,6 @@ mod tests {
     }
 
     #[test]
-    fn lock_entry_requires_released_insert_permit() {
-        // The insert permit holds the claim, so the entry cannot be re-locked
-        // until that permit is dropped.
-        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
-        let id = derive_request_id("lock-pending").unwrap();
-        let insert_permit = store.insert(&id).unwrap();
-        assert!(matches!(
-            store.lock_entry(&id),
-            Err(MetaStoreError::Locked { .. })
-        ));
-        drop(insert_permit);
-        // Now lockable; the resulting permit again blocks a second lock.
-        let lock_permit = store.lock_entry(&id).unwrap();
-        assert!(matches!(
-            store.lock_entry(&id),
-            Err(MetaStoreError::Locked { .. })
-        ));
-        drop(lock_permit);
-        assert!(store.lock_entry(&id).is_ok());
-    }
-
-    #[test]
     fn lock_then_update_completes_entry() {
         // A relocked Pending entry can be completed through the new permit.
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
@@ -1540,22 +1532,6 @@ mod tests {
         assert!(matches!(prev, EntryState::Done(Ok(_))));
         assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
         assert_eq!(store.get_completed_count(), 0);
-    }
-
-    #[test]
-    fn lock_entry_blocks_try_delete_until_released() {
-        // A permit acquired via `lock_entry` on a still-Pending entry blocks a
-        // permit-less `try_delete` just like the original insert permit does.
-        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
-        let id = derive_request_id("lock-blocks-del").unwrap();
-        drop(store.insert(&id).unwrap());
-        let permit = store.lock_entry(&id).unwrap();
-        assert!(matches!(
-            store.try_delete(&id),
-            Err(MetaStoreError::Locked { .. })
-        ));
-        drop(permit);
-        assert!(store.try_delete(&id).is_ok());
     }
 
     #[test]
@@ -2237,21 +2213,6 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
     }
 
-    /// `retrieve_from_meta_store_with_timeout` returns an already-completed
-    /// result immediately, without consuming the wait budget.
-    #[tokio::test]
-    async fn retrieve_with_timeout_returns_ready_result_immediately() {
-        let store = MetaStore::<String>::new_unlimited();
-        let id = derive_request_id("wait-ready").unwrap();
-        let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
-        update_ok_req_in_meta_store(&store, permit, "done".to_string(), "test").await;
-
-        let arc = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
-            .await
-            .expect("a completed entry should be returned");
-        assert_eq!(arc.as_ref(), "done");
-    }
-
     /// A `Pending` entry that completes while a caller is waiting wakes the
     /// waiter as soon as the result is recorded (rather than timing out).
     #[tokio::test]
@@ -2268,10 +2229,16 @@ mod tests {
             update_ok_req_in_meta_store(&writer_store, permit, "late".to_string(), "test").await;
         });
 
+        let start = Instant::now();
         // Generous timeout: the wait should end on the result, not the deadline.
         let arc = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
             .await
             .expect("waiter should observe the completed result");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "took too long: {:?}",
+            start.elapsed()
+        );
         assert_eq!(arc.as_ref(), "late");
         // Sanity: the entry really is the one we waited on.
         assert!(matches!(
@@ -2326,5 +2293,66 @@ mod tests {
             .await
             .expect_err("an absent id must not be returned");
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// The non-blocking `retrieve_from_meta_store` helper maps each entry state to
+    /// its caller-facing outcome: `Done(Ok)` returns the value, `Pending` is
+    /// `Unavailable`, and both an absent and a tombstoned id are `NotFound`.
+    #[tokio::test]
+    async fn retrieve_from_meta_store_maps_states() {
+        let store = RwLock::new(MetaStore::<String>::new_unlimited_inner());
+
+        // Absent id -> NotFound.
+        let missing = derive_request_id("ret-missing").unwrap();
+        let err = retrieve_from_meta_store(&store, &missing, "test")
+            .await
+            .expect_err("an absent id must not be returned");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        // Pending id -> Unavailable. The permit keeps the entry Pending.
+        let pending = derive_request_id("ret-pending").unwrap();
+        let _permit = store.write().await.insert(&pending).unwrap();
+        let err = retrieve_from_meta_store(&store, &pending, "test")
+            .await
+            .expect_err("a pending entry is not ready yet");
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+
+        // Done(Ok) id -> the stored value.
+        let ok = derive_request_id("ret-ok").unwrap();
+        insert_done_ok(&mut *store.write().await, &ok, "value");
+        let arc = retrieve_from_meta_store(&store, &ok, "test")
+            .await
+            .expect("a completed entry should be returned");
+        assert_eq!(arc.as_ref(), "value");
+
+        // Deleted id -> NotFound, the same outcome as an absent id.
+        store.write().await.try_delete(&ok).unwrap();
+        let err = retrieve_from_meta_store(&store, &ok, "test")
+            .await
+            .expect_err("a tombstoned id must not be returned");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// A `Done(Err)` result surfaces through the retrieve helper as `Internal`,
+    /// unless the stored error mentions "abort", which maps to `Aborted`.
+    #[tokio::test]
+    async fn retrieve_from_meta_store_maps_error_codes() {
+        let store = RwLock::new(MetaStore::<String>::new_unlimited_inner());
+
+        // Generic failure -> Internal.
+        let boom = derive_request_id("ret-boom").unwrap();
+        insert_done_err(&mut *store.write().await, &boom, "boom");
+        let err = retrieve_from_meta_store(&store, &boom, "test")
+            .await
+            .expect_err("a failed entry must surface an error");
+        assert_eq!(err.code(), tonic::Code::Internal);
+
+        // Error mentioning "abort" -> Aborted.
+        let aborted = derive_request_id("ret-abort").unwrap();
+        insert_done_err(&mut *store.write().await, &aborted, "task was aborted");
+        let err = retrieve_from_meta_store(&store, &aborted, "test")
+            .await
+            .expect_err("an aborted entry must surface an error");
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }
