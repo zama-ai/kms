@@ -14,13 +14,17 @@ use crate::{
         },
         glwe_key::GlweSecretKeyShare,
         lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
-        lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
+        lwe_key::{
+            LweSecretKeyShare, generate_lwe_public_key_shared,
+            generate_lwe_public_key_shared_with_noise,
+        },
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
         modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
         parameters::{DKGParams, MSNRKConfiguration},
         private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
         public_keysets::{
-            CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
+            CompressedReRandomizationRawKey, CompressedReRandomizationRawKeySwitchingKey,
+            FhePubKeySet, RawCompressedPubKeySet,
         },
         randomness::MPCEncryptionRandomGenerator,
         sns_compression_key::SnsCompressionPrivateKeyShares,
@@ -712,27 +716,48 @@ where
         }
     };
 
-    let cpk_re_randomization_ksk = match (params.pksk_params(), params.rerand_ksk_params()) {
-        (Some(_pksk_params), Some(cpk_re_randomization_ksk_params)) => {
-            if params.rerand_ksk_reuses_pksk() {
-                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
-            } else {
-                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
-                    generate_compressed_key_switch_key(
-                        &private_key_set.lwe_encryption_secret_key_share,
-                        &glwe_sk_share_as_lwe,
-                        &cpk_re_randomization_ksk_params,
-                        mpc_encryption_rng,
-                        session,
-                        preprocessing,
+    let cpk_re_randomization = if params.uses_derived_rerand() {
+        // Derived re-randomization: generate a compact public key over the
+        // compute (`Big`) key (`glwe_sk_share_as_lwe`) — no key-switch. The XOF
+        // seed is snapshotted right before the mask bytes are consumed, exactly
+        // like the encryption public key above.
+        let compression_seed = mpc_encryption_rng.current_compression_seed();
+        let derived_pk_share = generate_lwe_public_key_shared_with_noise(
+            params.num_needed_noise_rerand_pk(),
+            mpc_encryption_rng,
+            &glwe_sk_share_as_lwe,
+            session,
+            preprocessing,
+        )
+        .await?;
+        let seeded_pk = derived_pk_share
+            .open_to_tfhers_seeded_type(compression_seed, session)
+            .await?;
+        Some(CompressedReRandomizationRawKey::DerivedCpk(seeded_pk))
+    } else {
+        match (params.pksk_params(), params.rerand_ksk_params()) {
+            (Some(_pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+                let ksk = if params.rerand_ksk_reuses_pksk() {
+                    CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK
+                } else {
+                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                        generate_compressed_key_switch_key(
+                            &private_key_set.lwe_encryption_secret_key_share,
+                            &glwe_sk_share_as_lwe,
+                            &cpk_re_randomization_ksk_params,
+                            mpc_encryption_rng,
+                            session,
+                            preprocessing,
+                        )
+                        .await?,
                     )
-                    .await?,
-                ))
+                };
+                Some(CompressedReRandomizationRawKey::LegacyKsk(ksk))
             }
-        }
-        (_, None) => None,
-        _ => {
-            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+            (_, None) => None,
+            _ => {
+                panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+            }
         }
     };
 
@@ -787,7 +812,7 @@ where
         msnrk,
         msnrk_sns,
         sns_compression_key,
-        cpk_re_randomization_ksk,
+        cpk_re_randomization,
         oprf_key,
         seed,
     })
@@ -1084,16 +1109,35 @@ pub mod tests {
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
     fn pure_tfhers_test() {
+        use tfhe::shortint::parameters::ReRandomizationConfiguration;
+        use tfhe::shortint::parameters::ReRandomizationParameters;
+
         let params = *crate::tfhe_internals::parameters::BC_PARAMS_NO_SNS;
         let classic_pbs = params.classic_pbs();
         let dedicated_cpk_params = params.dedicated_pk_params().unwrap();
         let compression_params = params.compression().unwrap();
-        let re_rand_ks_params = params.rerand_params().unwrap();
 
         let config = tfhe::ConfigBuilder::with_custom_parameters(classic_pbs)
             .use_dedicated_compact_public_key_parameters(dedicated_cpk_params)
-            .enable_compression(compression_params)
-            .enable_ciphertext_re_randomization(re_rand_ks_params);
+            .enable_compression(compression_params);
+
+        let config = match params.rerand_configuration() {
+            Some(ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch) => {
+                // Legacy rerand: the dedicated CPK carries the rerand KSK params.
+                let rerand_params = params
+                    .rerand_params()
+                    .expect("legacy rerand configuration carries rerand KSK params");
+                config.enable_ciphertext_re_randomization(rerand_params)
+            }
+            Some(ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch) => {
+                // Derived rerand: the CPK is derived from the compute parameters,
+                // so no key-switching parameters are needed.
+                config.enable_ciphertext_re_randomization(
+                    ReRandomizationParameters::DerivedCPKWithoutKeySwitch,
+                )
+            }
+            None => config,
+        };
 
         let client_key = tfhe::ClientKey::generate(config.clone());
         let server_key = tfhe::ServerKey::new(&client_key);
@@ -1101,7 +1145,8 @@ pub mod tests {
 
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
         set_server_key(server_key);
-        try_tfhe_rerand(&client_key, &public_key);
+        // BC_PARAMS_NO_SNS uses the legacy re-randomization configuration.
+        try_tfhe_rerand(&client_key, &public_key, false);
     }
 
     #[cfg(feature = "slow_tests")]
@@ -2295,7 +2340,7 @@ pub mod tests {
             try_tfhe_compression_computation(&tfhe_sk);
         }
         if with_rerand {
-            try_tfhe_rerand(&tfhe_sk, &pk.public_key);
+            try_tfhe_rerand(&tfhe_sk, &pk.public_key, params.uses_derived_rerand());
         }
 
         assert_oprf_correctness::<EXTENSION_DEGREE>(prefix_path, params, num_parties, threshold);
@@ -2607,9 +2652,23 @@ pub mod tests {
         assert_eq!(decrypted, clear_c);
     }
 
-    fn try_tfhe_rerand(cks: &tfhe::ClientKey, cpk: &tfhe::CompactPublicKey) {
+    /// `use_derived_rerand` selects the re-randomization mode: derived parameter
+    /// sets use [`tfhe::ReRandomizationMode::UseAvailableMode`] (the server key's
+    /// embedded derived CPK — no public key supplied), while legacy sets use
+    /// [`tfhe::ReRandomizationMode::UseLegacyCPKIfNeeded`] with the encryption
+    /// CPK. (`cpk` is always needed to encrypt the test inputs below.)
+    fn try_tfhe_rerand(
+        cks: &tfhe::ClientKey,
+        cpk: &tfhe::CompactPublicKey,
+        use_derived_rerand: bool,
+    ) {
         let compact_public_encryption_domain_separator = *b"TFHE.Enc";
         let rerand_domain_separator = *b"TFHE.Rrd";
+        let rerand_mode = if use_derived_rerand {
+            tfhe::ReRandomizationMode::UseAvailableMode
+        } else {
+            tfhe::ReRandomizationMode::UseLegacyCPKIfNeeded { cpk }
+        };
 
         // Case where we want to compute FheUint64 + FheUint64 and re-randomize those inputs
         {
@@ -2657,9 +2716,11 @@ pub mod tests {
 
             let mut seed_gen = re_rand_context.finalize();
 
-            a.re_randomize(cpk, seed_gen.next_seed().unwrap()).unwrap();
+            a.re_randomize(rerand_mode, seed_gen.next_seed().unwrap())
+                .unwrap();
 
-            b.re_randomize(cpk, seed_gen.next_seed().unwrap()).unwrap();
+            b.re_randomize(rerand_mode, seed_gen.next_seed().unwrap())
+                .unwrap();
 
             let c = a + b;
             let dec: u64 = c.decrypt(cks);
