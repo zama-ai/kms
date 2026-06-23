@@ -415,7 +415,7 @@ impl MetaStoreStatusServiceImpl {
         MetaStoreInfo {
             r#type: store_type as i32,
             capacity: store_guard.get_capacity() as i32,
-            current_count: store_guard.get_current_count() as i32,
+            current_count: store_guard.get_total_count() as i32,
         }
     }
 }
