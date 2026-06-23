@@ -7,11 +7,12 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use error_utils::anyhow_error_and_log;
 
+use crate::network::{NetworkMode, Networking};
+
 use super::*;
 use constants::{
     NETWORK_TIMEOUT, NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS,
 };
-use threshold_types::network::{NetworkMode, Networking};
 use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
@@ -282,10 +283,10 @@ struct LocalTaggedValue {
 
 #[cfg(test)]
 mod tests {
+    use crate::network::Networking;
     use threshold_execution::{
         network_value::NetworkValue, runtime::sessions::session_parameters::DeSerializationRunTime,
     };
-    use threshold_types::network::Networking;
     use threshold_types::role::{Role, TwoSetsRole};
 
     use super::*;

@@ -248,7 +248,7 @@ mod tests {
         base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring,
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::allocate_and_generate_new_lwe_keyswitch_key;
 

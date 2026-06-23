@@ -1457,7 +1457,8 @@ mod tests {
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tests::helper::tests_and_benches::execute_protocol_small,
     };
-    use threshold_types::{network::NetworkMode, role::Role};
+    use threshold_networking::network::NetworkMode;
+    use threshold_types::role::Role;
 
     use super::*;
 

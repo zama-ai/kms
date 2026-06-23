@@ -1193,7 +1193,7 @@ pub(crate) mod tests {
     use futures_util::future::join;
     use rstest::rstest;
     use std::num::Wrapping;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::session_id::SessionId;
     use tokio::task::JoinSet;
 

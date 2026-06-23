@@ -53,12 +53,10 @@ use threshold_execution::small_execution::prss::{
 };
 use threshold_networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use threshold_networking::grpc::GrpcNetworkingManager;
+use threshold_networking::network::NetworkMode;
+use threshold_types::party::{Identity, RoleAssignment};
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
-use threshold_types::{
-    network::NetworkMode,
-    party::{Identity, RoleAssignment},
-};
 use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},

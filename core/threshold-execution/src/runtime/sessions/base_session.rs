@@ -5,7 +5,7 @@ use aes_prng::AesRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use threshold_types::network::Networking;
+use threshold_networking::network::Networking;
 use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
 use threshold_types::session_id::SessionId;
 
@@ -155,7 +155,7 @@ mod tests {
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::get_base_session;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     #[test]

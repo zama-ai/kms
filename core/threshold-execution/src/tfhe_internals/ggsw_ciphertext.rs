@@ -401,7 +401,7 @@ mod tests {
         },
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     use super::{GgswCiphertextShare, encrypt_constant_ggsw_ciphertext, ggsw_encode_message};

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::time::Duration;
 
 use threshold_networking::local::{LocalNetworking, LocalNetworkingProducer};
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use threshold_types::role::Role;
 
 pub struct BGVTestRuntime {

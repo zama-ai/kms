@@ -861,7 +861,7 @@ mod test {
         sharing::share::Share,
         structure_traits::Ring,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::session_id::SessionId;
 
     // Note this fn is very much tailored for the test below

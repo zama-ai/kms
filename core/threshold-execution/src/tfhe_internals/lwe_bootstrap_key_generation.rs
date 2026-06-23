@@ -300,7 +300,7 @@ mod tests {
     use algebra::{
         base_ring::Z128, galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::allocate_and_generate_lwe_bootstrap_key;
 

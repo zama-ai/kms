@@ -542,7 +542,7 @@ mod tests {
     };
     use paste::paste;
     use std::num::Wrapping;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::Share;
     use crate::online::preprocessing::RandomPreprocessing;

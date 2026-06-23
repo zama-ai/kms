@@ -19,7 +19,7 @@ use threshold_execution::{
         utils::expanded_encrypt,
     },
 };
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

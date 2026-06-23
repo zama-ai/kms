@@ -198,7 +198,7 @@ mod tests {
     use paste::paste;
     use std::num::Wrapping;
     use std::sync::Arc;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     macro_rules! test_triples {

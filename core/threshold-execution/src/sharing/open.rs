@@ -33,8 +33,8 @@ use algebra::{
 };
 use error_utils::anyhow_error_and_log;
 use thread_handles::spawn_compute_bound;
+use threshold_networking::network::NetworkMode;
 use threshold_types::{
-    network::NetworkMode,
     opening::{ExternalOpeningInfo, OpeningKind},
     protocol::ProtocolDescription,
     role::{Role, TwoSetsRole},
@@ -611,7 +611,7 @@ pub(crate) mod test {
         sharing::shamir::{InputOp, ShamirSharings},
         structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Sample},
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 
     use super::{RobustOpen, SecureRobustOpen};

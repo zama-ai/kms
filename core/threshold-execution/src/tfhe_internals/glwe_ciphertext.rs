@@ -232,7 +232,7 @@ mod tests {
         },
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     use super::{

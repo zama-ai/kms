@@ -638,7 +638,7 @@ mod tests {
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use algebra::structure_traits::{ErrorCorrect, Invert};
     use itertools::Itertools;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
 

@@ -303,7 +303,7 @@ mod tests {
         sharing::{shamir::ShamirSharings, share::Share},
         structure_traits::Ring,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::{LweCiphertextShare, LweSecretKeyShare, encrypt_lwe_ciphertext};
 

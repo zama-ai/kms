@@ -10,7 +10,7 @@ use threshold_execution::{
     },
     zk::ceremony::{Ceremony, SecureCeremony},
 };
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use threshold_types::session_id::SessionId;
 
 use tokio::task::JoinSet;

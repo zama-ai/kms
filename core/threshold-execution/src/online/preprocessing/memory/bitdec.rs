@@ -132,7 +132,7 @@ where
 mod tests {
     use crate::online::preprocessing::dummy::DummyPreprocessing;
     use crate::tests::helper::tests::get_base_session;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::*;
 

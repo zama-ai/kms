@@ -15,7 +15,7 @@ use threshold_execution::runtime::sessions::{
 use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use threshold_execution::tests::helper::tests_and_benches::execute_protocol_large;
 use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;

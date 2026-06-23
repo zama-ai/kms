@@ -145,7 +145,7 @@ mod tests {
         sharing::share::Share,
         structure_traits::ErrorCorrect,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     async fn test_bit_lift<const EXTENSION_DEGREE: usize, MaliciousBitLift: BitLift>(
         params: TestingParameters,

@@ -1371,7 +1371,7 @@ mod tests {
     use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{FheUint8, prelude::FheEncrypt};
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     #[test]

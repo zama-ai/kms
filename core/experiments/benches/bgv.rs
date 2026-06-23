@@ -19,7 +19,7 @@ use threshold_bgv::bgv::ddec::keygen_shares;
 use threshold_bgv::bgv::endpoints::threshold_decrypt;
 use threshold_bgv::bgv::runtime::BGVTestRuntime;
 use threshold_bgv::constants::PLAINTEXT_MODULUS;
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 
 fn bench_modswitch(c: &mut Criterion) {
     let mut rng = AesRng::seed_from_u64(0);

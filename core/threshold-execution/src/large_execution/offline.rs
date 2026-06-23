@@ -325,7 +325,7 @@ mod tests {
     };
     use rstest::rstest;
     use std::collections::HashSet;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     async fn test_offline_strategies<

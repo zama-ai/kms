@@ -22,7 +22,7 @@ use threshold_execution::runtime::sessions::{
 use threshold_execution::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use threshold_types::role::Role;
 
 #[derive(Debug, Clone, Copy)]

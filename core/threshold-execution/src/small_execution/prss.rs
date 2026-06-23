@@ -1170,7 +1170,8 @@ mod tests {
     use std::sync::Arc;
     use test_utils::read_element;
     use tfhe::{FheUint8, set_server_key};
-    use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
+    use threshold_networking::network::NetworkMode;
+    use threshold_types::commitment::KEY_BYTE_LEN;
 
     use tokio::task::JoinSet;
 

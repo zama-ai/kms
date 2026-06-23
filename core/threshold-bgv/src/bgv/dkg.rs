@@ -208,7 +208,7 @@ mod tests {
         runtime::sessions::small_session::SmallSession,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     #[expect(clippy::type_complexity)]
     fn test_dkg(

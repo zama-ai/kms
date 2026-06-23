@@ -200,7 +200,7 @@ pub(crate) mod tests {
     use num_integer::div_ceil;
     use rstest::rstest;
     use std::num::Wrapping;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     async fn test_singlesharing<

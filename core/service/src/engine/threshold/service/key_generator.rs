@@ -1901,7 +1901,7 @@ mod tests {
         online::preprocessing::dummy::DummyPreprocessing,
         small_execution::prss::PRSSSetup,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     #[cfg(feature = "insecure")]
     use crate::consts::MAX_TRIES;

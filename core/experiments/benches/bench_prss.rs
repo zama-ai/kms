@@ -19,7 +19,7 @@ use threshold_execution::{
     },
 };
 use threshold_networking::local::LocalNetworkingProducer;
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 

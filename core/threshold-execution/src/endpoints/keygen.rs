@@ -1076,7 +1076,7 @@ pub mod tests {
         },
     };
     use tfhe_csprng::seeders::Seeder;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     #[cfg(feature = "slow_tests")]
     use tokio::time::Duration;

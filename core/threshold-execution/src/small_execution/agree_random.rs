@@ -633,9 +633,9 @@ mod tests {
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use algebra::commitment::commitment_inner_hash;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::{
         commitment::{COMMITMENT_BYTE_LEN, Commitment, KEY_BYTE_LEN, Opening},
-        network::NetworkMode,
         role::Role,
     };
 

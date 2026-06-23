@@ -1001,7 +1001,7 @@ mod tests {
         TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
 
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use tokio::task::JoinSet;
 
     #[test]

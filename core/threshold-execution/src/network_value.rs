@@ -248,7 +248,7 @@ mod tests {
     use algebra::base_ring::Z128;
     use test_utils::read_element;
     use threshold_networking::local::LocalNetworkingProducer;
-    use threshold_types::network::{NetworkMode, Networking};
+    use threshold_networking::network::{NetworkMode, Networking};
 
     #[tokio::test]
     async fn test_box_sending() {

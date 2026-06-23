@@ -113,7 +113,7 @@ mod tests {
     use paste::paste;
     use rand::SeedableRng;
     use std::num::Wrapping;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     macro_rules! test_bitgen {

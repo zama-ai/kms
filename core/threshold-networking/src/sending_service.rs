@@ -10,7 +10,10 @@ use std::{
 };
 
 use super::ggen::gnetworking_client::GnetworkingClient;
-use crate::ggen::Status;
+use crate::{
+    ggen::Status,
+    network::{NetworkMode, Networking},
+};
 use backoff::SystemClock;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
@@ -36,7 +39,6 @@ use tonic::{async_trait, transport::Channel};
 use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
-use threshold_types::network::{NetworkMode, Networking};
 
 /// A queued outbound message. Holds [`Bytes`] (not `Arc<Vec<u8>>`) so that
 /// materializing a `SendValueRequest` from it — including on every retry — is
@@ -690,6 +692,7 @@ mod tests {
         CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
         TlsExtensionGetter,
     };
+    use crate::network::{NetworkMode, Networking};
     use crate::sending_service::{NetworkSession, now_activity_millis};
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -697,7 +700,6 @@ mod tests {
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
     use test_utils::random_free_port::get_listeners_random_free_ports;
-    use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::party::{Identity, RoleAssignment};
     use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
     use threshold_types::session_id::SessionId;

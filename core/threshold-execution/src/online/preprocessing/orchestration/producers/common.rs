@@ -86,7 +86,7 @@ pub(crate) mod tests {
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };
     use thread_handles::OsThreadGroup;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
 

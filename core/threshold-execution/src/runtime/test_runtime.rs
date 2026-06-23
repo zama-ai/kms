@@ -23,7 +23,7 @@ use std::{
 };
 use tfhe::{ServerKey, core_crypto::prelude::LweKeyswitchKey};
 use threshold_networking::local::{LocalNetworking, LocalNetworkingProducer};
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use threshold_types::role::{DualRole, Role, RoleKind, RoleTrait, TwoSetsRole};
 use threshold_types::session_id::SessionId;
 

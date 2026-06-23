@@ -165,7 +165,7 @@ mod tests {
         galois_rings::degree_4::ResiduePolyF4Z64,
         structure_traits::{One, Ring, Zero},
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::GlweSecretKeyShare;
 

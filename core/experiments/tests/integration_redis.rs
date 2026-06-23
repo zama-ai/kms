@@ -258,7 +258,7 @@ fn test_dkg_orchestrator_large(
         endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
         online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     redis_tidy();
 

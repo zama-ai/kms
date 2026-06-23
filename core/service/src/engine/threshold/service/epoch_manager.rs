@@ -57,7 +57,7 @@ use threshold_execution::{
         private_keysets::PrivateKeySet,
     },
 };
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;

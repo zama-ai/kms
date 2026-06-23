@@ -135,7 +135,7 @@ mod tests {
         galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         structure_traits::Ring,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::{RealSecretDistributions, SecretDistributions, TUniformBound};
 

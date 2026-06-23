@@ -155,7 +155,7 @@ mod tests {
         online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::small_session::SmallSession,
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use super::*;
 

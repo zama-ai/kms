@@ -433,7 +433,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::{collections::HashSet, num::Wrapping};
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double

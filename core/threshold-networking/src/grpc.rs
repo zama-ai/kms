@@ -15,6 +15,7 @@ use crate::constants::{
 };
 use crate::ggen::Status;
 use crate::health_check::HealthCheckSession;
+use crate::network::{NetworkMode, Networking};
 use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -22,12 +23,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock, Weak};
+use threshold_types::party::{MpcIdentity, RoleAssignment};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
-use threshold_types::{
-    network::{NetworkMode, Networking},
-    party::{MpcIdentity, RoleAssignment},
-};
 use tokio::sync::{
     Mutex, RwLock,
     mpsc::{Receiver, Sender, channel},

@@ -164,7 +164,7 @@ mod tests {
         use rand::{RngCore, SeedableRng};
         use std::collections::HashMap;
         use threshold_execution::runtime::test_runtime::generate_fixed_roles;
-        use threshold_types::network::NetworkMode;
+        use threshold_networking::network::NetworkMode;
         use threshold_types::role::Role;
 
         #[test]

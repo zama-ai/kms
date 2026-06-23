@@ -131,7 +131,7 @@ pub(crate) mod tests {
     };
     use rand::SeedableRng;
     use rstest::rstest;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
     use tokio::task::JoinSet;
 

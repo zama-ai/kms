@@ -460,7 +460,7 @@ mod test {
         },
         structure_traits::{ErrorCorrect, Invert, Ring},
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
 
     #[cfg(feature = "slow_tests")]

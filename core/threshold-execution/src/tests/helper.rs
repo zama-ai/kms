@@ -23,7 +23,7 @@ pub mod tests_and_benches {
         },
         small_execution::prf::PRSSConversions,
     };
-    use threshold_types::network::{NetworkMode, Networking};
+    use threshold_networking::network::{NetworkMode, Networking};
     use threshold_types::session_id::SessionId;
 
     pub fn get_seed_for_two_sets_role(role: &TwoSetsRole) -> u64 {
@@ -346,7 +346,7 @@ pub mod testing {
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use threshold_networking::local::LocalNetworkingProducer;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
     use tokio::runtime::Runtime;
@@ -431,7 +431,7 @@ pub mod tests {
         sync::Arc,
     };
     use threshold_networking::local::LocalNetworkingProducer;
-    use threshold_types::network::{NetworkMode, Networking};
+    use threshold_networking::network::{NetworkMode, Networking};
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use threshold_types::session_id::SessionId;
     use tokio::task::JoinError;

@@ -513,7 +513,7 @@ mod tests {
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use crate::online::bit_manipulation::BatchedBits;
     use crate::online::bit_manipulation::Bits;

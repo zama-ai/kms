@@ -805,7 +805,7 @@ mod tests {
     use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
     use tfhe::shortint::prelude::ModulusSwitchType;
     use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 
     #[tokio::test]

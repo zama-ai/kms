@@ -22,7 +22,7 @@ use threshold_execution::{
     tfhe_internals::parameters::DKGParams,
     zk::ceremony::Ceremony,
 };
-use threshold_types::network::NetworkMode;
+use threshold_networking::network::NetworkMode;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};

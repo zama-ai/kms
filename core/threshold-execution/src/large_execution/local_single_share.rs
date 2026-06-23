@@ -485,7 +485,7 @@ pub(crate) mod tests {
         },
         structure_traits::{ErrorCorrect, Invert, Ring},
     };
-    use threshold_types::network::NetworkMode;
+    use threshold_networking::network::NetworkMode;
 
     use aes_prng::AesRng;
     use futures_util::future::join;
