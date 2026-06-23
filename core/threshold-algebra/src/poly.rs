@@ -300,7 +300,7 @@ where
     }
 
     /// return a poly that is constant zero
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Poly {
             // an empty polynomial is considered zero
             coefs: vec![],
@@ -641,21 +641,14 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
 
 /// Runs the extended Euclidean algorithm for `a` and `b` until `deg(r1) < stop`.
 ///
-/// `a` is borrowed: when the EEA loop does not execute, we never read `a`, so we
-/// avoid cloning it. The loop consumes its running remainder, so `a` is cloned
-/// only once we know we need to iterate.
+/// Precondition: `deg(b) >= stop`. Callers should ensure `deg(b) < stop`. This code runs the loop at least once and `a`
+/// is always read — hence `a` is cloned up front.
 ///
 /// Returns the low-degree remainder `r1` and its Bézout cofactor `t1` with
 /// respect to the original `b`.
 fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
-    let mut r1 = b;
-
-    if r1.deg() < stop {
-        // `b` already satisfies the target degree bound, with cofactor 1.
-        return (r1, Poly::one());
-    }
-
     let mut r0 = a.clone();
+    let mut r1 = b;
 
     // Invariant: each remainder is `a * s + b * t`; we only track `t`.
     let mut t0 = Poly::zero();
@@ -706,6 +699,22 @@ fn gao_decoding_common<F: Field>(
     // q1 and q0 are called g(x) and v(x), respectively, in the Gao paper.
     // q0 = v(x) is the error locator polynomial; its roots are the error positions xi.
     let gcd_stop = (n + k) / 2;
+
+    // The "honest parties" fast path: if the interpolant through all n points already has degree below the Gao stop
+    // bound it *is* the message — any polynomial that low-degree and consistent with all n points must equal G when the
+    // error count is within the correctable bound. partial_xgcd would return (r, 1).
+    if r.deg() < gcd_stop {
+        return if r.deg() >= k {
+            Err(anyhow_error_and_log(format!(
+                "Gao decoding failure: Division result is of too high degree {}, but should be at most {}.",
+                r.deg(),
+                k - 1
+            )))
+        } else {
+            Ok(r)
+        };
+    }
+
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
     // abort early if we have too many errors
