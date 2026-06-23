@@ -210,6 +210,17 @@ pub enum EntryState<T> {
     Deleted,
 }
 
+// Hand-written so cloning does not require `T: Clone`.
+impl<T> Clone for EntryState<T> {
+    fn clone(&self) -> Self {
+        match self {
+            EntryState::Pending => EntryState::Pending,
+            EntryState::Done(result) => EntryState::Done(result.clone()),
+            EntryState::Deleted => EntryState::Deleted,
+        }
+    }
+}
+
 impl<T> std::fmt::Display for EntryState<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -302,9 +313,9 @@ impl<T> StoredEntry<T> {
     }
 }
 
-impl<T: Clone> From<&StoredEntry<T>> for EntryState<T> {
+impl<T> From<&StoredEntry<T>> for EntryState<T> {
     fn from(stored: &StoredEntry<T>) -> Self {
-        stored.result_tx.borrow().clone()
+        (*stored.result_tx.borrow()).clone()
     }
 }
 
