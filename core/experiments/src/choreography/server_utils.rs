@@ -46,6 +46,7 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     span.record("total_num_sessions", sessions.len());
     span.record("network_round", num_rounds);
 
+    let total_num_byte_sent = 0;
     #[cfg(feature = "measure_network")]
     let total_num_byte_sent = join_all(
         num_rounds_per_session
@@ -56,6 +57,7 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     .iter()
     .sum::<usize>();
 
+    let total_num_byte_received = 0;
     #[cfg(feature = "measure_network")]
     let total_num_byte_received = try_join_all(
         num_rounds_per_session
@@ -67,9 +69,7 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     .iter()
     .sum::<usize>();
 
-    #[cfg(feature = "measure_network")]
     span.record("network_sent", total_num_byte_sent);
-    #[cfg(feature = "measure_network")]
     span.record("network_received", total_num_byte_received);
 
     #[cfg(feature = "measure_memory")]
