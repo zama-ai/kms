@@ -1171,6 +1171,7 @@ impl<
     ) -> Result<Response<Empty>, MetricedError> {
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
+        // NOTE: destroy_epoch will also destroy PRSS data
         let res = Self::destroy_epoch(
             epoch_id,
             &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
