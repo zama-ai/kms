@@ -1952,7 +1952,7 @@ async fn custodian_reencrypt(
     seeds: &[String],
     operator_recovery_resps: &[String],
 ) -> Result<Vec<String>> {
-    let mut response_paths = Vec::new();
+    let mut cus_rec_resps = Vec::new();
     let custodian_bin = build_kms_custodian()?;
 
     for operator_index in 1..=amount_operators {

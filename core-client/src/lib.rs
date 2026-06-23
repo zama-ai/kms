@@ -40,10 +40,9 @@ use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
-use kms_lib::engine::utils::make_extra_data;
-use kms_lib::util::file_handling::{
-    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
-};
+use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
+use kms_lib::util::file_handling::{read_element, safe_read_element_versioned, write_element};
+
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
     test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
