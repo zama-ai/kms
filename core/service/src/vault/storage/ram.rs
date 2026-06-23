@@ -202,8 +202,11 @@ impl Storage for RamStorage {
         }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
+        // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
+        let size = serialized.len() as f64;
         self.internal_storage
             .insert(((*data_id, None), data_type.to_string()), serialized);
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
         Ok(StoreWriteOutcome::Created)
     }
 
@@ -259,10 +262,13 @@ impl StorageExt for RamStorage {
         }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
+        // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
+        let size = serialized.len() as f64;
         self.internal_storage.insert(
             ((*data_id, Some(*epoch_id)), data_type.to_string()),
             serialized,
         );
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
         Ok(StoreWriteOutcome::Created)
     }
 
@@ -399,6 +405,12 @@ pub mod tests {
         let mut storage = RamStorage::new();
         test_storage_read_store_methods(&mut storage).await;
         test_batch_helper_methods(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_store_data_records_payload_size_ram() {
+        let mut storage = RamStorage::new();
+        test_store_data_records_payload_size(&mut storage).await;
     }
 
     #[tokio::test]
