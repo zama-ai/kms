@@ -1,8 +1,5 @@
 use serde::Serialize;
-use sha3::{
-    Shake256,
-    digest::{ExtendableOutput, Update, XofReader},
-};
+use shake::{ExtendableOutput, Shake256, Update, XofReader};
 use tfhe_safe_serialize::{Named, safe_serialize};
 use tfhe_versionable::Versionize;
 
