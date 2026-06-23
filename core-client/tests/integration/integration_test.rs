@@ -2306,9 +2306,6 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
 
-    // Restore from backup
-    restore_from_backup(&config_path, temp_path).await?;
-
     Ok(())
 }
 
@@ -2680,9 +2677,6 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-
-    // Restore from backup
-    restore_from_backup(&config_path, temp_path).await?;
 
     Ok(())
 }

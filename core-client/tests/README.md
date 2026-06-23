@@ -66,7 +66,7 @@ The client binary accepts these commands (passed as `CCCommand` in tests via `ex
 | `NewMpcContext` | Register a new MPC context | ❌ | ❌ |
 | `DestroyMpcContext` | Remove an MPC context | ❌ | ❌ |
 | `DestroyMpcEpoch` | Remove an epoch | ❌ | ❌ |
-| `BackupRestore` | Restore keys from backup vault | ❌ | ❌ |
+| `BackupRestore` | Restore an AWS KMS backup | ❌ | ❌ |
 | `NewCustodianContext` | Set up custodian key-recovery context | ❌ | ❌ |
 | `CustodianRecoveryInit` | Initiate custodian recovery | ❌ | ❌ |
 | `CustodianBackupRecovery` | Complete custodian recovery | ❌ | ❌ |

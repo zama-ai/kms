@@ -247,9 +247,9 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
 1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
   Using the recovery information from the operators, each custodian can use the KMS Custodian CLI tool to prepare the partially decrypted response to the KMS nodes. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The results from the custodians must then be consolidated at the KMS operators.
-1. KMS nodes recover the backup decryption key.
+1. KMS nodes recover the backup decryption key and restore the backup.
   After the custodians have completed the partial decryption the results are communicated _individually_ to each of the KMS nodes. I.e. custodian `i` communicates the reencryption of the backup decryption key for KMS node `j` only to KMS node `j`.
-  Afterwards the KMS nodes can recover the decryption key, which can then be used to recover from the backup. The recovery of the decryption key can be done with the following command:
+  Afterwards the KMS nodes can recover the decryption key, which they use to restore from the backup. This can be done with the following command:
   ```{bash}
   $ cargo run -- -f <path-to-toml-config-file> custodian-backup-recovery -i <custodian context/backup ID> -r <dir to reencrypted decryption key from custodian 1 to operator 1> -r <dir to reencrypted decryption key from custodian 2 to operator 1> ..
   ```
@@ -258,22 +258,13 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   ```{bash}
   $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
   ```
+  This call will take the data in the backup and write this to the private storage.
+  However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
+  Furthermore note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
+
   Note: In practice custodians should only share the reencrypted partial decryption of a given KMS operator with that operator. I.e. all partial decryptions should not be broadcast. While each partial decryption is encrypted under an ephemeral key of a given KMS node, it is still best-practice to _not_ indiscriminantly publicize these.  For example considering only node 2 the example command would be the following:
   ```{bash}
   $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3
-  ```
-1. Recover the backup.
-  With the backup decryption key recovered in RAM, it is now possible for the KMS nodes to decrypt the backup. This is done with the following command, similar to the import/export approach above:
-  ```{bash}
-  $ cargo run -- -f <path-to-toml-config-file> backup-restore
-  ```
-  This call will take the data in the backup and write this to the private storage.
-  However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
-  Furthermore, observe that this will remove the decryption key from RAM. Hence the call can only be executed once. If a need arises to execute the call again then the `custodian-backup-recovery` call must be repeated. Also note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
-
-  Consider the following example as a concrete call:
-  ```{bash}
-  $ cargo run -- -f config/client_local_threshold_backup_custodian.toml backup-restore
   ```
 
 #### Rotating the custodian context

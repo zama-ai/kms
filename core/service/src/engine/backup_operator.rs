@@ -404,25 +404,39 @@ where
                             )
                         })?;
                         keychain.set_dec_key(Some(backup_dec_key));
-                        Ok(Response::new(Empty {}))
                     }
-                    _ => Err(MetricedError::new(
-                        OP_CUSTODIAN_BACKUP_RECOVERY,
-                        None,
-                        anyhow::anyhow!(
-                            "Backup vault is not setup with a keychain for custodian-based backup recovery"
-                        ),
-                        tonic::Code::Unavailable,
-                    )),
+                    _ => {
+                        return Err(MetricedError::new(
+                            OP_CUSTODIAN_BACKUP_RECOVERY,
+                            None,
+                            anyhow::anyhow!(
+                                "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                            ),
+                            tonic::Code::Unavailable,
+                        ));
+                    }
                 }
             }
-            None => Err(MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!("Backup vault is not configured"),
-                tonic::Code::Unavailable,
-            )),
+            None => {
+                return Err(MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Backup vault is not configured"),
+                    tonic::Code::Unavailable,
+                ));
+            }
         }
+        // Finally restore the backup data
+        let res = self
+            .restore_from_backup(tonic::Request::new(Empty {}))
+            .await;
+        // Finally remove the ephemeral keys
+        {
+            let mut ephemeral_keys = self.ephemeral_keys.lock().await;
+            // Remove any decryption key now that restoration is done.
+            *ephemeral_keys = None;
+        }
+        res
     }
 
     /// Restores the private data from the backup vault.
@@ -457,12 +471,6 @@ where
                                 tonic::Code::Internal,
                             )
                         })?;
-                }
-                // Finally remove the ephemeral keys
-                {
-                    let mut ephemeral_keys = self.ephemeral_keys.lock().await;
-                    // Remove any decryption key (if it is there) now that restoration is done.
-                    *ephemeral_keys = None;
                 }
                 tracing::info!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
