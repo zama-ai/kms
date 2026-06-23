@@ -234,6 +234,7 @@ harness = false
 default = ["extension_degree_4"]
 templating = ["minijinja"]
 measure_memory = ["dep:peak_alloc"]
+measure_network = ["threshold-networking/testing"]
 
 extension_degree_3 = []
 extension_degree_4 = []
