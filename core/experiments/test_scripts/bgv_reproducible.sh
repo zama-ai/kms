@@ -20,7 +20,7 @@ CTXT_VALUE=12345
 # BENCH_PARAMS.txt so the parser drives the expected schedule + one row
 # per factor in BGV_TDec_*.csv off this single source of truth. Edit this
 # array to extend / restrict the sweep.
-BGV_DDEC_PARALLEL_LIST=(1 2 4 8 16 32)
+BGV_DDEC_PARALLEL_LIST=(1 2 4 8 16 32 64)
 
 # Per-run output folder. See the TFHE reproducible common script for the
 # rationale — same convention so the parser sees one shape across protocols.

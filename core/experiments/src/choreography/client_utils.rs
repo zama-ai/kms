@@ -3,7 +3,7 @@ use crate::choreography_gen::{StatusCheckRequest, choreography_client::Choreogra
 use crate::conf::choreo::{ChoreoConf, NetworkTopology};
 use observability::telemetry::ContextPropagator;
 use std::collections::HashMap;
-use threshold_networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
+use threshold_networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use threshold_types::party::Identity;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
@@ -37,7 +37,6 @@ impl ChoreoRuntime {
                 // Nagle's algorithm. Note that this decreases latency but increases network
                 // bandwidth usage. If bandwidth is a concern, then this should be changed.
                 let channel = Channel::builder(endpoint.clone())
-                    .timeout(NETWORK_TIMEOUT_LONG)
                     .tcp_nodelay(true)
                     .connect_lazy();
                 Ok((*role, channel))
