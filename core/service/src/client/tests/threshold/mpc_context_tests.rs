@@ -1,5 +1,9 @@
 use aes_prng::AesRng;
-use kms_grpc::{RequestId, rpc_types::PubDataType};
+use kms_grpc::{
+    RequestId,
+    kms::v1::DestroyMpcContextRequest,
+    rpc_types::{PrivDataType, PubDataType},
+};
 use rand::SeedableRng;
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
@@ -11,7 +15,7 @@ use crate::{
         run_decryption_threshold, run_decryption_threshold_optionally_fail,
     },
     consts::{
-        DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+        DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
     cryptography::signatures::PublicSigKey,
@@ -21,7 +25,8 @@ use crate::{
         rate_limiter::RateLimiterConfig,
     },
     vault::storage::{
-        StorageType, file::FileStorage, read_context_at_id, read_versioned_at_request_id,
+        StorageReader, StorageReaderExt, StorageType, file::FileStorage, read_context_at_id,
+        read_versioned_at_request_id, store_versioned_at_request_and_epoch_id, tests::TestType,
     },
 };
 
@@ -226,6 +231,98 @@ async fn do_context_switch(
         Some(&material_path),
     )
     .await;
+
+    for (_, server) in kms_servers {
+        server.assert_shutdown().await;
+    }
+}
+
+// `DestroyMpcContext` with a non-empty `epoch_ids` erases the epoch's private data on every party, over real gRPC.
+#[tokio::test]
+async fn test_destroy_context_erases_epoch_data_4p() {
+    let party_count = 4;
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("destroy_context_erases_epoch_data_4p".to_string())
+        .with_party_count(party_count)
+        .with_threshold(1)
+        .with_material_spec(TestMaterialSpec::threshold_signing_only(party_count))
+        .with_prss()
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+    let (kms_clients, kms_servers, material_path, _guards) = env.into_parts();
+
+    let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];
+    let default_context = *DEFAULT_MPC_CONTEXT;
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    let epoch_req_id: RequestId = epoch_id.into();
+    let data_id = RequestId::from_bytes([7u8; 32]);
+    let fhe_key_info = PrivDataType::FheKeyInfo.to_string();
+    let prss_type = PrivDataType::PrssSetupCombined.to_string();
+
+    // Seed dummy private data under the default epoch for every party.
+    for prefix in priv_prefixes {
+        let mut storage =
+            FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
+        store_versioned_at_request_and_epoch_id(
+            &mut storage,
+            &data_id,
+            &epoch_id,
+            &TestType { i: 42 },
+            &fhe_key_info,
+        )
+        .await
+        .unwrap();
+        // Sanity: the data we just wrote is present before destruction.
+        assert!(
+            storage
+                .all_data_ids_at_epoch(&epoch_id, &fhe_key_info)
+                .await
+                .unwrap()
+                .contains(&data_id)
+        );
+    }
+
+    // Destroy the default context together with the default epoch's ID over gRPC.
+    let mut destroy_tasks = JoinSet::new();
+    for client in kms_clients.values() {
+        let mut client = client.clone();
+        let req = DestroyMpcContextRequest {
+            context_id: Some(default_context.into()),
+            epoch_ids: vec![epoch_id.into()],
+        };
+        destroy_tasks.spawn(async move { client.destroy_mpc_context(req).await });
+    }
+    destroy_tasks.join_all().await.into_iter().for_each(|res| {
+        assert!(res.is_ok(), "DestroyMpcContext failed: {:?}", res.err());
+    });
+
+    // Every party has had the epoch's private data and PRSS erased, and the context is gone.
+    for prefix in priv_prefixes {
+        let storage =
+            FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
+
+        let ids = storage
+            .all_data_ids_at_epoch(&epoch_id, &fhe_key_info)
+            .await
+            .unwrap();
+        assert!(
+            ids.is_empty(),
+            "epoch key shares must be erased for {prefix:?}"
+        );
+
+        assert!(
+            !storage
+                .data_exists(&epoch_req_id, &prss_type)
+                .await
+                .unwrap(),
+            "epoch PRSS must be erased for {prefix:?}"
+        );
+
+        read_context_at_id(&storage, &default_context)
+            .await
+            .unwrap_err();
+    }
 
     for (_, server) in kms_servers {
         server.assert_shutdown().await;
