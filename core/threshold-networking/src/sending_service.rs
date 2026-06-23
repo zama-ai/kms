@@ -403,7 +403,7 @@ impl SendingService for GrpcSendingService {
 /// in an [`AtomicU64`], so they can be read and written without locking or
 /// awaiting — notably from the session cleanup task, which must not hold a
 /// `DashMap` shard guard across an `.await`.
-pub(crate) static ACTIVITY_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+static ACTIVITY_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 /// Milliseconds elapsed since [`ACTIVITY_EPOCH`].
 pub(crate) fn now_activity_millis() -> u64 {
