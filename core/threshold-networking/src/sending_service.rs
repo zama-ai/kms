@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     net::IpAddr,
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, LazyLock, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -394,6 +397,19 @@ impl SendingService for GrpcSendingService {
     }
 }
 
+/// Monotonic epoch for session activity timestamps.
+///
+/// Session activity times are stored as milliseconds elapsed since this instant
+/// in an [`AtomicU64`], so they can be read and written without locking or
+/// awaiting — notably from the session cleanup task, which must not hold a
+/// `DashMap` shard guard across an `.await`.
+pub(crate) static ACTIVITY_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// Milliseconds elapsed since [`ACTIVITY_EPOCH`].
+pub(crate) fn now_activity_millis() -> u64 {
+    ACTIVITY_EPOCH.elapsed().as_millis() as u64
+}
+
 /// This acts as an interface with the real networking processes.
 /// It communicates with the SendingService via the mpsc Sender channel (sending_channels)
 /// And retrieves messages via the Grpc Server mpsc Receiver channel (receiving_channels)
@@ -423,9 +439,12 @@ pub struct NetworkSession {
     // we are within time bound
     pub(crate) conf: OptionConfigWrapper,
     pub(crate) init_time: OnceLock<Instant>,
-    /// Time when the last message was received, or when the session was made active if no message has been received yet.
-    /// Used to discard inactive sessions.
-    pub(crate) last_rec_activity_time: RwLock<Instant>,
+    /// Milliseconds since [`ACTIVITY_EPOCH`] when the last message was received,
+    /// or when the session was made active if no message has been received yet.
+    /// Used to discard inactive sessions. Stored as an atomic (not a lock) so it
+    /// can be read and written without awaiting — in particular from the session
+    /// cleanup task while it holds a `DashMap` shard guard.
+    pub(crate) last_rec_activity_time: AtomicU64,
     pub(crate) current_network_timeout: RwLock<Duration>,
     pub(crate) next_network_timeout: RwLock<Duration>,
     pub(crate) max_elapsed_time: RwLock<Duration>,
@@ -525,9 +544,8 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         }
         .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
         // Update the time we received a message
-        {
-            *self.last_rec_activity_time.write().await = Instant::now();
-        }
+        self.last_rec_activity_time
+            .store(now_activity_millis(), Ordering::Relaxed);
         // drop old messages
         let network_round = *counter_lock;
         while returned_packet.round_counter < network_round {
@@ -659,16 +677,16 @@ mod tests {
     use tokio::sync::mpsc::channel;
     use tokio::sync::{Mutex, RwLock};
     use tokio::task::JoinSet;
-    use tokio::time::Instant;
 
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
         CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
         TlsExtensionGetter,
     };
-    use crate::sending_service::NetworkSession;
+    use crate::sending_service::{NetworkSession, now_activity_millis};
     use std::collections::HashMap;
     use std::net::IpAddr;
+    use std::sync::atomic::AtomicU64;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
     use test_utils::random_free_port::get_listeners_random_free_ports;
@@ -934,7 +952,7 @@ mod tests {
             network_mode: NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },
             init_time: OnceLock::new(),
-            last_rec_activity_time: RwLock::new(Instant::now().into()),
+            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
             current_network_timeout: RwLock::new(Duration::from_secs(10)),
             next_network_timeout: RwLock::new(Duration::from_secs(10)),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),
@@ -1355,7 +1373,7 @@ mod tests {
                 conf: Some(test_config(1)),
             },
             init_time: OnceLock::new(),
-            last_rec_activity_time: RwLock::new(Instant::now().into()),
+            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
             current_network_timeout: RwLock::new(wait),
             next_network_timeout: RwLock::new(wait),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),

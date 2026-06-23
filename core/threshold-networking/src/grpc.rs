@@ -2,7 +2,9 @@
 
 use super::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use super::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
-use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
+use super::sending_service::{
+    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
+};
 use super::tls::extract_subject_from_cert;
 use crate::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
@@ -288,13 +290,13 @@ impl GrpcNetworkingManager {
                         }
                         SessionStatus::Active(session) => match session.upgrade() {
                             Some(network_session) => {
-                                let time_since_last_rec = {
-                                    network_session
-                                        .last_rec_activity_time
-                                        .read()
-                                        .await
-                                        .elapsed()
-                                };
+                                let time_since_last_rec = Duration::from_millis(
+                                    now_activity_millis().saturating_sub(
+                                        network_session
+                                            .last_rec_activity_time
+                                            .load(Ordering::Relaxed),
+                                    ),
+                                );
                                 if time_since_last_rec > discard_inactive_interval {
                                     tracing::warn!(
                                         "Discarding Active session {:?} after {:?} seconds.",
@@ -480,7 +482,7 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
-                    last_rec_activity_time: RwLock::new(Instant::now().into()),
+                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -508,7 +510,7 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
-                    last_rec_activity_time: RwLock::new(Instant::now().into()),
+                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
