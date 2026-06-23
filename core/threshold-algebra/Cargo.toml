@@ -13,7 +13,7 @@ error-utils.workspace   = true
 itertools.workspace   = true
 rand.workspace   = true
 serde.workspace   = true
-sha3.workspace   = true
+shake.workspace   = true
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 tracing.workspace   = true

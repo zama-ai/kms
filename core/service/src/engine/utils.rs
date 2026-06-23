@@ -1296,9 +1296,7 @@ mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
-        let pbs_params: ClassicPBSParameters = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params: ClassicPBSParameters = params.classic_pbs();
         let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
         let client_key = tfhe::ClientKey::generate(config);
         let server_key = client_key.generate_server_key();
@@ -1343,18 +1341,14 @@ mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
-        let max_norm_hwt = params
-            .get_params_basics_handle()
-            .get_sk_deviations()
-            .map(|x| x.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let tag = key_id.into();
 
         let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
             config,
             vec![42, 43, 44, 45],
-            params.get_params_basics_handle().get_sec() as u32,
+            params.sec() as u32,
             max_norm_hwt,
             tag,
         )

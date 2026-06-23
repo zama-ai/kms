@@ -491,11 +491,7 @@ impl<
                 keys.into_iter().zip_eq(verified_previous_epoch.keys_info)
             {
                 // Lift to expected domain
-                let mut private_keys = match key_info
-                    .key_parameters
-                    .get_params_basics_handle()
-                    .get_dkg_mode()
-                {
+                let mut private_keys = match key_info.key_parameters.dkg_mode() {
                     DkgMode::Z64 => private_keys.lift_to_z64(),
                     DkgMode::Z128 => {
                         private_keys
@@ -1006,11 +1002,7 @@ impl<
                 verified_previous_epoch.keys_info.iter().zip_eq(keys)
             {
                 // Lift to expected domain
-                let mut private_keys = match key_info
-                    .key_parameters
-                    .get_params_basics_handle()
-                    .get_dkg_mode()
-                {
+                let mut private_keys = match key_info.key_parameters.dkg_mode() {
                     DkgMode::Z64 => private_keys.lift_to_z64(),
                     DkgMode::Z128 => {
                         private_keys

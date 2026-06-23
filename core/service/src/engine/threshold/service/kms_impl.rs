@@ -895,6 +895,7 @@ where
         backup_operator,
         Arc::clone(&tracker),
         immutable_session_maker,
+        config.bandwidth_benchmark.clone().unwrap_or_default(),
         core_service_health_reporter.clone(),
         abort_handle,
     );

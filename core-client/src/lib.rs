@@ -18,7 +18,9 @@ use crate::backup::{
     do_new_custodian_context, do_restore_from_backup,
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
-use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
+use crate::decrypt::{
+    PubDecVerificationMaterial, do_public_decrypt, do_user_decrypt, get_public_decrypt_responses,
+};
 use crate::keygen::{
     do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
     get_keygen_responses, get_preproc_keygen_responses,
@@ -35,9 +37,13 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::client_wasm::Client;
-use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::engine::utils::{base64_deserialize, base64_serialize};
-use kms_lib::util::file_handling::{read_element, safe_read_element_versioned, write_element};
+use kms_lib::consts::{
+    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
+};
+use kms_lib::engine::utils::make_extra_data;
+use kms_lib::util::file_handling::{
+    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
+};
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
     test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
@@ -104,6 +110,76 @@ pub struct CoreClientConfig {
     #[validate(range(min = 1))]
     pub num_reconstruct: usize,
     pub fhe_params: Option<FheParameter>,
+    /// Default EIP-712 domain used both when *building* requests (full-flow
+    /// commands) and when *verifying* fetched results (pure-fetch `*Result`
+    /// commands). When omitted from the TOML it falls back to [`dummy_domain`],
+    /// so existing config files keep their previous behaviour.
+    pub default_domain: Option<Eip712DomainConfig>,
+}
+
+/// EIP-712 domain as specified in the core-client config file (TOML).
+#[derive(Deserialize, Serialize, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Eip712DomainConfig {
+    pub name: String,
+    pub version: String,
+    pub chain_id: u64,
+    /// Hex-encoded verifying contract address (with or without `0x`).
+    pub verifying_contract: String,
+    /// Optional hex-encoded 32-byte domain salt.
+    pub salt: Option<String>,
+}
+
+impl Eip712DomainConfig {
+    /// Build an [`alloy_sol_types::Eip712Domain`] from the configured fields.
+    pub fn to_domain(&self) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
+        // Accept the address with or without a `0x`/`0X` prefix by going through
+        // `parse_hex` (as `salt` does below); `Address::from_str` only strips a lowercase
+        // `0x`, so a `0X`-prefixed address would otherwise be rejected.
+        let verifying_contract_bytes = parse_hex(&self.verifying_contract).map_err(|e| {
+            anyhow::anyhow!(
+                "invalid verifying_contract '{}' in default_domain: {e}",
+                self.verifying_contract
+            )
+        })?;
+        let verifying_contract = alloy_primitives::Address::try_from(
+            verifying_contract_bytes.as_slice(),
+        )
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "invalid verifying_contract '{}' in default_domain: must be exactly 20 bytes",
+                self.verifying_contract
+            )
+        })?;
+        let salt = match &self.salt {
+            Some(s) => {
+                let bytes = parse_hex(s)?;
+                Some(
+                    alloy_primitives::B256::try_from(bytes.as_slice()).map_err(|_| {
+                        anyhow::anyhow!("default_domain salt must be exactly 32 bytes")
+                    })?,
+                )
+            }
+            None => None,
+        };
+        Ok(alloy_sol_types::Eip712Domain {
+            name: Some(std::borrow::Cow::Owned(self.name.clone())),
+            version: Some(std::borrow::Cow::Owned(self.version.clone())),
+            chain_id: Some(alloy_primitives::U256::from(self.chain_id)),
+            verifying_contract: Some(verifying_contract),
+            salt,
+        })
+    }
+}
+
+impl CoreClientConfig {
+    /// The default EIP-712 domain to use for building requests and verifying
+    /// results, falling back to [`dummy_domain`] when not set in the config.
+    pub fn default_domain(&self) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
+        match &self.default_domain {
+            Some(d) => d.to_domain(),
+            None => Ok(dummy_domain()),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
@@ -292,6 +368,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             pub num_majority: usize,
             pub num_reconstruct: usize,
             pub fhe_params: Option<FheParameter>,
+            pub default_domain: Option<Eip712DomainConfig>,
         }
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
@@ -306,6 +383,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
             fhe_params: temp.fhe_params,
+            default_domain: temp.default_domain,
         };
 
         conf.validate().map_err(serde::de::Error::custom)?;
@@ -522,20 +600,6 @@ impl CipherArguments {
             }
         }
     }
-
-    pub fn get_extra_data(&self) -> Vec<u8> {
-        let hex_str = match self {
-            CipherArguments::FromFile(cipher_file) => &cipher_file.extra_data,
-            CipherArguments::FromArgs(cipher_parameters) => &cipher_parameters.extra_data,
-        };
-        parse_extra_data(hex_str)
-    }
-}
-
-// Helper function to parse the extra data from the CLI arguments, with the same logic for both CipherParameters and CipherFile.
-// Defaults to an empty byte vector if the extra data is not provided or if the hex parsing fails.
-fn parse_extra_data(hex_str: &Option<String>) -> Vec<u8> {
-    parse_hex(hex_str.as_deref().unwrap_or("")).unwrap_or_default()
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -590,11 +654,6 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[serde(skip_serializing, skip_deserializing)]
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -615,10 +674,6 @@ pub struct CipherFile {
     /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -760,6 +815,65 @@ pub struct KeyGenResultParameters {
     /// Fetch legacy uncompressed public key material instead of the default compressed keyset.
     #[clap(long, short = 'u', default_value_t = false)]
     pub uncompressed: bool,
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Skip verification of the external signature and just download the material.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct CrsGenResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Skip verification of the external signature and just download the material.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct PublicDecryptResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    /// External ciphertext handle(s) (hex-encoded) from the original request, used to
+    /// verify the external signature. Repeat the flag once per ciphertext in the batch.
+    /// Required unless `--no-verify` is set: handles are request-specific and cannot be
+    /// defaulted from the config, so the command fails when they are omitted.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long = "handle")]
+    pub external_handles: Vec<String>,
+    /// Context ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default context when omitted;
+    /// must match the context of the original request or verification fails.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Epoch ID the original request was made with, used to derive the `extra_data` the
+    /// external signature is bound to. Defaults to the built-in default epoch when omitted;
+    /// must match the epoch of the original request or verification fails.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Skip all verification of the fetched responses — both the internal KMS-node
+    /// signatures and the external signature — and just return them.
+    #[clap(long, default_value_t = false)]
+    pub no_verify: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -921,14 +1035,14 @@ pub enum CCCommand {
     Encrypt(CipherParameters),
     #[clap(subcommand)]
     PublicDecrypt(CipherArguments),
-    PublicDecryptResult(ResultParameters),
+    PublicDecryptResult(PublicDecryptResultParameters),
     #[clap(subcommand)]
     UserDecrypt(CipherArguments),
     CrsGen(CrsParameters),
-    CrsGenResult(ResultParameters),
+    CrsGenResult(CrsGenResultParameters),
     AbortCrsGen(AbortParameters),
     InsecureCrsGen(CrsParameters),
-    InsecureCrsGenResult(ResultParameters),
+    InsecureCrsGenResult(CrsGenResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
     CustodianRecoveryInit(RecoveryInitParameters),
@@ -990,6 +1104,67 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 // dummy ciphertext handle for testing
 fn dummy_handle() -> Vec<u8> {
     vec![23_u8; 32]
+}
+
+/// Distinct placeholder ciphertext handles for a public-decryption batch — one entry per
+/// ciphertext. The handles within a batch must differ because a handle identifies a
+/// specific ciphertext/plaintext. Shared by the request builder and the integration tests
+/// so both agree on the exact handle list the external signature is computed over.
+pub fn integration_test_handles(count: usize) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|i| {
+            // 32-byte placeholder, made unique by encoding the batch index into the
+            // leading bytes (kept <= 32 bytes, as required by the signing-message builder).
+            let mut handle = dummy_handle();
+            handle[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            handle
+        })
+        .collect()
+}
+
+/// Derive the `extra_data` payload from an optional context/epoch, falling back to
+/// [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`] when not supplied. This is the single
+/// source of truth for how the core-client builds `extra_data` (RFC-005 v2), used both
+/// when *constructing* requests (full-flow commands) and when *verifying* fetched
+/// `*Result`s (pure-fetch commands), so the two always agree for the same context/epoch.
+pub(crate) fn extra_data_from_context_epoch(
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+) -> anyhow::Result<Vec<u8>> {
+    make_extra_data(
+        2,
+        Some(&context_id.unwrap_or(*DEFAULT_MPC_CONTEXT)),
+        Some(&epoch_id.unwrap_or(*DEFAULT_EPOCH_ID)),
+    )
+}
+
+/// External-signature verification material for a keygen/CRS result fetch: the
+/// EIP-712 `domain` and the `extra_data` the signature is bound to. Wrapped in an
+/// `Option` at the call sites, where `None` means "skip verification".
+pub(crate) struct SigVerificationMaterial {
+    pub domain: alloy_sol_types::Eip712Domain,
+    pub extra_data: Vec<u8>,
+}
+
+/// Build the [`SigVerificationMaterial`] for a keygen/CRS pure-fetch command. Returns
+/// `None` (skip verification, with an error log) when `no_verify` is set. Otherwise the
+/// domain comes from the config (falling back to [`dummy_domain`]) and the `extra_data`
+/// is derived from the supplied context/epoch via [`extra_data_from_context_epoch`]
+/// (RFC-005 v2), matching what the request builders emit for the same context/epoch.
+fn keygen_crs_verify_ctx(
+    cc_conf: &CoreClientConfig,
+    no_verify: bool,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+) -> anyhow::Result<Option<SigVerificationMaterial>> {
+    if no_verify {
+        tracing::error!("--no-verify set: fetching result WITHOUT external-signature verification");
+        return Ok(None);
+    }
+    Ok(Some(SigVerificationMaterial {
+        domain: cc_conf.default_domain()?,
+        extra_data: extra_data_from_context_epoch(context_id, epoch_id)?,
+    }))
 }
 
 pub struct EncryptionResult {
@@ -1724,15 +1899,20 @@ pub async fn execute_cmd(
                 }
             };
 
-            let ct_batch = vec![
-                TypedCiphertext {
-                    ciphertext,
-                    fhe_type: ptxt.fhe_type,
-                    external_handle: dummy_handle(),
-                    ciphertext_format: ct_format.into(),
-                };
-                cipher_args.get_batch_size()
-            ];
+            // Build one ciphertext per batch entry, each with a *distinct* external handle
+            // (a handle identifies a specific ciphertext/plaintext, so they must differ).
+            let fhe_type = ptxt.fhe_type;
+            let ciphertext_format: i32 = ct_format.into();
+            let ct_batch: Vec<TypedCiphertext> =
+                integration_test_handles(cipher_args.get_batch_size())
+                    .into_iter()
+                    .map(|external_handle| TypedCiphertext {
+                        ciphertext: ciphertext.clone(),
+                        fhe_type,
+                        external_handle,
+                        ciphertext_format,
+                    })
+                    .collect();
 
             do_public_decrypt(
                 &mut rng,
@@ -1751,7 +1931,7 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
-                cipher_args.get_extra_data(),
+                cc_conf.default_domain()?,
             )
             .await?
         }
@@ -1829,7 +2009,7 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
-                cipher_args.get_extra_data(),
+                cc_conf.default_domain()?,
             )
             .await?
         }
@@ -2104,16 +2284,19 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2137,16 +2320,19 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.uncompressed,
@@ -2161,9 +2347,47 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
             let req_id: RequestId = result_parameters.request_id;
-            let resp_response_vec = get_public_decrypt_responses(
+
+            // External-signature verification requires the request's EIP-712 domain
+            // (from config) plus the per-request ciphertext handles (from `--handle`).
+            // Verification is mandatory: we only skip it when `--no-verify` is set,
+            // and otherwise fail rather than returning unverified plaintexts.
+            let verification = if result_parameters.no_verify {
+                tracing::error!(
+                    "--no-verify set: fetching public decryption result WITHOUT verification"
+                );
+                None
+            } else {
+                if result_parameters.external_handles.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no --handle provided: ciphertext handles are required to verify the \
+                         external signature of a public decryption result. Pass --handle once \
+                         per ciphertext in the batch, or pass --no-verify to fetch without \
+                         verification."
+                    )
+                    .into());
+                }
+                let external_handles = result_parameters
+                    .external_handles
+                    .iter()
+                    .map(|h| parse_hex(h))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                // `extra_data` is derived from the supplied context/epoch via
+                // `make_extra_data` (RFC-005 v2), matching what the request builder
+                // emits for the same context/epoch (defaults when not supplied).
+                Some(PubDecVerificationMaterial::External {
+                    domain: cc_conf.default_domain()?,
+                    external_handles,
+                    extra_data: extra_data_from_context_epoch(
+                        result_parameters.context_id,
+                        result_parameters.epoch_id,
+                    )?,
+                })
+            };
+
+            let (resp_response_vec, _time_to_get_responses) = get_public_decrypt_responses(
                 &core_endpoints_req,
-                None,
+                verification,
                 None,
                 req_id,
                 max_iter,
@@ -2192,16 +2416,19 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2224,16 +2451,19 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            //NOTE: We assume the request comes from the core client too
-            //which (for now) uses the dummy_domain
+            let verify = keygen_crs_verify_ctx(
+                &cc_conf,
+                result_parameters.no_verify,
+                result_parameters.context_id,
+                result_parameters.epoch_id,
+            )?;
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
                 req_id,
-                dummy_domain(),
-                vec![],
+                verify,
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -2415,34 +2645,102 @@ pub async fn execute_cmd(
     Ok(res)
 }
 
+#[derive(Debug)]
+struct DurationStat {
+    avg: tokio::time::Duration,
+    std_dev: tokio::time::Duration,
+    p50: tokio::time::Duration,
+    p95: tokio::time::Duration,
+    p99: tokio::time::Duration,
+    min: tokio::time::Duration,
+    max: tokio::time::Duration,
+}
+
+impl std::fmt::Display for DurationStat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Avg: {:?}, StdDev: {:?}, P50: {:?}, P95: {:?}, P99: {:?}, Min: {:?}, Max: {:?}",
+            self.avg, self.std_dev, self.p50, self.p95, self.p99, self.min, self.max
+        )
+    }
+}
+
+fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationStat {
+    if durations.is_empty() {
+        return DurationStat {
+            avg: tokio::time::Duration::ZERO,
+            std_dev: tokio::time::Duration::ZERO,
+            p50: tokio::time::Duration::ZERO,
+            p95: tokio::time::Duration::ZERO,
+            p99: tokio::time::Duration::ZERO,
+            min: tokio::time::Duration::ZERO,
+            max: tokio::time::Duration::ZERO,
+        };
+    }
+
+    let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
+
+    let avg_secs = avg.as_secs_f64();
+    let variance = durations
+        .iter()
+        .map(|d| {
+            let diff = d.as_secs_f64() - avg_secs;
+            diff * diff
+        })
+        .sum::<f64>()
+        / durations.len() as f64;
+    let std_dev = Duration::from_secs_f64(variance.sqrt());
+
+    let mut sorted_durations = durations.to_vec();
+    sorted_durations.sort_unstable();
+
+    let p50_index = (sorted_durations.len() as f64 * 0.50).ceil() as usize - 1;
+    let p95_index = (sorted_durations.len() as f64 * 0.95).ceil() as usize - 1;
+    let p99_index = (sorted_durations.len() as f64 * 0.99).ceil() as usize - 1;
+
+    let p50 = sorted_durations[p50_index];
+    let p95 = sorted_durations[p95_index];
+    let p99 = sorted_durations[p99_index];
+
+    let min = *sorted_durations.first().expect("durations is not empty");
+    let max = *sorted_durations.last().expect("durations is not empty");
+    DurationStat {
+        avg,
+        std_dev,
+        p50,
+        p95,
+        p99,
+        min,
+        max,
+    }
+}
 // Prints the timings for the command execution, showing latency and throughput based on the measured durations.
-fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: tokio::time::Instant) {
+fn print_timings(
+    cmd: &str,
+    total_client_durations: &[tokio::time::Duration],
+    durations_to_get_responses: &[tokio::time::Duration],
+    start: tokio::time::Instant,
+) {
+    let num_results = total_client_durations.len();
     // compute total time that is elapsed since we sent the first request
     let total_elapsed = start.elapsed();
 
     // compute latency values
-    let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
-    durations.sort();
-    let median = if durations.len().is_multiple_of(2) {
-        (durations[durations.len() / 2 - 1] + durations[durations.len() / 2]) / 2
-    } else {
-        durations[durations.len() / 2]
-    };
-    let min = durations[0];
-    let max = durations[durations.len() - 1];
+    let total_duration_stat = compute_stat_on_durations(total_client_durations);
+    let response_duration_stat = compute_stat_on_durations(durations_to_get_responses);
+
+    tracing::debug!("Client total latency for {cmd}: {}", total_duration_stat);
+
+    tracing::info!("Latency for {cmd}: {}", response_duration_stat);
 
     tracing::info!(
-        "Latency for {cmd}: Avg: {avg:?}, Median: {median:?}, Min: {min:?}, Max: {max:?}"
-    );
-
-    tracing::info!(
-        "Total elapsed time for {cmd} with {} collected results: {total_elapsed:?}. Throughput: {} requests/s",
-        durations.len(),
-        durations.len() as f64 / total_elapsed.as_secs_f64()
+        "Total elapsed time for {cmd} with {num_results} collected results: {total_elapsed:?}. Throughput: {} requests/s",
+        num_results as f64 / total_elapsed.as_secs_f64()
     );
 
     // For debugging, print all collected durations
-    tracing::debug!("All durations: {:?}", durations);
+    tracing::debug!("All durations: {:?}", total_client_durations);
 }
 
 #[cfg(test)]
@@ -2649,6 +2947,75 @@ mod tests {
     }
 
     #[test]
+    fn default_domain_omitted_falls_back_to_dummy() {
+        let toml_str = build_test_toml("centralized", None, 1, 1, &[1]);
+        let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
+        assert!(conf.default_domain.is_none());
+        // The fallback must equal the built-in dummy domain so config files without a
+        // [default_domain] section keep verifying against the same domain as before.
+        assert_eq!(conf.default_domain().unwrap(), dummy_domain());
+    }
+
+    #[test]
+    fn shipped_default_domain_values_match_dummy() {
+        // All shipped client TOMLs embed these literals and document them as matching the
+        // built-in default. This guards that the two stay in lockstep: if `dummy_domain()`
+        // changes, either this test or the shipped [default_domain] sections must change.
+        let mut toml_str = build_test_toml("centralized", None, 1, 1, &[1]);
+        toml_str.push_str(
+            "\n[default_domain]\n\
+             name = \"Authorization token\"\n\
+             version = \"1\"\n\
+             chain_id = 8006\n\
+             verifying_contract = \"0x66f9664f97F2b50F62D13eA064982f936dE76657\"\n",
+        );
+        let conf: CoreClientConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(conf.default_domain().unwrap(), dummy_domain());
+    }
+
+    #[test]
+    fn default_domain_salt_must_be_32_bytes() {
+        let cfg = Eip712DomainConfig {
+            name: "n".to_string(),
+            version: "1".to_string(),
+            chain_id: 1,
+            verifying_contract: "0x66f9664f97F2b50F62D13eA064982f936dE76657".to_string(),
+            salt: Some("0x1234".to_string()), // 2 bytes, not 32
+        };
+        let err = cfg.to_domain().unwrap_err().to_string();
+        assert!(err.contains("32 bytes"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn default_domain_rejects_invalid_verifying_contract() {
+        let cfg = Eip712DomainConfig {
+            name: "n".to_string(),
+            version: "1".to_string(),
+            chain_id: 1,
+            verifying_contract: "not-an-address".to_string(),
+            salt: None,
+        };
+        let err = cfg.to_domain().unwrap_err().to_string();
+        assert!(
+            err.contains("invalid verifying_contract"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn extra_data_from_context_epoch_matches_default_builders() {
+        // The pure-fetch *Result verification path and the full-flow request builders must
+        // derive `extra_data` identically for the same context/epoch — here, the defaults.
+        let from_helper = extra_data_from_context_epoch(None, None).unwrap();
+        let from_builder =
+            make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap();
+        assert_eq!(from_helper, from_builder);
+        // v2 layout: 1 version byte + 32-byte context + 32-byte epoch.
+        assert_eq!(from_helper.len(), 1 + 32 + 32);
+        assert_eq!(from_helper[0], 2);
+    }
+
+    #[test]
     fn test_parse_previous_key_info() {
         let id1 = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         let id2 = "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
@@ -2780,16 +3147,12 @@ mod tests {
 
         let params = kms_lib::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
-        let max_norm_hwt = params
-            .get_params_basics_handle()
-            .get_sk_deviations()
-            .map(|x| x.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
             config,
             vec![1, 2, 3, 4],
-            params.get_params_basics_handle().get_sec() as u32,
+            params.sec() as u32,
             max_norm_hwt,
             key_id.into(),
         )
@@ -2840,6 +3203,7 @@ mod tests {
             num_majority: 1,
             num_reconstruct: 1,
             fhe_params: Some(FheParameter::Test),
+            default_domain: None,
         };
 
         let party_confs =

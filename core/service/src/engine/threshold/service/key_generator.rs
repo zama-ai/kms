@@ -1016,16 +1016,15 @@ impl<
             )
             .await?;
 
-        let params_handle = params.get_params_basics_handle();
-        let compression_params = params_handle
-            .get_compression_decompression_params()
+        let compression_params = params
+            .compression_decompression_params()
             .ok_or_else(|| anyhow::anyhow!("missing compression parameters"))?
             .raw_compression_parameters;
         let opt_decompression_key = match (opt_glwe_secret_key, opt_compression_secret_key) {
             (Some(glwe_secret_key), Some(compression_secret_key)) => {
                 let bit_glwe_secret_key = GlweSecretKeyOwned::from_container(
                     convert_to_bit(glwe_secret_key)?,
-                    params_handle.polynomial_size(),
+                    params.polynomial_size(),
                 );
                 let bit_compression_secret_key =
                     tfhe::integer::compression_keys::CompressionPrivateKeys::from_raw_parts(
@@ -1041,21 +1040,18 @@ impl<
                     );
 
                 let dummy_lwe_secret_key =
-                    LweSecretKeyOwned::from_container(vec![0u64; params_handle.lwe_dimension().0]);
+                    LweSecretKeyOwned::from_container(vec![0u64; params.lwe_dimension().0]);
 
                 // We need a dummy sns secret key otherwise [to_hl_client_key]
                 // will fail because it will try to use this key when the parameter supports SnS
-                let dummy_sns_secret_key = match params {
-                    DKGParams::WithoutSnS(_) => None,
-                    DKGParams::WithSnS(sns_param) => {
-                        let glwe_dim = sns_param.glwe_dimension_sns();
-                        let poly_size = sns_param.polynomial_size_sns();
-                        Some(GlweSecretKeyOwned::from_container(
-                            vec![0u128; glwe_dim.to_equivalent_lwe_dimension(poly_size).0],
-                            sns_param.polynomial_size_sns(),
-                        ))
-                    }
-                };
+                let dummy_sns_secret_key = params.sns().map(|sns_param| {
+                    let glwe_dim = sns_param.glwe_dimension_sns();
+                    let poly_size = sns_param.polynomial_size_sns();
+                    GlweSecretKeyOwned::from_container(
+                        vec![0u128; glwe_dim.to_equivalent_lwe_dimension(poly_size).0],
+                        sns_param.polynomial_size_sns(),
+                    )
+                });
 
                 let (client_key, _, _, _, _, _, _, _) = to_hl_client_key(
                     &params,
