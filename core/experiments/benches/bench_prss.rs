@@ -25,7 +25,8 @@ use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 
 fn bench_prss(c: &mut Criterion) {
-    let sizes = vec![1_usize, 100, 10000, 100000];
+    let sizes = vec![1_usize, 100, 10_000];
+    let mask_sizes = vec![1_usize, 100, 10_000, 100_000];
     let mut group = c.benchmark_group("prss");
 
     let num_parties = 7;
@@ -53,12 +54,40 @@ fn bench_prss(c: &mut Criterion) {
 
     let mut state = prss.new_prss_session_state(sid);
 
-    for size in &sizes {
+    for size in &mask_sizes {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {
             b.iter(|| {
                 rt.block_on(async {
                     let shares = state
                         .mask_next_vec(Role::indexed_from_one(1), 1_u128 << 70, *size)
+                        .await
+                        .unwrap();
+                    black_box(shares);
+                });
+            });
+        });
+    }
+
+    for size in &sizes {
+        group.bench_function(BenchmarkId::new("prss_next", size), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let shares = state
+                        .prss_next_vec(Role::indexed_from_one(1), *size)
+                        .await
+                        .unwrap();
+                    black_box(shares);
+                });
+            });
+        });
+    }
+
+    for size in &sizes {
+        group.bench_function(BenchmarkId::new("przs_next", size), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let shares = state
+                        .przs_next_vec(Role::indexed_from_one(1), threshold, *size)
                         .await
                         .unwrap();
                     black_box(shares);
