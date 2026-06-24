@@ -141,7 +141,6 @@ futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
-hotpath = { version = "=0.17", default-features = false }  # Profiling/alloc tracking; optional & feature-gated, never on by default
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
 http-legacy = { package = "http", version = "=0.2.12" }  # HTTP types (older version for compatibility) - LOW RISK: hyperium team
 hyper-rustls = { version = "=0.24.2" }  # TLS for hyper HTTP client - LOW RISK: rustls team, memory-safe TLS

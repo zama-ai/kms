@@ -1406,15 +1406,6 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn default_insecure_dkg() -> anyhow::Result<()> {
-    // Set KMS_HOTPATH to print an allocation/timing report on drop (build with --features hotpath[,hotpath-alloc]).
-    #[cfg(feature = "hotpath")]
-    let _hotpath_guard = std::env::var_os("KMS_HOTPATH").map(|_| {
-        hotpath::HotpathGuardBuilder::new("kms::test::default_insecure_dkg")
-            .percentiles(&[50.0, 95.0, 99.0])
-            .limit(0)
-            .build()
-    });
-
     // Use Default material spec for production-like keys.
     // PRSS is generated at server startup via `with_prss()`.
     let spec = TestMaterialSpec::threshold_default(4);
@@ -1475,15 +1466,6 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen() -> anyhow::Result<()> {
-    // Set KMS_HOTPATH to print an allocation/timing report on drop (build with --features hotpath[,hotpath-alloc]).
-    #[cfg(feature = "hotpath")]
-    let _hotpath_guard = std::env::var_os("KMS_HOTPATH").map(|_| {
-        hotpath::HotpathGuardBuilder::new("kms::test::secure_threshold_keygen")
-            .percentiles(&[50.0, 95.0, 99.0])
-            .limit(0)
-            .build()
-    });
-
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_threshold_keygen")
         .with_party_count(4)

@@ -205,15 +205,6 @@ pub async fn decryption_threshold(
 ) {
     assert!(parallelism > 0);
 
-    // Set KMS_HOTPATH to print an allocation/timing report on drop (build with --features hotpath[,hotpath-alloc]).
-    #[cfg(feature = "hotpath")]
-    let _hotpath_guard = std::env::var_os("KMS_HOTPATH").map(|_| {
-        hotpath::HotpathGuardBuilder::new("kms::test::decryption_threshold")
-            .percentiles(&[50.0, 95.0, 99.0])
-            .limit(0)
-            .build()
-    });
-
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * parallelism,
         pub_decrypt: 100,

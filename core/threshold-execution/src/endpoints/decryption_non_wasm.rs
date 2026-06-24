@@ -382,26 +382,19 @@ where
 
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let preprocessing = crate::hotpath_measure_async!(
-        "decrypt::noiseflood_prep",
-        noiseflood_session.init_prep_noiseflooding(len)
-    )
-    .await?;
+    let preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
     let session = noiseflood_session.get_mut_base_session();
     let sid: u128 = session.session_id().into();
     tracing::Span::current().record("sid", sid);
     let my_role = session.my_role();
     tracing::Span::current().record("my_role", my_role.to_string());
 
-    let outputs = crate::hotpath_measure_async!(
-        "decrypt::noiseflood_online",
-        O::decrypt::<_, _, T>(
-            session,
-            Arc::new(Mutex::new(preprocessing)),
-            secret_key_share,
-            Arc::new(ct_large),
-            ddec_key_type,
-        )
+    let outputs = O::decrypt::<_, _, T>(
+        session,
+        Arc::new(Mutex::new(preprocessing)),
+        secret_key_share,
+        Arc::new(ct_large),
+        ddec_key_type,
     )
     .await?;
 
@@ -562,21 +555,14 @@ where
 
     let sid = session.session_id();
 
-    let mut preparation = crate::hotpath_measure_async!(
-        "decrypt::bitdec_prep",
-        secure_init_prep_bitdec_small_session(session, ct.len())
-    )
-    .await?;
+    let mut preparation = secure_init_prep_bitdec_small_session(session, ct.len()).await?;
 
-    let outputs = crate::hotpath_measure_async!(
-        "decrypt::bitdec_online",
-        run_decryption_bitdec::<EXTENSION_DEGREE, _, _, T>(
-            session,
-            &mut preparation,
-            secret_key_share,
-            ksk,
-            ct,
-        )
+    let outputs = run_decryption_bitdec::<EXTENSION_DEGREE, _, _, T>(
+        session,
+        &mut preparation,
+        secret_key_share,
+        ksk,
+        ct,
     )
     .await?;
 

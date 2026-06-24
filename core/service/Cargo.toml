@@ -69,7 +69,6 @@ enum_dispatch.workspace = true
 futures-util.workspace = true
 hashing.workspace = true
 hex.workspace = true
-hotpath = { workspace = true, optional = true }
 http-legacy.workspace = true
 hyper-rustls = { workspace = true, optional = true }
 iam-rs = { workspace = true, optional = true }
@@ -187,10 +186,6 @@ non-wasm = [
 slow_tests = ["testing"]
 wasm_tests = ["testing"]
 s3_tests = ["testing"]
-# Profiling scaffolding (never in default). Propagates to threshold-execution so opening sites are measured too.
-hotpath = ["dep:hotpath", "hotpath/hotpath", "hotpath/threads", "threshold-execution/hotpath"]
-hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "threshold-execution/hotpath-alloc"]
-hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu", "threshold-execution/hotpath-cpu"]
 insecure = [
     "kms-grpc/insecure",
     "threshold-networking/testing",

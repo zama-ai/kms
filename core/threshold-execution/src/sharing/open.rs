@@ -141,41 +141,36 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         shares: Vec<Z>,
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>> {
-        crate::hotpath_measure_async!("open::robust_open_list_to_all", async move {
-            // Might need to chunk the opening into multiple ones due to network limits
-            let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
-            let mut shares = shares;
-            let mut result: Option<Vec<_>> = None;
-            while !shares.is_empty() {
-                // Typically we are well below the network limits, so we can avoid cloning for the common case by just taking (an O(1) swap).
-                let chunk = if shares.len() <= chunk_size {
-                    mem::take(&mut shares)
-                } else {
-                    let rest = shares.split_off(chunk_size);
-                    mem::replace(&mut shares, rest)
-                };
+        // Might need to chunk the opening into multiple ones due to network limits
+        let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
+        let mut shares = shares;
+        let mut result: Option<Vec<_>> = None;
+        while !shares.is_empty() {
+            // Typically we are well below the network limits, so we can avoid cloning for the common case by just taking (an O(1) swap).
+            let chunk = if shares.len() <= chunk_size {
+                mem::take(&mut shares)
+            } else {
+                let rest = shares.split_off(chunk_size);
+                mem::replace(&mut shares, rest)
+            };
 
-                match crate::hotpath_measure_async!(
-                    "open::execute_to_all",
-                    self.execute(session, OpeningKind::ToAll(chunk), degree)
-                )
+            match self
+                .execute(session, OpeningKind::ToAll(chunk), degree)
                 .await?
-                {
-                    Some(res) => match result.as_mut() {
-                        // If the openings fit into a single network send (the common case), then `result` is the initial
-                        // `None`, i.e. we're in the first iteration of the while-loop
-                        None => result = Some(res),
-                        // If we already used `result` to store data (i.e. we had to do multiple network sends), then we
-                        // have to `extend` (likely an allocation).
-                        Some(acc) => acc.extend(res),
-                    },
-                    None => return Ok(None),
-                }
+            {
+                Some(res) => match result.as_mut() {
+                    // If the openings fit into a single network send (the common case), then `result` is the initial
+                    // `None`, i.e. we're in the first iteration of the while-loop
+                    None => result = Some(res),
+                    // If we already used `result` to store data (i.e. we had to do multiple network sends), then we
+                    // have to `extend` (likely an allocation).
+                    Some(acc) => acc.extend(res),
+                },
+                None => return Ok(None),
             }
+        }
 
-            Ok(Some(result.unwrap_or_default()))
-        })
-        .await
+        Ok(Some(result.unwrap_or_default()))
     }
 
     /// Blanket implementation that relies on [`Self::execute`]
@@ -544,10 +539,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                 // Build reconstruction hints once from the current owner set.
                 // All sharings in the batch have the same owners (filled identically).
                 let hints = if let Some(first) = locked_sharings.first() {
-                    crate::hotpath_measure_block!(
-                        "open::recon_hints",
-                        ReconstructionHints::new(first, degree)
-                    )?
+                    ReconstructionHints::new(first, degree)?
                 } else {
                     // If there's not even a single sharing, we can return directly
                     return Ok(Some(vec![]));
@@ -561,16 +553,13 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                     .par_iter()
                     .with_min_len(*ROBUST_OPEN_RECONSTRUCTION_PAR_MIN_CHUNK)
                     .map(|sharing| {
-                        crate::hotpath_measure_block!(
-                            "open::reconstruct_one",
-                            reconstruct_fn(
-                                num_parties,
-                                degree,
-                                threshold as usize,
-                                num_bots,
-                                sharing,
-                                &hints,
-                            )
+                        reconstruct_fn(
+                            num_parties,
+                            degree,
+                            threshold as usize,
+                            num_bots,
+                            sharing,
+                            &hints,
                         )
                         .unwrap_or_default()
                     })

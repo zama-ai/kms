@@ -21,7 +21,6 @@ error-utils.workspace = true
 futures-util = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 hashing.workspace = true
-hotpath = { workspace = true, optional = true }
 itertools.workspace = true
 mockall.workspace = true
 num-integer.workspace = true
@@ -82,7 +81,3 @@ non-wasm = [
 testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile", "dep:sha3"]
 slow_tests = ["testing"]
 malicious_strategies = ["testing"]
-# Profiling scaffolding (never in default). hotpath-alloc tracks allocation count + bytes.
-hotpath = ["dep:hotpath", "hotpath/hotpath", "hotpath/threads"]
-hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
-hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
