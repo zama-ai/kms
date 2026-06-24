@@ -640,6 +640,10 @@ impl<T> MetaStore<T> {
         {
             // Orphaned `Pending` claim: drop the entry entirely. A `Pending` entry
             // is never in the completion queue, so no queue cleanup is needed.
+            //
+            // Removing it drops the result channel without publishing, so a waiter
+            // blocked in `retrieve_from_meta_store_with_timeout` would wake with
+            // `Unavailable`.
             self.storage.remove(&req_id);
         }
         // `Done` (locked existing) or already gone: nothing to undo.
@@ -670,7 +674,7 @@ impl<T> MetaStore<T> {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
         let prev = EntryState::from(&*entry);
-        let was_done = entry.status() == EntryStatus::Done;
+        let was_done = matches!(prev, EntryState::Done(_));
         entry.set_deleted();
         self.deleted_set.insert(req_id);
         if was_done {
@@ -711,7 +715,7 @@ impl<T> MetaStore<T> {
         // Safe: we just verified the entry exists and is not Deleted.
         let entry = self.storage.get_mut(request_id).unwrap();
         let prev = EntryState::from(&*entry);
-        let was_done = entry.status() == EntryStatus::Done;
+        let was_done = matches!(prev, EntryState::Done(_));
         entry.set_deleted();
         self.deleted_set.insert(*request_id);
         if was_done {
@@ -734,7 +738,7 @@ impl<T> MetaStore<T> {
         let is_orphaned_pending = self
             .storage
             .get(req_id)
-            .is_some_and(|e| e.status() == EntryStatus::Pending && !e.is_permit_held());
+            .is_some_and(|entry| entry.status() == EntryStatus::Pending && !entry.is_permit_held());
         if !is_orphaned_pending {
             return false;
         }
@@ -2354,5 +2358,33 @@ mod tests {
             .await
             .expect_err("an aborted entry must surface an error");
         assert_eq!(err.code(), tonic::Code::Aborted);
+    }
+
+    /// End-to-end: a waiter blocked on a `Pending` entry whose permit is dropped
+    /// is woken by the reaper witha failing status (`Done(Err)` -> `Internal`).
+    #[tokio::test]
+    async fn retrieve_with_timeout_wakes_when_reaper_fails_orphan() {
+        let store = MetaStore::<String>::new_unlimited();
+        let id = derive_request_id("wait-orphan").unwrap();
+
+        let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
+        // Abandon the request shortly after the waiter starts blocking; the reaper
+        // then fails the now-orphaned Pending entry.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drop(permit);
+        });
+
+        let start = Instant::now();
+        // Generous budget: we should wake on the reaper's failure, not the deadline.
+        let err = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
+            .await
+            .expect_err("an abandoned request should surface an error to the waiter");
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "took too long: {:?}",
+            start.elapsed()
+        );
     }
 }
