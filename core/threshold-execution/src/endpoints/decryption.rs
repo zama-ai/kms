@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tfhe::{
     integer::{
         BooleanBlock, IntegerCiphertext, IntegerRadixCiphertext, RadixCiphertext,
@@ -10,16 +12,7 @@ use tfhe::{
 #[cfg(feature = "non-wasm")]
 pub use super::decryption_non_wasm::*;
 
-#[derive(
-    Copy,
-    Clone,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    derive_more::Display,
-    Debug,
-    clap::ValueEnum,
-)]
+#[derive(Copy, Clone, Default, serde::Serialize, serde::Deserialize, Debug, clap::ValueEnum)]
 pub enum DecryptionMode {
     /// nSmall Noise Flooding, this is the default
     #[default]
@@ -40,6 +33,12 @@ impl DecryptionMode {
             DecryptionMode::BitDecSmall => "BitDecSmall",
             DecryptionMode::BitDecLarge => "BitDecLarge",
         }
+    }
+}
+
+impl fmt::Display for DecryptionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str_name())
     }
 }
 

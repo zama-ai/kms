@@ -46,6 +46,18 @@ pub(crate) enum CompressedReRandomizationRawKeySwitchingKey {
     DedicatedKSK(SeededLweKeyswitchKey<Vec<u64>>),
 }
 
+/// Raw re-randomization key material produced by the DKG, in either of the two
+/// supported configurations.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum CompressedReRandomizationRawKey {
+    /// `LegacyDedicatedCompactPublicKeyWithKeySwitch`: a key-switching key onto
+    /// the compute (large) key — either a dedicated KSK or the PKSK reused.
+    LegacyKsk(CompressedReRandomizationRawKeySwitchingKey),
+    /// `DerivedCompactPublicKeyWithoutKeySwitch`: a compact public key derived
+    /// over the compute (`Big`) key, so re-randomization needs no key-switch.
+    DerivedCpk(SeededLweCompactPublicKey<Vec<u64>>),
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct RawCompressedPubKeySet {
     pub lwe_public_key: SeededLweCompactPublicKey<Vec<u64>>,
@@ -57,7 +69,7 @@ pub(crate) struct RawCompressedPubKeySet {
     pub msnrk: CompressedModulusSwitchConfiguration<u64>,
     pub msnrk_sns: Option<CompressedModulusSwitchConfiguration<u64>>,
     pub sns_compression_key: Option<CompressedNoiseSquashingCompressionKey>,
-    pub cpk_re_randomization_ksk: Option<CompressedReRandomizationRawKeySwitchingKey>,
+    pub cpk_re_randomization: Option<CompressedReRandomizationRawKey>,
     pub oprf_key: Option<CompressedOprfServerKey>,
     pub seed: u128,
 }
@@ -154,8 +166,8 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             _ => (None, None),
         };
 
-        let cpk_re_randomization_key =
-            self.cpk_re_randomization_ksk.as_ref().map(|rerand_ksk| {
+        let cpk_re_randomization_key = self.cpk_re_randomization.as_ref().map(|rerand| match rerand {
+            CompressedReRandomizationRawKey::LegacyKsk(rerand_ksk) => {
                 let ksk = match rerand_ksk {
                     CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
                         tfhe::CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
@@ -175,7 +187,20 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
                 };
 
                 tfhe::CompressedReRandomizationKey::LegacyDedicatedCPK { ksk }
-            });
+            }
+            CompressedReRandomizationRawKey::DerivedCpk(seeded_pk) => {
+                // The derived rerand CPK is a compact public key over the compute
+                // (`Big`) key, so its CPK encryption parameters are derived from
+                // the compute parameters (see `DKGParams::derived_rerand_cpk_enc_params`).
+                let ipk = tfhe::shortint::CompressedCompactPublicKey::from_raw_parts(
+                    seeded_pk.clone(),
+                    params.derived_rerand_cpk_enc_params(),
+                );
+                let cpk =
+                    tfhe::integer::public_key::CompressedCompactPublicKey::from_raw_parts(ipk);
+                tfhe::CompressedReRandomizationKey::DerivedCPKWithoutKeySwitch { cpk }
+            }
+        });
 
         tfhe::CompressedServerKey::from_raw_parts(
             tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),

@@ -66,8 +66,16 @@ pub async fn safe_write_element_versioned<
     tmp.as_file()
         .sync_all()
         .map_err(|e| anyhow::anyhow!("failed to sync {}: {e}", tmp.path().display()))?;
+    // Capture the serialized size before `persist` consumes `tmp`, so it can be recorded only
+    // after the write durably succeeds (keyed by the element's type name; see `observe_size`).
+    let payload_size = tmp
+        .as_file()
+        .metadata()
+        .map_err(|e| anyhow::anyhow!("failed to stat {}: {e}", tmp.path().display()))?
+        .len();
     tmp.persist(file_path)
         .map_err(|e| anyhow::anyhow!("failed to persist {}: {e}", file_path.display()))?;
+    observability::metrics::METRICS.observe_size(<T as Named>::NAME, payload_size as f64);
     Ok(())
 }
 

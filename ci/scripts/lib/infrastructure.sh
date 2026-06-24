@@ -21,6 +21,14 @@ setup_infrastructure() {
         deploy_localstack           # S3-compatible storage
         deploy_registry_credentials # GHCR access
 
+        # Optional: install kube-prometheus-stack (Prometheus Operator) so the
+        # KMS ServiceMonitor is scraped and metrics are remote-written to
+        # Grafana Cloud. Must run BEFORE deploy_kms so the ServiceMonitor CRD
+        # exists when the kms-core chart renders it.
+        if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+            deploy_kube_prometheus_stack
+        fi
+
     elif [[ "${TARGET}" == "aws-ci" || "${TARGET}" == "aws-perf" ]]; then
         #---------------------------------------------------------------------
         # AWS deployments: Real infrastructure via Crossplane
@@ -33,6 +41,13 @@ setup_infrastructure() {
 
         deploy_tkms_infra           # S3 buckets, IAM roles, service accounts
         deploy_registry_credentials # GHCR access via sync-secrets
+
+        # Metrics are kind-only: without the kube-prometheus-stack installed above
+        # there is no ServiceMonitor CRD and deploy_kms would fail rendering one.
+        if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+            log_warn "--enable-metrics is only supported on kind targets; disabling for TARGET=${TARGET}."
+            export ENABLE_METRICS="false"
+        fi
     fi
 }
 
@@ -74,6 +89,78 @@ deploy_localstack() {
         --create-namespace \
         -f "${REPO_ROOT}/ci/kube-testing/infra/localstack-s3-values.yaml" \
         --wait
+}
+
+#=============================================================================
+# Deploy kube-prometheus-stack (Prometheus Operator)
+#
+# Installs a lean, operator-only kube-prometheus-stack in the `monitoring`
+# namespace and configures Prometheus to remote-write to Grafana Cloud.
+# The `ci_` metric-name prefix is applied at scrape time by the KMS
+# ServiceMonitor (see charts/kms-core), so remote-write stays plain here.
+#
+# Credentials are read from the environment (never echoed):
+#   - GRAFANA_CLOUD_PROM_URL       remote-write endpoint
+#   - GRAFANA_CLOUD_PROM_USERNAME  Prometheus instance / user id
+#   - GRAFANA_CLOUD_PROM_PASSWORD  Cloud Access Policy token (metrics:write)
+#=============================================================================
+# Pin the chart version for reproducible CI runs.
+KUBE_PROMETHEUS_STACK_VERSION="${KUBE_PROMETHEUS_STACK_VERSION:-77.6.2}"
+
+deploy_kube_prometheus_stack() {
+    log_info "Deploying kube-prometheus-stack (metrics enabled)..."
+
+    # Require the full credential set; a partial one would only fail later, at
+    # remote-write time.
+    if [[ -z "${GRAFANA_CLOUD_PROM_URL:-}" || -z "${GRAFANA_CLOUD_PROM_USERNAME:-}" || -z "${GRAFANA_CLOUD_PROM_PASSWORD:-}" ]]; then
+        log_warn "GRAFANA_CLOUD_PROM_URL/USERNAME/PASSWORD not all set; skipping kube-prometheus-stack install."
+        log_warn "Metrics will not be remote-written. Set all GRAFANA_CLOUD_PROM_* secrets to enable."
+        # Force metrics off for the rest of the deploy so deploy_kms (same shell, runs after)
+        # does not enable the kms-core ServiceMonitor — its CRD ships with the
+        # kube-prometheus-stack we just skipped, so the Helm deploy would fail without it.
+        export ENABLE_METRICS="false"
+        return 0
+    fi
+
+    # Dedicated namespace for the monitoring stack.
+    kubectl create namespace monitoring \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # Basic-auth secret referenced by Prometheus remoteWrite[].basicAuth. Feed the
+    # credentials via stdin (env-file) instead of --from-literal so they never appear
+    # in argv (/proc/<pid>/cmdline is world-readable and shows up in `ps`).
+    printf 'username=%s\npassword=%s\n' \
+        "${GRAFANA_CLOUD_PROM_USERNAME:-}" "${GRAFANA_CLOUD_PROM_PASSWORD:-}" |
+        kubectl create secret generic grafana-cloud-prom-auth \
+            --namespace monitoring \
+            --from-env-file=/dev/stdin \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+    helm repo update prometheus-community
+
+    # --set-file keeps the URL (a secret, like the credentials above) out of
+    # helm's argv. It still lands in the in-cluster release values, which is
+    # fine for ephemeral kind.
+    local REMOTE_WRITE_URL_FILE
+    REMOTE_WRITE_URL_FILE="$(mktemp)"
+    chmod 600 "${REMOTE_WRITE_URL_FILE}"
+    printf '%s' "${GRAFANA_CLOUD_PROM_URL}" > "${REMOTE_WRITE_URL_FILE}"
+
+    # Capture helm's status so the URL file is removed on failure too. No RETURN
+    # trap here: it would re-fire on the caller's return, where the local var is
+    # gone — fatal under set -u.
+    local HELM_STATUS=0
+    helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+        --version "${KUBE_PROMETHEUS_STACK_VERSION}" \
+        --namespace monitoring \
+        --create-namespace \
+        -f "${REPO_ROOT}/ci/kube-testing/infra/kube-prometheus-stack-values.yaml" \
+        --set-file "prometheus.prometheusSpec.remoteWrite[0].url=${REMOTE_WRITE_URL_FILE}" \
+        --set-string "prometheus.prometheusSpec.externalLabels.ci_run_id=${GITHUB_RUN_ID:-local}" \
+        --wait --timeout 5m || HELM_STATUS=$?
+    rm -f "${REMOTE_WRITE_URL_FILE}"
+    return "${HELM_STATUS}"
 }
 
 #=============================================================================

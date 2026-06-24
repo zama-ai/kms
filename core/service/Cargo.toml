@@ -67,7 +67,6 @@ clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
-getrandom.workspace = true # For some weird reason it needs to be here for wasm builds ? (even though we don't use it anywhere ?)
 hashing.workspace = true
 hex.workspace = true
 http-legacy.workspace = true
