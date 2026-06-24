@@ -10,9 +10,7 @@ use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
-use kms_lib::consts::{
-    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
-};
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT};
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
@@ -31,9 +29,8 @@ use validator::Validate;
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::{ContextId, RequestId};
-use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::backup::{RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC};
 use kms_lib::engine::base::derive_request_id;
-use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
@@ -54,6 +51,18 @@ fn write_core_client_toml(path: &Path, cfg: &CoreClientConfig) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("TOML serialization failed: {e}"))?;
     write(path, toml_str)?;
     Ok(())
+}
+
+/// Derive a single-core client config from a multi-core one by keeping only the
+/// first core. This is used for custodian backup tests.
+fn single_core_config(config_path: &Path) -> Result<PathBuf> {
+    let raw = std::fs::read_to_string(config_path)?;
+    let mut cfg: CoreClientConfig =
+        toml::from_str(&raw).map_err(|e| anyhow::anyhow!("parsing client config: {e}"))?;
+    cfg.cores.truncate(1);
+    let single_path = config_path.with_file_name("client_config_single.toml");
+    write_core_client_toml(&single_path, &cfg)?;
+    Ok(single_path)
 }
 
 /// Mock PCR value used for TLS auto mode in test configs.
@@ -1778,13 +1787,13 @@ async fn new_custodian_context(
     config_path: &Path,
     test_path: &Path,
     custodian_threshold: u32,
-    setup_msg_paths: Vec<PathBuf>,
+    setup_msgs: Vec<String>,
 ) -> String {
     let config = cmd_config(
         config_path,
         CCCommand::NewCustodianContext(NewCustodianContextParameters {
             threshold: custodian_threshold,
-            setup_msg_paths,
+            setup_msgs,
             mpc_context_id: DEFAULT_MPC_CONTEXT.to_string(),
         }),
         200,
@@ -1862,23 +1871,12 @@ fn parse_custodian_bin_returns_none_when_absent() {
     assert_eq!(parse_custodian_bin(stdout), None);
 }
 
-async fn generate_custodian_keys_to_file(
-    temp_dir: &Path,
-    custodian_count: usize,
-) -> Result<(Vec<String>, Vec<PathBuf>)> {
+async fn generate_custodian_keys(custodian_count: usize) -> Result<(Vec<String>, Vec<String>)> {
     let mut seeds = Vec::new();
-    let mut setup_msgs_paths = Vec::new();
+    let mut setup_msgs = Vec::new();
     let custodian_bin = build_kms_custodian()?;
 
     for cus_idx in 1..=custodian_count {
-        let cur_setup_path = temp_dir
-            .join("CUSTODIAN")
-            .join("setup-msg")
-            .join(format!("setup-{}", cus_idx));
-
-        // Ensure the dir exists
-        create_dir_all(cur_setup_path.parent().unwrap()).unwrap();
-
         let cmd_output = Command::new(&custodian_bin)
             .args([
                 "generate",
@@ -1888,8 +1886,6 @@ async fn generate_custodian_keys_to_file(
                 &cus_idx.to_string(),
                 "--custodian-name",
                 &format!("skynet-{cus_idx}"),
-                "--path",
-                cur_setup_path.to_str().unwrap(),
             ])
             .output()?;
         assert!(
@@ -1898,12 +1894,26 @@ async fn generate_custodian_keys_to_file(
             String::from_utf8_lossy(&cmd_output.stderr)
         );
 
+        let setup_msg = extract_setup_message(&cmd_output);
         let seed_phrase = extract_seed_phrase(cmd_output);
         seeds.push(seed_phrase);
-        setup_msgs_paths.push(cur_setup_path);
+        setup_msgs.push(setup_msg);
     }
 
-    Ok((seeds, setup_msgs_paths))
+    Ok((seeds, setup_msgs))
+}
+
+fn extract_setup_message(out: &Output) -> String {
+    let output_string = String::from_utf8_lossy(&out.stdout);
+    let setup_msg_line = output_string
+        .lines()
+        .find(|line| line.contains(SETUP_MESSAGE_DESC))
+        .expect("generate output should contain the custodian setup message");
+    setup_msg_line
+        .split_at(setup_msg_line.find(SETUP_MESSAGE_DESC).unwrap() + SETUP_MESSAGE_DESC.len())
+        .1
+        .trim()
+        .to_string()
 }
 
 fn extract_seed_phrase(out: Output) -> String {
@@ -1945,10 +1955,8 @@ async fn custodian_backup_init(config_path: &Path, test_path: &Path) -> Vec<Stri
 
 /// Native implementation: Re-encrypt custodian backups using kms-custodian binary directly
 async fn custodian_reencrypt(
-    temp_dir: &Path,
     amount_operators: usize,
     custodian_count: usize,
-    mpc_context_id: ContextId,
     seeds: &[String],
     operator_recovery_resps: &[String],
 ) -> Result<Vec<String>> {
@@ -1956,20 +1964,9 @@ async fn custodian_reencrypt(
     let custodian_bin = build_kms_custodian()?;
 
     for operator_index in 1..=amount_operators {
-        let pub_prefix = if amount_operators == 1 {
-            "PUB".to_string()
-        } else {
-            format!("PUB-p{}", operator_index)
-        };
-
         let cur_recovery_resp = &operator_recovery_resps[operator_index - 1];
 
         for custodian_index in 1..=custodian_count {
-            let verf_path = temp_dir
-                .join(&pub_prefix)
-                .join(PubDataType::VerfKey.to_string())
-                .join(SIGNING_KEY_ID.to_string());
-
             let cmd_output = Command::new(&custodian_bin)
                 .args([
                     "decrypt",
@@ -1977,10 +1974,6 @@ async fn custodian_reencrypt(
                     &seeds[custodian_index - 1],
                     "--custodian-role",
                     &custodian_index.to_string(),
-                    "--operator-verf-key",
-                    verf_path.to_str().unwrap(),
-                    "--mpc-context-id",
-                    &mpc_context_id.to_string(),
                     "-b",
                     cur_recovery_resp,
                 ])
@@ -2022,16 +2015,15 @@ async fn custodian_backup_recovery(
 }
 
 fn extract_custodian_decryption_payload(output_string: &str) -> String {
-    let str_to_find = "Decryption payload is the following:\n";
-    let start_idx = output_string
-        .find(str_to_find)
-        .expect("A successful decryption will output a response");
-    let front_trimmed_str = output_string.split_at(start_idx + str_to_find.len()).1;
-    // Now find the index of the last part
-    let end_idx = front_trimmed_str
-        .find("MANUALLY VALIDATE THE")
-        .expect("String expected after successful decryption");
-    front_trimmed_str.split_at(end_idx).0.trim().to_string()
+    let payload_line = output_string
+        .lines()
+        .find(|line| line.contains(RECOVERY_OUTPUT_DESC))
+        .expect("a successful decryption prints the recovery output");
+    payload_line
+        .split_at(payload_line.find(RECOVERY_OUTPUT_DESC).unwrap() + RECOVERY_OUTPUT_DESC.len())
+        .1
+        .trim()
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -2270,31 +2262,18 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     let temp_path = material_dir.path();
 
     // Generate custodian keys using native kms-custodian binary
-    let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(temp_path, amount_custodians).await?;
+    let (seeds, setup_msgs) = generate_custodian_keys(amount_custodians).await?;
 
     // Create custodian context
-    let cus_backup_id = new_custodian_context(
-        &config_path,
-        temp_path,
-        custodian_threshold,
-        setup_msg_paths,
-    )
-    .await;
+    let cus_backup_id =
+        new_custodian_context(&config_path, temp_path, custodian_threshold, setup_msgs).await;
 
     // Initialize custodian backup
     let operator_recovery_resp = custodian_backup_init(&config_path, temp_path).await;
 
     // Re-encrypt with custodian keys
-    let custodian_recovery_output = custodian_reencrypt(
-        temp_path,
-        1,
-        amount_custodians,
-        *DEFAULT_MPC_CONTEXT,
-        &seeds,
-        &operator_recovery_resp,
-    )
-    .await?;
+    let custodian_recovery_output =
+        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resp).await?;
 
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery(
@@ -2629,50 +2608,43 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 
     let amount_custodians = 5;
     let custodian_threshold = 2;
-    let amount_operators = 4;
+    let party_count = 4;
 
     // Setup isolated threshold KMS servers with custodian backup vaults (includes SecretSharingKeychain)
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_custodian_backup(
-            "threshold_custodian",
-            amount_operators,
-        )
-        .await?;
+        setup_isolated_threshold_cli_test_with_custodian_backup("threshold_custodian", party_count)
+            .await?;
 
     let temp_path = material_dir.path();
 
+    // TODO(#3042)
+    // Custodian backup/recovery currently runs against a single core at a time.
+    let single_core_config_path = single_core_config(&config_path)?;
+
     // Generate custodian keys using native kms-custodian binary
-    let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(temp_path, amount_custodians).await?;
+    let (seeds, setup_msgs) = generate_custodian_keys(amount_custodians).await?;
 
     // Create custodian context
     let cus_backup_id = new_custodian_context(
-        &config_path,
+        &single_core_config_path,
         temp_path,
         custodian_threshold,
-        setup_msg_paths,
+        setup_msgs,
     )
     .await;
 
     // Initialize custodian backup
-    let operator_recovery_resps = custodian_backup_init(&config_path, temp_path).await;
+    let operator_recovery_resps = custodian_backup_init(&single_core_config_path, temp_path).await;
 
-    // Re-encrypt with custodian keys
-    let recovery_output_paths = custodian_reencrypt(
-        temp_path,
-        amount_operators,
-        amount_custodians,
-        *DEFAULT_MPC_CONTEXT,
-        &seeds,
-        &operator_recovery_resps,
-    )
-    .await?;
+    // Re-encrypt with custodian keys (single operator)
+    let custodian_recovery_output =
+        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resps).await?;
 
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery(
-        &config_path,
+        &single_core_config_path,
         temp_path,
-        recovery_output_paths,
+        custodian_recovery_output,
         RequestId::from_str(&cus_backup_id)?,
     )
     .await;

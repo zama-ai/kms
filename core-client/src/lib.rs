@@ -41,7 +41,7 @@ use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
-use kms_lib::util::file_handling::{read_element, safe_read_element_versioned, write_element};
+use kms_lib::util::file_handling::{read_element, write_element};
 
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
@@ -754,8 +754,9 @@ impl Default for CrsParameters {
 pub struct NewCustodianContextParameters {
     #[clap(long, short = 't')]
     pub threshold: u32,
+    /// The base64-encoded custodian setup messages, as printed by `kms-custodian generate`.
     #[clap(long, short = 'm')]
-    pub setup_msg_paths: Vec<PathBuf>,
+    pub setup_msgs: Vec<String>,
     /// The MPC context ID for which the custodian context is being created.
     #[clap(long, short = 'c')]
     pub mpc_context_id: String,
@@ -2471,9 +2472,8 @@ pub async fn execute_cmd(
         }
         CCCommand::NewCustodianContext(new_custodian_context_parameters) => {
             let mut setup_msgs = Vec::new();
-            for cur_path in &new_custodian_context_parameters.setup_msg_paths {
-                let cur_setup: InternalCustodianSetupMessage =
-                    safe_read_element_versioned(cur_path).await?;
+            for cur_setup_msg in &new_custodian_context_parameters.setup_msgs {
+                let cur_setup: InternalCustodianSetupMessage = base64_deserialize(cur_setup_msg)?;
                 setup_msgs.push(cur_setup);
             }
             let mpc_context_id = ContextId::try_from(

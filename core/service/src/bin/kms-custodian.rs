@@ -1,7 +1,7 @@
 use aes_prng::AesRng;
 use clap::Parser;
 use hashing::{DomainSep, hash_element};
-use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::backup::{RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC};
 use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize};
 use kms_lib::{
@@ -103,9 +103,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 .generate_setup_message(&mut rng, params.custodian_name)
                 .map_err(|e| anyhow::anyhow!("Failed to generate custodian setup message: {e}"))?;
             let serialized_setup_msgs = base64_serialize(&setup_msg)?;
-            tracing::info!(
-                "Custodian setup message generated successfully! The serialized setup message is:\n{serialized_setup_msgs}"
-            );
+            tracing::info!("Custodian setup message generated successfully!");
+            // Use println to lower the risk of accidental file logging of the setup message
+            println!("{SETUP_MESSAGE_DESC}{serialized_setup_msgs}");
             tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
             // Use println to lower the risk of accidental file logging of the mnemonic
             println!("{SEED_PHRASE_DESC}{mnemonic}");
@@ -173,17 +173,15 @@ async fn main() -> Result<(), anyhow::Error> {
                 recovery_request.backup_enc_key(),
             )?;
             let serialized_res = base64_serialize(&res)?;
-            tracing::info!(
-                "Verified reencryption successfully. Decryption payload is the following:"
-            );
-            println!("{serialized_res}");
-
+            tracing::info!("Verified reencryption successfully.");
             tracing::warn!(
                 "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR!\n
                 OPERATOR VERFICATION KEY ADDRESS IS: {:?}",
                 recovery_request.operator_verf_key().address()
             );
-            tracing::info!("Reencryption successful!",);
+            // Use println to lower the risk of accidental file logging of the recovery output
+            println!("{RECOVERY_OUTPUT_DESC}{serialized_res}");
+            tracing::info!("Reencryption successful!");
         }
     }
     Ok(())
