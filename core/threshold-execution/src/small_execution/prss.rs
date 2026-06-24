@@ -630,11 +630,8 @@ where
         let mask_ctr = self.counters.mask_ctr;
 
         // Element `idx` is the f_A-weighted sum over all sets of
-        // phi(mask_ctr+idx) + phi(mask_ctr+idx+1). Consecutive elements share a phi
-        // value (the phi1 of element idx is the phi0 of element idx+1), so a chunk of
-        // `len` elements needs only `len+1` AES-PRF evaluations per set instead of
-        // `2*len`. We parallelize over chunks and precompute each chunk's phi range
-        // once per set.
+        // phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This matches repeated
+        // scalar calls while still batching each chunk's AES-PRF evaluations.
         let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
             let chunk = (*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).max(1);
             let mut res = vec![Z::ZERO; amount];
@@ -655,13 +652,16 @@ where
                         let f_a = set.f_a_points[&party_role];
 
                         // One pipelined AES call for the chunk's counter range. Element `idx`
-                        // needs phi(mask_ctr+idx) + phi(mask_ctr+idx+1), so a chunk of `len`
-                        // elements shares counters and needs only `len+1` evaluations.
-                        let phi_vals =
-                            phi_range(&aes_prf.phi_aes, mask_ctr + lo as u128, out.len() + 1, bd1)?;
+                        // consumes two distinct phi counters, matching one scalar mask_next().
+                        let phi_vals = phi_range(
+                            &aes_prf.phi_aes,
+                            mask_ctr + 2 * lo as u128,
+                            2 * out.len(),
+                            bd1,
+                        )?;
 
                         for (j, out_elem) in out.iter_mut().enumerate() {
-                            let phi = phi_vals[j] + phi_vals[j + 1];
+                            let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
                             // phi is a scalar, so a coefficient-wise scale (mul_by_u128) replaces a
                             // full extension multiply; `phi as u128` matches from_i128's wrapping.
                             *out_elem += f_a.mul_by_u128(phi as u128);
@@ -675,8 +675,7 @@ where
         .await??;
 
         // Advance the counter by two per element, matching one mask_next() call per
-        // element (each consumes two phi counters). The batch reuses the shared phi
-        // values internally but still never reuses counters across calls.
+        // element (each consumes two phi counters).
         self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)
@@ -1446,9 +1445,10 @@ mod tests {
         let sid = SessionId::from(23425);
 
         let role_one = Role::indexed_from_one(1);
-        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
-            .await
-            .unwrap();
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+                .await
+                .unwrap();
 
         let mut state = prss.new_prss_session_state(sid);
 
@@ -1468,6 +1468,57 @@ mod tests {
         // other counters must not have increased
         assert_eq!(state.counters.prss_ctr, 0);
         assert_eq!(state.counters.przs_ctr, 0);
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(23)]
+    async fn test_prss_mask_next_vec_matches_scalar_calls(#[case] amount: usize) {
+        let num_parties = 4;
+        let threshold = 1;
+
+        let sid = SessionId::from(23425);
+
+        let role_one = Role::indexed_from_one(1);
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+                .await
+                .unwrap();
+
+        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut batch_state = scalar_state.clone();
+
+        let mut scalar_values = Vec::with_capacity(amount);
+        for _ in 0..amount {
+            scalar_values.push(
+                scalar_state
+                    .mask_next(role_one, B_SWITCH_SQUASH)
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        let batched_values = batch_state
+            .mask_next_vec(role_one, B_SWITCH_SQUASH, amount)
+            .await
+            .unwrap();
+
+        assert_eq!(batched_values, scalar_values);
+        assert_eq!(
+            batch_state.counters.mask_ctr,
+            scalar_state.counters.mask_ctr
+        );
+        assert_eq!(
+            batch_state.counters.prss_ctr,
+            scalar_state.counters.prss_ctr
+        );
+        assert_eq!(
+            batch_state.counters.przs_ctr,
+            scalar_state.counters.przs_ctr
+        );
     }
 
     #[tokio::test]
