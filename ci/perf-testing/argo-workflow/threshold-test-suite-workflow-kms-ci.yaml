@@ -326,7 +326,11 @@ spec:
               "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt tests with FHE_PARAMS = Default
               "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt tests with FHE_PARAMS = Default
               "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req100"     # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
             ]
             template: summary-report
             continueOn:

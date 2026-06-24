@@ -113,15 +113,16 @@ async fn test_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
 ) {
     decryption_threshold(
         DEFAULT_PARAM,
@@ -134,7 +135,7 @@ async fn default_decryption_threshold(
         parallelism,
         amount_parties,
         None,
-        None,
+        Some(decryption_mode),
     )
     .await;
 }
@@ -203,6 +204,7 @@ pub async fn decryption_threshold(
     decryption_mode: Option<DecryptionMode>,
 ) {
     assert!(parallelism > 0);
+
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * parallelism,
         pub_decrypt: 100,
