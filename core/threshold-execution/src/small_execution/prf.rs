@@ -159,7 +159,7 @@ pub(crate) fn phi_range(
 
 /// Function Psi that generates bounded randomness for PRSS.next()
 pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
-    // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices in inner_psi
+    // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices below
     if ctr >= 1 << 112 {
         return Err(anyhow_error_and_log(format!(
             "ctr in psi must be smaller than 2^112 but was {ctr}."
@@ -168,37 +168,37 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
 
     //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
     let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-    let mut coefs = vec![0_u128; Z::EXTENSION_DEGREE * num_u128_base_ring];
 
-    //Loop over psi^(i)
+    // Build one block per coefficient chunk and encrypt them in a single pipelined call. Block
+    // (i, block_ctr) carries the dimension index i and the block counter in its MSBs; the outputs
+    // are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
+    let base = ctr.to_le_bytes();
+    let mut blocks = Vec::with_capacity(Z::EXTENSION_DEGREE * num_u128_base_ring);
     for i in 0..Z::EXTENSION_DEGREE {
-        //loop over block counter for each base ring element
         for block_ctr in 0..num_u128_base_ring {
-            coefs[i * num_u128_base_ring + block_ctr] =
-                inner_psi(pa, ctr, i as u8, block_ctr as u8);
+            let mut ctr_bytes = base;
+            ctr_bytes[15] = block_ctr as u8; // v - the block counter
+            ctr_bytes[14] = i as u8; // i - the dimension index
+            #[allow(deprecated)]
+            let block = GenericArray::from(ctr_bytes);
+            blocks.push(block);
         }
+    }
+
+    pa.aes.encrypt_blocks(&mut blocks);
+
+    let mut coefs = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        coefs.push(u128::from_le_bytes(block.into()));
     }
 
     Ok(Z::from_u128_chunks(coefs))
 }
 
-/// Inner function Psi^(i) that generates bounded randomness for PRSS.next()
-fn inner_psi(pa: &PsiAes, ctr: u128, i: u8, block_ctr: u8) -> u128 {
-    let mut ctr_bytes = ctr.to_le_bytes();
-
-    // pad/truncate ctr value and put v and i in the MSBs
-    ctr_bytes[15] = block_ctr; // v - the block counter
-    ctr_bytes[14] = i; // i - the dimension index
-    #[allow(deprecated)]
-    let mut to_enc = GenericArray::from(ctr_bytes);
-    pa.aes.encrypt_block(&mut to_enc);
-    u128::from_le_bytes(to_enc.into())
-}
-
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
 pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
-    // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices in inner_chi
+    // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices below
     if ctr >= 1 << 104 {
         return Err(anyhow_error_and_log(format!(
             "ctr in chi must be smaller than 2^104 but was {ctr}."
@@ -207,32 +207,32 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
 
     //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
     let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-    let mut coefs = vec![0_u128; Z::EXTENSION_DEGREE * num_u128_base_ring];
 
-    //Loop over chi^(i)
+    // Build one block per coefficient chunk and encrypt them in a single pipelined call. Block
+    // (i, block_ctr) carries the dimension index i, threshold index j and block counter; the
+    // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
+    let base = ctr.to_le_bytes();
+    let mut blocks = Vec::with_capacity(Z::EXTENSION_DEGREE * num_u128_base_ring);
     for i in 0..Z::EXTENSION_DEGREE {
-        //loop over block counter for each base ring element
         for block_ctr in 0..num_u128_base_ring {
-            coefs[i * num_u128_base_ring + block_ctr] =
-                inner_chi(pa, ctr, i as u8, j, block_ctr as u8);
+            let mut ctr_bytes = base;
+            ctr_bytes[15] = block_ctr as u8; // v - the block counter
+            ctr_bytes[14] = i as u8; // i - the dimension index
+            ctr_bytes[13] = j; // j - the threshold index
+            #[allow(deprecated)]
+            let block = GenericArray::from(ctr_bytes);
+            blocks.push(block);
         }
     }
 
+    pa.aes.encrypt_blocks(&mut blocks);
+
+    let mut coefs = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        coefs.push(u128::from_le_bytes(block.into()));
+    }
+
     Ok(Z::from_u128_chunks(coefs))
-}
-
-/// Inner function Chi^(i) that generates bounded randomness for PRZS.next()
-fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
-    let mut ctr_bytes = ctr.to_le_bytes();
-
-    // pad/truncate ctr value and put v and i in the MSBs, and j in the LSBs
-    ctr_bytes[15] = block_ctr; // v - the block counter
-    ctr_bytes[14] = i; // i - the dimension index
-    ctr_bytes[13] = j; // j - the threshold index
-    #[allow(deprecated)]
-    let mut to_enc = GenericArray::from(ctr_bytes);
-    pa.aes.encrypt_block(&mut to_enc);
-    u128::from_le_bytes(to_enc.into())
 }
 
 #[cfg(test)]
