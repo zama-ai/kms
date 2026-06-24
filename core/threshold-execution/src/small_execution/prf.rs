@@ -95,10 +95,24 @@ impl PsiAes {
 
 //NOTE: I BELIEVE WE NEVER NEED PRSS-MASK TO GENERATE MASK BIGGER THAN 2^126 EVEN FOR BGV
 //AFAICT, ONLY USED IN BGV DDEC WITH BD1<Q1 AND Q1 IS 94BIT LONG
-/// Function Phi that generates bounded randomness for PRSS-Mask.Next()
-/// This currently assumes that the value Bd_1 in the NIST doc is smaller than 2^126
-pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
-    // we currently assume that Bd1 is at most 126 bits large, so we only need a single block of AES and can fit the result in an i128.
+/// Function Phi that generates bounded randomness for PRSS-Mask.Next(), evaluated over the
+/// contiguous counter range `[start, start + count)`.
+///
+/// This currently assumes that the value Bd_1 in the NIST doc is smaller than 2^126. A single
+/// `encrypt_blocks` call is issued so the AES-NI backend can pipeline the blocks, and the
+/// (loop-invariant) bounds are checked only once for the whole range.
+pub(crate) fn phi_range(
+    pa: &PhiAes,
+    start: u128,
+    count: usize,
+    bd1: u128,
+) -> anyhow::Result<Vec<i128>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    // we currently assume that Bd1 is at most 126 bits large, so we only need a single block of
+    // AES per value and can fit the result in an i128.
     // check that bd1 is small enough to not cause overflow of the result
     if bd1 > (1 << 126) {
         return Err(anyhow_error_and_log(
@@ -106,29 +120,41 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
         ));
     }
 
-    // check ctr is smaller 2^120, so nothing gets overwritten by setting the index below
-    if ctr >= 1 << 120 {
+    // the highest counter touched; since the range is contiguous and increasing, checking it
+    // bounds the whole range so nothing gets overwritten by setting the block-counter byte below
+    let max_ctr = start + (count as u128 - 1);
+    if max_ctr >= 1 << 120 {
         return Err(anyhow_error_and_log(format!(
-            "ctr in phi must be smaller than 2^120 but was {ctr}."
+            "ctr in phi must be smaller than 2^120 but was {max_ctr}."
         )));
     }
 
-    // number of AES blocks, currently limited to 1. See NOTE above.
+    // number of AES blocks per value, currently limited to 1. See NOTE above.
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
 
-    // TODO iterate over blocks form 0..v here if we ever need Bd1 > 2^126
-    let mut ctr_bytes = ctr.to_le_bytes();
-    ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
-    #[allow(deprecated)]
-    let mut to_enc = GenericArray::from(ctr_bytes);
-    pa.aes.encrypt_block(&mut to_enc);
-    let out = u128::from_le_bytes(to_enc.into());
+    // TODO iterate over blocks from 0..v here if we ever need Bd1 > 2^126
+    let mut blocks = Vec::with_capacity(count);
+    for k in 0..count {
+        let mut ctr_bytes = (start + k as u128).to_le_bytes();
+        ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
+        #[allow(deprecated)]
+        let block = GenericArray::from(ctr_bytes);
+        blocks.push(block);
+    }
 
-    // compute output as -BD1 + (AES (mod 2*BD1)), a uniform random value in [-BD1 .. BD1)
-    let ret: i128 = -(bd1 as i128) + (out % (2 * bd1)) as i128;
+    // single pipelined AES call over the whole range
+    pa.aes.encrypt_blocks(&mut blocks);
 
-    Ok(ret)
+    let modulus = 2 * bd1;
+    let neg_bd1 = -(bd1 as i128);
+    let mut res = Vec::with_capacity(count);
+    for block in blocks {
+        let out = u128::from_le_bytes(block.into());
+        // compute output as -BD1 + (AES (mod 2*BD1)), a uniform random value in [-BD1 .. BD1)
+        res.push(neg_bd1 + (out % modulus) as i128);
+    }
+    Ok(res)
 }
 
 /// Function Psi that generates bounded randomness for PRSS.next()
@@ -214,6 +240,11 @@ mod tests {
     use super::*;
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+
+    /// Single-value convenience wrapper over [`phi_range`] used by the phi tests.
+    fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
+        Ok(phi_range(pa, ctr, 1, bd1)?[0])
+    }
 
     #[test]
     fn test_phi() {

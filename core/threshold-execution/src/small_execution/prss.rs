@@ -14,7 +14,7 @@ use crate::{
         runtime::sessions::{
             base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
-        small_execution::prf::{PhiAes, chi, phi, psi},
+        small_execution::prf::{PhiAes, chi, phi_range, psi},
     },
 };
 use algebra::{
@@ -642,8 +642,6 @@ where
                 .enumerate()
                 .try_for_each(|(chunk_idx, out)| -> anyhow::Result<()> {
                     let lo = chunk_idx * chunk;
-                    // reused across sets to avoid a per-set allocation
-                    let mut phi_vals: Vec<i128> = Vec::with_capacity(out.len() + 1);
                     for (i, set) in prss_setup.sets.iter().enumerate() {
                         if !set.parties.contains(&party_role) {
                             return Err(anyhow_error_and_log(format!(
@@ -656,12 +654,11 @@ where
                         // compute f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
                         let f_a = set.f_a_points[&party_role];
 
-                        // phi for counters [mask_ctr+lo .. mask_ctr+lo+len], evaluated once per set
-                        phi_vals.clear();
-                        for k in 0..=out.len() {
-                            let ctr = mask_ctr + (lo + k) as u128;
-                            phi_vals.push(phi(&aes_prf.phi_aes, ctr, bd1)?);
-                        }
+                        // One pipelined AES call for the chunk's counter range. Element `idx`
+                        // needs phi(mask_ctr+idx) + phi(mask_ctr+idx+1), so a chunk of `len`
+                        // elements shares counters and needs only `len+1` evaluations.
+                        let phi_vals =
+                            phi_range(&aes_prf.phi_aes, mask_ctr + lo as u128, out.len() + 1, bd1)?;
 
                         for (j, out_elem) in out.iter_mut().enumerate() {
                             let phi = phi_vals[j] + phi_vals[j + 1];
