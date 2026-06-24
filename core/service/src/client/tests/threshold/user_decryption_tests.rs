@@ -453,7 +453,6 @@ pub(crate) async fn user_decryption_threshold(
             }
             let cur_client = kms_clients.get(&i).unwrap().clone();
             let req_id_clone = reqs.get(j).as_ref().unwrap().0.clone().request_id.unwrap();
-            let bits = msg.bits() as u64;
             resp_tasks.spawn(async move {
                 // Sleep initially to give the server time to complete user
                 // decryption, then poll every 4*bits ms (clamped to [100ms, 1s])

@@ -380,7 +380,7 @@ async fn run_new_epoch(
         });
 
         let new_epoch_id: RequestId = new_epoch_id.into();
-        let responses = poll_new_epoch_result(&new_epoch_id, kms_clients, 50).await;
+        let responses = poll_new_epoch_result(&new_epoch_id, kms_clients).await;
 
         assert_eq!(responses.len(), amount_parties);
 
@@ -539,7 +539,6 @@ async fn run_new_epoch(
 async fn poll_new_epoch_result(
     new_epoch_id: &RequestId,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    max_iter: usize,
 ) -> Vec<(
     u32,
     RequestId,

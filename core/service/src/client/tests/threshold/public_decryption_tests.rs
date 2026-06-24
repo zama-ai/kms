@@ -313,7 +313,6 @@ pub async fn run_decryption_threshold_optionally_fail(
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
-    let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             data_root_path,
@@ -330,7 +329,6 @@ pub async fn run_decryption_threshold_optionally_fail(
             external_handle: i.to_be_bytes().to_vec(),
         };
         cts.push(ctt);
-        bits += msg.bits() as u64;
     }
 
     // make parallel requests by calling [decrypt] in a thread
