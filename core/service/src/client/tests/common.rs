@@ -78,7 +78,8 @@ impl Default for PollConfig {
     }
 }
 
-#[cfg(test)]
+// Only the `slow_tests`-gated tests use this long poll budget.
+#[cfg(all(test, feature = "slow_tests"))]
 impl PollConfig {
     /// Poll immediately, then wait 500ms between retries for up to 3600 attempts (30 min total).
     pub(crate) fn slow_tests_poll_config() -> Self {
