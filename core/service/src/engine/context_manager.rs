@@ -1046,12 +1046,13 @@ mod tests {
             Vault,
             keychain::secretsharing,
             storage::{
-                StorageProxy,
+                StorageProxy, StorageReaderExt,
                 crypto_material::get_core_signing_key,
                 delete_context_at_id,
                 ram::{self, RamStorage},
                 read_context_at_id, read_versioned_at_request_id, store_context_at_id,
-                store_versioned_at_request_id,
+                store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+                tests::TestType,
             },
         },
     };
@@ -1221,21 +1222,53 @@ mod tests {
             assert!(response.is_err());
         }
 
-        // now we try to delete the stored context
+        // Seed some private data under an epoch in the same storage. Nothing links it to the
+        // context: epoch data is keyed by `epoch_id` alone — the `context_id` never appears in its
+        // storage path — so destroying the context must leave it untouched.
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let epoch_data_type = PrivDataType::FheKeyInfo;
+        let epoch_data_id = RequestId::from_bytes([7u8; 32]);
+        {
+            let storage_ref = Arc::clone(&crypto_storage.private_storage);
+            let mut guarded_priv_storage = storage_ref.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut *guarded_priv_storage,
+                &epoch_data_id,
+                &epoch_id,
+                &TestType { i: 42 },
+                &epoch_data_type.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // now we try to delete the stored context, passing the (unrelated) epoch ID in `epoch_ids`
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
+            epoch_ids: vec![epoch_id.into()],
         });
 
         let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
 
-        // check that the context is deleted
         {
             let storage_ref = Arc::clone(&crypto_storage.private_storage);
             let guarded_priv_storage = storage_ref.lock().await;
+
+            // the context is deleted...
             let _ = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap_err();
+
+            // ...but the epoch data is untouched: the context manager ignores `epoch_ids`.
+            let ids = guarded_priv_storage
+                .all_data_ids_at_epoch(&epoch_id, &epoch_data_type.to_string())
+                .await
+                .unwrap();
+            assert!(
+                ids.contains(&epoch_data_id),
+                "context destruction must not delete epoch data: epoch_ids is ignored by the context manager"
+            );
         }
     }
 
@@ -1992,6 +2025,7 @@ mod tests {
         // Destroy the context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
+            epoch_ids: vec![],
         });
         let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
@@ -2069,6 +2103,7 @@ mod tests {
         // Destroy the context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
+            epoch_ids: vec![],
         });
         context_manager.destroy_mpc_context(request).await.unwrap();
 
@@ -2143,6 +2178,7 @@ mod tests {
         // Destroy the middle context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_ids[1].into()),
+            epoch_ids: vec![],
         });
         context_manager.destroy_mpc_context(request).await.unwrap();
 

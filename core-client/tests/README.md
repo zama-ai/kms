@@ -5,7 +5,7 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (threshold preprocessing tests)** | `cargo nextest run --test integration_test --features threshold_tests` |
+| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features slow_tests -- threshold` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
 | **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
@@ -17,24 +17,20 @@
 ## Feature flags (what they enable)
 
 - `testing`
-  - Enables test helper code used by integration tests.
-- `threshold_tests`
+  - Enables test helper code used by integration tests. Most threshold tests
+    (preproc+keygen, reshare, MPC context init/switch) run under this feature.
+- `slow_tests`
   - Implies `testing`.
-  - Enables threshold preprocessing and keygen tests in `tests/integration/integration_test.rs`.
-  - Compiles setup helpers that run threshold servers with `ensure_default_prss=true`
-    (`setup_isolated_threshold_cli_test_with_prss*`).
-  - Enables preprocessing-heavy flows/tests (preproc+keygen, MPC context init/switch,
-    reshare, full-gen default preproc).
-  - Only gates code/tests; it does **not** generate test material by itself.
+  - Compiles&runs the threshold tests that are too slow to run locally.
   - **Does not** enable Kind/Kubernetes tests.
 - `kind_tests`
   - Implies `testing`.
   - Enables Kubernetes/Kind test binaries under `tests/kind-testing/`.
   - Requires a running Kind cluster.
 
-### `threshold_tests` and pre-generated material
+### Pre-generated material
 
-- `threshold_tests` enables tests that require pre-generated material: **PRSS** (generated at server startup via `ensure_default_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`).
+- PRSS-based keygen tests require PRSS to be available at server startup (`ensure_default_prss=true` ensures it is generated/reused) and, for `nightly_full_gen_tests_default_*`, pre-generated keygen preprocessing material (offline DKG phase).
 - For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
 - Some tests generate PRSS live during the test (via `new_prss`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
 - Generate the production-like required secure material (aka "default") with:
@@ -42,10 +38,8 @@
 
 ### Test gating patterns
 
-Two patterns are used — which one to pick depends on whether the test body calls feature-gated helpers:
-
-- **`#[cfg(feature = "threshold_tests")]` on the fn** — use when the test body calls helpers that only exist with the feature (e.g. `setup_*_with_prss`, `real_preproc_and_keygen`). The test is invisible to `cargo test` without the feature.
-- **`#[cfg_attr(not(feature = "threshold_tests"), ignore)]` on the fn** — use when the test body compiles without the feature (e.g. tests using `setup_isolated_threshold_cli_test_signing_only` + `new_prss`). The test is visible but skipped without the feature.
+- **`#[cfg(feature = "slow_tests")]` on the fn** — the default for slow threshold tests. The test is invisible without the feature, so the per-PR build neither compiles nor runs it. Used when the body also calls a `slow_tests`-gated helper (e.g. `setup_isolated_threshold_cli_test_with_prss_default`).
+- **`#[cfg_attr(not(feature = "slow_tests"), ignore)]` on the fn** — only for `test_threshold_mpc_context_switch_6_docker`, whose Docker-Compose harness must keep compiling per-PR. The test is visible but skipped (and always `--skip`'d in CI; it needs a running Docker Compose).
 
 ### Test naming conventions (CI skip rules)
 
@@ -108,11 +102,11 @@ async fn test_my_feature() -> Result<()> {
 **Threshold setup variants** (all take `party_count: usize`):
 - `setup_isolated_threshold_cli_test` — basic threshold test
 - `setup_isolated_threshold_cli_test_signing_only` — signing without pre-loaded PRSS
-- `setup_isolated_threshold_cli_test_with_prss` — PRSS-enabled setup (`ensure_default_prss=true`) for preprocessing/keygen flows (requires `threshold_tests`)
+- `setup_isolated_threshold_cli_test_with_prss` — PRSS-enabled setup (`ensure_default_prss=true`) for preprocessing/keygen flows
 - `setup_isolated_threshold_cli_test_with_backup` — with backup vault
 - `setup_isolated_threshold_cli_test_with_custodian_backup` — with custodian backup vault
 - `setup_isolated_threshold_cli_test_default` — Default FHE params, no PRSS (`ensure_default_prss=false`)
-- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (`ensure_default_prss=true`; requires `threshold_tests` and pre-generated Default PRSS)
+- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (`ensure_default_prss=true`; requires `slow_tests` and pre-generated Default test material)
 
 ---
 

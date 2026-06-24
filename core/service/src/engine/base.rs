@@ -2113,7 +2113,7 @@ pub(crate) mod tests {
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
         let deserialized_upgraded: KeyGenMetadataInnerV1 =
-            bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
+            bc2wrap::deserialize_slice(&upgraded_bytes).unwrap();
         assert_eq!(deserialized_upgraded.extra_data, None);
         assert_eq!(deserialized_upgraded.key_id, q126.key_id);
         assert_eq!(
@@ -2170,7 +2170,7 @@ pub(crate) mod tests {
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
         let deserialized_upgraded: CrsGenMetadataInner =
-            bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
+            bc2wrap::deserialize_slice(&upgraded_bytes).unwrap();
         assert_eq!(deserialized_upgraded.extra_data, None);
         assert_eq!(deserialized_upgraded.crs_id, q126.crs_id);
         assert_eq!(deserialized_upgraded.max_num_bits, q126.max_num_bits);
