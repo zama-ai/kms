@@ -199,8 +199,8 @@ async fn write_crs() {
     // check the meta store is correct
     {
         let guard = meta_store.read().await;
-        assert!(guard.exists(&req_id));
-        assert!(guard.exists(&new_req_id));
+        assert!(guard.has_existed(&req_id));
+        assert!(guard.has_existed(&new_req_id));
     }
 }
 
@@ -329,8 +329,8 @@ async fn write_central_keys() {
     // check the meta store is correct
     {
         let guard = meta_store.read().await;
-        assert!(guard.exists(&req_id));
-        assert!(guard.exists(&new_req_id));
+        assert!(guard.has_existed(&req_id));
+        assert!(guard.has_existed(&new_req_id));
     }
 }
 
@@ -441,7 +441,7 @@ async fn write_threshold_keys_sunshine() {
     // check the meta store is correct
     {
         let guard = meta_store.read().await;
-        assert!(guard.exists(&req_id));
+        assert!(guard.has_existed(&req_id));
     }
 }
 
@@ -475,7 +475,7 @@ async fn write_threshold_keys_meta_update() {
     assert!(result.is_ok(), "expected success: {result:?}");
     {
         let guard = meta_store.read().await;
-        assert!(guard.exists(&req_id));
+        assert!(guard.has_existed(&req_id));
     }
     {
         let guard = crypto_storage.inner.public_storage.lock().await;
@@ -611,7 +611,7 @@ async fn write_threshold_keys_failed_storage() {
     // check the meta store is correct
     {
         let guard = meta_store.read().await;
-        assert!(guard.exists(&req_id));
+        assert!(guard.has_existed(&req_id));
     }
 
     // write on a failed storage device should fail
@@ -644,8 +644,8 @@ async fn write_threshold_keys_failed_storage() {
     // check the meta store is correct
     {
         let guard = meta_store.read().await;
-        assert!(guard.exists(&req_id));
-        assert!(guard.exists(&new_req_id));
+        assert!(guard.has_existed(&req_id));
+        assert!(guard.has_existed(&new_req_id));
     }
 }
 

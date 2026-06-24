@@ -425,12 +425,10 @@ impl<T> MetaStore<T> {
         store
     }
 
-    /// Check whether an entry exists in the store, that is if it is `Pending` or `Done` (but not `Deleted`).
-    pub(crate) fn exists(&self, request_id: &RequestId) -> bool {
-        // Return true if the entry exists and is not tombstoned (`Deleted`), false otherwise.
-        self.storage
-            .get(request_id)
-            .is_some_and(|e| e.status() != EntryStatus::Deleted)
+    /// Check whether `request_id` has ever occupied a slot in the store, including
+    /// a tombstoned (`Deleted`) entry.
+    pub(crate) fn has_existed(&self, request_id: &RequestId) -> bool {
+        self.storage.contains_key(request_id)
     }
 
     /// Verify the invariant that storage.len() >= complete_queue.len() + deleted_set.len()
@@ -927,7 +925,7 @@ pub(crate) async fn ensure_not_in_meta_store<T>(
     req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<(), MetricedError> {
-    if meta_store.read().await.exists(req_id) {
+    if meta_store.read().await.has_existed(req_id) {
         return Err(MetaStoreError::AlreadyExists { req_id: *req_id }.into_metriced(request_metric));
     }
     Ok(())
@@ -1332,7 +1330,7 @@ mod tests {
         store: &mut MetaStore<String>,
         id: &RequestId,
     ) -> Result<MetaStorePermit<String>, MetaStoreError> {
-        if store.exists(id) {
+        if store.has_existed(id) {
             store.lock_entry(id)
         } else {
             store.insert(id)
@@ -1361,10 +1359,10 @@ mod tests {
     fn sunshine() {
         let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
-        assert!(!meta_store.exists(&request_id));
+        assert!(!meta_store.has_existed(&request_id));
 
         let permit = meta_store.insert(&request_id).unwrap();
-        assert!(meta_store.exists(&request_id));
+        assert!(meta_store.has_existed(&request_id));
         assert!(meta_store.update(Ok("OK".to_string()), permit).is_ok());
         assert_done_ok(&meta_store, &request_id, &"OK".to_string());
     }
@@ -1383,9 +1381,9 @@ mod tests {
         let p3 = meta_store.insert(&id3).unwrap();
         assert!(meta_store.update(Err("Err3".to_string()), p3).is_ok());
 
-        assert!(!meta_store.exists(&id1));
-        assert!(meta_store.exists(&id2));
-        assert!(meta_store.exists(&id3));
+        assert!(!meta_store.has_existed(&id1));
+        assert!(meta_store.has_existed(&id2));
+        assert!(meta_store.has_existed(&id3));
     }
 
     #[test]
@@ -1775,8 +1773,8 @@ mod tests {
         assert_eq!(store.get_total_count(), 2);
         assert_eq!(store.get_completed_count(), 2);
         assert_eq!(store.get_processing_count(), 0);
-        assert!(store.exists(&a));
-        assert!(store.exists(&b));
+        assert!(store.has_existed(&a));
+        assert!(store.has_existed(&b));
         assert_done_ok(&store, &a, &"A".to_string());
         assert_done_ok(&store, &b, &"B".to_string());
 
