@@ -406,9 +406,6 @@ pub async fn run_decryption_threshold_optionally_fail(
             let cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
-                // Sleep initially to give the server time to complete decryption,
-                // then poll every 4*bits ms (clamped to [100ms, 1s]) for up to 600
-                // tries (~10 minutes for large types).
                 let response = retrying_poll(
                     cur_client,
                     req_id_clone.clone(),
