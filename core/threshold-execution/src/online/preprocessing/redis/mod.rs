@@ -153,11 +153,8 @@ fn fetch_correlated_randomness<T: for<'de> Deserialize<'de>>(
     let correlated_randomness = serialized_correlated_randomness
         .iter()
         .map(|serialized| {
-            // We can not use the safe deserialization as the amount of data that is fetched
-            // can be over 2GB in total.
-            // However, we should control our own Redis instance, if it's compromised we are
-            // already in trouble anyway.
-            bc2wrap::deserialize_unsafe(serialized).map_err(|_| {
+            // Each element is decoded individually, with a cap of 2GB per element.
+            bc2wrap::deserialize_slice(serialized).map_err(|_| {
                 redis::RedisError::from((redis::ErrorKind::TypeError, "Could not deserialize"))
             })
         })
@@ -572,7 +569,7 @@ pub mod tests {
                     );
 
                     let serialized = bc2wrap::serialize(&share).unwrap();
-                    let deserialized = bc2wrap::deserialize_unsafe(&serialized).unwrap();
+                    let deserialized = bc2wrap::deserialize_slice(&serialized).unwrap();
                     assert_eq!(share, deserialized);
                 }
 
@@ -595,7 +592,7 @@ pub mod tests {
 
                     let triple = Triple::<ResiduePolyF4<$z>>::new(share_one, share_two, share_three);
                     let serialized = bc2wrap::serialize(&triple).unwrap();
-                    let deserialized: Triple<ResiduePolyF4<$z>> = bc2wrap::deserialize_unsafe(&serialized).unwrap();
+                    let deserialized: Triple<ResiduePolyF4<$z>> = bc2wrap::deserialize_slice(&serialized).unwrap();
 
                     assert_eq!(triple, deserialized);
                 }
@@ -609,7 +606,7 @@ pub mod tests {
         let share = Share::new(Role::indexed_from_one(1), GF16::from(12));
 
         let serialized = bc2wrap::serialize(&share).unwrap();
-        let deserialized: Share<GF16> = bc2wrap::deserialize_unsafe(&serialized).unwrap();
+        let deserialized: Share<GF16> = bc2wrap::deserialize_slice(&serialized).unwrap();
         assert_eq!(share, deserialized);
     }
 
