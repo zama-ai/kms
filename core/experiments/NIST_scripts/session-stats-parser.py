@@ -48,8 +48,10 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-# TFHE message types and their bit widths. bool is reported with bit_width = 1.
-TFHE_TYPES = ["bool", "u4", "u8", "u16", "u32", "u64"]
+# Bit width of the message for each TFHE message type. bool is 1 bit. The
+# parser validates every ``CTXT_TYPES`` entry against this table; to add a
+# new message type, extend it here and at the bench-script's
+# ``CTXT_TYPES_LIST`` together.
 TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "bool": 1,
     "u4": 4,
@@ -57,13 +59,80 @@ TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "u16": 16,
     "u32": 32,
     "u64": 64,
+    "u128": 128
 }
-# Bit widths kept in the aggregated TDecOne/TDecTwo CSVs. u128 is intentionally dropped.
-TDEC_BIT_WIDTHS = [1, 4, 8, 16, 32, 64]
 
-# Parallelism factors of the BGV ``DDEC_PARALLEL_N`` benchmark lines, one row
-# per factor in the BGV TDec CSV.
-BGV_DDEC_PARALLEL_FACTORS = [1, 2, 4, 8, 16, 32]
+# Parallelism factors for BGV's ``DDEC_PARALLEL_N`` benchmark lines come
+# from each run's BENCH_PARAMS.txt (the ``BGV_DDEC_PARALLEL`` field). The
+# parser uses the per-run list to size both the expected schedule and the
+# rows emitted in ``BGV_TDec_*.csv``.
+
+
+# ---------------------------------------------------------------------------
+# Parameter set -> bits per LWE block
+# ---------------------------------------------------------------------------
+#
+# A TFHE radix ciphertext is a vector of LWE ciphertexts, one per "block". The
+# number of bits a block carries is determined by the parameter set's
+# message_modulus: bits_per_block = log2(message_modulus). Two groups across
+# the parameter sets the kms scripts can use (see
+# core/threshold-execution/src/tfhe_internals/parameters.rs::to_param, and the
+# raw MessageModulus values in raw_parameters.rs):
+#
+#   * NIST_PARAMS_P8_* (4 variants): MessageModulus = 2 -> 1 bit / block
+#   * Everything else (NIST_PARAMS_P32_*, BC_PARAMS*, BC_PARAMS_NIGEL*,
+#     PARAMS_TEST_BK_SNS):              MessageModulus = 4 -> 2 bits / block
+#
+# So a u64 message is 64 LWE blocks under P8 params but only 32 under
+# everything else. ``bool`` is always one LWE block regardless of params.
+# Mirrors the kms helper ``fhe_types_to_num_blocks`` in core/grpc/src/rpc_types.rs.
+PARAMS_TO_BITS_PER_BLOCK: Dict[str, int] = {
+    "nist-params-p8-no-sns-fglwe": 1,
+    "nist-params-p8-sns-fglwe":    1,
+    "nist-params-p8-no-sns-lwe":   1,
+    "nist-params-p8-sns-lwe":      1,
+    "nist-params-p32-no-sns-fglwe": 2,
+    "nist-params-p32-sns-fglwe":    2,
+    "nist-params-p32-no-sns-lwe":   2,
+    "nist-params-p32-sns-lwe":      2,
+    "bc-params-no-sns":         2,
+    "bc-params-sns":            2,
+    "bc-params-nigel-no-sns":   2,
+    "bc-params-nigel-sns":      2,
+    "params-test-bk-sns":       2,
+}
+
+
+def _bits_per_block(params: str) -> int:
+    """Bits per LWE block for ``params``.
+
+    Raises ``ValueError`` if ``params`` isn't in ``PARAMS_TO_BITS_PER_BLOCK``;
+    we refuse to guess because the value directly affects every TDec
+    throughput cell in the CSV (LWE blocks/sec). Add the new parameter set to
+    the table — read its ``MessageModulus`` from
+    ``core/threshold-execution/src/tfhe_internals/parameters.rs::to_param``
+    and store ``log2(message_modulus)``.
+    """
+    bpb = PARAMS_TO_BITS_PER_BLOCK.get(params.lower())
+    if bpb is None:
+        raise ValueError(
+            f"Unknown PARAMS={params!r}; cannot compute LWE-block throughput. "
+            f"Add it to PARAMS_TO_BITS_PER_BLOCK in session-stats-parser.py "
+            f"(known values: {sorted(PARAMS_TO_BITS_PER_BLOCK)})."
+        )
+    return bpb
+
+
+def _num_blocks(bit_width: int, bits_per_block: int) -> int:
+    """Number of LWE blocks a message of ``bit_width`` decomposes into.
+
+    ``bool`` is always one block regardless of bits_per_block. All other
+    supported widths (4, 8, 16, 32, 64) are clean multiples of 1 or 2 bits;
+    we use ceil-div as a safety net if an odd width is ever added.
+    """
+    if bit_width <= 1:
+        return 1
+    return -(-bit_width // bits_per_block)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +161,26 @@ class BenchParams:
     percentage_offline: int
     params: str  # TFHE parameter set name; "" for bgv
     ddec_modes: List[str]  # e.g. ["noise-flood-small", "bit-dec-small"]
+    # Message types swept inside each DDEC mode for this run. Recorded in
+    # BENCH_PARAMS.txt as ``CTXT_TYPES`` (space-separated, in the order the
+    # bench script's DDEC loop iterates). Every entry must be a key of
+    # ``TFHE_TYPE_TO_BIT_WIDTH``; ``parse_bench_params`` raises on unknown
+    # entries. Older BENCH_PARAMS.txt files without a ``CTXT_TYPES`` line
+    # fall back to the historical sweep (``["bool", "u4", "u8", "u16",
+    # "u32", "u64"]``).
+    ctxt_types: List[str]
+    # CRS sweep: when non-empty, the run emits one CRS_GEN_<UPPER_PARAMS>
+    # line per entry in order (used by the standalone crs_reproducible.sh
+    # script). When empty and ``has_crs`` is set, the run emits a single
+    # plain ``CRS_GEN`` line using ``params``.
+    crs_params: List[str]
+    # BGV parallelism factors swept by the DDEC step (one ``DDEC_PARALLEL_N``
+    # line per entry, one row per entry in BGV_TDec_*.csv). Recorded in
+    # BENCH_PARAMS.txt as ``BGV_DDEC_PARALLEL`` (space-separated ints).
+    # Required for BGV runs; empty for TFHE.
+    bgv_ddec_parallel: List[int]
     has_prss_init: bool
+    has_dkg: bool
     has_crs: bool
     has_reshare: bool
 
@@ -102,6 +190,21 @@ def _truthy(value: str, default: bool) -> bool:
     value = value.strip()
     if not value:
         return default
+    return value.lower() not in ("0", "false", "no", "off")
+
+
+def _required_bool(raw: Dict[str, str], key: str, folder: str) -> bool:
+    """Read a required boolean field from raw BENCH_PARAMS.txt; raise if
+    missing or empty. Used for the schedule-shaping fields
+    (HAS_PRSS_INIT / HAS_DKG / HAS_CRS / HAS_RESHARE) which every bench
+    script writes explicitly — leaving them implicit would silently
+    misshape the expected operation schedule.
+    """
+    value = raw.get(key, "").strip()
+    if not value:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} is missing required field {key}"
+        )
     return value.lower() not in ("0", "false", "no", "off")
 
 
@@ -141,13 +244,65 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
         return None
 
     protocol = raw.get("PROTOCOL", "tfhe").lower()
-    # TFHE runs do CRS + Reshare; BGV doesn't. The script-side writer can
-    # override either flag if a particular run skips one of those phases.
-    has_crs_default = protocol == "tfhe"
-    has_reshare_default = protocol == "tfhe"
 
     ddec_modes_raw = raw.get("DDEC_MODES", "")
     ddec_modes = [m for m in ddec_modes_raw.split() if m]
+
+    crs_params_raw = raw.get("CRS_PARAMS", "")
+    crs_params = [p for p in crs_params_raw.split() if p]
+
+    ctxt_types_raw = raw.get("CTXT_TYPES", "")
+    ctxt_types = [t for t in ctxt_types_raw.split() if t]
+    for t in ctxt_types:
+        if t not in TFHE_TYPE_TO_BIT_WIDTH:
+            raise ValueError(
+                f"Unknown CTXT_TYPES entry {t!r} in {folder!r}/BENCH_PARAMS.txt; "
+                f"add it to TFHE_TYPE_TO_BIT_WIDTH (known: {sorted(TFHE_TYPE_TO_BIT_WIDTH)})."
+            )
+
+    bgv_ddec_parallel_raw = raw.get("BGV_DDEC_PARALLEL", "")
+    bgv_ddec_parallel: List[int] = []
+    for token in bgv_ddec_parallel_raw.split():
+        try:
+            n = int(token)
+        except ValueError:
+            raise ValueError(
+                f"BGV_DDEC_PARALLEL in {folder!r}/BENCH_PARAMS.txt has non-integer "
+                f"entry {token!r}; expected a space-separated list of positive ints."
+            )
+        if n <= 0:
+            raise ValueError(
+                f"BGV_DDEC_PARALLEL in {folder!r}/BENCH_PARAMS.txt has non-positive "
+                f"entry {n}; expected positive ints."
+            )
+        bgv_ddec_parallel.append(n)
+
+    # Schedule-shaping booleans — every bench script writes these explicitly,
+    # so we refuse to guess.
+    has_prss_init = _required_bool(raw, "HAS_PRSS_INIT", folder)
+    has_dkg = _required_bool(raw, "HAS_DKG", folder)
+    has_crs = _required_bool(raw, "HAS_CRS", folder)
+    has_reshare = _required_bool(raw, "HAS_RESHARE", folder)
+
+    # Cross-field consistency: any run with DDEC modes must list which TFHE
+    # message types it sweeps; any run with HAS_CRS=1 must list the parameter
+    # sets the sweep covers (even single-CRS runs declare it as a one-entry
+    # list, so the parser's CRS row emission has a uniform shape).
+    if ddec_modes and not ctxt_types:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} has DDEC_MODES={ddec_modes_raw!r} "
+            f"but no CTXT_TYPES list."
+        )
+    if has_crs and not crs_params:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} has HAS_CRS=1 but no CRS_PARAMS "
+            f"list (single-CRS runs should write CRS_PARAMS=<the params>)."
+        )
+    if protocol == "bgv" and not bgv_ddec_parallel:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} has PROTOCOL=bgv but no "
+            f"BGV_DDEC_PARALLEL list (e.g. '1 2 4 8 16 32')."
+        )
 
     return BenchParams(
         experiment_name=raw.get("EXPERIMENT_NAME", os.path.basename(folder)),
@@ -162,9 +317,13 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
         percentage_offline=_maybe_int(raw.get("PERCENTAGE_OFFLINE", ""), 100),
         params=raw.get("PARAMS", ""),
         ddec_modes=ddec_modes,
-        has_prss_init=_truthy(raw.get("HAS_PRSS_INIT", ""), True),
-        has_crs=_truthy(raw.get("HAS_CRS", ""), has_crs_default),
-        has_reshare=_truthy(raw.get("HAS_RESHARE", ""), has_reshare_default),
+        ctxt_types=ctxt_types,
+        crs_params=crs_params,
+        bgv_ddec_parallel=bgv_ddec_parallel,
+        has_prss_init=has_prss_init,
+        has_dkg=has_dkg,
+        has_crs=has_crs,
+        has_reshare=has_reshare,
     )
 
 
@@ -185,20 +344,36 @@ def _mode_to_label_prefix(mode: str) -> str:
     return mode.upper().replace("-", "_")
 
 
+def _crs_label_for(params: str) -> str:
+    """Schedule label for a CRS_GEN line tied to a specific parameter set.
+
+    Used when CRS gen is swept over multiple parameter sets in one run
+    (standalone ``crs_reproducible.sh``); the single-CRS case keeps the
+    plain ``CRS_GEN`` label for backward compatibility.
+    """
+    return f"CRS_GEN_{params.upper().replace('-', '_')}"
+
+
 def _build_tfhe_labels(bp: BenchParams) -> List[str]:
     labels: List[str] = []
     if bp.has_prss_init:
         labels.extend(["PRSS_INIT_Z64", "PRSS_INIT_Z128"])
-    labels.extend(["DKG_PREPROC", "DKG"])
+    if bp.has_dkg:
+        labels.extend(["DKG_PREPROC", "DKG"])
     if bp.has_crs:
-        labels.append("CRS_GEN")
+        # One labeled CRS_GEN line per parameter set in the order the
+        # bench script swept them. Single-CRS runs (e.g. bench_nist's
+        # one-pass CRS) list a single entry. parse_bench_params already
+        # validated CRS_PARAMS is non-empty when has_crs.
+        for p in bp.crs_params:
+            labels.append(_crs_label_for(p))
     if bp.has_reshare:
         # Reshare emits two consecutive session-stats lines: the preprocessing
         # phase followed by the online phase.
         labels.extend(["RESHARE_PREPROC", "RESHARE"])
     for mode in bp.ddec_modes:
         prefix = _mode_to_label_prefix(mode)
-        for tfhe_type in TFHE_TYPES:
+        for tfhe_type in bp.ctxt_types:
             labels.append(f"{prefix}_{tfhe_type}_PREPROC")
             labels.append(f"{prefix}_{tfhe_type}_DDEC")
     return labels
@@ -208,8 +383,9 @@ def _build_bgv_labels(bp: BenchParams) -> List[str]:
     labels: List[str] = []
     if bp.has_prss_init:
         labels.extend(["PRSS_INIT_LEVEL_ONE", "PRSS_INIT_LEVEL_KSW"])
-    labels.extend(["DKG_PREPROC", "DKG"])
-    for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
+    if bp.has_dkg:
+        labels.extend(["DKG_PREPROC", "DKG"])
+    for parallel_n in bp.bgv_ddec_parallel:
         labels.append(f"DDEC_PARALLEL_{parallel_n}")
     return labels
 
@@ -376,33 +552,26 @@ def _select_party_files(
 ) -> List[str]:
     """Choose which party files participate in the cross-party average.
 
-    On malicious runs we expect one party's log to be short or malformed.
-    We rank by the number of well-formed metric lines and keep the top
-    ``num_parties - 1`` files. On honest runs we keep every file that has
-    the expected line count; mismatches are warned about and the run is
-    dropped by the caller.
+    On malicious runs party 1 (``session_stats_1.txt``) is always the
+    malicious party — all bench scripts configure the first party as the
+    adversary. We unconditionally drop that file and average over the
+    remaining ``num_parties - 1`` honest parties. On honest runs we keep
+    every file; mismatches are warned about and the run is dropped by
+    the caller.
     """
     party_files = sorted(glob.glob(os.path.join(folder, "session_stats_*.txt")))
     if not party_files:
         return []
 
     if bp.malicious and bp.num_parties > 1:
-        target = bp.num_parties - 1
-        if len(party_files) > target:
-            # Rank by metric-line count, keep the top ``target`` files.
-            ranked = sorted(
-                party_files,
-                key=lambda p: len(parse_session_stats_file(p)),
-                reverse=True,
-            )
-            kept = ranked[:target]
-            dropped = ranked[target:]
+        malicious_file = os.path.join(folder, "session_stats_1.txt")
+        if malicious_file in party_files:
+            party_files = [p for p in party_files if p != malicious_file]
             logger.warning(
                 "run=%s identified as malicious; dropping %s from averaging",
                 bp.experiment_name,
-                dropped,
+                malicious_file,
             )
-            party_files = kept
 
     return party_files
 
@@ -657,6 +826,21 @@ def _meta_cells(bp: BenchParams) -> List[object]:
     ]
 
 
+def _meta_cells_with_params(bp: BenchParams, override_params: str) -> List[object]:
+    """Like ``_meta_cells`` but with ``bp.params`` replaced by
+    ``override_params``. Used for CRS sweep rows where each row in the same
+    run carries its own param-set name in the ``params`` column.
+    """
+    return [
+        bp.experiment_name,
+        bp.session_type,
+        override_params,
+        bp.num_sessions,
+        bp.percentage_offline,
+        bp.num_ctxts,
+    ]
+
+
 CRS_HEADERS = [
     "malicious",
     "num_parties",
@@ -691,7 +875,8 @@ TWO_PHASE_HEADERS = [
 TDEC_HEADERS = [
     "malicious",
     "num_parties",
-    "num_ctxt",  # bit-width of the message — kept for historical reasons
+    "ptxt_type",  # message type name (bool, u4, u8, u16, u32, u64) — from BENCH_PARAMS.txt CTXT_TYPES
+    "num_ctxt",  # number of LWE ciphertexts (blocks) per message — depends on PARAMS
     "offline_avg_latency_ms",
     "offline_throughput_per_sec",
     "online_avg_latency_ms",
@@ -729,11 +914,17 @@ def _has_offline_phase(preproc: AggregatedOperation) -> bool:
     return preproc.avg_num_rounds != 0
 
 
-def _throughput_bits_per_sec(bit_width: int, per_ctxt_latency_ms: float) -> float:
-    """Throughput in bits/sec given per-ciphertext latency in ms and message bit width."""
-    if per_ctxt_latency_ms <= 0:
+def _throughput_lwe_per_sec(num_blocks: int, per_radix_latency_ms: float) -> float:
+    """LWE-blocks-per-second throughput.
+
+    The ``per_radix_latency_ms`` is the time for one full radix ciphertext
+    (covering all ``num_blocks`` LWE-block decryptions). Multiplying by
+    ``num_blocks`` converts to LWE-blocks-per-second; multiplying by 1000
+    converts ms to seconds.
+    """
+    if per_radix_latency_ms <= 0:
         return 0.0
-    return bit_width * 1000.0 / per_ctxt_latency_ms
+    return num_blocks * 1000.0 / per_radix_latency_ms
 
 
 def _two_phase_row(
@@ -747,17 +938,36 @@ def _two_phase_row(
     Memory cells are filled from ``mem_run`` when available and default to
     ``-1`` otherwise. Offline cells become ``-1`` when the preproc line has
     ``num_rounds == 0`` (means the run skipped real preprocessing).
+
+    DKG preprocessing is often run on only a subset of the offline material
+    (``percentage_offline < 100``) to keep wall-clock manageable. The session
+    stats then report the time/rounds/bytes for that subset, so we scale the
+    four offline metric cells by ``100 / percentage_offline`` to project to a
+    full offline phase. Rounds stays integer. Memory cells are NOT scaled —
+    peak allocator usage doesn't grow with the offline workload count.
+    Scaling only applies to ``DKG_PREPROC``; other preproc labels (Reshare,
+    DDEC preproc) already run their full offline phase.
     """
     offline_present = _has_offline_phase(preproc)
     offline_max_mem, offline_avg_mem = _peak_mem_kb_for(preproc.label, mem_run)
     online_max_mem, online_avg_mem = _peak_mem_kb_for(online.label, mem_run)
+
+    if preproc.label == "DKG_PREPROC" and bp.percentage_offline > 0:
+        offline_scale = 100.0 / bp.percentage_offline
+    else:
+        offline_scale = 1.0
+    offline_time = preproc.avg_time_active_ms * offline_scale
+    offline_rounds = int(round(preproc.avg_num_rounds * offline_scale))
+    offline_sent = preproc.avg_network_sent_B * offline_scale
+    offline_recv = preproc.avg_network_received_B * offline_scale
+
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        preproc.avg_time_active_ms if offline_present else -1,
-        preproc.avg_num_rounds if offline_present else -1,
-        preproc.avg_network_sent_B if offline_present else -1,
-        preproc.avg_network_received_B if offline_present else -1,
+        offline_time if offline_present else -1,
+        offline_rounds if offline_present else -1,
+        offline_sent if offline_present else -1,
+        offline_recv if offline_present else -1,
         offline_max_mem if offline_present else -1,
         offline_avg_mem if offline_present else -1,
         online.avg_time_active_ms,
@@ -771,36 +981,64 @@ def _two_phase_row(
 
 def _tdec_one_row(
     bp: BenchParams,
-    bit_width: int,
+    ptxt_type: str,
+    num_blocks: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
     mem_run: Optional[Run],
 ) -> List[object]:
     """Row for ``TFHE_TDecOne_*`` (NOISE_FLOOD).
 
-    Offline is the PREPROC line (``-1`` when its ``num_rounds`` is 0); online
-    is the sum of PREPROC + DDEC (latency, rounds, bytes summed; throughput
-    recomputed from the summed per-ctxt latency).
+    The online column depends on whether the PREPROC line did real work
+    (detected by ``num_rounds != 0``):
+
+      * **Offline phase present** (e.g. ``noise-flood-large``, where the
+        preprocessing has its own rounds): offline cells carry the PREPROC
+        line's metrics, online cells carry just the DDEC line's metrics —
+        the two phases are reported separately, same shape as TDecTwo.
+      * **No offline phase** (e.g. ``noise-flood-small`` where PREPROC has
+        ``num_rounds == 0``): offline cells are ``-1`` and online cells
+        carry ``PREPROC + DDEC`` (the residual PREPROC cost folds into the
+        online column because there's no separate phase to attribute it to).
+
+    ``num_blocks`` is the LWE ciphertext count for this message type under
+    the run's parameter set; it goes into the ``num_ctxt`` column and into
+    the throughput math (LWE blocks per second =
+    ``num_blocks * 1000 / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
-    online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
-    online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
-    online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
-    online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
     ddec_max_mem, _ = _peak_mem_kb_for(ddec.label, mem_run)
-    if offline_max_mem == -1 and ddec_max_mem == -1:
-        online_max_mem: float = -1
+
+    if offline_present:
+        # Two phases, reported separately.
+        online_latency_ms = ddec.avg_time_active_ms
+        online_rounds = ddec.avg_num_rounds
+        online_bytes_sent = ddec.avg_network_sent_B
+        online_bytes_received = ddec.avg_network_received_B
+        # Online phase's memory = DDEC's peak only (PREPROC ran separately).
+        online_max_mem: float = ddec_max_mem
     else:
-        online_max_mem = max(offline_max_mem, ddec_max_mem)
+        # PREPROC has no rounds (folded online); sum its residual cost in.
+        online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
+        online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
+        online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
+        online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
+        # Online phase's memory = peak across the folded PREPROC + DDEC.
+        if offline_max_mem == -1 and ddec_max_mem == -1:
+            online_max_mem = -1
+        else:
+            online_max_mem = max(offline_max_mem, ddec_max_mem)
+
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        bit_width,
+        ptxt_type,
+        num_blocks,
         preproc.avg_time_active_ms if offline_present else -1,
-        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        _throughput_lwe_per_sec(num_blocks, preproc.avg_time_active_ms) if offline_present else -1,
         online_latency_ms,
-        _throughput_bits_per_sec(bit_width, online_latency_ms),
+        _throughput_lwe_per_sec(num_blocks, online_latency_ms),
         preproc.avg_num_rounds if offline_present else -1,
         online_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
@@ -814,7 +1052,8 @@ def _tdec_one_row(
 
 def _tdec_two_row(
     bp: BenchParams,
-    bit_width: int,
+    ptxt_type: str,
+    num_blocks: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
     mem_run: Optional[Run],
@@ -822,7 +1061,10 @@ def _tdec_two_row(
     """Row for ``TFHE_TDecTwo_*`` (BIT_DEC).
 
     Offline is the PREPROC line (``-1`` when ``num_rounds`` is 0); online is
-    the DDEC line.
+    the DDEC line. ``num_blocks`` is the LWE ciphertext count for this message
+    type under the run's parameter set; it goes into the ``num_ctxt`` column
+    and into the throughput math (LWE blocks per second = ``num_blocks * 1000
+    / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
@@ -830,11 +1072,12 @@ def _tdec_two_row(
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        bit_width,
+        ptxt_type,
+        num_blocks,
         preproc.avg_time_active_ms if offline_present else -1,
-        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        _throughput_lwe_per_sec(num_blocks, preproc.avg_time_active_ms) if offline_present else -1,
         ddec.avg_time_active_ms,
-        _throughput_bits_per_sec(bit_width, ddec.avg_time_active_ms),
+        _throughput_lwe_per_sec(num_blocks, ddec.avg_time_active_ms),
         preproc.avg_num_rounds if offline_present else -1,
         ddec.avg_num_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
@@ -888,26 +1131,32 @@ def _emit_rows(
         mem_run = mem_index.get(_base_experiment_name(bp.experiment_name))
 
         if bp.protocol == "tfhe":
-            # CRS
+            # CRS — one row per entry in bp.crs_params (every CRS-producing
+            # run lists them, even bench_nist's single-CRS flow). Each row
+            # carries that entry's param name in the metadata trailer.
             if bp.has_crs:
-                crs_op = _find_operation(r.aggregates, "CRS_GEN")
-                if crs_op is not None:
-                    crs_max_mem, _ = _peak_mem_kb_for("CRS_GEN", mem_run)
-                    crs_rows.append([
-                        1 if bp.malicious else 0,
-                        bp.num_parties,
-                        crs_op.avg_time_active_ms,
-                        crs_op.avg_num_rounds,
-                        crs_op.avg_network_sent_B,
-                        crs_op.avg_network_received_B,
-                        crs_max_mem,
-                    ] + _meta_cells(bp))
+                for p in bp.crs_params:
+                    label = _crs_label_for(p)
+                    crs_op = _find_operation(r.aggregates, label)
+                    if crs_op is not None:
+                        crs_max_mem, _ = _peak_mem_kb_for(label, mem_run)
+                        crs_rows.append([
+                            1 if bp.malicious else 0,
+                            bp.num_parties,
+                            crs_op.avg_time_active_ms,
+                            crs_op.avg_num_rounds,
+                            crs_op.avg_network_sent_B,
+                            crs_op.avg_network_received_B,
+                            crs_max_mem,
+                        ] + _meta_cells_with_params(bp, p))
 
-            # KeyGen
-            preproc = _find_operation(r.aggregates, "DKG_PREPROC")
-            dkg = _find_operation(r.aggregates, "DKG")
-            if preproc is not None and dkg is not None:
-                keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
+            # KeyGen (only when the run actually did DKG; standalone CRS runs
+            # skip this).
+            if bp.has_dkg:
+                preproc = _find_operation(r.aggregates, "DKG_PREPROC")
+                dkg = _find_operation(r.aggregates, "DKG")
+                if preproc is not None and dkg is not None:
+                    keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
 
             # Reshare
             if bp.has_reshare:
@@ -920,36 +1169,50 @@ def _emit_rows(
             # one ddec mode pair (noise-flood-X + bit-dec-X) matching its
             # session type; we pick the matching uppercase prefix from
             # session_type and look up the per-tfhe-type PREPROC/DDEC pairs.
-            session_upper = bp.session_type.upper() if bp.session_type else ""
-            nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
-            bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
+            # Skipped entirely when the run has no DDEC modes (e.g. standalone
+            # CRS runs), which also lets PARAMS be empty without tripping the
+            # LWE-block lookup.
+            if bp.ddec_modes:
+                session_upper = bp.session_type.upper() if bp.session_type else ""
+                nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
+                bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
 
-            for tfhe_type in TFHE_TYPES:
-                bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
-                if bit_width not in TDEC_BIT_WIDTHS:
-                    continue
+                # Bits per LWE block is parameter-set dependent. Compute once
+                # per run; ``_num_blocks(bit_width, bits_per_block)`` converts
+                # the message bit-width into the LWE-block count that goes into
+                # both the ``num_ctxt`` column and the throughput math.
+                bits_per_block = _bits_per_block(bp.params)
 
-                if nf_prefix is not None:
-                    nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
-                    nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
-                    if nf_pp is not None and nf_dd is not None:
-                        tdec_one_rows.append(_tdec_one_row(bp, bit_width, nf_pp, nf_dd, mem_run))
+                for tfhe_type in bp.ctxt_types:
+                    bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
+                    num_blocks = _num_blocks(bit_width, bits_per_block)
 
-                if bd_prefix is not None:
-                    bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
-                    bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
-                    if bd_pp is not None and bd_dd is not None:
-                        tdec_two_rows.append(_tdec_two_row(bp, bit_width, bd_pp, bd_dd, mem_run))
+                    if nf_prefix is not None:
+                        nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
+                        nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
+                        if nf_pp is not None and nf_dd is not None:
+                            tdec_one_rows.append(
+                                _tdec_one_row(bp, tfhe_type, num_blocks, nf_pp, nf_dd, mem_run)
+                            )
+
+                    if bd_prefix is not None:
+                        bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
+                        bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
+                        if bd_pp is not None and bd_dd is not None:
+                            tdec_two_rows.append(
+                                _tdec_two_row(bp, tfhe_type, num_blocks, bd_pp, bd_dd, mem_run)
+                            )
 
         elif bp.protocol == "bgv":
-            # BGV KeyGen
-            preproc = _find_operation(r.aggregates, "DKG_PREPROC")
-            dkg = _find_operation(r.aggregates, "DKG")
-            if preproc is not None and dkg is not None:
-                bgv_keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
+            # BGV KeyGen (only when the run actually did DKG).
+            if bp.has_dkg:
+                preproc = _find_operation(r.aggregates, "DKG_PREPROC")
+                dkg = _find_operation(r.aggregates, "DKG")
+                if preproc is not None and dkg is not None:
+                    bgv_keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
 
-            # BGV TDec — one row per parallelism factor.
-            for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
+            # BGV TDec — one row per parallelism factor in bp.bgv_ddec_parallel.
+            for parallel_n in bp.bgv_ddec_parallel:
                 label = f"DDEC_PARALLEL_{parallel_n}"
                 ddec = _find_operation(r.aggregates, label)
                 if ddec is None:

@@ -16,6 +16,12 @@ NUM_PARTIES=4
 THRESHOLD=1
 CTXT_VALUE=12345
 
+# Parallelism factors swept by the BGV DDEC loop. Recorded in
+# BENCH_PARAMS.txt so the parser drives the expected schedule + one row
+# per factor in BGV_TDec_*.csv off this single source of truth. Edit this
+# array to extend / restrict the sweep.
+BGV_DDEC_PARALLEL_LIST=(1 2 4 8 16 32 64)
+
 # Per-run output folder. See the TFHE reproducible common script for the
 # rationale — same convention so the parser sees one shape across protocols.
 EXPERIMENT_NAME="$(basename "$1" .toml)"
@@ -37,14 +43,18 @@ cat > "$RUN_DEST/BENCH_PARAMS.txt" <<EOF
 === ${RUN_DATE} ===
 EXPERIMENT_NAME=${EXPERIMENT_NAME}
 PROTOCOL=bgv
+SESSION_TYPE=small
 NUM_PARTIES=${NUM_PARTIES}
 THRESHOLD=${THRESHOLD}
 MALICIOUS=0
 MEASURE_MEMORY=${MEASURE_MEMORY_FLAG}
+PARAMS=default
 NUM_CTXTS=${NUM_CTXTS}
 NUM_SESSIONS=${NUM_SESSIONS}
 PERCENTAGE_OFFLINE=${PERCENTAGE_OFFLINE}
+BGV_DDEC_PARALLEL=${BGV_DDEC_PARALLEL_LIST[*]}
 HAS_PRSS_INIT=1
+HAS_DKG=1
 HAS_CRS=0
 HAS_RESHARE=0
 EOF
@@ -74,7 +84,7 @@ SEED=$(( SEED + 1 ))
 ##KEY GEN
 echo "Generating keys"
 #Create preproc for dkg
-$STAIRWAYCTL_EXEC -c $1 preproc-key-gen --num-sessions 5 --sid $CURR_SID --seed $SEED
+$STAIRWAYCTL_EXEC -c $1 preproc-key-gen --num-sessions $NUM_SESSIONS --sid $CURR_SID --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 30
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
@@ -107,7 +117,7 @@ fi
 
 ###DDEC
 echo "Decrypting ctxt"
-for NUM_PARALLEL_SESSIONS in 1 2 4 8 16 32
+for NUM_PARALLEL_SESSIONS in "${BGV_DDEC_PARALLEL_LIST[@]}"
 do
     $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED --num-parallel-sessions $NUM_PARALLEL_SESSIONS --num-ctxt-per-session $NUM_CTXTS
     $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
