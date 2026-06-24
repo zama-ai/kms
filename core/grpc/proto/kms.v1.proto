@@ -632,6 +632,10 @@ message NewMpcContextRequest {
 // Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
   RequestId context_id = 1;
+  // The epochs associated with this context that must be destroyed together with it. The caller (kms-connector) is the
+  // source of truth for which epochs belong to the context and is responsible for supplying the complete set; the KMS
+  // destroys exactly the epochs listed here. May be empty when the context has no associated epochs.
+  repeated RequestId epoch_ids = 2;
 }
 
 message NewCustodianContextRequest {
