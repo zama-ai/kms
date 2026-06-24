@@ -121,6 +121,7 @@ jobs:
           summary: false
           failed-report: true
           pull-request: true
+          on-fail-only: true
           overwrite-comment: true
           comment-tag: 'test-reporter-${{ inputs.initial-workflow }}'
           collapse-large-reports: true
