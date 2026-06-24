@@ -78,6 +78,18 @@ impl Default for PollConfig {
     }
 }
 
+#[cfg(test)]
+impl PollConfig {
+    /// Poll immediately, then wait 500ms between retries for up to 3600 attempts (30 min total).
+    pub(crate) fn slow_tests_poll_config() -> Self {
+        Self {
+            initial_delay: Duration::ZERO,
+            retry_delay: Duration::from_millis(500),
+            max_retries: 3600,
+        }
+    }
+}
+
 /// Poll a gRPC result endpoint until it returns something other than
 /// `Code::Unavailable`, or until `config.max_retries` is exhausted.
 ///

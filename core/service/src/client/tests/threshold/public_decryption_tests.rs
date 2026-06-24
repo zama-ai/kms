@@ -413,13 +413,7 @@ pub async fn run_decryption_threshold_optionally_fail(
                     cur_client,
                     req_id_clone.clone(),
                     "public decryption result",
-                    PollConfig {
-                        initial_delay: tokio::time::Duration::from_millis(
-                            100 * bits * parallelism as u64,
-                        ),
-                        retry_delay: tokio::time::Duration::from_millis(4 * bits.clamp(100, 1000)),
-                        max_retries: 600,
-                    },
+                    PollConfig::default(),
                     |client, request| {
                         Box::pin(async move { client.get_public_decryption_result(request).await })
                     },

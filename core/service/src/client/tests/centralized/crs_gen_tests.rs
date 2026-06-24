@@ -226,7 +226,10 @@ pub(crate) async fn run_crs_centralized(
             .clone()
             .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
             .await
-            .map_err(|e| MetricedError::new("test", Some(*crs_req_id), e, tonic::Code::Internal))
+            .map_err(|e| {
+                let code = e.code();
+                MetricedError::new("test", Some(*crs_req_id), e, code)
+            })
     })
     .await
     .unwrap()

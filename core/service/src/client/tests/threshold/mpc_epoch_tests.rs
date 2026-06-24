@@ -559,11 +559,7 @@ async fn poll_new_epoch_result(
                 client,
                 reshare_request_id.into(),
                 "resharing result",
-                PollConfig {
-                    initial_delay: tokio::time::Duration::from_millis(500),
-                    retry_delay: tokio::time::Duration::from_millis(500),
-                    max_retries: max_iter,
-                },
+                PollConfig::default(),
                 |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
             )
             .await;

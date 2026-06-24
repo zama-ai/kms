@@ -72,11 +72,6 @@ use tokio::task::JoinSet;
 use tonic::transport::Channel;
 use tonic::{Response, Status};
 
-/// Polling budget (number of `get_key_gen_preproc_result` retries at
-/// [`PREPROC_POLL_SLEEP_MS`] each) for real, secure preprocessing.
-#[cfg(feature = "slow_tests")]
-const SECURE_PREPROC_POLL_MAX_ITER: usize = 6000;
-
 #[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {
@@ -991,9 +986,7 @@ pub(crate) async fn run_preproc(
 
     // the responses should be empty
     let extra_data = preproc_request.extra_data.clone();
-    let responses =
-        poll_key_gen_preproc_result(preproc_request, kms_clients, SECURE_PREPROC_POLL_MAX_ITER)
-            .await;
+    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients).await;
     assert!(responses.len() + expected_num_parties_crashed == amount_parties);
     for response in responses {
         internal_client
@@ -1007,7 +1000,6 @@ pub(crate) async fn run_preproc(
 async fn poll_key_gen_preproc_result(
     request: kms_grpc::kms::v1::KeyGenPreprocRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    max_iter: usize,
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
     for client in kms_clients.values() {
@@ -1021,11 +1013,7 @@ async fn poll_key_gen_preproc_result(
                 client,
                 req_id_clone.clone(),
                 "preprocessing result",
-                PollConfig {
-                    initial_delay: tokio::time::Duration::from_millis(500),
-                    retry_delay: tokio::time::Duration::from_millis(500),
-                    max_retries: max_iter,
-                },
+                PollConfig::slow_tests_poll_config(),
                 |client, request| {
                     Box::pin(async move { client.get_key_gen_preproc_result(request).await })
                 },
@@ -1573,7 +1561,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             client.clone(),
             preproc_id.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -1613,7 +1601,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             client,
             keygen_id.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await?;
@@ -1675,13 +1663,13 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
         res??;
     }
 
-    // Wait for preprocessing to complete on active parties
+    // Wait for preprocessing to complete on active parties.
     for client in env.all_clients_except(crashed_party) {
         retrying_poll(
             client,
             preproc_id.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -1718,7 +1706,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
             client,
             keygen_id.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await?;
@@ -2350,7 +2338,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
             client.clone(),
             preproc_id_3.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -2397,7 +2385,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
             client.clone(),
             key_id_3.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;
