@@ -695,30 +695,42 @@ where
 
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = prss_ctr + idx`.
-        let res = spawn_compute_bound(move ||{
-            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
-        let ctr = prss_ctr + idx as u128;
-        let mut res = Z::ZERO;
-        for (i, set) in prss_setup.sets.iter().enumerate() {
-            if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = prfs.get(i) {
-                    let psi = psi(&aes_prf.psi_aes, ctr)?;
-
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the precomputed f_a_points (indexed from zero)
-                    let f_a = set.f_a_points[&party_role];
-
-                    res += f_a * psi;
-                } else {
-                    return Err(anyhow_error_and_log(
-                        "PRFs not properly initialized!".to_string(),
-                    ));
-                }
-            } else {
-                return Err(anyhow_error_and_log(format!("Called prss.next() with party role {party_role} that is not in a precomputed set of parties!")));
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
             }
-        }
-        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
-    }).instrument(tracing::Span::current()).await??;
+
+            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
+            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                set_data.push((aes_prf, set.f_a_points[&party_role]));
+            }
+
+            (0..amount)
+                .into_par_iter()
+                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .map(|idx| {
+                    let ctr = prss_ctr + idx as u128;
+                    let mut res = Z::ZERO;
+                    for &(aes_prf, f_a) in &set_data {
+                        let psi = psi(&aes_prf.psi_aes, ctr)?;
+                        res += f_a * psi;
+                    }
+                    Ok(res)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
 
         self.counters.prss_ctr += amount as u128;
 
@@ -745,32 +757,52 @@ where
 
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = przs_ctr + idx`.
-        let res = spawn_compute_bound(move ||{
-            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
-        let ctr = przs_ctr + idx as u128;
-        let mut res = Z::ZERO;
-        for (i, set) in prss_setup.sets.iter().enumerate() {
-            if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = prfs.get(i) {
-                    for j in 1..=threshold {
-                        let chi = chi(&aes_prf.chi_aes, ctr, j)?;
-                        // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
-                        let f_a = set.f_a_points[&party_role];
-                        // power of alpha_i^j
-                        let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
-                        res += f_a * alpha_j * chi;
-                    }
-                } else {
-                    return Err(anyhow_error_and_log(
-                        "PRFs not properly initialized!".to_string(),
-                    ));
-                }
-            } else {
-                return Err(anyhow_error_and_log(format!("Called przs.next() with party role {party_role} that is not in a precomputed set of parties!")));
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
             }
-        }
-        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
-}).instrument(tracing::Span::current()).await??;
+
+            // Per-set invariants, computed once instead of per element: the products
+            // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
+            let mut set_data: Vec<(&PrfAes, Vec<Z>)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called przs.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                let f_a = set.f_a_points[&party_role];
+                let mut fa_alpha = Vec::with_capacity(threshold as usize);
+                for j in 1..=threshold {
+                    // power of alpha_i^j
+                    let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
+                    fa_alpha.push(f_a * alpha_j);
+                }
+                set_data.push((aes_prf, fa_alpha));
+            }
+
+            (0..amount)
+                .into_par_iter()
+                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .map(|idx| {
+                    let ctr = przs_ctr + idx as u128;
+                    let mut res = Z::ZERO;
+                    for (aes_prf, fa_alpha) in &set_data {
+                        for (j_idx, fa_alpha_j) in fa_alpha.iter().enumerate() {
+                            let chi = chi(&aes_prf.chi_aes, ctr, (j_idx + 1) as u8)?;
+                            res += *fa_alpha_j * chi;
+                        }
+                    }
+                    Ok(res)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
 
         self.counters.przs_ctr += amount as u128;
 
