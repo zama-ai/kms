@@ -645,8 +645,11 @@ where
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
                     let f_a = set.f_a_points[&party_role];
 
-                    //Leave it to the Ring's implementation to deal with negative values
-                    res += f_a * Z::from_i128(phi);
+                    // phi is a scalar, so embedding it via from_i128 and doing a full
+                    // extension-field multiply (Karatsuba + reduction) is wasteful: mul_by_u128
+                    // scales each coefficient directly. `phi as u128` reproduces from_i128's
+                    // `Wrapping(phi as u128)`, so negative values wrap identically.
+                    res += f_a.mul_by_u128(phi as u128);
                 } else {
                     return Err(anyhow_error_and_log(
                         "PRFs not properly initialized!".to_string(),
