@@ -26,6 +26,7 @@ use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::slice::ParallelSliceMut;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -628,41 +629,57 @@ where
         let prss_setup = self.prss_setup.clone();
         let mask_ctr = self.counters.mask_ctr;
 
-        // Each element is computed from an independent counter, so the batch is
-        // assembled in parallel. Element `idx` uses `ctr = mask_ctr + idx` (and
-        // `ctr + 1`).
-        let res = spawn_compute_bound(move || {
-        (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
-        let ctr = mask_ctr + idx as u128;
-        let mut res = Z::ZERO;
-        for (i, set) in prss_setup.sets.iter().enumerate() {
-            if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = prfs.get(i) {
-                    let phi0 = phi(&aes_prf.phi_aes, ctr , bd1)?;
-                    let phi1 = phi(&aes_prf.phi_aes, ctr + 1, bd1)?;
-                    let phi = phi0 + phi1;
+        // Element `idx` is the f_A-weighted sum over all sets of
+        // phi(mask_ctr+idx) + phi(mask_ctr+idx+1). Consecutive elements share a phi
+        // value (the phi1 of element idx is the phi0 of element idx+1), so a chunk of
+        // `len` elements needs only `len+1` AES-PRF evaluations per set instead of
+        // `2*len`. We parallelize over chunks and precompute each chunk's phi range
+        // once per set.
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            let chunk = (*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).max(1);
+            let mut res = vec![Z::ZERO; amount];
+            res.par_chunks_mut(chunk)
+                .enumerate()
+                .try_for_each(|(chunk_idx, out)| -> anyhow::Result<()> {
+                    let lo = chunk_idx * chunk;
+                    // reused across sets to avoid a per-set allocation
+                    let mut phi_vals: Vec<i128> = Vec::with_capacity(out.len() + 1);
+                    for (i, set) in prss_setup.sets.iter().enumerate() {
+                        if !set.parties.contains(&party_role) {
+                            return Err(anyhow_error_and_log(format!(
+                                "Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!"
+                            )));
+                        }
+                        let aes_prf = prfs.get(i).ok_or_else(|| {
+                            anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                        })?;
+                        // compute f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                        let f_a = set.f_a_points[&party_role];
 
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
-                    let f_a = set.f_a_points[&party_role];
+                        // phi for counters [mask_ctr+lo .. mask_ctr+lo+len], evaluated once per set
+                        phi_vals.clear();
+                        for k in 0..=out.len() {
+                            let ctr = mask_ctr + (lo + k) as u128;
+                            phi_vals.push(phi(&aes_prf.phi_aes, ctr, bd1)?);
+                        }
 
-                    // phi is a scalar, so embedding it via from_i128 and doing a full
-                    // extension-field multiply (Karatsuba + reduction) is wasteful: mul_by_u128
-                    // scales each coefficient directly. `phi as u128` reproduces from_i128's
-                    // `Wrapping(phi as u128)`, so negative values wrap identically.
-                    res += f_a.mul_by_u128(phi as u128);
-                } else {
-                    return Err(anyhow_error_and_log(
-                        "PRFs not properly initialized!".to_string(),
-                    ));
-                }
-            } else {
-                return Err(anyhow_error_and_log(format!("Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!")));
-            }
-        }
-            Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
-    }).instrument(tracing::Span::current()).await??;
+                        for (j, out_elem) in out.iter_mut().enumerate() {
+                            let phi = phi_vals[j] + phi_vals[j + 1];
+                            // phi is a scalar, so a coefficient-wise scale (mul_by_u128) replaces a
+                            // full extension multiply; `phi as u128` matches from_i128's wrapping.
+                            *out_elem += f_a.mul_by_u128(phi as u128);
+                        }
+                    }
+                    Ok(())
+                })?;
+            Ok(res)
+        })
+        .instrument(tracing::Span::current())
+        .await??;
 
-        // increase counter by two for each element generated, since we have two phi calls above
+        // Advance the counter by two per element, matching one mask_next() call per
+        // element (each consumes two phi counters). The batch reuses the shared phi
+        // values internally but still never reuses counters across calls.
         self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)
