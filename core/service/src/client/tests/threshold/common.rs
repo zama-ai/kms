@@ -229,7 +229,7 @@ pub async fn threshold_secure_key_gen(
             client.clone(),
             (*preproc_id).into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -260,14 +260,14 @@ pub async fn threshold_secure_key_gen(
         res??;
     }
 
-    // Wait for key generation to complete and collect responses
+    // Wait for key generation to complete and collect responses.
     let mut responses = Vec::new();
     for (party_id, client) in clients.iter() {
         let result = retrying_poll(
             client.clone(),
             (*keygen_id).into(),
             "keygen result",
-            PollConfig::default(),
+            PollConfig::slow_tests_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;

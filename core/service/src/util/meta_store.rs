@@ -425,8 +425,12 @@ impl<T> MetaStore<T> {
         store
     }
 
+    /// Check whether an entry exists in the store, that is if it is `Pending` or `Done` (but not `Deleted`).
     pub(crate) fn exists(&self, request_id: &RequestId) -> bool {
-        self.storage.contains_key(request_id)
+        // Return true if the entry exists and is not tombstoned (`Deleted`), false otherwise.
+        self.storage
+            .get(request_id)
+            .is_some_and(|e| e.status() != EntryStatus::Deleted)
     }
 
     /// Verify the invariant that storage.len() >= complete_queue.len() + deleted_set.len()
