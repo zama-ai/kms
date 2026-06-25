@@ -655,9 +655,6 @@ pub mod setup {
 /// with a short delay while the response is `Unavailable`, and returns the first
 /// terminal outcome (a success, or any non-`Unavailable` error), mirroring how
 /// real clients poll.
-///
-/// Panics if no terminal result appears within [`crate::consts::MAX_TRIES`]
-/// attempts, so a stuck background task fails the test instead of hanging forever.
 pub async fn poll_result_until_ready<T, Fut, F>(
     mut fetch: F,
 ) -> Result<tonic::Response<T>, crate::engine::utils::MetricedError>
@@ -667,17 +664,16 @@ where
             Output = Result<tonic::Response<T>, crate::engine::utils::MetricedError>,
         >,
 {
-    for _ in 0..crate::consts::MAX_TRIES {
+    /// ~60s at a 100ms cadence, matching the old blocking-get window.
+    const MAX_POLL_ATTEMPTS: usize = 600;
+    for _ in 0..MAX_POLL_ATTEMPTS {
         let res = fetch().await;
         if !matches!(&res, Err(e) if e.code() == tonic::Code::Unavailable) {
             return res;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    panic!(
-        "result endpoint never became ready after {} attempts",
-        crate::consts::MAX_TRIES
-    );
+    panic!("result endpoint never became ready after {MAX_POLL_ATTEMPTS} attempts");
 }
 
 // NOTE: this test stays out of the setup module

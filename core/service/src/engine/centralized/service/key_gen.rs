@@ -945,13 +945,16 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        // The first key generation consumed the preprocessing entry, so register
-        // it again to make sure the second request fails on the duplicate request
-        // ID and not on the missing preprocessing.
+        // The first key generation consumed (tombstoned) the original
+        // preprocessing entry, and a tombstoned ID cannot be reused. Register a
+        // *fresh* preprocessing entry and point the duplicate request at it, so
+        // the second request fails on the duplicate key request ID rather than on
+        // missing/consumed preprocessing.
+        let preproc_id_2 = derive_request_id("test_keygen_already_exists_preproc_id_2").unwrap();
         let preproc_req = KeyGenPreprocRequest {
             params: FheParameter::Test.into(),
             keyset_config: None,
-            request_id: Some(preproc_id.into()),
+            request_id: Some(preproc_id_2.into()),
             context_id: None,
             domain: Some(domain.clone()),
             epoch_id: None,
@@ -961,9 +964,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
+        let mut duplicate_request = request.clone();
+        duplicate_request.preproc_id = Some(preproc_id_2.into());
         let err = key_gen_impl(
             &kms,
-            tonic::Request::new(request.clone()),
+            tonic::Request::new(duplicate_request),
             #[cfg(feature = "insecure")]
             true,
         )

@@ -2521,7 +2521,10 @@ mod tests {
         // independently of whether the key generation itself succeeds.
         let mut deleted = false;
         for _ in 0..MAX_TRIES {
-            if !kg.preproc_buckets.read().await.exists(&insecure_prep_id) {
+            if matches!(
+                kg.preproc_buckets.read().await.retrieve(&insecure_prep_id),
+                Some(EntryState::Deleted)
+            ) {
                 deleted = true;
                 break;
             }

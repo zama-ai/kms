@@ -1126,10 +1126,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            prep.get_insecure_result(tonic::Request::new(req_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
+            crate::testing::utils::poll_result_until_ready(
+                || prep.get_insecure_result(tonic::Request::new(req_id.into()))
+            )
+            .await
+            .unwrap_err()
+            .code(),
             tonic::Code::FailedPrecondition
         );
     }
