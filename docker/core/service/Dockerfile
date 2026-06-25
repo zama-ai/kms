@@ -31,7 +31,6 @@ COPY core ./core
 COPY core-client ./core-client
 COPY observability ./observability
 COPY tools ./tools
-COPY vsocktun ./vsocktun
 
 RUN mkdir -p /app/kms/core/service/bin
 
@@ -55,7 +54,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     cargo build --locked --profile=${LTO_RELEASE} -p kms \
       --bin kms-server --bin kms-gen-tls-certs --bin kms-init \
       --bin kms-custodian --bin kms-gen-keys \
-      -p vsocktun --bin vsocktun
       -F insecure -F threshold-execution/testing && \
     if [ -n "${SCCACHE_BUCKET}" ]; then sccache --show-stats; fi && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
@@ -63,17 +61,10 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-init \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
        /app/kms/target/${LTO_RELEASE}/kms-custodian \
-       /app/kms/target/${LTO_RELEASE}/vsocktun \
      ./core/service/bin
 
 # Second stage: build raw IP proxies for enclave
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
-
-ARG YQ_VERSION=v4.53.2
-# Overridable arg to allow building for different architectures
-ARG TARGETARCH=amd64
-RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
-    chmod +x /usr/bin/yq
 
 ARG DNSPROXY_VERSION=v0.81.1
 # Overridable arg to allow building for different architectures
@@ -83,6 +74,13 @@ RUN wget -qO dnsproxy.tar.gz https://github.com/AdGuardTeam/dnsproxy/releases/do
     tar xzf dnsproxy.tar.gz && \
     cp linux-${TARGETARCH}/dnsproxy /usr/bin/dnsproxy && \
     chmod +x /usr/bin/dnsproxy
+
+ARG VSOCKTUN_VERSION=v0.1.0
+RUN git clone https://github.com/zama-ai/vsocktun && \
+    cd vsocktun && \
+    git checkout ${VSOCKTUN_VERSION} && \
+    cargo build --locked --release && \
+    cp target/release/vsocktun /usr/bin/vsocktun
 
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
@@ -95,6 +93,7 @@ RUN apk update && apk add --no-cache \
     libssl3 \
     socat \
     net-tools \
+    yq \
     iptables \
     libgcc \
     libstdc++
@@ -107,8 +106,8 @@ COPY ./core/service/config/ /app/kms/core/service/config
 ENV PATH="/app/kms/core/service/bin:$PATH"
 # Copy the binaries from the kms-core and enclave-utils stages
 COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
-COPY --from=enclave-utils /usr/bin/yq /usr/bin/yq
 COPY --from=enclave-utils /usr/bin/dnsproxy /usr/bin/dnsproxy
+COPY --from=enclave-utils /usr/bin/vsocktun /usr/bin/vsocktun
 
 # Copy parent-side and enclave-side init scripts
 COPY ./docker/core/service/start_parent_proxies.sh ./bin/

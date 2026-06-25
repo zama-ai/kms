@@ -19,7 +19,6 @@ members = [
     "observability",
     "tools/kms-health-check",
     "tools/generate-test-material",
-    "vsocktun",
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
@@ -116,9 +115,6 @@ aws-lc-rs = { version = "=1.17.0" } # AWS-LC cryptographic library - LOW RISK: O
 aws-nitro-enclaves-nsm-api = { version = "=0.5.1" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
 aws-sdk-kms = { version = "=1.111.0", default-features = false, features = ["default-https-client", "rt-tokio"] }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
 aws-sdk-s3 = { version = "=1.137.0", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-smithy-runtime = { version = "=1.11.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
-aws-smithy-runtime-api = { version = "=1.12.3" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
-aws-smithy-types = { version = "=1.5.0" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.9", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
@@ -139,7 +135,6 @@ crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-s
 dashmap = "=6.2.1"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
 escargot = "=0.5.15" # Interact with cargo without spawning external processes. MEDIUM RISK: single maintainer, 8M downloads, test-only dependency.
-etherparse = "=0.20.1"  # HIGH RISK: Individual maintainer (JulianSchmid), but focused, well-documented, and added as a test-only dependency so vsocktun can parse captured IPv4/UDP packets without bespoke header decoding
 futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
@@ -153,8 +148,6 @@ minijinja = { version = "=2.20.0", features = ["loader"] }  # Template engine - 
 ml-kem = { version = "=0.2.3", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
-netns-rs = "=0.2.0"  # Linux network namespaces - MEDIUM RISK: openanolis/dragonball + individual maintainer, small focused crate; used by vsocktun test code to create, enter, and clean up named netns without bespoke mount/setns lifecycle logic
-nix = { version = "=0.30.1", features = ["socket"] }  # Unix/POSIX bindings - LOW RISK: nix-rust project, widely used; used by vsocktun test code for standard Linux socket options
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
@@ -181,7 +174,6 @@ rayon = "=1.12.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
 redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
 reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 275M+ downloads
-route_manager = { version = "=0.2.11" }  # MEDIUM RISK: small focused networking crate already pulled transitively by tun-rs; used directly by vsocktun to install enclave routes without depending on extra runtime binaries in the enclave image
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.9", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
@@ -224,7 +216,6 @@ tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
 tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
 tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
-tun-rs = "=2.8.3"  # Cross-platform TUN/TAP library - MEDIUM RISK: tun-rs team, purpose-built and production-oriented; used by vsocktun to replace bespoke Linux TUN/offload configuration code
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.23.3", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
