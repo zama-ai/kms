@@ -65,40 +65,34 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     triples: Vec<Triple<Z>>,
     session: &Ses,
 ) -> anyhow::Result<Vec<Share<Z>>> {
-    let amount = x_vec.len();
-    if amount != y_vec.len() || amount != triples.len() {
+    let batch_size = x_vec.len();
+    if batch_size != y_vec.len() || batch_size != triples.len() {
         return Err(anyhow_error_and_log(format!(
             "Trying to multiply two lists of values using a list of triple, but they are not of equal length: a_vec: {:?}, b_vec: {:?}, triples: {:?}",
-            amount,
+            batch_size,
             y_vec.len(),
             triples.len()
         )));
     }
-    let x_vec_cloned = x_vec.clone();
-    let y_vec_cloned = y_vec.clone();
-    let (triples_a, (triples_b, triples_c)): (Vec<_>, (Vec<_>, Vec<_>)) = triples
-        .into_iter()
-        .map(|triple| (triple.a, (triple.b, triple.c)))
-        .unzip();
 
-    let (y_vec, triples_a,to_open) = spawn_compute_bound(move || {
-        let res: Vec<Z> = x_vec_cloned.iter().zip_eq(
-            y_vec_cloned
-                .iter()
-                .zip(triples_a.iter().zip_eq(triples_b.into_iter())),
-        ).fold(Vec::with_capacity(2*amount), |mut acc, (cur_x, (cur_y, (cur_a, cur_b)))| {
-            if cur_x.owner() != cur_y.owner()
-                || cur_a.owner() != cur_x.owner()
-                || cur_b.owner() != cur_x.owner()
-            {
-                tracing::warn!("Trying to multiply with shares of different owners. This will always result in an incorrect share");
-            }
-            acc.push((cur_x + cur_a).value()); // epsilon
-            acc.push((cur_b + cur_y).value()); // rho
-            acc
-    });
-    (y_vec_cloned,triples_a,res)
-    }).await?;
+    // Assumption: within a session owners match by construction: x_vec, y_vec and every triple share are owned by the
+    // local party and preprocessing uses the local role and `Share` +/-/* preserve the owner.
+
+    let (y_vec, triples, to_open) = spawn_compute_bound(move || {
+        let to_open: Vec<Z> = x_vec
+            .iter()
+            .zip_eq(y_vec.iter().zip_eq(triples.iter()))
+            .fold(
+                Vec::with_capacity(2 * batch_size),
+                |mut acc, (cur_x, (cur_y, triple))| {
+                    acc.push((cur_x + &triple.a).value()); // epsilon
+                    acc.push((triple.b + cur_y).value()); // rho
+                    acc
+                },
+            );
+        (y_vec, triples, to_open)
+    })
+    .await?;
 
     //NOTE: We execute the "linear equation loop" with epsilonrho directly
     // Open and separate the list of both epsilon and rho values into two lists of values.
@@ -110,23 +104,23 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
         None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
     };
 
-    if 2 * amount != epsilonrho.len() {
+    if 2 * batch_size != epsilonrho.len() {
         return Err(anyhow_error_and_log(format!(
             "Inconsistent share lengths: epsilonrho: {:?}. Expected {:?}",
             epsilonrho.len(),
-            2 * amount
+            2 * batch_size
         )));
     }
     // Compute the linear equation of shares to get the result
     spawn_compute_bound(move || {
-        let epsilon_rho_vec = epsilonrho.chunks(2);
+        // `epsilonrho.len` is checked above to be guaranteed even, so `chunks_exact` drops nothing.
+        let epsilon_rho_vec = epsilonrho.chunks_exact(2);
         y_vec
             .iter()
-            .zip_eq(epsilon_rho_vec.zip_eq(triples_a.into_iter().zip_eq(triples_c.into_iter())))
-            .map(|(curr_y, (curr_epsilonrho, (curr_a, curr_c)))| {
-                //curr_epsilonrho is a pair of shares, so we need to extract them
-                //first is epsilon then rho
-                curr_y * curr_epsilonrho[0] - curr_a * curr_epsilonrho[1] + curr_c
+            .zip_eq(epsilon_rho_vec.zip_eq(triples.iter()))
+            .map(|(curr_y, (curr_epsilonrho, triple))| {
+                //curr_epsilonrho is a pair of opened values, epsilon then rho
+                curr_y * curr_epsilonrho[0] - triple.a * curr_epsilonrho[1] + triple.c
             })
             .collect()
     })
