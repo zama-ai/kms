@@ -803,7 +803,7 @@ mod test_user_decryption {
         .await
         .unwrap();
         // LEGACY should have been using safe_deserialize
-        let signcrypted_msg: HybridKemCt = bc2wrap::deserialize_unsafe(
+        let signcrypted_msg: HybridKemCt = bc2wrap::deserialize_slice(
             &response
                 .into_inner()
                 .payload

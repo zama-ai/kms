@@ -137,7 +137,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     }
 
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
 
     let expected_addr =
         if let Some(expected_addr) = trusted_ctx.server_addresses.get(&(other_resp.party_id)) {

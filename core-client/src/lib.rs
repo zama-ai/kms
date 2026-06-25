@@ -782,6 +782,13 @@ pub struct DestroyMpcContextParameters {
     /// The context ID to use for the MPC context to destroy.
     #[clap(long)]
     pub context_id: ContextId,
+
+    /// Comma-separated epoch IDs associated with the context, to be destroyed alongside it
+    /// (e.g. `--epoch-ids=<a>,<b>,<c>`). Operators must obtain the full set out of band: the KMS
+    /// destroys exactly the epochs listed here, and any epoch left out keeps its secret shares on
+    /// disk (hazmat).
+    #[clap(long, value_delimiter = ',')]
+    pub epoch_ids: Vec<EpochId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -2624,8 +2631,11 @@ pub async fn execute_cmd(
                 ),
             )]
         }
-        CCCommand::DestroyMpcContext(DestroyMpcContextParameters { context_id }) => {
-            do_destroy_mpc_context(&core_endpoints_req, context_id).await?;
+        CCCommand::DestroyMpcContext(DestroyMpcContextParameters {
+            context_id,
+            epoch_ids,
+        }) => {
+            do_destroy_mpc_context(&core_endpoints_req, context_id, epoch_ids).await?;
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),

@@ -2,6 +2,7 @@ use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::HashMap,
+    mem,
     sync::{Arc, Mutex},
 };
 use tokio::{task::JoinSet, time::error::Elapsed};
@@ -140,25 +141,36 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         shares: Vec<Z>,
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>> {
-        //Might need to chunk the opening into multiple ones due to network limits
+        // Might need to chunk the opening into multiple ones due to network limits
         let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
-        let chunks: Vec<Vec<_>> = shares
-            .into_iter()
-            .chunks(chunk_size)
-            .into_iter()
-            .map(|chunk| chunk.collect())
-            .collect_vec();
-        let mut result = Vec::new();
-        for chunked_shares in chunks {
+        let mut shares = shares;
+        let mut result: Option<Vec<_>> = None;
+        while !shares.is_empty() {
+            // Typically we are well below the network limits, so we can avoid cloning for the common case by just taking (an O(1) swap).
+            let chunk = if shares.len() <= chunk_size {
+                mem::take(&mut shares)
+            } else {
+                let rest = shares.split_off(chunk_size);
+                mem::replace(&mut shares, rest)
+            };
+
             match self
-                .execute(session, OpeningKind::ToAll(chunked_shares), degree)
+                .execute(session, OpeningKind::ToAll(chunk), degree)
                 .await?
             {
-                Some(res) => result.extend(res),
+                Some(res) => match result.as_mut() {
+                    // If the openings fit into a single network send (the common case), then `result` is the initial
+                    // `None`, i.e. we're in the first iteration of the while-loop
+                    None => result = Some(res),
+                    // If we already used `result` to store data (i.e. we had to do multiple network sends), then we
+                    // have to `extend` (likely an allocation).
+                    Some(acc) => acc.extend(res),
+                },
                 None => return Ok(None),
             }
         }
-        Ok(Some(result))
+
+        Ok(Some(result.unwrap_or_default()))
     }
 
     /// Blanket implementation that relies on [`Self::execute`]
@@ -263,11 +275,6 @@ impl RobustOpen for SecureRobustOpen {
                 .map(|share| ShamirSharings::create(vec![Share::new(own_role, share)]))
                 .collect_vec();
 
-            let reconstruct_fn = match session.network().get_network_mode() {
-                NetworkMode::Sync => reconstruct_w_errors_sync,
-                NetworkMode::Async => reconstruct_w_errors_async,
-            };
-
             let num_parties = session.num_parties();
             let threshold = session.threshold();
             let num_bots = session.corrupt_roles().len();
@@ -278,7 +285,7 @@ impl RobustOpen for SecureRobustOpen {
                 sharings,
                 degree,
                 jobs,
-                reconstruct_fn,
+                session.network().get_network_mode(),
             )
             .await?
         } else {
@@ -385,11 +392,6 @@ impl RobustOpen for SecureRobustOpen {
                 ),
             };
 
-            let reconstruct_fn = match session.network().get_network_mode() {
-                NetworkMode::Sync => reconstruct_w_errors_sync,
-                NetworkMode::Async => reconstruct_w_errors_async,
-            };
-
             // Use my own share if ever I am in both sets
             let sharings = if let Some(my_shares) = my_shares {
                 let my_reconstruction_role = role_transform(&own_role, external_opening_info);
@@ -413,7 +415,7 @@ impl RobustOpen for SecureRobustOpen {
                 sharings,
                 degree,
                 jobs,
-                reconstruct_fn,
+                session.network().get_network_mode(),
             )
             .await;
         }
@@ -431,15 +433,20 @@ type ReconsFunc<Z> = fn(
     hints: &ReconstructionHints<Z>,
 ) -> anyhow::Result<Option<Z>>;
 
-/// Helper function of robust reconstructions which collect the shares and tries to reconstruct
+/// Helper function of robust reconstructions which collects the shares and tries to reconstruct.
 ///
 /// Takes as input:
 ///
-/// - the session_parameters
-/// - indexed_share as the indexed share of the local party
-/// - degree as the degree of the secret sharing
-/// - max_num_errors as the max. number of errors we allow (this is session.threshold)
-/// - a set of jobs to receive the shares from the other parties
+/// - `num_parties`: the total number of parties
+/// - `threshold`: the corruption threshold
+/// - `num_bots`: the number of parties already known to be non-answering/corrupt (excluded from
+///   reconstruction); grows as receive jobs time out or return malformed data. The error-correction
+///   capacity is derived from these as `max_errors = threshold - num_bots`.
+/// - `sharings`: the batch of sharings to reconstruct, each pre-seeded with this party's own share
+/// - `degree`: the degree of the secret sharing
+/// - `jobs`: the set of jobs receiving the other parties' shares
+/// - `network_mode`: selects the per-value reconstruction function (sync/async variant) and, from the
+///   same decision, the share-count bar at which that function can first succeed
 async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     num_parties: usize,
     threshold: u8,
@@ -447,15 +454,30 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     sharings: Vec<ShamirSharings<Z>>,
     degree: usize,
     mut jobs: JoinSet<Result<JobResultType<Role, Z>, Elapsed>>,
-    reconstruct_fn: ReconsFunc<Z>,
+    network_mode: NetworkMode,
 ) -> anyhow::Result<Option<Vec<Z>>> {
     // OPTIMIZATION: Collect shares concurrently with batched reconstruction
     // Instead of processing one party at a time, collect multiple responses
     // and attempt reconstruction less frequently to reduce O(n×m) complexity
 
+    // Pick the reconstruction function and the share-count needed for reconstruction. The sync mode needs degree + 2t.
+    // Same for the robust async mode. The weaker async branch however can reconstruct from as few as degree + t shares.
+    let t = threshold as usize;
+    let (reconstruct_fn, attempt_bound): (ReconsFunc<Z>, usize) = match network_mode {
+        NetworkMode::Sync => (reconstruct_w_errors_sync, degree + 2 * t),
+        NetworkMode::Async if degree + 3 * t < num_parties => {
+            (reconstruct_w_errors_async, degree + 2 * t)
+        }
+        NetworkMode::Async => (reconstruct_w_errors_async, degree + t),
+    };
+
     let mut collected_shares = 0;
-    let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
+    let mut has_attempted = false;
     let mut last_reconstruction_attempt = 0;
+    // Own shares already seeded into each sharing (0 if we hold none for this set, e.g. when we are
+    // not part of the sending set). All sharings in the batch are filled identically, so the first
+    // one's current length is representative.
+    let initial_shares = sharings.first().map_or(0, |s| s.shares.len());
     let sharings = Arc::new(Mutex::new(sharings));
 
     //Start awaiting on receive jobs to retrieve the shares
@@ -471,13 +493,10 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
         match opening_contribution {
             Ok((contributor, partial_openings)) => {
                 if let Ok(partial_openings) = partial_openings {
-                    fill_indexed_shares(
-                        &mut sharings
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
-                        partial_openings,
-                        contributor,
-                    );
+                    let mut locked = sharings
+                        .lock()
+                        .map_err(|_| anyhow_error_and_log("Poisoned lock"))?;
+                    fill_indexed_shares(&mut locked, partial_openings, contributor);
                     collected_shares += 1;
                 } else if let Err(e) = partial_openings {
                     tracing::warn!(
@@ -494,16 +513,21 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
             }
         }
 
-        // OPTIMIZATION: Attempt reconstruction strategically to reduce redundant attempts:
-        // 1. First time we reach minimum required shares (threshold + 1)
-        // 2. For each additional share to handle potential corrupt/invalid shares
-        // 3. When no more jobs are pending (final attempt)
-        let should_attempt_reconstruction = collected_shares >= required_shares
-            && (last_reconstruction_attempt == 0  // First time we have enough shares
-                || collected_shares > last_reconstruction_attempt  // Each additional share
+        // Don't spawn the batched par-iter until `reconstruct_w_errors` could actually succeed: it
+        // returns None for every value while `num_heard_from <= attempt_bound`. `num_heard_from`
+        // counts everyone we've heard from — own + received good shares + known bots — exactly as the
+        // reconstruct functions do, so the bar tracks them through party drops (num_bots grows as
+        // receive jobs time out / return garbage). Once over the bar, attempt the first time, again on
+        // each newly received share (an earlier attempt may not have corrected the errors then
+        // present), and a final time once no jobs remain.
+        let num_heard_from = initial_shares + collected_shares + num_bots;
+        let should_attempt_reconstruction = num_heard_from > attempt_bound
+            && (!has_attempted  // First time we're over the bar
+                || collected_shares > last_reconstruction_attempt  // Each newly received share
                 || jobs.is_empty()); // Final attempt when all responses collected
 
         if should_attempt_reconstruction {
+            has_attempted = true;
             last_reconstruction_attempt = collected_shares;
 
             // Spawn a task on rayon.
@@ -585,7 +609,7 @@ pub(crate) mod test {
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z128,
         sharing::shamir::{InputOp, ShamirSharings},
-        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Sample},
     };
     use threshold_types::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
@@ -734,6 +758,68 @@ pub(crate) mod test {
             10,
             NetworkMode::Async,
         ).await;
+    }
+
+    #[tokio::test]
+    async fn test_async_weak_reconstruction_starts_at_degree_plus_t() {
+        let num_parties = 13;
+        let threshold = 4_u8;
+        let degree = threshold as usize;
+
+        assert!(degree + 3 * (threshold as usize) >= num_parties);
+        assert!(degree + 2 * (threshold as usize) < num_parties);
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let secret = ResiduePolyF4Z128::sample(&mut rng);
+        let shares = ShamirSharings::<ResiduePolyF4Z128>::share(
+            &mut rng,
+            secret,
+            num_parties,
+            threshold as usize,
+        )
+        .unwrap()
+        .shares;
+
+        let own_role = Role::indexed_from_one(1);
+        let own_share = shares
+            .iter()
+            .find(|share| share.owner() == own_role)
+            .copied()
+            .unwrap();
+        let sharings = vec![ShamirSharings::create(vec![own_share])];
+
+        let mut jobs = tokio::task::JoinSet::new();
+
+        // Own share + 8 remote shares = 9 heard-from parties. This is enough for the weak
+        // async branch (`num_heard_from > degree + t`) but below the sync/strong-async bar.
+        for share in shares
+            .iter()
+            .filter(|share| (2..=9).contains(&share.owner().one_based()))
+        {
+            let contributor = share.owner();
+            let value = share.value();
+            jobs.spawn(async move {
+                Ok::<_, tokio::time::error::Elapsed>((
+                    contributor,
+                    Ok::<_, anyhow::Error>(vec![value]),
+                ))
+            });
+        }
+
+        let opened = super::try_reconstruct_from_shares(
+            num_parties,
+            threshold,
+            0,
+            sharings,
+            degree,
+            jobs,
+            NetworkMode::Async,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(opened, vec![secret]);
     }
 
     #[tokio::test]

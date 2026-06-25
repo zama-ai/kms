@@ -131,7 +131,7 @@ impl LegacySerialization for PublicSigKey {
     where
         Self: Sized,
     {
-        bc2wrap::deserialize_safe(bytes).map_err(|e| {
+        bc2wrap::deserialize_slice(bytes).map_err(|e| {
             CryptographyError::DeserializationError(format!("Could not deserialize key {}", e))
         })
     }
