@@ -6,31 +6,34 @@ The tool allows to make custodian keys using a BIP39 seed phrase and help operat
 
 - [Rust](https://www.rust-lang.org/tools/install). The version pinned in [rust-toolchain.toml](../../rust-toolchain.toml) is picked up automatically by `rustup` when building inside the repository.
 
-## Usage
-
-WARNING: This tool is only mean to be used in a highly secure setting. This means that a lot of steps must be taken to ensure security. More specifically an _air gapped_ system *must* be used.
-In particular, for all usages, the following steps must be taken:
-1. Construct a trusted live version of an operating system.
-2. Boot this live OS on a factory new machine.
-3. On a separate machine prepare necessary installation files: I.e. either Rust and the source code of this repository, or a trusted pre-compiled binary of the backup utility. 
-4. These must then be copied to a factory-fresh USB stick.
-
 ### Custodian setup
+WARNING: Setup is only meant to be used in a highly secure setting. This means that some steps must be taken to ensure security. More specifically an _air gapped_ system *must* be used, either with a freshly installed operating system, or via live booting using an USB stick. 
 
 Run the CLI tool with the `generate` command in order to generate keys for a custodian. More specifically:
 ```{bash}
 $ cargo run --bin kms-custodian generate --randomness <random string of chars> --custodian-role <1-index role> --custodian-name <name of the custodian as a string>
 ```
+(If using precompiled code, replace `cargo run --bin kms-custodian` with `./bin/kms-custodian`)
+
 Observe that the `randomness` supplied is used along with entropy of the current system to derive keys, and thus the command is *not* idempotent. 
 This will generate a fresh pair of keys for the given custodian and print the base64-encoded *public* setup message to stdout (prefixed with `The custodian setup message is: `). This setup message is what the operator collects (out-of-band) to run `new-custodian-context`.
 Furthermore, this will print a BIP39 seed phrase on the screen. This seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
 
-Observe the seed phrase and the private keys do not get logged or saved to disc; only printed _once_ to stdout. 
+Observe the seed phrase and the private keys do not get logged or saved to disc; instead the seed phrase is printed _once_ to stdout. Similarely for the base64-encoded *public* setup message.
 
 For example the command may look like this:
 ```{bash}
 $ cargo run --bin kms-custodian generate --randomness 123 --custodian-role 3 --custodian-name homer-3
 ```
+
+After execution, the following steps *must* be taken.
+1. The seed phrase must be written by hand on a paper. 
+2. The base64-encoded *public* setup message must be copied and shared with the operators. This is done by using a factory-fresh USB stick and copy-pasting the base64 encoding into a new .txt file that is stored on the USB stick. NOTE: Do **NOT** store the seed phrase on the USB stick! 
+3. A validation of the first two steps must be done. This is done by executing the [key verification](#key-verification) steps below.
+4. After these steps have been executed the base64 setup message must be shared with *all* the operators. This is done out-of-band e.g. via Slack and/or Signal. 
+5. The operators will then take over and setup a new custodian context. More specifically through their [setup](./core_client.md#setup-1) phase. 
+6. When the operators' setup has been confirmed to have been completed and successful, the laptop and paper with the seed phrase must be stored in a physically secure location.
+
 
 ### Key verification 
 
@@ -46,6 +49,12 @@ $ cargo run --bin kms-custodian verify --seed-phrase "stick essence exhaust bunk
 ```
 
 ### Recovery (decryption of backup)
+WARNING: Recovery is only meant to be done in a secure setting. This means that a some steps must be taken to ensure security. More specifically a laptop with a clean system *must* be used, i.e. either with a freshly installed operating system, or via live booting using an USB stick. Concretely this should ideally be the laptop used during [setup](#custodian-setup).
+
+Before being able to execute the recovery steps, ensure the following has been done:
+1. The operator that must be recovered has initialized the [custodian recovery phase](./core_client.md#recovery-1).
+2. The desire to execute custodian recovery has been confirmed out-of-band; e.g. over Slack and/or Signal. 
+3. A safe laptop and the seed phrase has been recovered. 
 
 Run the CLI tool with the `decrypt` command in order to decrypt a backup, and then reencrypt it under a supplied operator keyset. More specifically:
 ```bash
@@ -60,6 +69,8 @@ For example:
 ```{bash}
 $ cargo run --bin kms-custodian decrypt --seed-phrase "stick essence exhaust bunker meat orchard wolf timber tackle gesture video cheap" --randomness 123  --custodian-role 1 --recovery-request "<base64 recovery request>"
 ```
+
+WARNING: After recovery to a operator is is **crucial** to consider the previous backup burned and hence a new seed-phrase must be constructed for all backup custodians. That is, the [custodian setup](#custodian-setup) must be reexecuted once the backup recovery has been successfully completed on the operator. 
 
 ---
 
@@ -145,7 +156,6 @@ sequenceDiagram
     Note over Cus, Vault: Phase 6 — Recovery finalization
     Cli->>Op: CustodianRecoveryRequest
     Pub-->>Op: RecoveryValidationMaterial
-    Cli->>Op: RestoreFromBackup
     Vault-->>Op: BackupCiphertext (per PrivDataType, in a loop)
     end
 ```
@@ -175,7 +185,7 @@ This phase is invisible to custodians and to the core-client. It runs continuous
 
 The recovering operator boots against the same **public** storage and backup vault but with empty private storage. It calls `CustodianRecoveryInit`, generates an ephemeral encryption keypair `(sk^{e_i}, pk^{e_i})` pinned in process memory, reads `RecoveryValidationMaterial` from public storage at `ctx_id`, verifies the operator's signature on it, and returns a `RecoveryRequest` to the core-client (which writes it to disk for later distribution to the custodians).
 
-The recovering operator has the same long-term signing key as the original (recovered out of band from public storage), so `RecoveryValidationMaterial`'s signature still verifies.
+The recovering operator has the same long-term verification key as the original (recovered out of band from public storage), so `RecoveryValidationMaterial`'s signature still verifies.
 
 `sk^{e_i}` lives only in process memory; restarting the server discards it. `overwrite_ephemeral_key=true` lets a stuck recovery be re-initiated.
 

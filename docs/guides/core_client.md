@@ -226,14 +226,12 @@ More specifically the following steps must be done:
 
 WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
 
-The recoveyr procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
+The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
 However, the procedure is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
-
-Assuming the TOML file has been appropriately modified to allow custodian-based backup, as discussed above, then the steps needed are as follows:
-
 
 > **Note:** Custodian backup/recovery currently runs against a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config lists exactly one core; point an equivalent single-core config at each operator you wish to recover and repeat these steps.
 
+The steps needed are as follows:
 1. Initiate the recovery.
   After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt; this is done with the following command:
   ```{bash}
