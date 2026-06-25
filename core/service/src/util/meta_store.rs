@@ -1399,12 +1399,12 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-done-del").unwrap();
         insert_done_ok(&mut store, &id, "v");
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         let permit = store.lock_entry(&id).unwrap();
         let prev = store.delete(permit).unwrap();
         assert!(matches!(prev, EntryState::Done(Ok(_))));
         assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
-        assert_eq!(store.get_successful_completed_count(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
     }
 
     #[test]
@@ -1440,14 +1440,14 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("try-del-done").unwrap();
         insert_done_ok(&mut store, &id, "payload");
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         let prev = store.try_delete(&id).unwrap();
         match prev {
             EntryState::Done(Ok(arc)) => assert_eq!(arc.as_ref(), "payload"),
             other => panic!("expected Done(Ok), got {other}"),
         }
         assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
-        assert_eq!(store.get_successful_completed_count(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
     }
 
     #[test]
@@ -1458,10 +1458,10 @@ mod tests {
         let id = derive_request_id("reserve-fresh").unwrap();
         let permit = reserve(&mut store, &id).unwrap();
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
-        assert_eq!(store.get_successful_completed_count(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
         store.finalize(permit, "v1".to_string()).unwrap();
         assert_done_ok(&store, &id, &"v1".to_string());
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
     }
 
     #[test]
@@ -1476,7 +1476,7 @@ mod tests {
         assert_done_ok(&store, &id, &"v1".to_string());
         store.finalize(permit, "v2".to_string()).unwrap();
         assert_done_ok(&store, &id, &"v2".to_string());
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
     }
 
     #[test]
@@ -1535,7 +1535,7 @@ mod tests {
         let permit = reserve(&mut store, &id).unwrap();
         store.abort_reservation(permit);
         assert_done_ok(&store, &id, &"original".to_string());
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         // Released: it can be reserved again afterwards.
         assert!(reserve(&mut store, &id).is_ok());
     }
@@ -1552,7 +1552,7 @@ mod tests {
         let permit = reserve(&mut store, &id).unwrap(); // adopts the orphan
         store.finalize(permit, "adopted".to_string()).unwrap();
         assert_done_ok(&store, &id, &"adopted".to_string());
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
     }
 
     #[test]
@@ -1654,17 +1654,14 @@ mod tests {
 
         assert_eq!(store.get_capacity(), usize::MAX);
         assert_eq!(store.get_current_count(), 2);
-        assert_eq!(store.get_successful_completed_count(), 2);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 2);
         assert_eq!(store.get_processing_count(), 0);
         assert!(store.exists(&a));
         assert!(store.exists(&b));
         assert_done_ok(&store, &a, &"A".to_string());
         assert_done_ok(&store, &b, &"B".to_string());
 
-        let completed: Vec<_> = store
-            .get_successful_completed_request_ids()
-            .copied()
-            .collect();
+        let completed = store.get_successful_completed_request_ids();
         assert_eq!(completed.len(), 2);
         assert!(completed.contains(&a) && completed.contains(&b));
     }
@@ -1685,16 +1682,13 @@ mod tests {
         // Aggregate counts.
         assert_eq!(store.get_current_count(), 4);
         assert_eq!(store.get_total_count(), store.get_current_count());
-        assert_eq!(store.get_successful_completed_count(), 2);
+        // Only the `ok` entry is a success; the `err` entry is excluded.
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         assert_eq!(store.get_processing_count(), 2);
 
-        // Completed vs processing partition.
-        let completed: Vec<_> = store
-            .get_successful_completed_request_ids()
-            .copied()
-            .collect();
-        assert_eq!(completed.len(), 2);
-        assert!(completed.contains(&ok) && completed.contains(&err));
+        // Successful vs processing partition (failures are not successes).
+        let completed = store.get_successful_completed_request_ids();
+        assert_eq!(completed, vec![ok]);
 
         let processing = store.get_processing_request_ids();
         assert_eq!(processing.len(), 2);
@@ -1722,10 +1716,7 @@ mod tests {
         assert_eq!(store.get_deleted_count(), 1);
         assert!(store.get_deleted_request_ids().any(|id| *id == gone));
         // The deleted entry leaves the completed queue; the survivor stays.
-        let completed: Vec<_> = store
-            .get_successful_completed_request_ids()
-            .copied()
-            .collect();
+        let completed = store.get_successful_completed_request_ids();
         assert_eq!(completed, vec![kept]);
     }
 
@@ -1743,7 +1734,7 @@ mod tests {
         // storage holds pending + done + tombstone = 3, but only the single
         // Pending entry counts as processing (the tombstone is excluded).
         assert_eq!(store.get_current_count(), 3);
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         assert_eq!(store.get_processing_count(), 1);
 
         // Deleting the remaining Pending entry drops processing to zero, while the
@@ -1791,7 +1782,7 @@ mod tests {
         // target would already be present in the store.
         insert_done_ok(&mut ms, &id, "v0");
         let store = RwLock::new(ms);
-        assert_eq!(store.read().await.get_successful_completed_count(), 1);
+        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
 
         // Existing Done -> overwrite in place, keep the single completion slot.
         let payload = with_overwriting_claim(&store, &id, async || Ok(("v1".to_string(), 42u8)))
@@ -1799,7 +1790,7 @@ mod tests {
             .unwrap();
         assert_eq!(payload, 42);
         assert_done_ok(&*store.read().await, &id, &"v1".to_string());
-        assert_eq!(store.read().await.get_successful_completed_count(), 1);
+        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
 
         // A second overwrite still keeps the single completion slot.
         let payload = with_overwriting_claim(&store, &id, async || Ok(("v2".to_string(), 7u8)))
@@ -1807,7 +1798,7 @@ mod tests {
             .unwrap();
         assert_eq!(payload, 7);
         assert_done_ok(&*store.read().await, &id, &"v2".to_string());
-        assert_eq!(store.read().await.get_successful_completed_count(), 1);
+        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
     }
 
     #[tokio::test]
@@ -1839,7 +1830,7 @@ mod tests {
         assert!(res.is_err());
         // The pre-existing Done value is untouched by the aborted claim.
         assert_done_ok(&*store.read().await, &id, &"original".to_string());
-        assert_eq!(store.read().await.get_successful_completed_count(), 1);
+        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
     }
 
     #[tokio::test]
@@ -1872,7 +1863,7 @@ mod tests {
 
     /// An orphaned `Pending` entry (insert permit dropped without an outcome) is
     /// transitioned to `Done(Err)` and becomes a fully-fledged completed entry:
-    /// queued, counted, and listed as failed.
+    /// queued and listed as failed. Being a failure, it is not a success.
     #[test]
     fn fail_if_orphaned_fails_dropped_pending() {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
@@ -1881,7 +1872,7 @@ mod tests {
         drop(permit); // abandoned: claim strong_count drops back to 1
         assert!(store.fail_if_orphaned(&id, "abandoned".to_string()));
         assert_done_err(&store, &id, "abandoned");
-        assert_eq!(store.get_successful_completed_count(), 1);
+        assert!(store.get_successful_completed_request_ids().is_empty());
         assert_eq!(store.get_processing_count(), 0);
         assert_eq!(store.get_failed_request_ids(), vec![id]);
     }
@@ -2017,7 +2008,7 @@ mod tests {
             .expect("a failed entry should be retryable");
         // Back in flight: no longer completed/failed.
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
-        assert_eq!(store.get_successful_completed_count(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
         assert!(store.get_failed_request_ids().is_empty());
 
         // The retry can now complete.
