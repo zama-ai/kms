@@ -677,8 +677,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
     async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
         let guarded_meta_store = self.preproc_buckets.read().await;
-        let request_ids = guarded_meta_store.get_completed_request_ids();
-        Ok(request_ids.map(|id| id.to_string()).collect())
+        let request_ids = guarded_meta_store.get_successful_completed_request_ids();
+        Ok(request_ids.into_iter().map(|id| id.to_string()).collect())
     }
 }
 
