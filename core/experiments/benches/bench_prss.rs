@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use algebra::structure_traits::{Sample, Zero};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use threshold_execution::{
@@ -92,6 +93,33 @@ fn bench_prss(c: &mut Criterion) {
                         .unwrap();
                     black_box(shares);
                 });
+            });
+        });
+    }
+
+    // Decomposition probe: isolate the Karatsuba multiply that prss_next does per set
+    // (`f_a * psi`), WITHOUT the psi AES generation or allocation. For n=7,t=2 each party is in
+    // C(6,2) = 15 sets, and prss_next does one full ResiduePolyF8Z128 multiply per set per element.
+    // Comparing this to prss_next/<size> shows how much of prss_next is the (AES-independent)
+    // multiply vs the AES+allocation in psi.
+    let num_sets = 15usize;
+    let mut mul_rng = AesRng::seed_from_u64(7);
+    let f_as: Vec<ResiduePolyF8Z128> = (0..num_sets)
+        .map(|_| ResiduePolyF8Z128::sample(&mut mul_rng))
+        .collect();
+    let psis: Vec<ResiduePolyF8Z128> = (0..num_sets)
+        .map(|_| ResiduePolyF8Z128::sample(&mut mul_rng))
+        .collect();
+    for size in &sizes {
+        group.bench_function(BenchmarkId::new("prss_mul_only", size), |b| {
+            b.iter(|| {
+                let mut acc = ResiduePolyF8Z128::ZERO;
+                for _ in 0..*size {
+                    for s in 0..num_sets {
+                        acc += black_box(f_as[s]) * black_box(psis[s]);
+                    }
+                }
+                black_box(acc);
             });
         });
     }

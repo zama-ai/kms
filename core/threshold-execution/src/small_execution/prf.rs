@@ -157,6 +157,11 @@ pub(crate) fn phi_range(
     Ok(res)
 }
 
+/// Number of AES blocks encrypted per `encrypt_blocks` call in psi/chi. Sized to the AES-NI /
+/// ARMv8 parallel width so a single batch covers the common degree-8 case, while a stack buffer
+/// (rather than a per-call heap allocation) holds the blocks.
+const AES_BATCH: usize = 8;
+
 /// Function Psi that generates bounded randomness for PRSS.next()
 pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
     // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices below
@@ -168,28 +173,31 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
 
     //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
     let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-
-    // Build one block per coefficient chunk and encrypt them in a single pipelined call. Block
-    // (i, block_ctr) carries the dimension index i and the block counter in its MSBs; the outputs
-    // are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
+    let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
     let base = ctr.to_le_bytes();
-    let mut blocks = Vec::with_capacity(Z::EXTENSION_DEGREE * num_u128_base_ring);
-    for i in 0..Z::EXTENSION_DEGREE {
-        for block_ctr in 0..num_u128_base_ring {
+
+    // Block (i, block_ctr) carries the dimension index i and the block counter in its MSBs; the
+    // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
+    // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
+    // heap allocation for the block buffer.
+    let mut coefs = vec![0_u128; n_blocks];
+    #[allow(deprecated)]
+    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+    let mut start = 0;
+    while start < n_blocks {
+        let chunk = (n_blocks - start).min(AES_BATCH);
+        for (slot, block) in buf[..chunk].iter_mut().enumerate() {
+            let idx = start + slot;
             let mut ctr_bytes = base;
-            ctr_bytes[15] = block_ctr as u8; // v - the block counter
-            ctr_bytes[14] = i as u8; // i - the dimension index
-            #[allow(deprecated)]
-            let block = GenericArray::from(ctr_bytes);
-            blocks.push(block);
+            ctr_bytes[15] = (idx % num_u128_base_ring) as u8; // v - the block counter
+            ctr_bytes[14] = (idx / num_u128_base_ring) as u8; // i - the dimension index
+            block.copy_from_slice(&ctr_bytes);
         }
-    }
-
-    pa.aes.encrypt_blocks(&mut blocks);
-
-    let mut coefs = Vec::with_capacity(blocks.len());
-    for block in blocks {
-        coefs.push(u128::from_le_bytes(block.into()));
+        pa.aes.encrypt_blocks(&mut buf[..chunk]);
+        for (slot, block) in buf[..chunk].iter().enumerate() {
+            coefs[start + slot] = u128::from_le_bytes((*block).into());
+        }
+        start += chunk;
     }
 
     Ok(Z::from_u128_chunks(coefs))
@@ -207,29 +215,32 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
 
     //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
     let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-
-    // Build one block per coefficient chunk and encrypt them in a single pipelined call. Block
-    // (i, block_ctr) carries the dimension index i, threshold index j and block counter; the
-    // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
+    let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
     let base = ctr.to_le_bytes();
-    let mut blocks = Vec::with_capacity(Z::EXTENSION_DEGREE * num_u128_base_ring);
-    for i in 0..Z::EXTENSION_DEGREE {
-        for block_ctr in 0..num_u128_base_ring {
+
+    // Block (i, block_ctr) carries the dimension index i, threshold index j and block counter; the
+    // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
+    // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
+    // heap allocation for the block buffer.
+    let mut coefs = vec![0_u128; n_blocks];
+    #[allow(deprecated)]
+    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+    let mut start = 0;
+    while start < n_blocks {
+        let chunk = (n_blocks - start).min(AES_BATCH);
+        for (slot, block) in buf[..chunk].iter_mut().enumerate() {
+            let idx = start + slot;
             let mut ctr_bytes = base;
-            ctr_bytes[15] = block_ctr as u8; // v - the block counter
-            ctr_bytes[14] = i as u8; // i - the dimension index
+            ctr_bytes[15] = (idx % num_u128_base_ring) as u8; // v - the block counter
+            ctr_bytes[14] = (idx / num_u128_base_ring) as u8; // i - the dimension index
             ctr_bytes[13] = j; // j - the threshold index
-            #[allow(deprecated)]
-            let block = GenericArray::from(ctr_bytes);
-            blocks.push(block);
+            block.copy_from_slice(&ctr_bytes);
         }
-    }
-
-    pa.aes.encrypt_blocks(&mut blocks);
-
-    let mut coefs = Vec::with_capacity(blocks.len());
-    for block in blocks {
-        coefs.push(u128::from_le_bytes(block.into()));
+        pa.aes.encrypt_blocks(&mut buf[..chunk]);
+        for (slot, block) in buf[..chunk].iter().enumerate() {
+            coefs[start + slot] = u128::from_le_bytes((*block).into());
+        }
+        start += chunk;
     }
 
     Ok(Z::from_u128_chunks(coefs))
