@@ -229,7 +229,7 @@ pub async fn threshold_secure_key_gen(
             client.clone(),
             (*preproc_id).into(),
             "preprocessing result",
-            PollConfig::slow_tests_poll_config(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -267,7 +267,7 @@ pub async fn threshold_secure_key_gen(
             client.clone(),
             (*keygen_id).into(),
             "keygen result",
-            PollConfig::slow_tests_poll_config(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;
