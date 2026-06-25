@@ -82,7 +82,7 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
         .unzip();
 
     let (y_vec, triples_a,to_open) = spawn_compute_bound(move || {
-        let res = x_vec_cloned.iter().zip_eq(
+        let res: Vec<Z> = x_vec_cloned.iter().zip_eq(
             y_vec_cloned
                 .iter()
                 .zip(triples_a.iter().zip_eq(triples_b.into_iter())),
@@ -93,18 +93,22 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
             {
                 tracing::warn!("Trying to multiply with shares of different owners. This will always result in an incorrect share");
             }
-            let share_epsilon =  cur_x + cur_a;
-            let share_rho = cur_b + cur_y;
-            acc.push(share_epsilon);
-            acc.push(share_rho);
+            acc.push((cur_x + cur_a).value()); // epsilon
+            acc.push((cur_b + cur_y).value()); // rho
             acc
     });
     (y_vec_cloned,triples_a,res)
     }).await?;
 
     //NOTE: We execute the "linear equation loop" with epsilonrho directly
-    // Open and seperate the list of both epsilon and rho values into two lists of values
-    let epsilonrho = open_list(&to_open, session).await?;
+    // Open and separate the list of both epsilon and rho values into two lists of values.
+    let epsilonrho = match SecureRobustOpen::default()
+        .robust_open_list_to_all(session, to_open, session.threshold() as usize)
+        .await?
+    {
+        Some(opened) => opened,
+        None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
+    };
 
     if 2 * amount != epsilonrho.len() {
         return Err(anyhow_error_and_log(format!(

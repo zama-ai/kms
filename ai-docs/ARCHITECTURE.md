@@ -145,7 +145,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   refreshes secret shares as part of epoch creation; the outcome is fetched
   via `GetEpochResult`. When resharing legacy key material that has no
   dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and the
-  reshared private keyset keeps that field absent.
+  reshared private keyset keeps that field absent. `DestroyMpcContext` carries
+  the context's epoch IDs and erases their secret shares (cascading to the
+  existing per-epoch deletion) before forgetting the context, so retiring a
+  party set leaves no usable key shares behind; the kms-connector is the source
+  of truth for which epochs belong to a context.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 

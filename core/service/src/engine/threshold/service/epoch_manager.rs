@@ -1065,7 +1065,7 @@ impl<
     /// Destroys an epoch by removing all private data stored under the given epoch for each of the
     /// given data types, then removing the PRSS setup data, and finally removing the epoch from the
     /// session maker.
-    pub(crate) async fn destroy_epoch(
+    async fn destroy_epoch(
         epoch_id: &EpochId,
         priv_data_types: &[PrivDataType],
         priv_storage: &tokio::sync::Mutex<PrivS>,
@@ -1125,24 +1125,28 @@ impl<
             }
         }
 
-        // Delete the PRSS setup data (stored under epoch_id as a request_id)
-        if let Err(e) = delete_at_request_id(
-            &mut (*priv_storage_guard),
-            &(*epoch_id).into(),
-            &PrivDataType::PrssSetupCombined.to_string(),
-        )
-        .await
+        // Delete the PRSS setup (stored under epoch_id as a request_id) only once every key/CRS
+        // deletion above has succeeded. The PRSS is what resurrects the epoch after a restart —
+        // the session maker is rebuilt from PRSS storage on startup — so it doubles as the durable
+        // retry marker. Deleting it while key/CRS shares remain would let a restarted node skip the
+        // epoch (its PRSS, hence the epoch itself, is gone) and strand those shares forever.
+        // Keeping PRSS for last guarantees a restarted node still sees the epoch and can finish the
+        // deletion.
+        if first_error.is_none()
+            && let Err(e) = delete_at_request_id(
+                &mut (*priv_storage_guard),
+                &(*epoch_id).into(),
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
         {
             tracing::error!("Error deleting PrssSetupCombined epoch ID {epoch_id}: {e:?}");
-            if first_error.is_none() {
-                first_error = Some(e);
-            }
+            first_error = Some(e);
         }
 
-        // Remove the epoch from the session maker regardless of deletion errors
-        session_maker.remove_epoch(epoch_id).await;
-
         if let Some(e) = first_error {
+            // If there was a problem, stop and signal error here so that the operation can be retried. We must never
+            // end up in a situation where the epoch is gone, but data lingers on disk.
             return Err(MetricedError::new(
                 OP_DESTROY_EPOCH,
                 Some((*epoch_id).into()),
@@ -1151,8 +1155,39 @@ impl<
             ));
         }
 
+        // Only forget the epoch once every piece of its private data has been deleted.
+        session_maker.remove_epoch(epoch_id).await;
+
         tracing::info!("Epoch {} destroyed successfully", epoch_id);
         Ok(Response::new(Empty {}))
+    }
+
+    /// Fully erase a single epoch: delete its on-disk private key shares, CRS and PRSS setup, then drop the in-memory
+    /// decompressed-key cache for that epoch.
+    ///
+    /// [`Self::destroy_epoch`] only touches storage, so the cache must be cleared here as well or the decompressed keys
+    /// stay resident until restart. The cache is purged regardless of the deletion outcome.
+    async fn destroy_epoch_and_purge_cache(
+        &self,
+        epoch_id: &EpochId,
+    ) -> Result<Response<Empty>, MetricedError> {
+        let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
+
+        // NOTE: destroy_epoch will also destroy PRSS data
+        let res = Self::destroy_epoch(
+            epoch_id,
+            &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
+            &priv_storage,
+            &self.session_maker,
+        )
+        .await;
+
+        let removed = self.crypto_storage.purge_epoch_from_cache(epoch_id).await;
+        tracing::info!(
+            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
+        );
+
+        res
     }
 
     async fn initiate_resharing_and_crs_resign(
@@ -1386,26 +1421,33 @@ impl<
                 |e| MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument),
             )?;
 
-        let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
+        self.destroy_epoch_and_purge_cache(&epoch_id).await
+    }
 
-        let res = Self::destroy_epoch(
-            &epoch_id,
-            &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
-            &priv_storage,
-            &self.session_maker,
-        )
-        .await;
+    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
+        let mut first_error: Option<MetricedError> = None;
+        for epoch_id in epoch_ids {
+            if !self.session_maker.epoch_exists(epoch_id).await {
+                tracing::info!(
+                    "Epoch {epoch_id} not present during context destruction; already destroyed, skipping"
+                );
+                continue;
+            }
 
-        // `destroy_epoch` above removes only the on-disk material, so the cached
-        // decompressed keys must be dropped here separately or they stay resident
-        // until restart. Safe even if destruction partially failed: the epoch is
-        // already gone from the session maker, so nothing can reach these entries.
-        let removed = self.crypto_storage.purge_epoch_from_cache(&epoch_id).await;
-        tracing::info!(
-            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
-        );
+            // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
+            // caller learns that some shares may remain and can retry. Later failures are logged via their own
+            // `MetricedError` drop handling.
+            if let Err(e) = self.destroy_epoch_and_purge_cache(epoch_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(e);
+            }
+        }
 
-        res
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     async fn get_epoch_result(
@@ -2251,5 +2293,101 @@ pub(crate) mod tests {
         .unwrap_err();
 
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_destroy_mpc_epochs() {
+        use crate::vault::storage::{
+            StorageReader, StorageReaderExt, store_versioned_at_request_and_epoch_id,
+            tests::TestType,
+        };
+
+        let mut rng = AesRng::seed_from_u64(7);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_ids = [EpochId::new_random(&mut rng), EpochId::new_random(&mut rng)];
+        // Cover both epoch-scoped private data types the cascade erases.
+        let data_types = [PrivDataType::FheKeyInfo, PrivDataType::CrsInfo];
+        let data_id = derive_request_id("cascade_test_data").unwrap();
+        let prss_type = PrivDataType::PrssSetupCombined.to_string();
+
+        // Seed two epochs, each with PRSS data plus a key share and a CRS entry.
+        for epoch_id in &epoch_ids {
+            let prss = PRSSSetupCombined {
+                prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
+                prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                num_parties: 4,
+                threshold: 1,
+            };
+            epoch_manager
+                .session_maker
+                .add_epoch(*epoch_id, prss.clone())
+                .await;
+
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let mut priv_storage = private_storage.lock().await;
+            for data_type in &data_types {
+                store_versioned_at_request_and_epoch_id(
+                    &mut (*priv_storage),
+                    &data_id,
+                    epoch_id,
+                    &TestType { i: 42 },
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+            store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &(*epoch_id).into(),
+                &prss,
+                &prss_type,
+            )
+            .await
+            .unwrap();
+        }
+
+        for epoch_id in &epoch_ids {
+            assert!(epoch_manager.session_maker.epoch_exists(epoch_id).await);
+        }
+
+        // Destroy both epochs plus one that was never created: the missing epoch must be skipped
+        // (idempotent) while the call still succeeds.
+        let nonexistent = EpochId::new_random(&mut rng);
+        epoch_manager
+            .destroy_mpc_epochs(&[epoch_ids[0], epoch_ids[1], nonexistent])
+            .await
+            .unwrap();
+
+        // Each epoch is gone from the session maker and all of its private data — key shares, CRS,
+        // and PRSS — has been erased from storage.
+        for epoch_id in &epoch_ids {
+            assert!(!epoch_manager.session_maker.epoch_exists(epoch_id).await);
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let priv_storage = private_storage.lock().await;
+            for data_type in &data_types {
+                let ids = priv_storage
+                    .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
+                    .await
+                    .unwrap();
+                assert!(
+                    ids.is_empty(),
+                    "{data_type} data should be gone for {epoch_id}"
+                );
+            }
+            assert!(
+                !priv_storage
+                    .data_exists(&(*epoch_id).into(), &prss_type)
+                    .await
+                    .unwrap(),
+                "PRSS setup should be gone for {epoch_id}"
+            );
+        }
+
+        // Re-running the same destruction is a no-op and still succeeds (idempotent retry).
+        epoch_manager
+            .destroy_mpc_epochs(&[epoch_ids[0], epoch_ids[1], nonexistent])
+            .await
+            .unwrap();
     }
 }
