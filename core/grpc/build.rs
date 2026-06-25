@@ -13,6 +13,7 @@ fn default_builder() -> Builder {
         .type_attribute("ExternalDecryptionResult", DERIVES)
         .type_attribute("UserDecryptionRequest", DERIVES)
         .type_attribute("UserDecryptionRequest.client_identity", DERIVES)
+        .field_attribute("UserDecryptionRequest.client_identity", "#[wasm_bindgen(skip)]")
         .type_attribute("UserDecryptionResponse", DERIVES)
         .type_attribute("UserDecryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
