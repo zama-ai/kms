@@ -662,9 +662,13 @@ where
 
                         for (j, out_elem) in out.iter_mut().enumerate() {
                             let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
-                            // phi is a scalar, so a coefficient-wise scale (mul_by_u128) replaces a
-                            // full extension multiply; `phi as u128` matches from_i128's wrapping.
-                            *out_elem += f_a.mul_by_u128(phi as u128);
+                            // mul_by_i128 scales by the signed scalar via from_i128, so it is a
+                            // cheap coefficient scale for ResiduePoly yet still correct for base
+                            // rings whose modulus does not divide 2^128 (e.g. the BGV prime
+                            // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
+                            // negative phi on such rings (the wrong large mask would wrap mod q and
+                            // corrupt the decrypted plaintext).
+                            *out_elem += f_a.mul_by_i128(phi);
                         }
                     }
                     Ok(())
