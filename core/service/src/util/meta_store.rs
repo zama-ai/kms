@@ -1782,7 +1782,14 @@ mod tests {
         // target would already be present in the store.
         insert_done_ok(&mut ms, &id, "v0");
         let store = RwLock::new(ms);
-        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(
+            store
+                .read()
+                .await
+                .get_successful_completed_request_ids()
+                .len(),
+            1
+        );
 
         // Existing Done -> overwrite in place, keep the single completion slot.
         let payload = with_overwriting_claim(&store, &id, async || Ok(("v1".to_string(), 42u8)))
@@ -1790,7 +1797,14 @@ mod tests {
             .unwrap();
         assert_eq!(payload, 42);
         assert_done_ok(&*store.read().await, &id, &"v1".to_string());
-        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(
+            store
+                .read()
+                .await
+                .get_successful_completed_request_ids()
+                .len(),
+            1
+        );
 
         // A second overwrite still keeps the single completion slot.
         let payload = with_overwriting_claim(&store, &id, async || Ok(("v2".to_string(), 7u8)))
@@ -1798,7 +1812,14 @@ mod tests {
             .unwrap();
         assert_eq!(payload, 7);
         assert_done_ok(&*store.read().await, &id, &"v2".to_string());
-        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(
+            store
+                .read()
+                .await
+                .get_successful_completed_request_ids()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -1830,7 +1851,14 @@ mod tests {
         assert!(res.is_err());
         // The pre-existing Done value is untouched by the aborted claim.
         assert_done_ok(&*store.read().await, &id, &"original".to_string());
-        assert_eq!(store.read().await.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(
+            store
+                .read()
+                .await
+                .get_successful_completed_request_ids()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
