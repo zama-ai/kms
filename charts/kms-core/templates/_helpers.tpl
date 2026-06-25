@@ -134,7 +134,15 @@ args:
     TUN_IF={{ .networkTunnel.interfaceName | quote }}
     TUN_ADDR={{ .networkTunnel.parentAddress | quote }}
     TUN_HOST="${TUN_ADDR%/*}"
-    ENCLAVE_TUN_IP={{ .networkTunnel.enclaveAddress | quote }}
+    ENCLAVE_TUN_ADDR={{ .networkTunnel.enclaveAddress | quote }}
+    case "$ENCLAVE_TUN_ADDR" in
+      */*) ;;
+      *)
+        echo "enclave-network-tunnel: enclave tunnel address missing CIDR prefix: $ENCLAVE_TUN_ADDR" >&2
+        exit 1
+        ;;
+    esac
+    ENCLAVE_TUN_IP="${ENCLAVE_TUN_ADDR%/*}"
     TUN_SUBNET={{ .networkTunnel.subnet | quote }}
     VSOCK_PORT=2100
     QUEUE_COUNT={{ .queueCount | quote }}
@@ -185,7 +193,7 @@ args:
     vsocktun parent \
       --tun-name "$TUN_IF" \
       --tun-address "$TUN_ADDR" \
-      --enclave-address "$ENCLAVE_TUN_IP" \
+      --enclave-address "$ENCLAVE_TUN_ADDR" \
       --vsock-port "$VSOCK_PORT" \
       --queues "$QUEUE_COUNT" \
       --tokio-worker-threads "$TOKIO_WORKER_THREADS" &

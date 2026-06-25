@@ -125,10 +125,6 @@ kmsCore:
     memoryGiB: 96
     networkTunnel:
       enabled: true
-      # interfaceName is local to the parent-side network namespace, so it does
-      # not need to match the enclave-side TUN_IF constant. The address values
-      # are served to the enclave by the parent-side vsocktun bootstrap over the
-      # fixed tunnel VSOCK port used by the deployment scripts.
       # If unset, queueCount defaults to a heuristic based on the threshold
       # party topology: 8 queues minimum, or the next power of two above the
       # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
@@ -136,11 +132,17 @@ kmsCore:
       # If unset, tokioWorkerThreads defaults to a smaller scheduler pool than
       # queueCount: 4 workers for up to 16 queues, otherwise 8 workers.
       tokioWorkerThreads:
+      # interfaceName is local to the parent-side network namespace, so it does
+      # not need to match the enclave-side TUN_IF constant. The address values
+      # are served to the enclave by the parent-side vsocktun bootstrap over the
+      # fixed tunnel VSOCK port used by the deployment scripts.
       interfaceName: vsocktun
       subnet: 10.118.0.0/24
       parentAddress: 10.118.0.1/24
       # Served to the enclave by parent-side vsocktun during bootstrap.
-      enclaveAddress: 10.118.0.2
+      # This must include the CIDR prefix expected by `vsocktun --enclave-address`.
+      enclaveAddress: 10.118.0.2/24
+      # Parent-side resource limits
       resources:
         requests:
           memory: 256Mi

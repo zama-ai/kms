@@ -8,7 +8,7 @@
 NETWORK_TUNNEL_PORT=2100
 
 if [ "$#" -ne 9 ]; then
-    echo "usage: start_parent_proxies.sh ENCLAVE_LOG_PORT ENCLAVE_CONFIG_PORT KMS_SERVER_CONFIG_FILE WEB_IDENTITY_TOKEN_FILE KMS_SERVER_TUN_IF KMS_SERVER_TUN_ADDR ENCLAVE_TUN_IP TUN_QUEUE_COUNT TUN_TOKIO_WORKER_THREADS"
+    echo "usage: start_parent_proxies.sh ENCLAVE_LOG_PORT ENCLAVE_CONFIG_PORT KMS_SERVER_CONFIG_FILE WEB_IDENTITY_TOKEN_FILE KMS_SERVER_TUN_IF KMS_SERVER_TUN_ADDR ENCLAVE_TUN_ADDR TUN_QUEUE_COUNT TUN_TOKIO_WORKER_THREADS"
     exit 1
 fi
 
@@ -18,7 +18,7 @@ KMS_SERVER_CONFIG_FILE="$3"
 WEB_IDENTITY_TOKEN_FILE="$4"
 KMS_SERVER_TUN_IF="$5"
 KMS_SERVER_TUN_ADDR="$6"
-ENCLAVE_TUN_IP="$7"
+ENCLAVE_TUN_ADDR="$7"
 TUN_QUEUE_COUNT="$8"
 TUN_TOKIO_WORKER_THREADS="$9"
 UPSTREAM_DNS=""
@@ -61,14 +61,12 @@ if [ "${KMS_SERVER_TUN_ADDR%/*}" = "$KMS_SERVER_TUN_ADDR" ]; then
     exit 1
 fi
 
-case "$ENCLAVE_TUN_IP" in
-    */*)
-        echo "start_proxies: enclave tunnel address must not contain CIDR prefix: $ENCLAVE_TUN_IP"
-        exit 1
-        ;;
-esac
+if [ "${ENCLAVE_TUN_ADDR%/*}" = "$ENCLAVE_TUN_ADDR" ]; then
+    echo "start_proxies: enclave tunnel address missing CIDR prefix: $ENCLAVE_TUN_ADDR"
+    exit 1
+fi
 
-ENCLAVE_TUN_ADDR="${ENCLAVE_TUN_IP}/${KMS_SERVER_TUN_ADDR#*/}"
+ENCLAVE_TUN_IP="${ENCLAVE_TUN_ADDR%/*}"
 KMS_SERVER_TUN_IP="${KMS_SERVER_TUN_ADDR%/*}"
 
 add_ingress_dnat() {
@@ -100,7 +98,7 @@ cleanup() {
     fi
     sudo iptables -D FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || true
     sudo iptables -D FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    kill $(jobs -p) 2>/dev/null || true
+    kill "$(jobs -p)" 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM
@@ -122,7 +120,7 @@ echo "start_proxies: starting enclave network tunnel interface"
 sudo "$VSOCKTUN_BIN" parent \
     --tun-name "$KMS_SERVER_TUN_IF" \
     --tun-address "$KMS_SERVER_TUN_ADDR" \
-    --enclave-address "$ENCLAVE_TUN_IP" \
+    --enclave-address "$ENCLAVE_TUN_ADDR" \
     --vsock-port "$NETWORK_TUNNEL_PORT" \
     --queues "$TUN_QUEUE_COUNT" \
     --tokio-worker-threads "$TUN_TOKIO_WORKER_THREADS" &
@@ -145,7 +143,8 @@ if [ -z "$UPSTREAM_DNS" ]; then
     exit 1
 fi
 
-set -- $(ip route get 1.1.1.1)
+# find out through which network interface egress traffic is routed
+set -- "$(ip route get 1.1.1.1)"
 while [ "$#" -gt 0 ]; do
     case "$1" in
         dev)
@@ -167,6 +166,7 @@ if [ -z "$PARENT_IF" ] || [ -z "$PARENT_IP" ]; then
     exit 1
 fi
 
+# enable SNAT for egress from enclave
 sudo iptables -t nat -C POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE 2>/dev/null || \
     sudo iptables -t nat -A POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE
 sudo iptables -C FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || \

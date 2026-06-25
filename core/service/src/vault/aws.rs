@@ -13,7 +13,7 @@ pub async fn build_aws_sdk_config(
     aws_sts_endpoint: Option<Url>,
 ) -> SdkConfig {
     let aws_region = Region::new(aws_region);
-    let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+    let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::v2026_01_12());
 
     if let Some(p) = aws_sts_endpoint {
         config_loader = config_loader.endpoint_url(p);
@@ -37,8 +37,8 @@ pub async fn build_aws_sdk_config(
 
     config_loader
         .region(aws_region)
-        // DNS resolution is sometimes slow in EKS due to ndots 5, and the
-        // default 5s timeout isn't enough
+        // DNS resolution is sometimes slow in EKS due to the ndots 5 clause in
+        // its default resolv.conf, and the default 5s timeout isn't enough
         .identity_cache(
             IdentityCache::lazy()
                 .load_timeout(Duration::from_secs(10))
