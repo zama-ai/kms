@@ -71,6 +71,9 @@ impl Client {
                 extra_data: extra_data.to_vec(),
                 context_id: context_id.map(|c| (*c).into()),
                 epoch_id: epoch_id.map(|e| (*e).into()),
+                // This reference client uses the legacy `client_address` string (EVM); the typed
+                // `client_identity` is set by the kms-connector for the Solana path.
+                client_identity: None,
             },
             enc_pk,
             enc_sk,
