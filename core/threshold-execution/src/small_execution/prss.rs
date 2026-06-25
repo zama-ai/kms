@@ -1429,9 +1429,10 @@ mod tests {
     #[case(1)]
     #[case(2)]
     #[case(23)]
-    // larger amounts exercise the parallel batch path
     #[case(1025)]
     #[case(2049)]
+    // check that the batched mask_next_vec() call produces the same values as sequential scalar mask_next() calls
+    // passing this test also shows that a bug was fixed, in which randomness was re-used across calls in the batched version
     async fn test_prss_mask_next_vec_matches_scalar_calls(#[case] amount: usize) {
         let num_parties = 4;
         let threshold = 1;
