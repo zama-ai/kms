@@ -38,6 +38,7 @@ The file to be used must be specified with the `-f` flag, e.g. `-f config/client
 The core client currently ships with the following pre-defined configurations:
 - `./config/client_local_centralized.toml` for the centralized version run via docker-compose.
 - `./config/client_local_threshold.toml` for the threshold version with n=4 parties and threshold t=1 run via docker-compose.
+- `./config/client_local_threshold_custodian_backup.toml` for the threshold version when executing custodian backup instructions towards a *single* KMS core from the CLI.
 
 Values inside the TOML configs are:
 - `kms_type` - The kind of KMS to interact with; "centralized" or "threshold".
@@ -182,9 +183,9 @@ After `backup-restore` has been executed the KMS server must be rebooted for the
 
 ### Custodian-based backup
 
-#### Setup
+#### Configuration
 
-To set up a custodian-based approach. A backup storage must be set up similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as follows, using the local file system:
+To configure custodian-based approach. A backup storage must be set up similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as follows, using the local file system:
 ```{toml}
 [backup_vault.storage.file]
 path = "./backup_vault"
@@ -209,62 +210,60 @@ path = "./backup_vault"
 [backup_vault.keychain.secret_sharing]
 ```
 
-#### Recovery
+#### Setup
 
-WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
-
-Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
-
-Assuming the TOML file has been appropriately modified to allow custodian-based backup, as discussed above, then the steps needed are as follows:
+For the custodian backup approach to work, and start doing backups, a custodian context first needs to be setup. To setup this, first a set of custodians must be selected. Each of this must complete an initialization step resulting in each of them holding a *seed phrase* and some public key material. 
+The key material of each custodian must then be communicated with operators (which happens during custodian context construction). Once this is done, the operators will automatically backup private key material in a secret-shared manner, signcrypted under the custodians' public keys.
+More specifically the following steps must be done:
 
 1. Set up custodians.
   This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool.
   This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
-2. Add a new custodian context.
-  After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will eventually happen through the gateway but can also be executed with the CLI tool as detailed in [this section](#Custodian-context).
-3. Initiate the recovery.
-  After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt this is done with the following command:
-  ```{bash}
-  $ cargo run -- -f <path-to-toml-config-file> custodian-recovery-init [-o <bool>] -r <dir to store recovery info from operator 1> -r <dir to store recovery info from operator 2> ...
-  ```
-  That is, an optional boolean expressing whether to allow overwriting any potential existing ephemeral key (default is false) followed by an ordered list of arguments must be given; one for each of the KMS nodes. In monotonically increasing order of each of the KMS nodes' IDs. These directories will express where the result of the initiation of each the servers will be stored, which must then be communicated with the custodians to proceed with the recovery.
+1. Add a new custodian context.
+  After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).
 
-  As a concrete example of a command for a setup with 4 servers is the following:
+#### Recovery
+
+WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
+
+The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
+However, the procedure is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
+
+> **Note:** Custodian backup/recovery currently runs against a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config lists exactly one core; point an equivalent single-core config at each operator you wish to recover and repeat these steps.
+
+The steps needed are as follows:
+1. Initiate the recovery.
+  After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt; this is done with the following command:
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
+  $ cargo run -- -f <single-core-config-file> custodian-recovery-init [-o <bool>]
   ```
-  As output, the custodian context/backup ID is printed.
-4. Custodians do partial decryption.
+  The optional boolean expresses whether to allow overwriting any potential existing ephemeral key (default is false, expanded parameter `overwrite-ephemeral-key`). The command prints a base64 recovery request (prefixed with `Serialized custodian result:`) which must then be communicated to the custodians to proceed with the recovery.
+
+  As a concrete example:
+  ```{bash}
+  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init
+  ```
+  As output, the base64 recovery request and the custodian context/backup ID are printed.
+1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
-  Using the recovery information from the operators, each custodian can use the KMS Custodian CLI tool to prepare the partially decrypted response to the KMS nodes. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The results from the custodians must then be consolidated at the KMS operators.
-5. KMS nodes recover the backup decryption key.
-  After the custodians have completed the partial decryption the results are communicated _individually_ to each of the KMS nodes. I.e. custodian `i` communicates the reencryption of the backup decryption key for KMS node `j` only to KMS node `j`.
-  Afterwards the KMS nodes can recover the decryption key, which can then be used to recover from the backup. The recovery of the decryption key can be done with the following command:
+  Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The base64 outputs from the custodians must then be consolidated at the KMS operator.
+1. KMS node recovers the backup decryption key and restores the backup.
+  After the custodians have completed the partial decryption the results are communicated _individually_ to the KMS node.
+  The KMS uses the custodians recovery request to recover the backup decryption key, which it uses to restore from the backup. This is done with the following command, passing each custodian's base64 output after `-r`:
   ```{bash}
-  $ cargo run -- -f <path-to-toml-config-file> custodian-backup-recovery -i <custodian context/backup ID> -r <dir to reencrypted decryption key from custodian 1 to operator 1> -r <dir to reencrypted decryption key from custodian 2 to operator 1> ..
+  $ cargo run -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context/backup ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
   ```
-  That is, `-i` expresses the custodian context/backup ID which helped to decrypt this. This value is given as output from `custodian-recovery-init` above. The `-r` arguments is a sorted list of the custodians partially decrypted output for each KMS node. The list must be sorted in the monotonically increasing order of the custodian per KMS node.
-  As a concrete example (which allows to restore for _all_ KMS server in one go) consider the following:
+  That is, `-i` expresses the custodian context/backup ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
+  As a concrete example:
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
-  ```
-  Note: In practice custodians should only share the reencrypted partial decryption of a given KMS operator with that operator. I.e. all partial decryptions should not be broadcast. While each partial decryption is encrypted under an ephemeral key of a given KMS node, it is still best-practice to _not_ indiscriminantly publicize these. This will however require updating the `client_local_threshold.toml` to only contain a `[[cores]]` entry for the relevant KMS server. E.g. node 2. In that case the example command would be the following:
-  ```{bash}
-  $ cargo run -- -f  config/client_local_threshold.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3
-  ```
-6. Recover the backup.
-  With the backup decryption key recovered in RAM, it is now possible for the KMS nodes to decrypt the backup. This is done with the following command, similar to the import/export approach above:
-  ```{bash}
-  $ cargo run -- -f <path-to-toml-config-file> backup-restore
+  $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
   ```
   This call will take the data in the backup and write this to the private storage.
   However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
-  Furthermore, observe that this will remove the decryption key from RAM. Hence the call can only be executed once. If a need arises to execute the call again then the `custodian-backup-recovery` call must be repeated. Also note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
+  Furthermore note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
 
-  Consider the following example as a concrete call:
-  ```{bash}
-  $ cargo run -- -f config/client_local_threshold.toml backup-restore
-  ```
+#### Rotating the custodian context
+TODO
 
 ### Concrete e2e example for custodian backup
 
@@ -283,62 +282,37 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 1. Set up custodians:
   In the project root run:
   ```{bash}
-  cargo run --bin kms-custodian  generate --randomness 123 --custodian-role 1 --custodian-name homer-1 --path  core-client/tests/data/keys/CUSTODIAN/setup-msg/setup-1
-  cargo run --bin kms-custodian  generate --randomness 123 --custodian-role 2 --custodian-name homer-2 --path  core-client/tests/data/keys/CUSTODIAN/setup-msg/setup-2
-  cargo run --bin kms-custodian  generate --randomness 123 --custodian-role 3 --custodian-name homer-3 --path  core-client/tests/data/keys/CUSTODIAN/setup-msg/setup-3
+  cargo run --bin kms-custodian  generate --randomness 123 --custodian-role 1 --custodian-name homer-1
+  cargo run --bin kms-custodian  generate --randomness 123 --custodian-role 2 --custodian-name homer-2
+  cargo run --bin kms-custodian  generate --randomness 123 --custodian-role 3 --custodian-name homer-3
   ```
-  Each of these will give a seed phrase as output to the CLI. Remember these and replace them appropriately with the example ones, in the following steps.
+  Each of these prints a seed phrase and a base64-encoded setup message (prefixed with `The custodian setup message is: `) to the CLI. Remember the seed phrases, and collect the setup messages for the next step.
 2. Add a new custodian context.
-  In the `core-client` folder run the following:
+  In the `core-client` folder run the following, passing each custodian's base64 setup message after `-m`:
   ```{bash}
-  cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
+  cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
   ```
+  > **Note:** Custodian management (`new-custodian-context`, `custodian-recovery-init`, `custodian-backup-recovery`) currently operates on a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
+
 3. Initiate the recovery.
   In the `core-client` folder run the following:
   ```{bash}
-  cargo run -- -f config/client_local_threshold.toml custodian-recovery-init -r tests/data/keys/CUSTODIAN/recovery/1 -r tests/data/keys/CUSTODIAN/recovery/2 -r tests/data/keys/CUSTODIAN/recovery/3 -r tests/data/keys/CUSTODIAN/recovery/4
+  cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
-  Take note of the ID printed on the CLI after completion.
+  This prints a base64 recovery request to the CLI (prefixed with `Serialized custodian result:`) and the custodian-context ID. Take note of both.
 4. Custodians do partial decryption.
-  Fetch the public verification keys of the KMS nodes. With Minio these can be found at the following URLs:
-
-  http://localhost:9000/kms/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
-
-  http://localhost:9000/kms/PUB-p2/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
-
-  http://localhost:9000/kms/PUB-p3/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
-
-  http://localhost:9000/kms/PUB-p4/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
-
-  Download these and copy them into `core-client/tests/data/keys`. 
-  IMPORTANT: DO NOT CHANGE THE NAME OF THE VERIFICATION KEY! THAT IS, THE KEY FILE MUST KEEP THE NAME WHEN FETCHING IT FROM THE OPERATOR!
-  Then execute the following command in root of the KMS project, replacing the seed_phrases with the appropriate ones learned from step 1:
+  Each custodian decrypts the base64 recovery request from step 3 and prints a base64 recovery output (prefixed with `The custodian recovery output is: `). The recovery request already carries the operator's verification key, so it no longer needs to be supplied separately. Execute the following in the root of the KMS project, replacing the seed phrases with the ones from step 1 and `<recovery request>` with the base64 string from step 3:
   ```{bash}
-  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/1 --operator-verf-key core-client/tests/data/keys/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-1-1
-  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/2 --operator-verf-key core-client/tests/data/keys/PUB-p2/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-2-1
-  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/3 --operator-verf-key core-client/tests/data/keys/PUB-p3/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-3-1
-  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/4 --operator-verf-key core-client/tests/data/keys/PUB-p4/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee  --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-4-1
-
-  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123  --custodian-role 2 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/1 --operator-verf-key core-client/tests/data/keys/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-1-2
-  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123  --custodian-role 2 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/2 --operator-verf-key core-client/tests/data/keys/PUB-p2/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-2-2
-  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123  --custodian-role 2 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/3 --operator-verf-key core-client/tests/data/keys/PUB-p3/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-3-2
-  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123  --custodian-role 2 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/4 --operator-verf-key core-client/tests/data/keys/PUB-p4/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-4-2
-
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123  --custodian-role 3 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/1 --operator-verf-key core-client/tests/data/keys/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-1-3
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123  --custodian-role 3 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/2 --operator-verf-key core-client/tests/data/keys/PUB-p2/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-2-3
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123  --custodian-role 3 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/3 --operator-verf-key core-client/tests/data/keys/PUB-p3/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-3-3
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123  --custodian-role 3 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/4 --operator-verf-key core-client/tests/data/keys/PUB-p4/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-4-3
+  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123 --custodian-role 1 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123 --custodian-role 2 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123 --custodian-role 3 --recovery-request "<recovery request>"
   ```
-5. KMS nodes recover the backup decryption key.
-  Execute the following from `core-client` replacing the ID following `-i` with the appropriate ID learned in step 3.
+5. KMS node recovers the backup decryption key.
+  Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-1-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-2-3 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-3-3   -r tests/data/keys/CUSTODIAN/response/recovery-response-4-1 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-2 -r tests/data/keys/CUSTODIAN/response/recovery-response-4-3
+  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
   ```
-6. Recover the backup.
-  In the core-client folder execute the following command:
-  ```{bash}
-  $ cargo run -- -f config/client_local_threshold.toml backup-restore
-  ```
+  The backup is restored automatically as part of this step.
 
 ## Supported Operations
 
@@ -650,14 +624,14 @@ For custodian-based backup we currently only support a single active custodian c
 Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended.
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -m <dir to setup from custodian 1> -m <dir to setup from custodian 2> ...
+$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
 ```
-The parameter `-t` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m` list, which expresses the paths to the setup messages of each of the custodians, sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
+The parameter `-t` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m` list, which expresses the base64 setup messages of each of the custodians (as printed by `kms-custodian generate`), sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
 See [the custodian setup section](./backup.md#custodian-setup) for details.
 
 Finally a concrete example of a command for a setup with 3 custodians is the following:
 ```{bash}
-$ cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
+$ cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
 ```
 
 ### New Epoch (Resharing)

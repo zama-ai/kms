@@ -35,15 +35,14 @@ use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPl
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, KeyId, RequestId};
-use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
+use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
-use kms_lib::engine::utils::make_extra_data;
-use kms_lib::util::file_handling::{
-    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
-};
+use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
+use kms_lib::util::file_handling::{read_element, write_element};
+
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
     test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
@@ -755,8 +754,9 @@ impl Default for CrsParameters {
 pub struct NewCustodianContextParameters {
     #[clap(long, short = 't')]
     pub threshold: u32,
+    /// The base64-encoded custodian setup messages, as printed by `kms-custodian generate`.
     #[clap(long, short = 'm')]
-    pub setup_msg_paths: Vec<PathBuf>,
+    pub setup_msgs: Vec<String>,
     /// The MPC context ID for which the custodian context is being created.
     #[clap(long, short = 'c')]
     pub mpc_context_id: String,
@@ -895,9 +895,6 @@ pub struct RecoveryInitParameters {
     /// If false, the call will be indempotent, if true, this will not be the case
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
-    /// Paths to write the operator responses, the responses stored in these paths are not ordered.
-    #[clap(long, short = 'r')]
-    pub operator_recovery_resp_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -906,7 +903,7 @@ pub struct RecoveryParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
     #[clap(long, short = 'r')]
-    pub custodian_recovery_outputs: Vec<PathBuf>,
+    pub custodian_recovery_outputs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2482,9 +2479,8 @@ pub async fn execute_cmd(
         }
         CCCommand::NewCustodianContext(new_custodian_context_parameters) => {
             let mut setup_msgs = Vec::new();
-            for cur_path in &new_custodian_context_parameters.setup_msg_paths {
-                let cur_setup: InternalCustodianSetupMessage =
-                    safe_read_element_versioned(cur_path).await?;
+            for cur_setup_msg in &new_custodian_context_parameters.setup_msgs {
+                let cur_setup: InternalCustodianSetupMessage = base64_deserialize(cur_setup_msg)?;
                 setup_msgs.push(cur_setup);
             }
             let mpc_context_id = ContextId::try_from(
@@ -2516,42 +2512,39 @@ pub async fn execute_cmd(
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
-            operator_recovery_resp_paths,
         }) => {
-            assert_eq!(
-                operator_recovery_resp_paths.len(),
-                num_cores,
-                "Number of operator recovery response paths must match number of operators (cores) in the configuration files"
-            );
+            if num_cores > 1 {
+                return Err("Custodian recovery init is only supported for a single core".into());
+            }
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
-            assert_eq!(res.len(), operator_recovery_resp_paths.len());
 
-            // no ordering of results and paths here
-            for (cur_res, cur_path) in res.into_iter().zip(operator_recovery_resp_paths) {
-                safe_write_element_versioned(cur_path, &cur_res).await?;
-            }
+            // TODO(#3042) - currently we require backup operations to be done with a single client.
+            // This issue streamlines this and requires an update in this section
+            let serialized_res = base64_serialize(
+                res.first()
+                    .expect("Expected at least one response for custodian recovery init"),
+            )?;
+            tracing::info!("Serialized custodian result:\n{}", serialized_res);
 
-            vec![(
-                None,
-                "custodian recovery init queried and recovery request stored".to_string(),
-            )]
+            vec![(None, serialized_res)]
         }
         CCCommand::CustodianBackupRecovery(RecoveryParameters {
             custodian_context_id,
             custodian_recovery_outputs,
         }) => {
+            if num_cores > 1 {
+                return Err("Custodian recovery is only supported for a single core".into());
+            }
             // We assume the output files are ordered the same way as the operators in the configuration file.
-            let mut custodian_outputs = Vec::new();
-            for recovery_path in custodian_recovery_outputs {
-                let read_recovery: InternalCustodianRecoveryOutput =
-                    safe_read_element_versioned(&recovery_path).await?;
-                custodian_outputs.push(read_recovery);
+            let mut deserialized_rec_out = Vec::new();
+            for cur_cus_rec in custodian_recovery_outputs {
+                deserialized_rec_out.push(base64_deserialize(cur_cus_rec)?);
             }
             do_custodian_backup_recovery(
                 &core_endpoints_req,
                 *custodian_context_id,
-                custodian_outputs,
+                deserialized_rec_out,
             )
             .await?;
             vec![(

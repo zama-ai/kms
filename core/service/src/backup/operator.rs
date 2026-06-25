@@ -3,10 +3,6 @@ use super::{
     error::{BackupError, SetupSkipReason},
     secretsharing,
 };
-use crate::backup::{
-    custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
-    error::RecoverySkipReason,
-};
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
@@ -20,6 +16,13 @@ use crate::{
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
+};
+use crate::{
+    backup::{
+        custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+        error::RecoverySkipReason,
+    },
+    cryptography::internal_crypto_types::LegacySerialization,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -64,6 +67,7 @@ impl Named for InternalRecoveryRequest {
 #[versionize(InternalRecoveryRequestVersions)]
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
+    operator_verf_key: PublicSigKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
 }
 
@@ -71,15 +75,18 @@ impl InternalRecoveryRequest {
     /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' unsigncryption keys.
     pub fn new(
         ephem_op_enc_key: UnifiedPublicEncKey,
+        operator_verf_key: PublicSigKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
             ephem_op_enc_key,
+            operator_verf_key,
             cts,
         };
         Ok(res)
     }
 
+    // TODO dead code, only used in tests, should it be used in recovery
     /// Validate that the data in the request is sensible.
     pub fn is_valid(
         &self,
@@ -104,11 +111,21 @@ impl InternalRecoveryRequest {
             tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
             return Ok(false);
         }
+        // todo i think this si the same
+        if unsigncrypt_key.sender_verf_key != &self.operator_verf_key {
+            panic!("InternalRecoveryRequest contains an invalid operator verification key");
+        } else {
+            println!("SAME");
+        }
         Ok(true)
     }
 
     pub fn backup_enc_key(&self) -> &UnifiedPublicEncKey {
         &self.ephem_op_enc_key
+    }
+
+    pub fn operator_verf_key(&self) -> &PublicSigKey {
+        &self.operator_verf_key
     }
 
     pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
@@ -137,8 +154,10 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             let inner_ct: InnerOperatorBackupOutput = cur_backup_out.try_into()?;
             cts.insert(role, inner_ct);
         }
+        let operator_verf_key = PublicSigKey::from_legacy_bytes(&value.operator_verf_key)?;
         Ok(Self {
             ephem_op_enc_key,
+            operator_verf_key,
             cts,
         })
     }
@@ -929,6 +948,10 @@ mod tests {
 
     #[test]
     fn validate_recovery_validation_material() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);

@@ -596,12 +596,6 @@ where
             )
         })?;
 
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        self.inner
-            .crypto_storage
-            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
-            .await;
-
         Ok(Response::new(Empty {}))
     }
 
@@ -853,12 +847,6 @@ where
                 tonic::Code::Internal,
             )
         })?;
-
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        self.inner
-            .crypto_storage
-            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
-            .await;
 
         Ok(Response::new(Empty {}))
     }
@@ -1815,6 +1803,7 @@ mod tests {
         .unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
+            server_verf_key.clone(),
             recovery_material.payload.cts,
         )
         .unwrap();

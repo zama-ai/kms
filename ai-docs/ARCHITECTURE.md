@@ -203,9 +203,9 @@ Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
 `NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit`
 / `CustodianBackupRecovery` RPCs defined in
-[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). A separate
-`RestoreFromBackup` RPC completes restoration on the node and also covers
-the no-custodian AWS-KMS path.
+[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). 
+A separate
+`RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at

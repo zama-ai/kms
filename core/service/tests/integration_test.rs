@@ -320,7 +320,7 @@ mod kms_custodian_binary_tests {
     use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
         backup::{
-            KMS_CUSTODIAN, SEED_PHRASE_DESC,
+            KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC,
             custodian::{
                 InternalCustodianContext, InternalCustodianRecoveryOutput,
                 InternalCustodianSetupMessage,
@@ -336,11 +336,10 @@ mod kms_custodian_binary_tests {
             signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
-        util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
+        engine::utils::{base64_deserialize, base64_serialize},
     };
     use rand::SeedableRng;
-    use std::path::MAIN_SEPARATOR;
-    use std::{collections::BTreeMap, path::Path, thread};
+    use std::{collections::BTreeMap, thread};
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
@@ -387,9 +386,8 @@ mod kms_custodian_binary_tests {
 
     #[test]
     fn sunshine_generate() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
-        let (seed_phrase2, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
+        let (seed_phrase, _setup_msgs) = generate_custodian_keys(1);
+        let (seed_phrase2, _setup_msgs) = generate_custodian_keys(1);
 
         // Ensure that randomness is always sampled on top of given randomness
         assert_ne!(seed_phrase, seed_phrase2);
@@ -397,17 +395,14 @@ mod kms_custodian_binary_tests {
 
     #[test]
     fn sunshine_verify() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir
-            .path()
-            .join(format!("custodian-1{MAIN_SEPARATOR}setup_msg.bin"));
-        let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
+        let (seed_phrase, setup_msg) = generate_custodian_keys(1);
+        let serialized_setup_msg = base64_serialize(&setup_msg).unwrap();
         let verf_command = vec![
             "verify".to_string(),
             "--seed-phrase".to_string(),
             seed_phrase.to_string(),
-            "--path".to_string(),
-            path.to_str().unwrap().to_string(),
+            "--setup-msg".to_string(),
+            serialized_setup_msg,
         ];
         // Note that `run_commands` validate that the command executed successfully
         let _verf_out = run_custodian_cli(verf_command);
@@ -420,14 +415,11 @@ mod kms_custodian_binary_tests {
         let amount_operators = 4;
         let backup_id = derive_request_id("backuptest").unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
-
         // Generate custodian keys
         let mut setup_msgs = Vec::new();
         let mut seed_phrases: Vec<_> = Vec::new();
         for custodian_index in 1..=amount_custodians {
-            let (seed_phrase, setup_msg) =
-                generate_custodian_keys_to_file(temp_dir.path(), custodian_index);
+            let (seed_phrase, setup_msg) = generate_custodian_keys(custodian_index);
             setup_msgs.push(setup_msg);
             seed_phrases.push(seed_phrase);
         }
@@ -438,79 +430,58 @@ mod kms_custodian_binary_tests {
             commitment: RecoveryValidationMaterial,
             ephemeral_keys: (UnifiedPrivateEncKey, UnifiedPublicEncKey),
             backup_dec_key: UnifiedPrivateEncKey,
-            operator_id: usize,
+            /// base64-encoded recovery request the operator hands to each custodian
+            recovery_request: String,
         }
         let mut operator_data = vec![];
-        for operator_index in 1..=amount_operators {
-            let (cur_commitments, operator, cur_ephemeral_keys, backup_dec) = make_backup_sunshine(
-                temp_dir.path(),
-                threshold,
-                operator_index,
-                setup_msgs.clone(),
-                backup_id,
-            )
-            .await;
+        for _operator_index in 1..=amount_operators {
+            let (cur_commitments, operator, cur_ephemeral_keys, backup_dec, recovery_request) =
+                make_backup_sunshine(threshold, setup_msgs.clone(), backup_id).await;
             operator_data.push(OperatorData {
                 operator,
                 commitment: cur_commitments,
                 ephemeral_keys: cur_ephemeral_keys,
                 backup_dec_key: backup_dec,
-                operator_id: operator_index,
+                recovery_request,
             });
         }
 
-        // Decrypt
+        // Decrypt: each custodian re-encrypts its share for every operator. The custodian
+        // output is printed to stdout as base64, collected per operator (in custodian order).
+        let mut recovery_outputs: Vec<Vec<String>> = vec![Vec::new(); amount_operators];
         for custodian_index in 1..=amount_custodians {
-            for operator_index in 1..=amount_operators {
-                let request_path = temp_dir.path().join(format!(
-                    "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-request.bin"
-                ));
-                let recovery_path = temp_dir.path().join(format!(
-                    "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin"
-                ));
-                let operator_verf_path = temp_dir.path().join(format!(
-                    "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-verf_key.bin"
-                ));
+            for (operator_index, data) in operator_data.iter().enumerate() {
                 let decrypt_command = vec![
                     "decrypt".to_string(),
                     "--seed-phrase".to_string(),
                     seed_phrases[custodian_index - 1].to_string(),
                     "--custodian-role".to_string(),
                     custodian_index.to_string(),
-                    "--operator-verf-key".to_string(),
-                    operator_verf_path.to_str().unwrap().to_string(),
-                    "--mpc-context-id".to_string(),
-                    DEFAULT_MPC_CONTEXT.to_string(),
                     "-b".to_string(),
-                    request_path.to_str().unwrap().to_string(),
-                    "-o".to_string(),
-                    recovery_path.to_str().unwrap().to_string(),
+                    data.recovery_request.clone(),
                 ];
-                let _verf_out = run_custodian_cli(decrypt_command);
+                let decrypt_out = run_custodian_cli(decrypt_command);
+                recovery_outputs[operator_index].push(extract_decryption_payload(&decrypt_out));
             }
         }
 
         // Validate the decryption
-        for OperatorData {
-            operator,
-            commitment,
-            ephemeral_keys,
-            backup_dec_key,
-            operator_id,
-        } in operator_data
-        {
+        for (operator_index, op_data) in operator_data.into_iter().enumerate() {
+            let OperatorData {
+                operator,
+                commitment,
+                ephemeral_keys,
+                backup_dec_key,
+                ..
+            } = op_data;
             let (dec_key, enc_key) = ephemeral_keys;
             let cur_res = decrypt_recovery(
-                temp_dir.path(),
-                amount_custodians,
+                &recovery_outputs[operator_index],
                 &operator,
-                operator_id,
                 &commitment,
-                backup_id,
                 &dec_key,
                 &enc_key,
-            )
-            .await;
+            );
             assert_eq!(
                 cur_res,
                 bc2wrap::serialize(&backup_dec_key).unwrap(),
@@ -520,13 +491,19 @@ mod kms_custodian_binary_tests {
         }
     }
 
-    fn generate_custodian_keys_to_file(
-        root_path: &Path,
-        custodian_index: usize,
-    ) -> (String, InternalCustodianSetupMessage) {
-        let final_dir = root_path.join(format!(
-            "custodian-{custodian_index}{MAIN_SEPARATOR}setup_msg.bin"
-        ));
+    fn extract_decryption_payload(output: &str) -> String {
+        let payload_line = output
+            .lines()
+            .find(|line| line.contains(RECOVERY_OUTPUT_DESC))
+            .expect("a successful decryption prints the recovery output");
+        payload_line
+            .split_at(payload_line.find(RECOVERY_OUTPUT_DESC).unwrap() + RECOVERY_OUTPUT_DESC.len())
+            .1
+            .trim()
+            .to_string()
+    }
+
+    fn generate_custodian_keys(custodian_index: usize) -> (String, InternalCustodianSetupMessage) {
         let gen_command = vec![
             "generate".to_string(),
             "--randomness".to_string(),
@@ -535,8 +512,6 @@ mod kms_custodian_binary_tests {
             custodian_index.to_string(),
             "--custodian-name".to_string(),
             format!("skynet-{custodian_index}"),
-            "--path".to_string(),
-            final_dir.to_str().unwrap().to_string(),
         ];
         let gen_out = run_custodian_cli(gen_command.clone());
         let seed_phrase = extract_seed_phrase(gen_out.as_ref());
@@ -550,9 +525,7 @@ mod kms_custodian_binary_tests {
     }
 
     async fn make_backup_sunshine(
-        root_path: &Path,
         threshold: usize,
-        operator_id: usize, // not actual operator ID, just for managing where the files go
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
     ) -> (
@@ -560,18 +533,12 @@ mod kms_custodian_binary_tests {
         Operator,
         (UnifiedPrivateEncKey, UnifiedPublicEncKey),
         UnifiedPrivateEncKey,
+        String,
     ) {
         let amount_custodians = setup_msgs.len();
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-
-        let request_path = root_path.join(format!(
-            "operator-{operator_id}{MAIN_SEPARATOR}{backup_id}-request.bin",
-        ));
-        let operator_verf_path = root_path.join(format!(
-            "operator-{operator_id}{MAIN_SEPARATOR}{backup_id}-verf_key.bin",
-        ));
 
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
@@ -619,45 +586,33 @@ mod kms_custodian_binary_tests {
             let ct = ct_map.get(&custodian_role).unwrap();
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
-        let recovery_request =
-            InternalRecoveryRequest::new(ephemeral_pub_key.clone(), ciphertexts).unwrap();
-        safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
-            .await
-            .unwrap();
-        safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
-            .await
-            .unwrap();
+        let recovery_request = InternalRecoveryRequest::new(
+            ephemeral_pub_key.clone(),
+            verification_key.clone(),
+            ciphertexts,
+        )
+        .unwrap();
+        let serialized_recovery_request = base64_serialize(&recovery_request).unwrap();
         (
             validation_material,
             operator,
             (ephemeral_priv_key, ephemeral_pub_key),
             backup_ske,
+            serialized_recovery_request,
         )
     }
 
-    #[expect(clippy::too_many_arguments)]
-    async fn decrypt_recovery(
-        root_path: &Path,
-        amount_custodians: usize,
+    fn decrypt_recovery(
+        custodian_outputs: &[String],
         operator: &Operator,
-        operator_id: usize,
         recovery_material: &RecoveryValidationMaterial,
-        backup_id: RequestId,
         ephem_dec_key: &UnifiedPrivateEncKey,
         ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Vec<u8> {
-        let mut outputs = Vec::new();
-        for custodian_index in 1..=amount_custodians {
-            let recovery_path = root_path.join(format!(
-                "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
-                operator_id,
-            ));
-            let payload: InternalCustodianRecoveryOutput =
-                safe_read_element_versioned(&Path::new(&recovery_path))
-                    .await
-                    .unwrap();
-            outputs.push(payload);
-        }
+        let outputs: Vec<InternalCustodianRecoveryOutput> = custodian_outputs
+            .iter()
+            .map(|cur| base64_deserialize(cur).unwrap())
+            .collect();
         operator
             .verify_and_recover(&outputs, recovery_material, ephem_dec_key, ephem_enc_key)
             .unwrap()
