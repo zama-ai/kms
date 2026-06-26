@@ -120,10 +120,8 @@ pub(crate) fn phi_range(
         ));
     }
 
-    // the highest counter touched; since the range is contiguous and increasing, checking it
-    // bounds the whole range so nothing gets overwritten by setting the block-counter byte below.
-    // saturating_add so an out-of-range `start` can never wrap past the guard below (it would
-    // saturate to u128::MAX and trip it) instead of panicking in debug / wrapping in release.
+    // check ctr is smaller 2^120, so nothing gets overwritten by setting the index below.
+    // Also ensure it doesn't overflow when adding count-1 to it.
     let max_ctr = start.saturating_add(count as u128 - 1);
     if max_ctr >= 1 << 120 {
         return Err(anyhow_error_and_log(format!(
@@ -131,7 +129,7 @@ pub(crate) fn phi_range(
         )));
     }
 
-    // number of AES blocks per value, currently limited to 1. See NOTE above.
+    // Number of AES blocks per value, currently limited to 1. See NOTE above.
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
 
