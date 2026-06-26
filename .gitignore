@@ -46,4 +46,5 @@ ci/kube-testing/kms/local-values-*.yaml
 core/grpc/proto/buf.yaml
 .devcontainer
 *.pem
-CLAUDE.local.md
+/.agent-shell/
+.devenv/
