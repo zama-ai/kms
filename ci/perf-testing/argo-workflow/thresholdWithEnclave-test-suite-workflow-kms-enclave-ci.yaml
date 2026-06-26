@@ -582,11 +582,11 @@ spec:
             value: '{{inputs.parameters.fhe-params}}'
         resources:
           requests:
-            memory: "48Gi"
-            cpu: "32"
+            memory: "96Gi"
+            cpu: "64"
           limits:
-            memory: "48Gi"
-            cpu: "32"
+            memory: "96Gi"
+            cpu: "64"
 
 
     - name: summary-report
