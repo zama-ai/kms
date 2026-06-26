@@ -1053,8 +1053,7 @@ mod tests {
         for osh in old_shares.into_iter().flatten() {
             osh.glwe_secret_key_share_sns_as_lwe
                 .unwrap()
-                .data_as_raw_vec()
-                .iter()
+                .data_iter()
                 .for_each(|x| assert!(x.is_zero()));
         }
         Ok(())
@@ -1234,16 +1233,14 @@ mod tests {
                 .glwe_secret_key_share_sns_as_lwe
                 .clone()
                 .unwrap()
-                .data_as_raw_vec()
-                .iter()
+                .data_iter()
                 .all(|x| x.is_zero())
             {
                 println!("Role {:?} did not zeroize its old share! : {:?}", role, osh);
             }
             osh.glwe_secret_key_share_sns_as_lwe
                 .unwrap()
-                .data_as_raw_vec()
-                .iter()
+                .data_iter()
                 .for_each(|x| assert!(x.is_zero()));
         }
         Ok(())
@@ -1469,7 +1466,8 @@ mod tests {
                 x.glwe_secret_key_share_sns_as_lwe
                     .clone()
                     .unwrap()
-                    .data_as_raw_vec()
+                    .data_iter()
+                    .collect_vec()
             })
             .collect_vec();
         let glwe_sns_sk128 = reconstruct_shares_to_scalar(shares128, threshold, max_errors)
@@ -1487,7 +1485,8 @@ mod tests {
                         x.lwe_compute_secret_key_share
                             .clone()
                             .unsafe_cast_to_z64()
-                            .data_as_raw_vec()
+                            .data_iter()
+                            .collect_vec()
                     })
                     .collect_vec();
                 reconstruct_shares_to_scalar(shares64, threshold, max_errors)
@@ -1502,7 +1501,8 @@ mod tests {
                         x.lwe_compute_secret_key_share
                             .clone()
                             .unsafe_cast_to_z128()
-                            .data_as_raw_vec()
+                            .data_iter()
+                            .collect_vec()
                     })
                     .collect_vec();
                 reconstruct_shares_to_scalar(shares128, threshold, max_errors)
@@ -1522,7 +1522,8 @@ mod tests {
                         x.glwe_secret_key_share
                             .clone()
                             .unsafe_cast_to_z64()
-                            .data_as_raw_vec()
+                            .data_iter()
+                            .collect_vec()
                     })
                     .collect_vec();
                 reconstruct_shares_to_scalar(shares64, threshold, max_errors)
@@ -1537,7 +1538,8 @@ mod tests {
                         x.glwe_secret_key_share
                             .clone()
                             .unsafe_cast_to_z128()
-                            .data_as_raw_vec()
+                            .data_iter()
+                            .collect_vec()
                     })
                     .collect_vec();
                 reconstruct_shares_to_scalar(shares128, threshold, max_errors)
