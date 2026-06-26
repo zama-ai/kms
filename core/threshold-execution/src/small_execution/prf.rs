@@ -121,8 +121,10 @@ pub(crate) fn phi_range(
     }
 
     // the highest counter touched; since the range is contiguous and increasing, checking it
-    // bounds the whole range so nothing gets overwritten by setting the block-counter byte below
-    let max_ctr = start + (count as u128 - 1);
+    // bounds the whole range so nothing gets overwritten by setting the block-counter byte below.
+    // saturating_add so an out-of-range `start` can never wrap past the guard below (it would
+    // saturate to u128::MAX and trip it) instead of panicking in debug / wrapping in release.
+    let max_ctr = start.saturating_add(count as u128 - 1);
     if max_ctr >= 1 << 120 {
         return Err(anyhow_error_and_log(format!(
             "ctr in phi must be smaller than 2^120 but was {max_ctr}."
