@@ -581,10 +581,10 @@ spec:
         resources:
           requests:
             memory: "24Gi"
-            cpu: "4"
+            cpu: "8"
           limits:
             memory: "24Gi"
-            cpu: "4"
+            cpu: "8"
 
 
     - name: summary-report
