@@ -1392,12 +1392,12 @@ mod tests {
         (0..parties).for_each(|i| {
             first_bit_shares.push(Share::new(
                 Role::indexed_from_zero(i),
-                *shares[i]
+                shares[i]
                     .glwe_secret_key_share_sns_as_lwe
                     .as_ref()
                     .unwrap()
-                    .data_as_raw_vec()
-                    .first()
+                    .data_as_raw_iter()
+                    .next()
                     .unwrap(),
             ));
         });
