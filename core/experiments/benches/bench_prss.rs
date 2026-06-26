@@ -2,6 +2,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 
 use aes_prng::AesRng;
+use algebra::base_ring::Z128;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
@@ -16,6 +17,10 @@ use threshold_execution::{
     },
     small_execution::{
         agree_random::DummyAgreeRandomFromShare,
+        prf::{
+            PrfKey,
+            testing::{PsiAesHandle, psi_2, psi_original},
+        },
         prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
     },
 };
@@ -53,6 +58,39 @@ fn bench_prss(c: &mut Criterion) {
         .unwrap();
 
     let mut state = prss.new_prss_session_state(sid);
+
+    let psi_aes = PsiAesHandle::new(&PrfKey([23_u8; 16]), sid);
+    assert_eq!(
+        psi_original::<ResiduePolyF8Z128>(&psi_aes, 0).unwrap(),
+        psi_2::<Z128, 8>(&psi_aes, 0).unwrap()
+    );
+
+    for size in &sizes {
+        group.bench_function(BenchmarkId::new("psi_original_f8_z128", size), |b| {
+            let mut ctr = 0_u128;
+            b.iter(|| {
+                let mut shares = Vec::with_capacity(*size);
+                for _ in 0..*size {
+                    shares
+                        .push(psi_original::<ResiduePolyF8Z128>(&psi_aes, black_box(ctr)).unwrap());
+                    ctr += 1;
+                }
+                black_box(shares);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("psi_2_f8_z128", size), |b| {
+            let mut ctr = 0_u128;
+            b.iter(|| {
+                let mut shares = Vec::with_capacity(*size);
+                for _ in 0..*size {
+                    shares.push(psi_2::<Z128, 8>(&psi_aes, black_box(ctr)).unwrap());
+                    ctr += 1;
+                }
+                black_box(shares);
+            });
+        });
+    }
 
     for size in &mask_sizes {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {

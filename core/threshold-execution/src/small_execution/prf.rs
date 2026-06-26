@@ -4,7 +4,8 @@ use aes::Aes128;
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 pub use algebra::PRSSConversions;
-use algebra::structure_traits::Ring;
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::structure_traits::{BaseRing, Ring};
 use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -205,6 +206,92 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     Ok(Z::from_u128_chunks(coefs))
 }
 
+/// Concrete fast path for [`psi`] over the residue-polynomial rings used by PRSS.
+#[allow(dead_code)] // Alternate implementation kept next to `psi` for review and benchmarking.
+pub(crate) fn psi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    pa: &PsiAes,
+    ctr: u128,
+) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>> {
+    // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices below
+    if ctr >= 1 << 112 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {ctr}."
+        )));
+    }
+
+    // These are the concrete PRSS residue-ring invariants this non-general fast path relies on.
+    assert_eq!(
+        Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128),
+        1,
+        "psi_2 assumes one AES block per base-ring coefficient"
+    );
+    assert!(
+        EXTENSION_DEGREE <= AES_BATCH,
+        "psi_2 assumes the whole residue polynomial fits in one AES batch"
+    );
+
+    let mut ctr_bytes = ctr.to_le_bytes();
+    ctr_bytes[15] = 0; // v - the block counter, fixed to zero for the concrete residue rings
+    #[allow(deprecated)]
+    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+
+    for (i, block) in buf[..EXTENSION_DEGREE].iter_mut().enumerate() {
+        ctr_bytes[14] = i as u8; // i - the dimension index
+        #[allow(deprecated)]
+        {
+            *block = GenericArray::from(ctr_bytes);
+        }
+    }
+
+    pa.aes.encrypt_blocks(&mut buf[..EXTENSION_DEGREE]);
+
+    let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
+    let mut i = 0;
+    while i < EXTENSION_DEGREE {
+        coefs[i] = Z::from_u128(u128::from_le_bytes(buf[i].into()));
+        coefs[i + 1] = Z::from_u128(u128::from_le_bytes(buf[i + 1].into()));
+        i += 2;
+    }
+
+    Ok(ResiduePoly { coefs })
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use super::*;
+
+    /// Reusable AES state for benchmarking the Psi PRF variants.
+    #[derive(Clone)]
+    pub struct PsiAesHandle {
+        aes: PsiAes,
+    }
+
+    impl PsiAesHandle {
+        /// Builds a Psi AES handle with the same key schedule as production PRSS.
+        pub fn new(key: &PrfKey, sid: SessionId) -> Self {
+            Self {
+                aes: PsiAes::new(key, sid),
+            }
+        }
+    }
+
+    /// Runs the original generic Psi implementation.
+    pub fn psi_original<Z: Ring + PRSSConversions>(
+        pa: &PsiAesHandle,
+        ctr: u128,
+    ) -> anyhow::Result<Z> {
+        super::psi(&pa.aes, ctr)
+    }
+
+    /// Runs the concrete residue-polynomial Psi fast path.
+    pub fn psi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+        pa: &PsiAesHandle,
+        ctr: u128,
+    ) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>> {
+        super::psi_2(&pa.aes, ctr)
+    }
+}
+
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
 pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
@@ -252,6 +339,7 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
 mod tests {
     use super::*;
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
+    use algebra::base_ring::{Z64, Z128};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 
     /// Single-value convenience wrapper over [`phi_range`] used by the phi tests.
@@ -332,6 +420,48 @@ mod tests {
     #[test]
     fn test_pi_64() {
         test_psi::<ResiduePolyF4Z64>();
+    }
+
+    fn test_psi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: Ring + PRSSConversions,
+    {
+        let key = PrfKey([23_u8; 16]);
+        let aes = testing::PsiAesHandle::new(&key, SessionId::from(0));
+
+        for ctr in [0, 1, 42, (1 << 112) - 1] {
+            assert_eq!(
+                testing::psi_original::<ResiduePoly<Z, EXTENSION_DEGREE>>(&aes, ctr).unwrap(),
+                testing::psi_2::<Z, EXTENSION_DEGREE>(&aes, ctr).unwrap()
+            );
+        }
+
+        let err_ctr = testing::psi_2::<Z, EXTENSION_DEGREE>(&aes, 1 << 112)
+            .unwrap_err()
+            .to_string();
+        assert!(err_ctr.contains(
+            "ctr in psi must be smaller than 2^112 but was 5192296858534827628530496329220096."
+        ));
+    }
+
+    #[test]
+    fn test_psi_2_f4_z128_matches_psi() {
+        test_psi_2::<Z128, 4>();
+    }
+
+    #[test]
+    fn test_psi_2_f4_z64_matches_psi() {
+        test_psi_2::<Z64, 4>();
+    }
+
+    #[test]
+    fn test_psi_2_f8_z128_matches_psi() {
+        test_psi_2::<Z128, 8>();
+    }
+
+    #[test]
+    fn test_psi_2_f8_z64_matches_psi() {
+        test_psi_2::<Z64, 8>();
     }
 
     fn test_chi<Z: Ring + PRSSConversions>() {
