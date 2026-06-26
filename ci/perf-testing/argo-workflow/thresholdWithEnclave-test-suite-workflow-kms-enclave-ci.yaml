@@ -817,7 +817,7 @@ spec:
                   },
                   {
                     "title": ":gear: Config",
-                    "value": "• tokioWorkerThreads: 10\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
+                    "value": "• tokioWorkerThreads: 20\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
                     "short": false
                   },
                   {
