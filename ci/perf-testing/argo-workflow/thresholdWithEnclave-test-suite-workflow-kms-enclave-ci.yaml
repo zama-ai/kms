@@ -391,6 +391,8 @@ spec:
         labels:
           test: "{{inputs.parameters.test-name}}"
           app: kms-enclave-test-suite
+      nodeSelector:
+          karpenter.sh/nodepool: kms-pool
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<version>
         command: ["/bin/bash", "-c"]
@@ -578,13 +580,6 @@ spec:
             value: 'NoiseFloodSmall'
           - name: FHE_PARAMETER
             value: '{{inputs.parameters.fhe-params}}'
-        nodeSelector:
-          karpenter.sh/nodepool: kms-pool
-        tolerations:
-          - key: karpenter.sh/nodepool
-            effect: NoSchedule
-            operator: Equal
-            value: kms-pool
         resources:
           requests:
             memory: "24Gi"
