@@ -581,10 +581,10 @@ spec:
         resources:
           requests:
             memory: "24Gi"
-            cpu: "4"
+            cpu: "8"
           limits:
             memory: "24Gi"
-            cpu: "4"
+            cpu: "8"
 
 
     - name: summary-report
@@ -817,7 +817,7 @@ spec:
                   },
                   {
                     "title": ":gear: Config",
-                    "value": "• tokioWorkerThreads: 20\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
+                    "value": "• tokioWorkerThreads: 10\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
                     "short": false
                   },
                   {
