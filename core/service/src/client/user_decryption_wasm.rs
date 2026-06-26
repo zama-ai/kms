@@ -156,7 +156,7 @@ impl Client {
             return Err(anyhow_error_and_log("incorrect length for addresses"));
         }
 
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&payload.verification_key)?;
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)?;
 
         // NOTE: ID starts at 1
         let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
@@ -507,7 +507,7 @@ impl Client {
                 )?;
 
                 let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                    bc2wrap::deserialize_safe(&shares.bytes)?;
+                    bc2wrap::deserialize_slice(&shares.bytes)?;
                 let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                 for cur_block_share in cipher_blocks_share {
                     cur_blocks.push(cur_block_share);
@@ -684,7 +684,7 @@ impl Client {
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey =
-                    bc2wrap::deserialize_safe(&cur_resp.verification_key)?; // TODO(#2781)
+                    bc2wrap::deserialize_slice(&cur_resp.verification_key)?; // TODO(#2781)
                 let client_id = self.client_address.to_vec();
                 let unsign_key =
                     UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
@@ -695,7 +695,7 @@ impl Client {
                 ) {
                     Ok(decryption_share) => {
                         let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                            bc2wrap::deserialize_safe(&decryption_share.plaintext.bytes)?;
+                            bc2wrap::deserialize_slice(&decryption_share.plaintext.bytes)?;
                         let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                         for cur_block_share in cipher_blocks_share {
                             cur_blocks.push(cur_block_share);

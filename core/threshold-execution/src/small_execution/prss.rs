@@ -1480,6 +1480,63 @@ mod tests {
     #[case(1)]
     #[case(2)]
     #[case(23)]
+    #[case(1025)]
+    #[case(2049)]
+    // check that the batched mask_next_vec() call produces the same values as sequential scalar mask_next() calls
+    // passing this test also shows that a bug was fixed, in which randomness was re-used across calls in the batched version
+    async fn test_prss_mask_next_vec_matches_scalar_calls(#[case] amount: usize) {
+        let num_parties = 4;
+        let threshold = 1;
+
+        let sid = SessionId::from(23425);
+
+        let role_one = Role::indexed_from_one(1);
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+                .await
+                .unwrap();
+
+        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut batch_state = scalar_state.clone();
+
+        // `amount` sequential scalar mask_next() calls ...
+        let mut scalar_values = Vec::with_capacity(amount);
+        for _ in 0..amount {
+            scalar_values.push(
+                scalar_state
+                    .mask_next(role_one, B_SWITCH_SQUASH)
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        // ... must produce the same values (and counter state) as one batched call.
+        let batched_values = batch_state
+            .mask_next_vec(role_one, B_SWITCH_SQUASH, amount)
+            .await
+            .unwrap();
+
+        assert_eq!(batched_values, scalar_values);
+        assert_eq!(
+            batch_state.counters.mask_ctr,
+            scalar_state.counters.mask_ctr
+        );
+        assert_eq!(
+            batch_state.counters.prss_ctr,
+            scalar_state.counters.prss_ctr
+        );
+        assert_eq!(
+            batch_state.counters.przs_ctr,
+            scalar_state.counters.przs_ctr
+        );
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(23)]
     // amounts above span multiple rayon chunks (default PRSS_GEN_PAR_MIN_CHUNK = 1024),
     // exercising the per-chunk counter offset and the partial last chunk
     #[case(1025)]

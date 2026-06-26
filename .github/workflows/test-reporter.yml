@@ -73,7 +73,9 @@ jobs:
             exit 1
           fi
 
-      - name: Publish Test Report
+      # Full report goes to the GitHub Actions job summary (1 MiB limit, holds the
+      # complete per-test table). Not posted to the PR to avoid the 65 KiB comment cap.
+      - name: Publish Test Report (Job Summary)
         if: env.EXIT_CODE == 0
         uses: ctrf-io/github-test-reporter@0f299074936c32ccaab5be5230511f6b2b9080aa # v1.0.28
         env:
@@ -81,15 +83,49 @@ jobs:
         with:
           report-path: '/tmp/junit/**/*.xml'
           title: 'Consolidated Tests Results ${{ env.TIMESTAMP }} from ${{ inputs.initial-workflow }}'
-          overwrite-comment: true
-          summary-report: false
+          summary: true
+          summary-report: true
           github-report: true
-          pull-request-report: true
-          pull-request: true
           test-report: true
           flaky-report: true
+          pull-request: false
+          pull-request-report: false
           collapse-large-reports: true
-          report-order: 'github-report,pull-request-report,test-report,flaky-report'
+          report-order: 'summary-report,github-report,test-report,flaky-report'
+          integrations-config: |
+            {
+              "junit-to-ctrf": {
+                "enabled": true,
+                "action": "convert",
+                "options": {
+                  "output": "./ctrf-reports/ctrf-report.json",
+                  "toolname": "junit-to-ctrf",
+                  "useSuiteName": false,
+                  "env": {
+                    "appName": "kms"
+                  }
+                }
+              }
+            }
+
+      # Only the (compact) failed-report is posted to the PR, tagged per calling
+      # workflow so each of the (max 3) workflows owns and overwrites its own comment.
+      - name: Publish Test Report (PR Comment)
+        if: env.EXIT_CODE == 0
+        uses: ctrf-io/github-test-reporter@0f299074936c32ccaab5be5230511f6b2b9080aa # v1.0.28
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          report-path: '/tmp/junit/**/*.xml'
+          title: 'Consolidated Tests Results ${{ env.TIMESTAMP }} from ${{ inputs.initial-workflow }}'
+          summary: false
+          failed-report: true
+          pull-request: true
+          on-fail-only: true
+          overwrite-comment: true
+          comment-tag: 'test-reporter-${{ inputs.initial-workflow }}'
+          collapse-large-reports: true
+          report-order: 'failed-report'
           integrations-config: |
             {
               "junit-to-ctrf": {
