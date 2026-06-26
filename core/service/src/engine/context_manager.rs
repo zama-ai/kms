@@ -5,7 +5,7 @@ use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use crate::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
@@ -352,12 +352,12 @@ pub async fn create_default_centralized_context_in_storage<
         mpc_nodes: vec![NodeInfo {
             mpc_identity: CENTRALIZED_MPC_IDENTITY.to_string(), // identity is not used in centralized KMS
             party_id: CENTRALIZED_PARTY_ID,                     // always 1
-            verification_key: Some(verification_key),
+            signer_address: Some(SignerAddress(verification_key.address())),
             external_url: CENTRALIZED_EXTERNAL_URL.to_string(), // no external URL since there are no peers
             ca_cert: None, // there's no peer network, so no certificate is needed
             public_storage_url: "".to_string(),
             public_storage_prefix: None, // None will default to "PUB"
-            extra_verification_keys: vec![],
+            extra_signer_addresses: vec![],
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
         software_version: SoftwareVersion::current()?,
@@ -414,9 +414,9 @@ pub async fn ensure_default_threshold_context_in_storage<
                 .transpose()
             {
                 Ok(pem_string) => {
-                    let verification_key = if let Some(my_id) = threshold_config.my_id {
+                    let signer_address = if let Some(my_id) = threshold_config.my_id {
                         if peer.party_id == my_id {
-                            Some(PublicSigKey::clone(verf_key))
+                            Some(SignerAddress(verf_key.address()))
                         } else {
                             None
                         }
@@ -429,7 +429,7 @@ pub async fn ensure_default_threshold_context_in_storage<
                     Ok(NodeInfo {
                         mpc_identity: identity.mpc_identity().to_string(),
                         party_id: role.one_based() as u32,
-                        verification_key,
+                        signer_address,
                         external_url: format!(
                             "{}://{}:{}",
                             scheme,
@@ -441,7 +441,7 @@ pub async fn ensure_default_threshold_context_in_storage<
                         // since it does not have access to the configuration of other parties.
                         public_storage_url: "".to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     })
                 }
                 Err(e) => Err(e),
@@ -995,7 +995,7 @@ mod tests {
             signatures::{PublicSigKey, gen_sig_keys},
             signcryption::UnifiedUnsigncryptionKey,
         },
-        engine::context::{NodeInfo, SoftwareVersion},
+        engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
         util::meta_store::MetaStore,
         vault::{
             Vault,
@@ -1078,12 +1078,12 @@ mod tests {
                     mpc_nodes: vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
-                        verification_key: Some(pk.clone()),
+                        signer_address: Some(SignerAddress(pk.address())),
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }],
                     context_id: *DEFAULT_MPC_CONTEXT,
                     software_version: SoftwareVersion {
@@ -1118,12 +1118,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: Some(verification_key.clone()),
+                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
-                extra_verification_keys: vec![],
+                extra_signer_addresses: vec![],
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1163,8 +1163,8 @@ mod tests {
             assert_eq!(stored_context.mpc_nodes.len(), 1);
             assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.mpc_nodes[0].verification_key,
-                Some(verification_key)
+                stored_context.mpc_nodes[0].signer_address,
+                Some(SignerAddress(verification_key.address()))
             );
         }
         // Try to make a context with the same context ID (should fail)
@@ -1236,12 +1236,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: Some(verification_key.clone()),
+                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
-                extra_verification_keys: vec![],
+                extra_signer_addresses: vec![],
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1287,8 +1287,8 @@ mod tests {
             assert_eq!(stored_context.mpc_nodes.len(), 1);
             assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.mpc_nodes[0].verification_key,
-                Some(verification_key)
+                stored_context.mpc_nodes[0].signer_address,
+                Some(SignerAddress(verification_key.address()))
             );
         }
 
@@ -1341,12 +1341,12 @@ mod tests {
                     mpc_nodes: vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
-                        verification_key: Some(verification_key.clone()),
+                        signer_address: Some(SignerAddress(verification_key.address())),
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }],
                     context_id: *context_id,
                     software_version: SoftwareVersion {
@@ -1424,12 +1424,12 @@ mod tests {
                     mpc_nodes: vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
-                        verification_key: Some(verification_key.clone()),
+                        signer_address: Some(SignerAddress(verification_key.address())),
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }],
                     context_id: *context_id,
                     software_version: SoftwareVersion {
@@ -1464,12 +1464,12 @@ mod tests {
                 mpc_nodes: vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: Some(verification_key.clone()),
+                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 }],
                 software_version: SoftwareVersion {
                     major: 0,
@@ -1533,12 +1533,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: Some(verification_key.clone()),
+                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
-                extra_verification_keys: vec![],
+                extra_signer_addresses: vec![],
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1915,12 +1915,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: Some(verification_key.clone()),
+                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
-                extra_verification_keys: vec![],
+                extra_signer_addresses: vec![],
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2010,12 +2010,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: Some(verification_key.clone()),
+                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
-                extra_verification_keys: vec![],
+                extra_signer_addresses: vec![],
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2091,12 +2091,12 @@ mod tests {
                 mpc_nodes: vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: Some(verification_key.clone()),
+                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 }],
                 context_id: *context_id,
                 software_version: SoftwareVersion {

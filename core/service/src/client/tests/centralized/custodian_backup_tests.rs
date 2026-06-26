@@ -9,7 +9,7 @@ use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::signatures::PublicSigKey;
-use crate::engine::context::ContextInfo;
+use crate::engine::context::{ContextInfo, SignerAddress};
 use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::util::key_setup::test_tools::{
@@ -521,7 +521,7 @@ async fn test_mpc_context_backup_central() {
             )
             .await
             .unwrap();
-            node.verification_key = Some(pk);
+            node.signer_address = Some(SignerAddress(pk.address()));
             node.external_url = "http://fake.url:8080".to_string();
         }
         ctx
