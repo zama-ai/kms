@@ -578,13 +578,20 @@ spec:
             value: 'NoiseFloodSmall'
           - name: FHE_PARAMETER
             value: '{{inputs.parameters.fhe-params}}'
+        nodeSelector:
+          karpenter.sh/nodepool: kms-pool
+        tolerations:
+          - key: karpenter.sh/nodepool
+            effect: NoSchedule
+            operator: Equal
+            value: kms-pool
         resources:
           requests:
             memory: "24Gi"
-            cpu: "8"
+            cpu: "16"
           limits:
             memory: "24Gi"
-            cpu: "8"
+            cpu: "16"
 
 
     - name: summary-report
