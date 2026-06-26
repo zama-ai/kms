@@ -105,9 +105,7 @@ where
         })
     }
 
-    pub fn data_as_raw_iter(
-        &self,
-    ) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
+    pub fn data_iter(&self) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value())
     }
 

@@ -231,9 +231,7 @@ where
         LweDimension(self.data.len())
     }
 
-    pub fn data_as_raw_iter(
-        &self,
-    ) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
+    pub fn data_iter(&self) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value())
     }
 }
@@ -267,7 +265,7 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     let (mask, body) = output.get_mut_mask_and_body();
     generator.fill_slice_with_random_mask_custom_mod(mask, encryption_type);
 
-    slice_semi_reverse_negacyclic_convolution(body, mask, lwe_secret_key_share.data_as_raw_iter());
+    slice_semi_reverse_negacyclic_convolution(body, mask, lwe_secret_key_share.data_iter());
 
     generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(body);
 }
