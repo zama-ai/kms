@@ -1,0 +1,30 @@
+[package]
+name = "kms-benches"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Standalone benchmark crate. Lives apart from `kms` so `cargo bench -p kms-benches` builds `kms`
+# as a *dependency* — none of `kms`'s heavy dev-dependencies (backward-compatibility, proptest, …)
+# get compiled — which makes bench iteration much faster.
+
+[dev-dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to the workspace root Cargo.toml, NOT here! Use .workspace = true.
+aes-prng.workspace = true
+algebra.workspace = true
+bc2wrap.workspace = true
+criterion = { workspace = true, features = ["html_reports"] }
+hashing.workspace = true
+kms = { workspace = true, features = ["non-wasm", "insecure", "testing"] }
+kms-grpc.workspace = true
+rand.workspace = true
+test-utils.workspace = true
+tfhe = { workspace = true, features = ["boolean", "shortint", "integer", "zk-pok"] }
+threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
+threshold-types.workspace = true
+tokio.workspace = true
+
+[[bench]]
+name = "user_decrypt"
+harness = false
