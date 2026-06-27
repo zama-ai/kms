@@ -497,7 +497,7 @@ where
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
     custodian_context_id: &ContextId,
-    verf_key: &Arc<PublicSigKey>,
+    verf_key: &PublicSigKey,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
     S: StorageReader + Send,

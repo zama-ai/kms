@@ -986,7 +986,7 @@ pub(crate) async fn run_preproc(
 
     // the responses should be empty
     let extra_data = preproc_request.extra_data.clone();
-    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients).await;
     assert!(responses.len() + expected_num_parties_crashed == amount_parties);
     for response in responses {
         internal_client
@@ -1000,7 +1000,6 @@ pub(crate) async fn run_preproc(
 async fn poll_key_gen_preproc_result(
     request: kms_grpc::kms::v1::KeyGenPreprocRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    max_iter: usize,
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
     for client in kms_clients.values() {
@@ -1014,11 +1013,7 @@ async fn poll_key_gen_preproc_result(
                 client,
                 req_id_clone.clone(),
                 "preprocessing result",
-                PollConfig {
-                    initial_delay: tokio::time::Duration::from_millis(500),
-                    retry_delay: tokio::time::Duration::from_millis(500),
-                    max_retries: max_iter,
-                },
+                PollConfig::long_poll_config(),
                 |client, request| {
                     Box::pin(async move { client.get_key_gen_preproc_result(request).await })
                 },
@@ -1566,7 +1561,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             client.clone(),
             preproc_id.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -1606,7 +1601,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             client,
             keygen_id.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await?;
@@ -1668,13 +1663,13 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
         res??;
     }
 
-    // Wait for preprocessing to complete on active parties
+    // Wait for preprocessing to complete on active parties.
     for client in env.all_clients_except(crashed_party) {
         retrying_poll(
             client,
             preproc_id.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -1711,7 +1706,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
             client,
             keygen_id.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await?;
@@ -2343,7 +2338,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
             client.clone(),
             preproc_id_3.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -2390,7 +2385,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
             client.clone(),
             key_id_3.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;

@@ -50,6 +50,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::{
         compute_external_user_decrypt_signature,
         encryption::UnifiedPublicEncKey,
@@ -72,7 +73,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+            update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -410,7 +412,7 @@ impl<
         Self {
             base_kms,
             crypto_storage,
-            user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            user_decrypt_meta_store: MetaStore::new_unlimited(),
             session_maker,
             tracker,
             rate_limiter,
@@ -487,16 +489,6 @@ impl<
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        add_req_to_meta_store(
-            &mut meta_store.write().await,
-            &req_id,
-            OP_USER_DECRYPT_REQUEST,
-        )?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -542,9 +534,16 @@ impl<
                 )
             })?;
 
+        // Below we write to the meta-store, leaving this [req_id] in the
+        // "Started" (Pending) state. The management task updates it on every
+        // outcome path; should the permit ever be dropped without an update, the
+        // store's reaper fails the entry rather than leaving it Pending forever.
+        let meta_permit =
+            add_or_redo_failed_in_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
+            let meta_permit = meta_permit;
 
             let result = Self::inner_user_decrypt(
                 &req_id,
@@ -563,12 +562,8 @@ impl<
                 metric_tags,
             )
             .await;
-            update_req_in_meta_store(
-                &mut meta_store.write().await,
-                &req_id,
-                result,
-                OP_USER_DECRYPT_REQUEST,
-            );
+            update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
+                .await;
         };
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
@@ -595,12 +590,14 @@ impl<
                 })?;
 
         // Retrieve the UserDecryptMetaStore object
-        let (payload, external_signature, extra_data) = retrieve_from_meta_store(
-            self.user_decrypt_meta_store.read().await,
+        let arc = retrieve_from_meta_store_with_timeout(
+            &self.user_decrypt_meta_store,
             &request_id,
             OP_USER_DECRYPT_RESULT,
+            DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
+        let (payload, external_signature, extra_data) = (*arc).clone();
 
         let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
             MetricedError::new(
@@ -746,9 +743,8 @@ mod tests {
         );
 
         let key_id = RequestId::new_random(rng);
-        let mut key_store = MetaStore::new_unlimited();
-        key_store.insert(&key_id).unwrap();
-        let key_meta_store = Arc::new(RwLock::new(key_store));
+        let key_meta_store = MetaStore::new_unlimited();
+        let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
         let user_decryptor =
             RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
@@ -777,6 +773,7 @@ mod tests {
                 threshold_fhe_keys,
                 PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                meta_store_permit,
                 "",
             )
             .await
@@ -1144,9 +1141,10 @@ mod tests {
             epoch_id: Some(epoch_id.into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
-        user_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        crate::testing::utils::poll_result_until_ready(|| {
+            user_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }

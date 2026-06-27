@@ -108,7 +108,6 @@ anyhow = "=1.0.102"  # Error handling - MEDIUM RISK: Reputable individual mainta
 assert_cmd = "=2.2.2"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
 async-std = { version = "=1.13.2", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 55M+ downloads
 async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
-async_cell = "0.2.2"  # Async cell implementation - HIGH RISK: Individual maintainer, very low popularity
 attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted
 aws-config = { version = "=1.8.18" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
 aws-lc-rs = { version = "=1.17.0" } # AWS-LC cryptographic library - LOW RISK: Official AWS SDK
