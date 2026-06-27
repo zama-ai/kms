@@ -1125,10 +1125,11 @@ mod tests {
             .await
             .unwrap();
 
+        // Real preprocessing can far outlast the default poll window under heavy
+        // parallel test load, so use a generous attempt budget.
         assert_eq!(
-            crate::testing::utils::poll_result_until_ready(
-                || prep.get_insecure_result(tonic::Request::new(req_id.into()))
-            )
+            crate::testing::utils::poll_result_until_ready_with_max_tries(6000, || prep
+                .get_insecure_result(tonic::Request::new(req_id.into())))
             .await
             .unwrap_err()
             .code(),

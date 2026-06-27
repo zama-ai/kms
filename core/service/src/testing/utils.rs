@@ -655,7 +655,24 @@ pub mod setup {
 /// with a short delay while the response is `Unavailable`, and returns the first
 /// terminal outcome (a success, or any non-`Unavailable` error), mirroring how
 /// real clients poll.
+/// use [`poll_result_until_ready_with_max_tries`].
 pub async fn poll_result_until_ready<T, Fut, F>(
+    fetch: F,
+) -> Result<tonic::Response<T>, crate::engine::utils::MetricedError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<
+            Output = Result<tonic::Response<T>, crate::engine::utils::MetricedError>,
+        >,
+{
+    poll_result_until_ready_with_max_tries(crate::consts::MAX_TRIES, fetch).await
+}
+
+/// Like [`poll_result_until_ready`] but with an explicit attempt budget (100ms
+/// apart), for genuinely long-running operations whose background task can far
+/// outlast the default [`crate::consts::MAX_TRIES`] window.
+pub async fn poll_result_until_ready_with_max_tries<T, Fut, F>(
+    max_tries: usize,
     mut fetch: F,
 ) -> Result<tonic::Response<T>, crate::engine::utils::MetricedError>
 where
@@ -664,16 +681,14 @@ where
             Output = Result<tonic::Response<T>, crate::engine::utils::MetricedError>,
         >,
 {
-    /// ~60s at a 100ms cadence, matching the old blocking-get window.
-    const MAX_POLL_ATTEMPTS: usize = 600;
-    for _ in 0..MAX_POLL_ATTEMPTS {
+    for _ in 0..max_tries {
         let res = fetch().await;
         if !matches!(&res, Err(e) if e.code() == tonic::Code::Unavailable) {
             return res;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    panic!("result endpoint never became ready after {MAX_POLL_ATTEMPTS} attempts");
+    panic!("result endpoint never became ready after {max_tries} attempts");
 }
 
 // NOTE: this test stays out of the setup module

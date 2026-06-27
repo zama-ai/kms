@@ -1573,7 +1573,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             client.clone(),
             preproc_id.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -1613,7 +1613,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             client,
             keygen_id.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await?;
@@ -1681,7 +1681,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
             client,
             preproc_id.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -1718,7 +1718,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
             client,
             keygen_id.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await?;
@@ -2350,7 +2350,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
             client.clone(),
             preproc_id_3.into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -2397,7 +2397,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
             client.clone(),
             key_id_3.into(),
             "key gen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;
