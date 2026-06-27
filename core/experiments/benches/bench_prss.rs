@@ -19,7 +19,9 @@ use threshold_execution::{
         agree_random::DummyAgreeRandomFromShare,
         prf::{
             PrfKey,
-            testing::{PsiAesHandle, psi_2, psi_original},
+            testing::{
+                ChiAesHandle, PsiAesHandle, chi_2, chi_original, psi_2, psi_original,
+            },
         },
         prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
     },
@@ -60,9 +62,14 @@ fn bench_prss(c: &mut Criterion) {
     let mut state = prss.new_prss_session_state(sid);
 
     let psi_aes = PsiAesHandle::new(&PrfKey([23_u8; 16]), sid);
+    let chi_aes = ChiAesHandle::new(&PrfKey([23_u8; 16]), sid);
     assert_eq!(
         psi_original::<ResiduePolyF8Z128>(&psi_aes, 0).unwrap(),
         psi_2::<Z128, 8>(&psi_aes, 0).unwrap()
+    );
+    assert_eq!(
+        chi_original::<ResiduePolyF8Z128>(&chi_aes, 0, 1).unwrap(),
+        chi_2::<Z128, 8>(&chi_aes, 0, 1).unwrap()
     );
 
     for size in &sizes {
@@ -85,6 +92,32 @@ fn bench_prss(c: &mut Criterion) {
                 let mut shares = Vec::with_capacity(*size);
                 for _ in 0..*size {
                     shares.push(psi_2::<Z128, 8>(&psi_aes, black_box(ctr)).unwrap());
+                    ctr += 1;
+                }
+                black_box(shares);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("chi_original_f8_z128", size), |b| {
+            let mut ctr = 0_u128;
+            b.iter(|| {
+                let mut shares = Vec::with_capacity(*size);
+                for _ in 0..*size {
+                    shares.push(
+                        chi_original::<ResiduePolyF8Z128>(&chi_aes, black_box(ctr), 1).unwrap(),
+                    );
+                    ctr += 1;
+                }
+                black_box(shares);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("chi_2_f8_z128", size), |b| {
+            let mut ctr = 0_u128;
+            b.iter(|| {
+                let mut shares = Vec::with_capacity(*size);
+                for _ in 0..*size {
+                    shares.push(chi_2::<Z128, 8>(&chi_aes, black_box(ctr), 1).unwrap());
                     ctr += 1;
                 }
                 black_box(shares);

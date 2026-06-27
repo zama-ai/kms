@@ -1,8 +1,6 @@
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use aes::Aes128;
-#[allow(deprecated)]
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{Array, BlockCipherEncrypt, KeyInit};
 pub use algebra::PRSSConversions;
 use algebra::galois_rings::common::ResiduePoly;
 use algebra::structure_traits::{BaseRing, Ring};
@@ -141,8 +139,7 @@ pub(crate) fn phi_range(
     for k in 0..count {
         let mut ctr_bytes = (start + k as u128).to_le_bytes();
         ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
-        #[allow(deprecated)]
-        let block = GenericArray::from(ctr_bytes);
+        let block = Array::from(ctr_bytes);
         blocks.push(block);
     }
 
@@ -184,8 +181,7 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
     // heap allocation for the block buffer.
     let mut coefs = vec![0_u128; n_blocks];
-    #[allow(deprecated)]
-    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+    let mut buf = [Array::from([0u8; 16]); AES_BATCH];
     let mut start = 0;
     while start < n_blocks {
         let chunk = (n_blocks - start).min(AES_BATCH);
@@ -232,15 +228,11 @@ pub(crate) fn psi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>(
 
     let mut ctr_bytes = ctr.to_le_bytes();
     ctr_bytes[15] = 0; // v - the block counter, fixed to zero for the concrete residue rings
-    #[allow(deprecated)]
-    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+    let mut buf = [Array::from([0u8; 16]); AES_BATCH];
 
     for (i, block) in buf[..EXTENSION_DEGREE].iter_mut().enumerate() {
         ctr_bytes[14] = i as u8; // i - the dimension index
-        #[allow(deprecated)]
-        {
-            *block = GenericArray::from(ctr_bytes);
-        }
+        *block = Array::from(ctr_bytes);
     }
 
     pa.aes.encrypt_blocks(&mut buf[..EXTENSION_DEGREE]);
@@ -266,11 +258,26 @@ pub mod testing {
         aes: PsiAes,
     }
 
+    /// Reusable AES state for benchmarking the Chi PRF variants.
+    #[derive(Clone)]
+    pub struct ChiAesHandle {
+        aes: ChiAes,
+    }
+
     impl PsiAesHandle {
         /// Builds a Psi AES handle with the same key schedule as production PRSS.
         pub fn new(key: &PrfKey, sid: SessionId) -> Self {
             Self {
                 aes: PsiAes::new(key, sid),
+            }
+        }
+    }
+
+    impl ChiAesHandle {
+        /// Builds a Chi AES handle with the same key schedule as production PRZS.
+        pub fn new(key: &PrfKey, sid: SessionId) -> Self {
+            Self {
+                aes: ChiAes::new(key, sid),
             }
         }
     }
@@ -289,6 +296,24 @@ pub mod testing {
         ctr: u128,
     ) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>> {
         super::psi_2(&pa.aes, ctr)
+    }
+
+    /// Runs the original generic Chi implementation.
+    pub fn chi_original<Z: Ring + PRSSConversions>(
+        pa: &ChiAesHandle,
+        ctr: u128,
+        j: u8,
+    ) -> anyhow::Result<Z> {
+        super::chi(&pa.aes, ctr, j)
+    }
+
+    /// Runs the concrete residue-polynomial Chi fast path.
+    pub fn chi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+        pa: &ChiAesHandle,
+        ctr: u128,
+        j: u8,
+    ) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>> {
+        super::chi_2(&pa.aes, ctr, j)
     }
 }
 
@@ -312,8 +337,7 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
     // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
     // heap allocation for the block buffer.
     let mut coefs = vec![0_u128; n_blocks];
-    #[allow(deprecated)]
-    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+    let mut buf = [Array::from([0u8; 16]); AES_BATCH];
     let mut start = 0;
     while start < n_blocks {
         let chunk = (n_blocks - start).min(AES_BATCH);
@@ -333,6 +357,53 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
     }
 
     Ok(Z::from_u128_chunks(coefs))
+}
+
+/// Concrete fast path for [`chi`] over the residue-polynomial rings used by PRZS.
+#[allow(dead_code)] // Alternate implementation kept next to `chi` for review and benchmarking.
+pub(crate) fn chi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    pa: &ChiAes,
+    ctr: u128,
+    j: u8,
+) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>> {
+    // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices below
+    if ctr >= 1 << 104 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in chi must be smaller than 2^104 but was {ctr}."
+        )));
+    }
+
+    assert_eq!(
+        Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128),
+        1,
+        "chi_2 assumes one AES block per base-ring coefficient"
+    );
+    assert!(
+        EXTENSION_DEGREE <= AES_BATCH,
+        "chi_2 assumes the whole residue polynomial fits in one AES batch"
+    );
+
+    let mut ctr_bytes = ctr.to_le_bytes();
+    ctr_bytes[13] = j; // j - the threshold index
+    ctr_bytes[15] = 0; // v - the block counter, fixed to zero for the concrete residue rings
+    let mut buf = [Array::from([0u8; 16]); AES_BATCH];
+
+    for (i, block) in buf[..EXTENSION_DEGREE].iter_mut().enumerate() {
+        ctr_bytes[14] = i as u8; // i - the dimension index
+        *block = Array::from(ctr_bytes);
+    }
+
+    pa.aes.encrypt_blocks(&mut buf[..EXTENSION_DEGREE]);
+
+    let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
+    let mut i = 0;
+    while i < EXTENSION_DEGREE {
+        coefs[i] = Z::from_u128(u128::from_le_bytes(buf[i].into()));
+        coefs[i + 1] = Z::from_u128(u128::from_le_bytes(buf[i + 1].into()));
+        i += 2;
+    }
+
+    Ok(ResiduePoly { coefs })
 }
 
 #[cfg(test)]
@@ -487,7 +558,52 @@ mod tests {
 
     #[test]
     fn test_chi_z64() {
-        test_chi::<ResiduePolyF4Z128>();
+        test_chi::<ResiduePolyF4Z64>();
+    }
+
+    fn test_chi_2<Z: BaseRing, const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: Ring + PRSSConversions,
+    {
+        let key = PrfKey([23_u8; 16]);
+        let aes = testing::ChiAesHandle::new(&key, SessionId::from(0));
+
+        for ctr in [0, 1, 42, (1 << 104) - 1] {
+            for j in [0, 1, 7] {
+                assert_eq!(
+                    testing::chi_original::<ResiduePoly<Z, EXTENSION_DEGREE>>(&aes, ctr, j)
+                        .unwrap(),
+                    testing::chi_2::<Z, EXTENSION_DEGREE>(&aes, ctr, j).unwrap()
+                );
+            }
+        }
+
+        let err_ctr = testing::chi_2::<Z, EXTENSION_DEGREE>(&aes, 1 << 104, 0)
+            .unwrap_err()
+            .to_string();
+        assert!(err_ctr.contains(
+            "ctr in chi must be smaller than 2^104 but was 20282409603651670423947251286016."
+        ));
+    }
+
+    #[test]
+    fn test_chi_2_f4_z128_matches_chi() {
+        test_chi_2::<Z128, 4>();
+    }
+
+    #[test]
+    fn test_chi_2_f4_z64_matches_chi() {
+        test_chi_2::<Z64, 4>();
+    }
+
+    #[test]
+    fn test_chi_2_f8_z128_matches_chi() {
+        test_chi_2::<Z128, 8>();
+    }
+
+    #[test]
+    fn test_chi_2_f8_z64_matches_chi() {
+        test_chi_2::<Z64, 8>();
     }
 
     /// check that all three PRFs cause different encryptions, even when initialized from the same key
@@ -502,12 +618,9 @@ mod tests {
         assert_ne!(chi::<Z>(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
 
         // initialize identical 128-bit block
-        #[allow(deprecated)]
-        let mut chi_block = GenericArray::from([42u8; 16]);
-        #[allow(deprecated)]
-        let mut psi_block = GenericArray::from([42u8; 16]);
-        #[allow(deprecated)]
-        let mut phi_block = GenericArray::from([42u8; 16]);
+        let mut chi_block = Array::from([42u8; 16]);
+        let mut psi_block = Array::from([42u8; 16]);
+        let mut phi_block = Array::from([42u8; 16]);
 
         // encrypt with different PRFs
         chiaes.aes.encrypt_block(&mut chi_block);
