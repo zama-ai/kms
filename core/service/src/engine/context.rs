@@ -123,7 +123,7 @@ pub enum NodeInfoVersions {
 
 /// Legacy [`NodeInfo`] layout, kept for backward compatibility.
 ///
-/// Persisted contexts stored the perator's full `PublicSigKey` instead of its Ethereum address.
+/// Persisted contexts stored the operator's full `PublicSigKey` instead of its Ethereum address.
 /// Upgraded to the current [`NodeInfo`] by deriving the address from each key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Version)]
 pub struct NodeInfoV0 {
