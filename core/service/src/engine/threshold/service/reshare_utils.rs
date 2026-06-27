@@ -731,20 +731,20 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: None,
+                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        verification_key: None,
+                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -752,7 +752,7 @@ mod tests {
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }]
                 } else {
                     vec![]
@@ -1059,20 +1059,20 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: None,
+                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        verification_key: None,
+                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -1080,7 +1080,7 @@ mod tests {
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }]
                 } else {
                     vec![]
