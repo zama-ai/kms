@@ -14,8 +14,8 @@ mod s3_operations;
 pub use crate::s3_operations::fetch_public_elements;
 
 use crate::backup::{
-    do_custodian_backup_recovery, do_custodian_recovery_init, do_get_operator_pub_keys,
-    do_new_custodian_context, do_restore_from_backup,
+    do_custodian_backup_recovery, do_custodian_recovery_init, do_destroy_custodian_context,
+    do_get_operator_pub_keys, do_new_custodian_context, do_restore_from_backup,
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{
@@ -792,6 +792,15 @@ pub struct DestroyMpcContextParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct DestroyCustodianContextParameters {
+    /// The custodian context ID to destroy, as returned by `new-custodian-context`.
+    /// This must NOT be the currently active custodian context (destroying a context also
+    /// purges all of its backups).
+    #[clap(long, short = 'i')]
+    pub custodian_context_id: RequestId,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct DestroyMpcEpochParameters {
     /// The epoch ID to use for the MPC epoch to destroy.
     #[clap(long)]
@@ -1059,6 +1068,7 @@ pub enum CCCommand {
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     DestroyMpcContext(DestroyMpcContextParameters),
+    DestroyCustodianContext(DestroyCustodianContextParameters),
     DestroyMpcEpoch(DestroyMpcEpochParameters),
     #[cfg(feature = "testing")]
     NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
@@ -2632,6 +2642,15 @@ pub async fn execute_cmd(
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),
+            )]
+        }
+        CCCommand::DestroyCustodianContext(DestroyCustodianContextParameters {
+            custodian_context_id,
+        }) => {
+            do_destroy_custodian_context(&core_endpoints_req, custodian_context_id).await?;
+            vec![(
+                Some(*custodian_context_id),
+                "custodian context destruction done".to_string(),
             )]
         }
         CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters { epoch_id }) => {

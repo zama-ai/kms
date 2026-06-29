@@ -258,7 +258,7 @@ The steps needed are as follows:
   That is, `-i` expresses the custodian context/backup ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
   As a concrete example:
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
+  $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
   ```
   This call will take the data in the backup and write this to the private storage.
   However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
@@ -275,7 +275,16 @@ Two conditions must hold before destroying a context:
 
 WARNING: This operation is irreversible and purges _all backups_ tied to the context. Only destroy a context once its replacement has been created and confirmed to work as intended (see [Rotating the custodian context](#rotating-the-custodian-context) below); otherwise you may be left with no usable backup.
 
-TODO add core client steps
+To destroy a custodian context using the core client run the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> destroy-custodian-context -i <custodian context ID>
+```
+The `-i`/`--custodian-context-id` argument is the ID of the custodian context to destroy, as printed by `new-custodian-context` when it was created.
+
+As a concrete example:
+```{bash}
+$ cargo run -- -f config/client_local_threshold_custodian_backup.toml destroy-custodian-context -i 0700000000000000000000000000000000000000000000000000000000000001
+```
 
 #### Rotating the custodian context
 In order to rotate the custodian context the following steps must be executed
@@ -328,7 +337,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 5. KMS node recovers the backup decryption key.
   Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 96d39b058585a54f2f46fffce7acea935bd1dcd29ca7f6d8db50abc6281f2d80 -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
+  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
   ```
   The backup is restored automatically as part of this step.
 
