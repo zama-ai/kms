@@ -1,8 +1,8 @@
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
-use aes::Aes128;
-#[allow(deprecated)]
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::{
+    Aes128,
+    cipher::{Array, BlockCipherEncrypt, KeyInit},
+};
 pub use algebra::PRSSConversions;
 use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
@@ -137,8 +137,7 @@ pub(crate) fn phi_range(
     for k in 0..count {
         let mut ctr_bytes = (start + k as u128).to_le_bytes();
         ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
-        #[allow(deprecated)]
-        let block = GenericArray::from(ctr_bytes);
+        let block = Array::from(ctr_bytes);
         blocks.push(block);
     }
 
@@ -194,8 +193,7 @@ fn prf_residue_poly<Z: Ring + PRSSConversions>(
     let base = ctr.to_le_bytes();
 
     let mut coefs = vec![0_u128; n_blocks];
-    #[allow(deprecated)]
-    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
+    let mut buf = [Array::from([0u8; 16]); AES_BATCH];
     let mut start = 0;
     while start < n_blocks {
         let chunk = (n_blocks - start).min(AES_BATCH);
@@ -354,11 +352,11 @@ mod tests {
 
         // initialize identical 128-bit block
         #[allow(deprecated)]
-        let mut chi_block = GenericArray::from([42u8; 16]);
+        let mut chi_block = Array::from([42u8; 16]);
         #[allow(deprecated)]
-        let mut psi_block = GenericArray::from([42u8; 16]);
+        let mut psi_block = Array::from([42u8; 16]);
         #[allow(deprecated)]
-        let mut phi_block = GenericArray::from([42u8; 16]);
+        let mut phi_block = Array::from([42u8; 16]);
 
         // encrypt with different PRFs
         chiaes.aes.encrypt_block(&mut chi_block);
