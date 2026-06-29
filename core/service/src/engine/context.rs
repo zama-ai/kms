@@ -189,18 +189,15 @@ pub struct NodeInfo {
 
 /// Parses a 20-byte Ethereum address carried in a gRPC `MpcNode` address field.
 ///
-/// `field` names the field for error reporting (e.g. "signer address").
+/// `field_label` identifies which field the `bytes` came from, for error reporting
+/// (ex: "signer address").
 fn parse_signer_address(
     bytes: &[u8],
     mpc_identity: &str,
-    field: &str,
+    field_label: &str,
 ) -> anyhow::Result<SignerAddress> {
-    let addr = Address::try_from(bytes).map_err(|e| {
-        anyhow::anyhow!(
-            "Invalid {field} for node {mpc_identity}: expected a 20-byte Ethereum address, got {} bytes ({e})",
-            bytes.len()
-        )
-    })?;
+    let addr = Address::try_from(bytes)
+        .map_err(|e| anyhow::anyhow!("Invalid {field_label} for node {mpc_identity}: {e}",))?;
     Ok(SignerAddress(addr))
 }
 

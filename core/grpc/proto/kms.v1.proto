@@ -534,6 +534,7 @@ message MpcNode {
 
   // The 20-byte Ethereum address of the KMS node operator's signing key, used to verify
   // signatures produced by the KMS node and to identify the node.
+  // Stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
   //
   // This is optional to be compatible with configuration files that's used in
   // older KMS versions, which are not aware of the signing keys of the other parties.
@@ -558,6 +559,7 @@ message MpcNode {
 
   // A list of 20-byte Ethereum addresses of additional signing keys that are permitted to make
   // transactions on behalf of this node.
+  // Each entry is stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
   repeated bytes extra_signer_addresses = 8;
 }
 
