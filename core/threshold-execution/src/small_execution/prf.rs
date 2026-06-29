@@ -1,7 +1,7 @@
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use aes::Aes128;
+use aes::cipher::BlockCipherEncrypt;
 #[allow(deprecated)]
-use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 pub use algebra::PRSSConversions;
 use algebra::structure_traits::Ring;
@@ -120,7 +120,8 @@ pub(crate) fn phi_range(
         ));
     }
 
-    // check ctr is smaller 2^120, so nothing gets overwritten by setting the index below.
+    // We assume the block counter is stored in ctr_bytes[15] (even though it's currently fixed to zero, given our parameters)
+    // Thus, we need to check that ctr is smaller 2^120, so nothing gets overwritten by setting the index below.
     // Also ensure it doesn't overflow when adding count-1 to it.
     let max_ctr = start.saturating_add(count as u128 - 1);
     if max_ctr >= 1 << 120 {
@@ -133,7 +134,7 @@ pub(crate) fn phi_range(
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
 
-    // TODO iterate over blocks from 0..v here if we ever need Bd1 > 2^126
+    // TODO iterate over blocks from 0..v here, if we ever need Bd1 > 2^126
     let mut blocks = Vec::with_capacity(count);
     for k in 0..count {
         let mut ctr_bytes = (start + k as u128).to_le_bytes();
