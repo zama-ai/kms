@@ -647,6 +647,8 @@ spec:
         - name: test-result-12
         - name: test-result-13
         - name: test-result-14
+        - name: test-result-15
+        - name: test-result-16
         - name: tls
         - name: run_url
       script:
