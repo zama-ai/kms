@@ -1,7 +1,7 @@
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use aes::Aes128;
-use aes::cipher::BlockCipherEncrypt;
 #[allow(deprecated)]
+use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 pub use algebra::PRSSConversions;
 use algebra::structure_traits::Ring;
@@ -175,6 +175,8 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
     let base = ctr.to_le_bytes();
 
+    // Compute the EXTENSION_DEGREE base-ring coefficients psi^(i) for this counter.
+    // Compute one AES block each, encrypted in stack-buffer batches.
     // Block (i, block_ctr) carries the dimension index i and the block counter in its MSBs; the
     // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
     // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
@@ -217,6 +219,8 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
     let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
     let base = ctr.to_le_bytes();
 
+    // Compute the EXTENSION_DEGREE base-ring coefficients chi^(i) for this counter.
+    // Compute one AES block each, encrypted in stack-buffer batches.
     // Block (i, block_ctr) carries the dimension index i, threshold index j and block counter; the
     // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
     // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
