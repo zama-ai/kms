@@ -1042,7 +1042,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
-            signcryption::{Unsigncrypt, UnifiedUnsigncryptionKey},
+            signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
         },
         engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
         util::meta_store::MetaStore,

@@ -660,7 +660,7 @@ Multiple custodian contexts may exist at once, but only a single one is *active*
 Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended (see [Destroy context](#destroy-context)).
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -c <custodian context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
+$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -i <custodian context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
 ```
 The parameter `-t`/`threshold` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m`/`setup_msgs` list, which expresses the base64 setup messages of each of the custodians (as printed by `kms-custodian generate`), sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
 The parameter `-i`/`--mpc-context-id` specifies the MPC context ID that the custodian context is bound to.

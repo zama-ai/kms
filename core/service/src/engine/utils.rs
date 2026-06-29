@@ -653,7 +653,8 @@ where
     T: Serialize + tfhe::Versionize + tfhe::named::Named,
 {
     let mut serialized_data = Vec::new();
-    safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT).unwrap();
+    safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Serialization failed: {e:?}"))?;
     Ok(base64::encode(&serialized_data))
 }
 
