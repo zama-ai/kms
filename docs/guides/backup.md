@@ -1,6 +1,6 @@
 # KMS backup CLI Tool
 
-The tool allows to make custodian keys using a BIP39 seed phrase and help operators in recovery of backups (through reencryption) by using a seed pharase.
+The tool allows to make custodian keys using a BIP39 seed phrase and help operators in recovery of backups (through reencryption) by using a seed phrase.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Observe that the `randomness` supplied is used along with entropy of the current
 This will generate a fresh pair of keys for the given custodian and print the base64-encoded *public* setup message to stdout (prefixed with `The custodian setup message is: `). This setup message is what the operator collects (out-of-band) to run `new-custodian-context`.
 Furthermore, this will print a BIP39 seed phrase on the screen. This seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
 
-Observe the seed phrase and the private keys do not get logged or saved to disc; instead the seed phrase is printed _once_ to stdout. Similarely for the base64-encoded *public* setup message.
+Observe the seed phrase and the private keys do not get logged or saved to disc; instead the seed phrase is printed _once_ to stdout. Similarly for the base64-encoded *public* setup message.
 
 For example the command may look like this:
 ```{bash}
@@ -49,7 +49,7 @@ $ cargo run --bin kms-custodian verify --seed-phrase "stick essence exhaust bunk
 ```
 
 ### Recovery (decryption of backup)
-WARNING: Recovery is only meant to be done in a secure setting. This means that a some steps must be taken to ensure security. More specifically a laptop with a clean system *must* be used, i.e. either with a freshly installed operating system, or via live booting using an USB stick. Concretely this should ideally be the laptop used during [setup](#custodian-setup).
+WARNING: Recovery is only meant to be done in a secure setting. This means that some steps must be taken to ensure security. More specifically a laptop with a clean system *must* be used, i.e. either with a freshly installed operating system, or via live booting using an USB stick. Concretely this should ideally be the laptop used during [setup](#custodian-setup).
 
 Before being able to execute the recovery steps, ensure the following has been done:
 1. The operator that must be recovered has initialized the [custodian recovery phase](./core_client.md#recovery-1).
@@ -70,7 +70,7 @@ For example:
 $ cargo run --bin kms-custodian decrypt --seed-phrase "stick essence exhaust bunker meat orchard wolf timber tackle gesture video cheap" --randomness 123  --custodian-role 1 --recovery-request "<base64 recovery request>"
 ```
 
-WARNING: After recovery to a operator is is **crucial** to consider the previous backup burned and hence a new seed-phrase must be constructed for all backup custodians. That is, the [custodian setup](#custodian-setup) must be reexecuted once the backup recovery has been successfully completed on the operator. 
+WARNING: After recovery to an operator it is **crucial** to consider the previous backup burned and hence a new seed-phrase must be constructed for all backup custodians. That is, the [custodian setup](#custodian-setup) must be reexecuted once the backup recovery has been successfully completed on the operator. 
 
 ---
 

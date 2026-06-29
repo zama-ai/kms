@@ -231,7 +231,7 @@ WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE S
 The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
 However, the procedure is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
 
-> **Note:** Custodian backup/recovery currently runs against a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config lists exactly one core; point an equivalent single-core config at each operator you wish to recover and repeat these steps.
+> **Note:** All custodian management and recovery commands (`new-custodian-context`, `custodian-recovery-init`, `custodian-backup-recovery`, `destroy-custodian-context`) currently operate on a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config lists exactly one core; point an equivalent single-core config at each operator you wish to back up or recover and repeat these steps.
 
 The steps needed are as follows:
 1. Initiate the recovery.
@@ -245,7 +245,7 @@ The steps needed are as follows:
   ```{bash}
   $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
-  As output, the base64 recovery request and the custodian context/backup ID are printed.
+  As output, the base64 recovery request and the custodian context ID are printed. (This custodian context ID is also the backup ID — the two are the same value.)
 1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
   Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The base64 outputs from the custodians must then be consolidated at the KMS operator.
@@ -253,9 +253,9 @@ The steps needed are as follows:
   After the custodians have completed the partial decryption the results are communicated _individually_ to the KMS node.
   The KMS uses the custodians recovery request to recover the backup decryption key, which it uses to restore from the backup. This is done with the following command, passing each custodian's base64 output after `-r`:
   ```{bash}
-  $ cargo run -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context/backup ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
+  $ cargo run -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
   ```
-  That is, `-i` expresses the custodian context/backup ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
+  That is, `-i` expresses the custodian context ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
   As a concrete example:
   ```{bash}
   $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
@@ -271,7 +271,7 @@ Destroying a custodian context permanently removes that context **and all of its
 
 Two conditions must hold before destroying a context:
 1. The context must be a valid custodian context that was previously created with `new-custodian-context`.
-2. There must be two custodians contexts in the system to be able to remove one. Recovery is only ever possible against a non-destroyed context.
+2. There must be two custodian contexts in the system to be able to remove one. Recovery is only ever possible against a non-destroyed context.
 
 WARNING: This operation is irreversible and purges _all backups_ tied to the context. Only destroy a context once its replacement has been created and confirmed to work as intended (see [Rotating the custodian context](#rotating-the-custodian-context) below); otherwise you may be left with no usable backup.
 
@@ -319,7 +319,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```{bash}
   cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
   ```
-  > **Note:** Custodian management (`new-custodian-context`, `custodian-recovery-init`, `custodian-backup-recovery`) currently operates on a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
+  > **Note:** As described in the [Recovery](#recovery-1) section, these custodian commands operate on a **single core at a time**. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
 
 3. Initiate the recovery.
   In the `core-client` folder run the following:
@@ -541,10 +541,6 @@ This can be used to move private information from one node to another. More spec
 
 WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used.
 
-#### Arguments
-
-`<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS. This is a required argument. Typically `2048` is used since that is the largest bit width needed with the current FHE types.
-
 ### Encryption
 
 We provide a way to perform an encryption without actually sending any request to the kms-core:
@@ -647,8 +643,8 @@ Optional command line options for the public/user decryption command are:
 ### Custodian context
 
 In order to be able to do custodian-based backup and recovery, the KMS nodes need to know the public keys of the custodians which will be able to help it recover. This is handled through custodian contexts.
-For custodian-based backup we currently only support a single active custodian context. This means there will only exist one set of custodians under which a backup can be constructed. Whenever a new custodian context is made, this will replace the old context as the current backup method.
-Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended.
+Multiple custodian contexts may exist at once, but only a single one is *active* at any given time: backups are always constructed under the most recent custodian context. Whenever a new custodian context is made, it becomes the active context and replaces the previous one as the current backup method.
+Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended (see [Destroy context](#destroy-context)).
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -c <custodian context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
