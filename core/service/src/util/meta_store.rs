@@ -629,8 +629,8 @@ impl<T> MetaStore<T> {
     /// claim adopted via `lock_entry`) it is **removed outright** — not
     /// tombstoned — so `request_id` stays reusable.
     ///
-/// Note: this does not publish a new state, but removing a `Pending` entry drops its result channel,
-/// so any waiter in `retrieve_from_meta_store_with_timeout` will wake with `Unavailable`.
+    /// Note: this does not publish a new state, but removing a `Pending` entry drops its result channel,
+    /// so any waiter in `retrieve_from_meta_store_with_timeout` will wake with `Unavailable`.
     /// Deliberately **private**, like [`finalize`](MetaStore::finalize): reached
     /// only through [`with_overwriting_claim`], the migration-only entry point.
     fn abort_reservation(&mut self, mut permit: MetaStorePermit<T>) {
@@ -2443,8 +2443,8 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::Aborted);
     }
 
-/// End-to-end: a waiter blocked on a `Pending` entry whose permit is dropped
-/// is woken by the reaper with a failing status (`Done(Err)` -> `Internal`).
+    /// End-to-end: a waiter blocked on a `Pending` entry whose permit is dropped
+    /// is woken by the reaper with a failing status (`Done(Err)` -> `Internal`).
     #[tokio::test]
     async fn retrieve_with_timeout_wakes_when_reaper_fails_orphan() {
         let store = MetaStore::<String>::new_unlimited();
