@@ -76,9 +76,8 @@ RUN wget -qO dnsproxy.tar.gz https://github.com/AdGuardTeam/dnsproxy/releases/do
     chmod +x /usr/bin/dnsproxy
 
 ARG VSOCKTUN_VERSION=v0.1.0
-RUN git clone https://github.com/zama-ai/vsocktun && \
+RUN git clone --depth 1 --branch ${VSOCKTUN_VERSION} https://github.com/zama-ai/vsocktun && \
     cd vsocktun && \
-    git checkout ${VSOCKTUN_VERSION} && \
     cargo build --locked --release && \
     cp target/release/vsocktun /usr/bin/vsocktun
 
