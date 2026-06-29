@@ -2637,6 +2637,9 @@ pub async fn execute_cmd(
         CCCommand::DestroyCustodianContext(DestroyCustodianContextParameters {
             custodian_context_id,
         }) => {
+            if num_cores > 1 {
+                return Err("Custodian destruction is only supported for a single core".into());
+            }
             do_destroy_custodian_context(&core_endpoints_req, custodian_context_id).await?;
             vec![(
                 Some(*custodian_context_id),

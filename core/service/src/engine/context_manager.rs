@@ -1034,7 +1034,7 @@ mod tests {
     use super::*;
     use crate::{
         backup::{
-            custodian::{Custodian, HEADER, InternalCustodianSetupMessage},
+            custodian::{Custodian, DSEP_BACKUP_CUSTODIAN, HEADER, InternalCustodianSetupMessage},
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
@@ -1042,7 +1042,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
-            signcryption::UnifiedUnsigncryptionKey,
+            signcryption::{Unsigncrypt, UnifiedUnsigncryptionKey},
         },
         engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -1895,6 +1895,10 @@ mod tests {
             recovery_material.payload.cts,
         )
         .unwrap();
+        // The constructed request must round-trip the operator's verification key.
+        assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_key);
+        // And the signcryption destined for custodian 1 must validate under that
+        // custodian's unsigncryption key, confirming the backup material was sealed correctly.
         let custodian_id = custodian1.verification_key().verf_key_id();
         let unsign_key = UnifiedUnsigncryptionKey::new(
             custodian1.public_dec_key(),
@@ -1902,10 +1906,14 @@ mod tests {
             &server_verf_key,
             &custodian_id,
         );
+        let role_1_ct = internal_rec_req
+            .signcryptions()
+            .remove(&Role::indexed_from_one(1))
+            .expect("recovery request must contain a ciphertext for custodian role 1");
         assert!(
-            internal_rec_req
-                .is_valid(Role::indexed_from_one(1), &unsign_key)
-                .unwrap()
+            unsign_key
+                .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &role_1_ct.signcryption)
+                .is_ok()
         );
     }
 

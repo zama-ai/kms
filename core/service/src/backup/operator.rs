@@ -86,40 +86,6 @@ impl InternalRecoveryRequest {
         Ok(res)
     }
 
-    // TODO dead code, only used in tests, should it be used in recovery
-    /// Validate that the data in the request is sensible.
-    pub fn is_valid(
-        &self,
-        custodian_role: Role,
-        unsigncrypt_key: &UnifiedUnsigncryptionKey,
-    ) -> anyhow::Result<bool> {
-        let output = match self.cts.get(&custodian_role) {
-            Some(output) => output,
-            None => {
-                tracing::warn!(
-                    "InternalRecoveryRequest is missing ciphertext for custodian role {}",
-                    custodian_role
-                );
-                return Ok(false);
-            }
-        };
-        // We ignore the result, but just ensure that unsigncryption works
-        if unsigncrypt_key
-            .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &output.signcryption)
-            .is_err()
-        {
-            tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
-            return Ok(false);
-        }
-        // todo i think this si the same
-        if unsigncrypt_key.sender_verf_key != &self.operator_verf_key {
-            panic!("InternalRecoveryRequest contains an invalid operator verification key");
-        } else {
-            println!("SAME");
-        }
-        Ok(true)
-    }
-
     pub fn backup_enc_key(&self) -> &UnifiedPublicEncKey {
         &self.ephem_op_enc_key
     }
@@ -948,10 +914,6 @@ mod tests {
 
     #[test]
     fn validate_recovery_validation_material() {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_test_writer()
-            .try_init();
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
