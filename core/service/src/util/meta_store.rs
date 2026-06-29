@@ -629,8 +629,8 @@ impl<T> MetaStore<T> {
     /// claim adopted via `lock_entry`) it is **removed outright** — not
     /// tombstoned — so `request_id` stays reusable.
     ///
-    /// Observe that this method does not notify any waiters as there is no concrete change to notify them.
-    ///
+/// Note: this does not publish a new state, but removing a `Pending` entry drops its result channel,
+/// so any waiter in `retrieve_from_meta_store_with_timeout` will wake with `Unavailable`.
     /// Deliberately **private**, like [`finalize`](MetaStore::finalize): reached
     /// only through [`with_overwriting_claim`], the migration-only entry point.
     fn abort_reservation(&mut self, mut permit: MetaStorePermit<T>) {
