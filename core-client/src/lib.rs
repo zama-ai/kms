@@ -67,7 +67,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
-// time to sleep between retries of requests in milliseconds
+// time to sleep between get_x_result poll requests in milliseconds
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
 /// Retries a function a given number of times with a given interval between retries.
@@ -2757,6 +2757,35 @@ fn print_timings(
 
     // For debugging, print all collected durations
     tracing::debug!("All durations: {:?}", total_client_durations);
+}
+
+/// Like [`print_timings`], but reports throughput from the *collection* window only
+/// (request -> partial-decryption responses), keeping client-side reconstruction and
+/// verification out of the throughput figure.
+///
+/// This reports the collect-only throughput as the canonical figure,
+/// plus a legacy end-to-end figure (collect + reconstruction) for continuity.
+fn print_phased_timings(
+    cmd: &str,
+    collect_elapsed: tokio::time::Duration,
+    response_durations: &[tokio::time::Duration],
+    reconstruct_elapsed: tokio::time::Duration,
+) {
+    let num_results = response_durations.len();
+    let response_duration_stat = compute_stat_on_durations(response_durations);
+
+    tracing::info!("Latency for {cmd}: {}", response_duration_stat);
+
+    // This is the line the CI perf harness parses ("Throughput: N requests/s"). Collection only, i.e. the KMS serving
+    // rate, excluding client-side reconstruction.
+    tracing::info!(
+        "Collected {num_results} results for {cmd} in {collect_elapsed:?}. Throughput: {} requests/s",
+        num_results as f64 / collect_elapsed.as_secs_f64()
+    );
+
+    tracing::info!(
+        "Client-side reconstruction + verification for {cmd} of {num_results} results took {reconstruct_elapsed:?}"
+    );
 }
 
 #[cfg(test)]

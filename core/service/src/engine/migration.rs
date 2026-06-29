@@ -926,12 +926,12 @@ mod tests {
             mpc_nodes.push(NodeInfo {
                 mpc_identity: format!("testnode{}", i),
                 party_id: (i + 1) as u32,
-                verification_key: None,
+                signer_address: None,
                 external_url: "https://doesnotexist.zama.ai".to_string(),
                 ca_cert: None,
                 public_storage_url: "".to_string(),
                 public_storage_prefix: None,
-                extra_verification_keys: vec![],
+                extra_signer_addresses: vec![],
             });
         }
         let context_info = ContextInfo {

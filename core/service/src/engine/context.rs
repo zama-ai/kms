@@ -1,15 +1,17 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
+use alloy_primitives::Address;
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::role::Role;
 
 use crate::{
-    cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
+    cryptography::signatures::PublicSigKey,
     engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
+    impl_generic_versionize,
     vault::storage::{StorageReader, crypto_material::get_core_signing_key},
 };
 
@@ -105,9 +107,55 @@ impl SoftwareVersion {
     }
 }
 
+/// Ethereum address identifying the verification key of a node operator.
+///
+/// This newtype exists solely to implement [`tfhe_versionable::Versionize`] for
+/// [`alloy_primitives::Address`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignerAddress(pub Address);
+impl_generic_versionize!(SignerAddress);
+
 #[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
 pub enum NodeInfoVersions {
-    V0(NodeInfo),
+    V0(NodeInfoV0),
+    V1(NodeInfo),
+}
+
+/// Legacy [`NodeInfo`] layout, kept for backward compatibility.
+///
+/// Persisted contexts stored the operator's full `PublicSigKey` instead of its Ethereum address.
+/// Upgraded to the current [`NodeInfo`] by deriving the address from each key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Version)]
+pub struct NodeInfoV0 {
+    pub mpc_identity: String,
+    pub party_id: u32,
+    pub verification_key: Option<PublicSigKey>,
+    pub external_url: String,
+    pub ca_cert: Option<Vec<u8>>,
+    pub public_storage_url: String,
+    pub public_storage_prefix: Option<String>,
+    pub extra_verification_keys: Vec<PublicSigKey>,
+}
+
+impl Upgrade<NodeInfo> for NodeInfoV0 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<NodeInfo, Self::Error> {
+        Ok(NodeInfo {
+            mpc_identity: self.mpc_identity,
+            party_id: self.party_id,
+            signer_address: self.verification_key.map(|k| SignerAddress(k.address())),
+            external_url: self.external_url,
+            ca_cert: self.ca_cert,
+            public_storage_url: self.public_storage_url,
+            public_storage_prefix: self.public_storage_prefix,
+            extra_signer_addresses: self
+                .extra_verification_keys
+                .into_iter()
+                .map(|k| SignerAddress(k.address()))
+                .collect(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Versionize, Serialize, Deserialize)]
@@ -116,9 +164,11 @@ pub struct NodeInfo {
     pub mpc_identity: String,
     pub party_id: u32,
 
+    /// Ethereum address of the node operator's signing key, used to identify the node.
+    ///
     /// This is optional for legacy reasons because typically MPC parties
-    /// do not know the public verification keys of other parties when it first starts.
-    pub verification_key: Option<PublicSigKey>,
+    /// do not know the signing keys of other parties when it first starts.
+    pub signer_address: Option<SignerAddress>,
 
     /// Must be a valid URL.
     pub external_url: String,
@@ -131,7 +181,24 @@ pub struct NodeInfo {
 
     pub public_storage_url: String,
     pub public_storage_prefix: Option<String>,
-    pub extra_verification_keys: Vec<PublicSigKey>,
+
+    /// Ethereum addresses of additional signing keys permitted to make transactions on behalf of
+    /// this node.
+    pub extra_signer_addresses: Vec<SignerAddress>,
+}
+
+/// Parses a 20-byte Ethereum address carried in a gRPC `MpcNode` address field.
+///
+/// `field_label` identifies which field the `bytes` came from, for error reporting
+/// (ex: "signer address").
+fn parse_signer_address(
+    bytes: &[u8],
+    mpc_identity: &str,
+    field_label: &str,
+) -> anyhow::Result<SignerAddress> {
+    let addr = Address::try_from(bytes)
+        .map_err(|e| anyhow::anyhow!("Invalid {field_label} for node {mpc_identity}: {e}",))?;
+    Ok(SignerAddress(addr))
 }
 
 impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
@@ -150,23 +217,31 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
 
         // check the external_url is a valid URL
         let _ = url::Url::parse(&value.external_url)?;
-        let mut extra_verification_keys = Vec::new();
-        for k in &value.extra_verification_keys {
-            let pk = PublicSigKey::from_legacy_bytes(k)?;
-            extra_verification_keys.push(pk);
+        let mut extra_signer_addresses = Vec::new();
+        for k in &value.extra_signer_addresses {
+            extra_signer_addresses.push(parse_signer_address(
+                k,
+                &value.mpc_identity,
+                "extra signer address",
+            )?);
         }
+        let signer_address = match &value.signer_address {
+            None => None,
+            Some(addr_bytes) => Some(parse_signer_address(
+                addr_bytes,
+                &value.mpc_identity,
+                "signer address",
+            )?),
+        };
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: match value.verification_key {
-                None => None,
-                Some(vk_bytes) => Some(PublicSigKey::from_legacy_bytes(&vk_bytes)?),
-            },
+            signer_address,
             external_url: value.external_url,
             ca_cert,
             public_storage_url: value.public_storage_url,
             public_storage_prefix: value.public_storage_prefix,
-            extra_verification_keys,
+            extra_signer_addresses,
         })
     }
 }
@@ -174,23 +249,19 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
 impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
     type Error = anyhow::Error;
     fn try_from(value: NodeInfo) -> anyhow::Result<Self> {
-        // Observe that legacy formats have never been used here, so it is safe to use safe_serialize
         Ok(kms_grpc::kms::v1::MpcNode {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: match value.verification_key {
-                Some(inner) => Some(inner.to_legacy_bytes()?),
-                None => None,
-            },
+            signer_address: value.signer_address.map(|addr| addr.0.to_vec()),
             external_url: value.external_url,
             ca_cert: value.ca_cert,
             public_storage_url: value.public_storage_url,
             public_storage_prefix: value.public_storage_prefix,
-            extra_verification_keys: value
-                .extra_verification_keys
+            extra_signer_addresses: value
+                .extra_signer_addresses
                 .into_iter()
-                .map(|k| k.to_legacy_bytes())
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|addr| addr.0.to_vec())
+                .collect(),
         })
     }
 }
@@ -224,14 +295,12 @@ impl ContextInfo {
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
-        let verification_key = signing_key.verf_key();
+        let core_address = SignerAddress(signing_key.verf_key().address());
 
-        let my_node = self.mpc_nodes.iter().find(|node| {
-            node.verification_key
-                .as_ref()
-                .map(|inner| inner == &verification_key)
-                .unwrap_or(false)
-        });
+        let my_node = self
+            .mpc_nodes
+            .iter()
+            .find(|node| node.signer_address == Some(core_address));
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
             self.mpc_nodes.iter().map(|node| node.party_id).collect();
@@ -503,22 +572,22 @@ mod tests {
                 NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: Some(verification_key.clone()),
+                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 },
                 NodeInfo {
                     mpc_identity: "Node2".to_string(),
                     party_id: 1, // Duplicate party_id
-                    verification_key: Some(verification_key),
+                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 },
             ],
             context_id: ContextId::from_bytes([4u8; 32]),

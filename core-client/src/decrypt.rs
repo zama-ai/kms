@@ -1,4 +1,4 @@
-use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_timings};
+use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings, print_timings};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
     ContextId, EpochId, KeyId, RequestId,
@@ -270,13 +270,34 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     // keygen/CRS request builders.
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
 
+    // The expected plaintext is identical for every request.
+    let expected = TestingPlaintext::try_from(ptxt)?;
+
+    // PHASE 0: build every request up front.
+    let mut requests = Vec::with_capacity(num_requests);
+    for _ in 0..num_requests {
+        let req_id = RequestId::new_random(rng);
+        let (user_decrypt_req, enc_pk, enc_sk) =
+            internal_client.write().await.user_decryption_request(
+                &domain,
+                ct_batch.clone(),
+                &req_id,
+                &key_id.into(),
+                context_id.as_ref(),
+                epoch_id.as_ref(),
+                &extra_data,
+            )?;
+        requests.push((req_id, user_decrypt_req, enc_pk, enc_sk));
+    }
+
+    // PHASE 1: send the prebuilt requests and collect their partial-decryption responses.
+    // This is the window we time for throughput. Reconstruction + verification is deferred to
+    // phase 2 below so it does not inflate the reported throughput.
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-    let mut timings_start = HashMap::new();
-    let mut durations = Vec::new();
     let mut durations_to_get_responses = Vec::new();
     let start = tokio::time::Instant::now();
 
-    for i in 0..num_requests {
+    for (i, (req_id, user_decrypt_req, enc_pk, enc_sk)) in requests.into_iter().enumerate() {
         // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
         if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
             tracing::info!(
@@ -285,32 +306,13 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
             );
             tokio::time::sleep(inter_request_delay).await;
         }
-        let req_id = RequestId::new_random(rng);
-        let internal_client = internal_client.clone();
-        let ct_batch = ct_batch.clone();
         let core_endpoints_req = core_endpoints_req.clone();
         let core_endpoints_resp = core_endpoints_resp.clone();
-        let original_plaintext = ptxt.clone();
-        let extra_data = extra_data.clone();
-        let domain = domain.clone();
-
-        // start timing measurement for this request
-        let request_start = tokio::time::Instant::now();
-        timings_start.insert(req_id, request_start); // start timing for this request
 
         // USER_DECRYPTION REQUEST
         join_set.spawn(async move {
-            let user_decrypt_req_tuple = internal_client.write().await.user_decryption_request(
-                &domain,
-                ct_batch,
-                &req_id,
-                &key_id.into(),
-                context_id.as_ref(),
-                epoch_id.as_ref(),
-                &extra_data,
-            )?;
-
-            let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
+            // start timing this request's collect window
+            let request_start = tokio::time::Instant::now();
 
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
@@ -430,9 +432,43 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 time_to_get_responses
             );
 
-            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
-            let eip712_domain =
-                protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?)?;
+            // Reconstruction + verification is deferred to phase 2 (below) so it stays out of the throughput window.
+            // Return everything phase 2 needs to reconstruct.
+            Ok((
+                req_id,
+                user_decrypt_req,
+                enc_pk,
+                enc_sk,
+                resp_response_vec,
+                time_to_get_responses,
+            ))
+        });
+    }
+
+    // Drain phase 1: gather every request's responses and its collect-only latency.
+    let mut collected = Vec::with_capacity(num_requests);
+    while let Some(result) = join_set.join_next().await {
+        let (req_id, user_decrypt_req, enc_pk, enc_sk, resp_response_vec, time_to_get_responses) =
+            result??;
+        durations_to_get_responses.push(time_to_get_responses);
+        collected.push((req_id, user_decrypt_req, enc_pk, enc_sk, resp_response_vec));
+    }
+    let collect_elapsed = start.elapsed();
+
+    // PHASE 2: reconstruct + verify each result in parallel. Measured and reported separately from the throughput figure.
+    let reconstruct_start = tokio::time::Instant::now();
+    let mut recon_tasks: JoinSet<Result<(RequestId, String), anyhow::Error>> = JoinSet::new();
+    for (req_id, user_decrypt_req, enc_pk, enc_sk, resp_response_vec) in collected {
+        let internal_client = internal_client.clone();
+        recon_tasks.spawn(async move {
+            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req)
+                .map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
+            let eip712_domain = protobuf_to_alloy_domain(
+                user_decrypt_req
+                    .domain
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?,
+            )?;
             let plaintexts = internal_client
                 .read()
                 .await
@@ -451,57 +487,41 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                     )
                 })?;
 
-            // test that all results are matching the original plaintext
-            for pt in &plaintexts {
+            // every decrypted block must match the expected plaintext (`TestingPlaintext` is `Copy`,
+            // and we convert by value, so no per-block clones)
+            let mut decoded = plaintexts.into_iter().map(TestingPlaintext::try_from);
+            let first = decoded
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("no plaintexts in user decryption response"))??;
+            anyhow::ensure!(
+                first == expected,
+                "user decryption result mismatch: expected {expected:?}, got {first:?}"
+            );
+            for pt in decoded {
+                let pt = pt?;
                 anyhow::ensure!(
-                    TestingPlaintext::try_from(pt.clone())? == TestingPlaintext::try_from(original_plaintext.clone())?,
-                    "user decryption result mismatch: expected {:?}, got {:?}",
-                    TestingPlaintext::try_from(original_plaintext.clone())?,
-                    TestingPlaintext::try_from(pt.clone())?
+                    pt == expected,
+                    "user decryption result mismatch: expected {expected:?}, got {pt:?}"
                 );
             }
 
-            let decrypted_plaintext = plaintexts.first().ok_or_else(|| anyhow::anyhow!("no plaintexts in user decryption response"))?.clone();
-
-            tracing::info!(
-                "User decryption response is ok: {:?} / {:?}",
-                original_plaintext,
-                TestingPlaintext::try_from(decrypted_plaintext.clone())?,
-            );
-
-            let res = format!(
-                "User decrypted Plaintext {:?}",
-                TestingPlaintext::try_from(decrypted_plaintext)?
-            );
-
-            tracing::info!(
-                "{:?} ###! Verified user decrypt responses and reconstructed. Since start {:?}",
-                req_id.as_str(),
-                start.elapsed()
-            );
-
-            Ok((req_id, res, time_to_get_responses))
+            tracing::info!("User decryption response is ok: {expected:?} / {first:?}");
+            Ok((req_id, format!("User decrypted Plaintext {first:?}")))
         });
     }
-    let mut result_vec = Vec::new();
-    while let Some(result) = join_set.join_next().await {
-        let (req_id, resp_msg, time_to_get_responses) = result??;
-        let elapsed = timings_start
-            .remove(&req_id)
-            .unwrap_or_else(|| {
-                panic!("programmer error, req_id {req_id} should have been inserted to timing map")
-            })
-            .elapsed();
-        durations.push(elapsed);
-        durations_to_get_responses.push(time_to_get_responses);
-        result_vec.push((Some(req_id), resp_msg));
-    }
 
-    print_timings(
+    let mut result_vec = Vec::with_capacity(durations_to_get_responses.len());
+    while let Some(res) = recon_tasks.join_next().await {
+        let (req_id, msg) = res??;
+        result_vec.push((Some(req_id), msg));
+    }
+    let reconstruct_elapsed = reconstruct_start.elapsed();
+
+    print_phased_timings(
         "user decrypt",
-        &durations,
+        collect_elapsed,
         &durations_to_get_responses,
-        start,
+        reconstruct_elapsed,
     );
 
     Ok(result_vec)
