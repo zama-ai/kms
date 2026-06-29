@@ -19,6 +19,7 @@ use crate::{
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
     cryptography::signatures::PublicSigKey,
+    engine::context::SignerAddress,
     testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
@@ -126,7 +127,7 @@ async fn do_context_switch(
             )
             .await
             .unwrap();
-            node.verification_key = Some(pk);
+            node.signer_address = Some(SignerAddress(pk.address()));
         }
         new_context
     };
