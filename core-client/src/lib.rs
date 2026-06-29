@@ -2784,12 +2784,6 @@ fn print_phased_timings(
         num_results as f64 / collect_elapsed.as_secs_f64()
     );
 
-    // Legacy end-to-end figure (collect + client-side reconstruction)
-    let legacy_elapsed = collect_elapsed + reconstruct_elapsed;
-    tracing::info!(
-        "Legacy end-to-end for {cmd} (collect + client reconstruction) over {num_results} results: {legacy_elapsed:?} = {} requests/s",
-        num_results as f64 / legacy_elapsed.as_secs_f64()
-    );
     tracing::info!(
         "Client-side reconstruction + verification for {cmd} of {num_results} results took {reconstruct_elapsed:?}"
     );
