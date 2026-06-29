@@ -86,6 +86,8 @@ pub async fn init_rayon_thread_pool(num_threads: usize) -> anyhow::Result<usize>
 /// Spawn a compute task on rayon and returns its result.
 ///
 /// This can be used to offload the tokio executor from CPU bound tasks.
+///
+/// The setup overhead introduced by this call is ~25µs.
 pub async fn spawn_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 'static>(
     compute_fn: F,
 ) -> anyhow::Result<R> {

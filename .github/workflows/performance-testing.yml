@@ -363,8 +363,10 @@ jobs:
             TLS_STATUS="disabled"
           fi
           # Update the workflow template with the current image tag
-          echo "Updating workflow template with image tag: ${KMS_CORE_IMAGE_TAG}"
-          sed -i "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
+          echo "Updating workflow template — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
+          sed -i \
+            -e "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" \
+            -e "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
             ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml
 
           echo "Submitting Argo workflow..."

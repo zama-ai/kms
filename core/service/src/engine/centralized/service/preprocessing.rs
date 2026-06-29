@@ -59,12 +59,6 @@ pub async fn preprocessing_impl<
     let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain, extra_data) =
         validate_preproc_request(inner)?;
 
-    add_req_to_meta_store(
-        &mut service.preprocessing_meta_store.write().await,
-        &req_id,
-        OP_KEYGEN_PREPROC_REQUEST,
-    )?;
-
     let sk = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_KEYGEN_PREPROC_REQUEST,
@@ -73,6 +67,12 @@ pub async fn preprocessing_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    let permit = add_req_to_meta_store(
+        &service.preprocessing_meta_store,
+        &req_id,
+        OP_KEYGEN_PREPROC_REQUEST,
+    )
+    .await?;
     let external_signature =
         compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain, extra_data)
             .map_err(|e| e.to_string());
@@ -83,11 +83,12 @@ pub async fn preprocessing_impl<
     });
 
     let _ = update_req_in_meta_store(
-        &mut service.preprocessing_meta_store.write().await,
-        &req_id,
+        &service.preprocessing_meta_store,
+        permit,
         preproc_bucket,
         OP_KEYGEN_PREPROC_REQUEST,
-    );
+    )
+    .await;
     tracing::warn!(
         "Received a preprocessing request for the central server {} - No action taken",
         req_id
@@ -138,7 +139,7 @@ pub async fn get_preprocessing_res_impl<
             })?;
 
     let preproc_data = retrieve_from_meta_store(
-        service.preprocessing_meta_store.read().await,
+        &service.preprocessing_meta_store,
         &request_id,
         OP_KEYGEN_PREPROC_RESULT,
     )
@@ -146,7 +147,7 @@ pub async fn get_preprocessing_res_impl<
 
     Ok(Response::new(KeyGenPreprocResult {
         preprocessing_id: Some(request_id.into()),
-        external_signature: preproc_data.external_signature,
+        external_signature: preproc_data.external_signature.clone(),
     }))
 }
 #[cfg(test)]

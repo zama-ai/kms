@@ -391,8 +391,10 @@ spec:
         labels:
           test: "{{inputs.parameters.test-name}}"
           app: kms-enclave-test-suite
+      nodeSelector:
+          karpenter.sh/nodepool: kms-pool
       script:
-        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<version>
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
           cat <<EOF >>config.toml
@@ -580,11 +582,11 @@ spec:
             value: '{{inputs.parameters.fhe-params}}'
         resources:
           requests:
-            memory: "24Gi"
-            cpu: "4"
+            memory: "96Gi"
+            cpu: "64"
           limits:
-            memory: "24Gi"
-            cpu: "4"
+            memory: "96Gi"
+            cpu: "64"
 
 
     - name: summary-report

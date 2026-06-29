@@ -66,7 +66,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
-// time to sleep between retries of requests in milliseconds
+// time to sleep between get_x_result poll requests in milliseconds
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
 /// Retries a function a given number of times with a given interval between retries.
@@ -2733,32 +2733,31 @@ fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationSta
         max,
     }
 }
-// Prints the timings for the command execution, showing latency and throughput based on the measured durations.
-fn print_timings(
+
+/// Reports latency + collect-only throughput for a decrypt command. The heavy client-side
+/// reconstruction/verification is excluded from the throughput figure (reported on its own line)
+/// so it reflects the KMS serving rate.
+fn print_phased_timings(
     cmd: &str,
-    total_client_durations: &[tokio::time::Duration],
-    durations_to_get_responses: &[tokio::time::Duration],
-    start: tokio::time::Instant,
+    collect_elapsed: tokio::time::Duration,
+    response_durations: &[tokio::time::Duration],
+    reconstruct_elapsed: tokio::time::Duration,
 ) {
-    let num_results = total_client_durations.len();
-    // compute total time that is elapsed since we sent the first request
-    let total_elapsed = start.elapsed();
-
-    // compute latency values
-    let total_duration_stat = compute_stat_on_durations(total_client_durations);
-    let response_duration_stat = compute_stat_on_durations(durations_to_get_responses);
-
-    tracing::debug!("Client total latency for {cmd}: {}", total_duration_stat);
+    let num_results = response_durations.len();
+    let response_duration_stat = compute_stat_on_durations(response_durations);
 
     tracing::info!("Latency for {cmd}: {}", response_duration_stat);
 
+    // This is the line the CI perf harness parses ("Throughput: N requests/s"). Collection only, i.e. the KMS serving
+    // rate, excluding client-side reconstruction.
     tracing::info!(
-        "Total elapsed time for {cmd} with {num_results} collected results: {total_elapsed:?}. Throughput: {} requests/s",
-        num_results as f64 / total_elapsed.as_secs_f64()
+        "Collected {num_results} results for {cmd} in {collect_elapsed:?}. Throughput: {} requests/s",
+        num_results as f64 / collect_elapsed.as_secs_f64()
     );
 
-    // For debugging, print all collected durations
-    tracing::debug!("All durations: {:?}", total_client_durations);
+    tracing::info!(
+        "Client-side reconstruction + verification for {cmd} of {num_results} results took {reconstruct_elapsed:?}"
+    );
 }
 
 #[cfg(test)]
