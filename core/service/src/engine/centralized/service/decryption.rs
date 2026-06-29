@@ -1,3 +1,4 @@
+use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
@@ -10,7 +11,8 @@ use crate::engine::validation::{
     validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
-    add_or_redo_failed_in_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
+    add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+    update_req_in_meta_store,
 };
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
@@ -168,10 +170,11 @@ pub async fn get_user_decryption_result_impl<
             },
         )?;
 
-    let arc = retrieve_from_meta_store(
+    let arc = retrieve_from_meta_store_with_timeout(
         &service.user_dec_meta_store,
         &request_id,
         OP_USER_DECRYPT_RESULT,
+        DURATION_WAITING_ON_RESULT_SECONDS,
     )
     .await?;
     let (payload, external_signature, extra_data) = (*arc).clone();
@@ -356,10 +359,11 @@ pub async fn get_public_decryption_result_impl<
     })?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let dec_res = retrieve_from_meta_store(
+    let dec_res = retrieve_from_meta_store_with_timeout(
         &service.pub_dec_meta_store,
         &request_id,
         OP_PUBLIC_DECRYPT_RESULT,
+        DURATION_WAITING_ON_RESULT_SECONDS,
     )
     .await?;
     let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*dec_res).clone();

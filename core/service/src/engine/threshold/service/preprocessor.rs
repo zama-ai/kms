@@ -51,8 +51,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
-            update_req_in_meta_store,
+            MetaStore, MetaStorePermit, add_req_to_meta_store,
+            retrieve_from_meta_store_with_timeout, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -539,9 +539,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
         );
 
-        let preproc_data =
-            retrieve_from_meta_store(&self.preproc_buckets, &request_id, OP_KEYGEN_PREPROC_RESULT)
-                .await?;
+        let preproc_data = retrieve_from_meta_store_with_timeout(
+            &self.preproc_buckets,
+            &request_id,
+            OP_KEYGEN_PREPROC_RESULT,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        )
+        .await?;
 
         tracing::info!("Preproc result ready for request {}", request_id);
 
@@ -1105,9 +1109,14 @@ mod tests {
         );
 
         // The stored bucket must hold no preprocessing material
-        let bucket = retrieve_from_meta_store(&prep.preproc_buckets, &req_id, "test")
-            .await
-            .unwrap();
+        let bucket = retrieve_from_meta_store_with_timeout(
+            &prep.preproc_buckets,
+            &req_id,
+            "test",
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             bucket.preprocessing_store,
             super::PreprocMaterial::Insecure

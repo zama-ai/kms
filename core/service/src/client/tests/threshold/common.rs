@@ -260,7 +260,7 @@ pub async fn threshold_secure_key_gen(
         res??;
     }
 
-    // Wait for key generation to complete and collect responses
+    // Wait for key generation to complete and collect responses.
     let mut responses = Vec::new();
     for (party_id, client) in clients.iter() {
         let result = retrying_poll(
