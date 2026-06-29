@@ -785,10 +785,8 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENS
     }
 
     fn mul_by_i128(self, scalar: i128) -> Self {
-        // `from_i128(scalar)` places the base residue in coef[0] and zeros elsewhere, so the full
-        // multiply `self * from_i128(scalar)` collapses to scaling every coefficient by that base
-        // residue — no Karatsuba and no reduction. For Z128 the residue is `Wrapping(scalar as u128)`,
-        // matching `from_i128` exactly.
+        // from_i128(scalar) is a scalar poly (only coef[0] is nonzero),
+        // so the full multiply reduces to simply scaling each coefficient.
         let zscalar = Wrapping(scalar as u128); // signed scalar interpreted modulo 2^128 (Z128's modulus)
         Self {
             coefs: self.coefs.map(|c| c * base),
