@@ -1529,6 +1529,28 @@ mod tests {
     }
 
     #[test]
+    fn lock_entry_requires_released_insert_permit() {
+        // The insert permit holds the claim, so the entry cannot be re-locked
+        // until that permit is dropped.
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
+        let id = derive_request_id("lock-pending").unwrap();
+        let insert_permit = store.insert(&id).unwrap();
+        assert!(matches!(
+            store.lock_entry(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        drop(insert_permit);
+        // Now lockable; the resulting permit again blocks a second lock.
+        let lock_permit = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.lock_entry(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        drop(lock_permit);
+        assert!(store.lock_entry(&id).is_ok());
+    }
+
+    #[test]
     fn lock_then_update_completes_entry() {
         // A relocked Pending entry can be completed through the new permit.
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
@@ -1553,6 +1575,22 @@ mod tests {
         assert!(matches!(prev, EntryState::Done(Ok(_))));
         assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
         assert_eq!(store.get_successful_completed_request_ids().len(), 0);
+    }
+
+    #[test]
+    fn lock_entry_blocks_try_delete_until_released() {
+        // A permit acquired via `lock_entry` on a still-Pending entry blocks a
+        // permit-less `try_delete` just like the original insert permit does.
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
+        let id = derive_request_id("lock-blocks-del").unwrap();
+        drop(store.insert(&id).unwrap());
+        let permit = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        drop(permit);
+        assert!(store.try_delete(&id).is_ok());
     }
 
     #[test]
