@@ -1809,7 +1809,7 @@ async fn new_custodian_context(
         CCCommand::NewCustodianContext(NewCustodianContextParameters {
             threshold: custodian_threshold,
             setup_msgs,
-            mpc_context_id: DEFAULT_MPC_CONTEXT.to_string(),
+            mpc_context_id: *DEFAULT_MPC_CONTEXT,
         }),
         200,
     );
