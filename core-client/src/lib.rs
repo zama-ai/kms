@@ -1802,19 +1802,11 @@ pub async fn execute_cmd(
                     "http://".to_string() + &address
                 };
 
-                let core_endpoint_req = retry!(
-                    connect_core_pool(&url).await,
-                    5,
-                    100
-                )?;
+                let core_endpoint_req = retry!(connect_core_pool(&url).await, 5, 100)?;
                 // Centralized is always party 1
                 core_endpoints_req.insert(core.clone(), core_endpoint_req);
 
-                let core_endpoint_resp = retry!(
-                    connect_core_pool(&url).await,
-                    5,
-                    100
-                )?;
+                let core_endpoint_resp = retry!(connect_core_pool(&url).await, 5, 100)?;
                 core_endpoints_resp.insert(core.clone(), core_endpoint_resp);
 
                 // there's only 1 party, so use index 1
@@ -1855,20 +1847,12 @@ pub async fn execute_cmd(
                         url
                     );
 
-                    let core_endpoint_req = retry!(
-                        connect_core_pool(&url).await,
-                        5,
-                        100
-                    )?;
+                    let core_endpoint_req = retry!(connect_core_pool(&url).await, 5, 100)?;
                     // NOTE CANT USE PARTY ID AS KEY CAUSE WE MAY HAVE SEVERAL CORES WITH SAME ID
                     // WHEN HAVING MULTIPLE CONTEXTS
                     core_endpoints_req.insert(cur_core.clone(), core_endpoint_req);
 
-                    let core_endpoint_resp = retry!(
-                        connect_core_pool(&url).await,
-                        5,
-                        100
-                    )?;
+                    let core_endpoint_resp = retry!(connect_core_pool(&url).await, 5, 100)?;
                     core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
                     pub_storage.insert(
