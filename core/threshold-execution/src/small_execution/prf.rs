@@ -98,9 +98,9 @@ impl PsiAes {
 /// Function Phi that generates bounded randomness for PRSS-Mask.Next(), evaluated over the
 /// contiguous counter range `[start, start + count)`.
 ///
-/// This currently assumes that the value Bd_1 in the NIST doc is smaller than 2^126. A single
-/// `encrypt_blocks` call is issued so the AES-NI backend can pipeline the blocks, and the
-/// (loop-invariant) bounds are checked only once for the whole range.
+/// This currently assumes and checks that the value Bd_1 in the NIST doc is smaller than 2^126.
+/// A single `encrypt_blocks` call is issued so the AES-NI backend can pipeline the blocks,
+/// and the (loop-invariant) bounds are checked only once for the whole range.
 pub(crate) fn phi_range(
     pa: &PhiAes,
     start: u128,
@@ -111,9 +111,7 @@ pub(crate) fn phi_range(
         return Ok(Vec::new());
     }
 
-    // we currently assume that Bd1 is at most 126 bits large, so we only need a single block of
-    // AES per value and can fit the result in an i128.
-    // check that bd1 is small enough to not cause overflow of the result
+    // check that bd1 is within expected bounds, to avoid overflow when computing -Bd1 + (AES mod 2*Bd1)
     if bd1 > (1 << 126) {
         return Err(anyhow_error_and_log(
             "Bd1 must be at most 2^126 to not overflow, but is larger".to_string(),
