@@ -12,7 +12,10 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
-use crate::util::meta_store::add_req_to_meta_store;
+use crate::util::meta_store::{
+    add_req_to_meta_store, delete_in_meta_store, ensure_not_in_meta_store,
+    lock_entry_in_meta_store, update_err_req_in_meta_store,
+};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
@@ -182,11 +185,14 @@ where
             }
         }
 
-        add_req_to_meta_store(
-            &mut self.custodian_meta_store.write().await,
+        // Fail fast: reject before the (expensive) key generation and backup
+        // re-encryption if this context id is already known to the meta store.
+        ensure_not_in_meta_store(
+            &self.custodian_meta_store,
             &custodian_context_id,
             OP_NEW_CUSTODIAN_CONTEXT,
-        )?;
+        )
+        .await?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
@@ -224,12 +230,12 @@ where
 
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
-        let mut cus_meta_store = self.custodian_meta_store.write().await;
-        if cus_meta_store.delete(&context_id).is_none() {
-            tracing::warn!(
-                "Custodian context with id {context_id} to be deleted does not exist in meta store"
-            );
-        }
+        let permit = lock_entry_in_meta_store(
+            &self.custodian_meta_store,
+            &context_id,
+            OP_DESTROY_CUSTODIAN_CONTEXT,
+        )
+        .await?;
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
@@ -258,6 +264,13 @@ where
                 tonic::Code::Internal,
             )
         })?;
+        delete_in_meta_store(
+            &self.custodian_meta_store,
+            permit,
+            "Failed to delete context".to_string(),
+            OP_DESTROY_CUSTODIAN_CONTEXT,
+        )
+        .await;
         Ok(Response::new(Empty {}))
     }
 
@@ -286,49 +299,81 @@ where
         )
         .await?;
 
+        let meta_permit = add_req_to_meta_store(
+            &self.custodian_meta_store,
+            &inner_context.context_id,
+            OP_NEW_CUSTODIAN_CONTEXT,
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to claim meta-store entry for custodian context {}: {e}",
+                inner_context.context_id
+            )
+        })?;
+
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        let lock_start = std::time::Instant::now();
-        let mut guarded_backup_vault = backup_vault.lock().await;
-        // First update the backup vault's context ID
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
-            guarded_backup_vault.keychain.as_mut()
-        {
-            if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
-                && cur_backup_id == inner_context.context_id
+        // We keep the result so we can update the meta-store with an appropriate error in case of failure.
+        let prep: anyhow::Result<()> = async {
+            let lock_start = std::time::Instant::now();
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            // First update the backup vault's context ID
+            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+                guarded_backup_vault.keychain.as_mut()
             {
-                anyhow::bail!(
-                    "A custodian context with the same context ID already exists in the backup vault!"
-                );
+                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
+                    && cur_backup_id == inner_context.context_id
+                {
+                    anyhow::bail!(
+                        "A custodian context with the same context ID already exists in the backup vault!"
+                    );
+                }
+                secret_share_keychain
+                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
+            } else {
+                return Err(anyhow_error_and_log(
+                    "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
+                ));
+            };
+            // Ensure we free the lock on backup vault before performing the new backup!
+            drop(guarded_backup_vault);
+            // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
+            // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
+            // Hence we do a complete failure of the method if this fails
+            if !self
+                .crypto_storage
+                .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
+                .await
+            {
+                return Err(anyhow_error_and_log("Failed to update backup vault"));
             }
-            secret_share_keychain
-                .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
-        } else {
-            return Err(anyhow_error_and_log(
-                "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
-            ));
-        };
-        // Ensure we free the lock on backup vault before performing the new backup!
-        drop(guarded_backup_vault);
-        // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
-        // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
-        // Hence we do a complete failure of the method if this fails
-        if !self
-            .crypto_storage
-            .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
-            .await
-        {
-            return Err(anyhow_error_and_log("Failed to update backup vault"));
+            let total_lock_time = lock_start.elapsed();
+            tracing::info!(
+                "New context storage - context_id={}, total_lock_held={:?}",
+                inner_context.context_id,
+                total_lock_time
+            );
+            Ok(())
         }
-        let total_lock_time = lock_start.elapsed();
-        tracing::info!(
-            "New context storage - context_id={}, total_lock_held={:?}",
-            inner_context.context_id,
-            total_lock_time
-        );
-        // Then store the results
+        .await;
+        if let Err(e) = prep {
+            update_err_req_in_meta_store(
+                &self.custodian_meta_store,
+                meta_permit,
+                format!("{e:#}"),
+                OP_NEW_CUSTODIAN_CONTEXT,
+            )
+            .await;
+            return Err(e);
+        }
+        // Then store the results (consumes the permit, recording success or error).
         self.crypto_storage
-            .write_backup_keys(recovery_validation, Arc::clone(&self.custodian_meta_store))
+            .write_backup_keys(
+                recovery_validation,
+                Arc::clone(&self.custodian_meta_store),
+                meta_permit,
+            )
             .await?;
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
@@ -1143,7 +1188,7 @@ mod tests {
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
             session_maker,
         );
 
@@ -1265,7 +1310,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
             let response = context_manager.new_mpc_context(request).await;
@@ -1300,7 +1345,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1332,7 +1377,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1385,7 +1430,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1415,7 +1460,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1508,7 +1553,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1558,7 +1603,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
             let request = Request::new(NewMpcContextRequest {
@@ -1588,7 +1633,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1651,7 +1696,7 @@ mod tests {
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
-                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                MetaStore::new(100, 10),
                 session_maker,
             );
 
@@ -1894,7 +1939,7 @@ mod tests {
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage,
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
             session_maker,
         );
 
@@ -1936,7 +1981,7 @@ mod tests {
         let context_manager = CentralizedContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
         );
 
         // Initially, the cache should be empty
@@ -2031,7 +2076,7 @@ mod tests {
         let context_manager = CentralizedContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
         );
 
         // Initially, context should not exist
@@ -2078,7 +2123,7 @@ mod tests {
         let context_manager = CentralizedContextManager::new(
             base_kms,
             crypto_storage.clone(),
-            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            MetaStore::new(100, 10),
         );
 
         // Create multiple contexts

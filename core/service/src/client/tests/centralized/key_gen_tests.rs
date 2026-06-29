@@ -284,7 +284,8 @@ pub async fn run_key_gen_centralized(
         kms_client.clone(),
         (*key_req_id).into(),
         "key gen result",
-        PollConfig::default(),
+        // Real keygen (especially `FheParameter::Default`) far outlasts the default
+        PollConfig::long_poll_config(),
         |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
     )
     .await;
