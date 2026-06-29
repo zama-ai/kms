@@ -317,7 +317,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 2. Add a new custodian context.
   In the `core-client` folder run the following, passing each custodian's base64 setup message after `-m`:
   ```{bash}
-  cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -c "0700000000000000000000000000000000000000000000000000000000000001" -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
+  cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
   ```
   > **Note:** Custodian management (`new-custodian-context`, `custodian-recovery-init`, `custodian-backup-recovery`) currently operates on a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
 
@@ -654,12 +654,12 @@ Below we sketch how to use the core client to create a new custodian context:
 $ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -c <custodian context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
 ```
 The parameter `-t`/`threshold` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m`/`setup_msgs` list, which expresses the base64 setup messages of each of the custodians (as printed by `kms-custodian generate`), sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
-The parameter `-c`/`--mpc-context-id` specifies the MPC context ID that the custodian context is bound to.
+The parameter `-i`/`--mpc-context-id` specifies the MPC context ID that the custodian context is bound to.
 See [the custodian setup section](./backup.md#custodian-setup) for details.
 
 Finally a concrete example of a command for a setup with 3 custodians is the following:
 ```{bash}
-$ cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -c "0700000000000000000000000000000000000000000000000000000000000001" -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
+$ cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
 ```
 
 ### New Epoch (Resharing)
