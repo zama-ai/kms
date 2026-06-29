@@ -161,12 +161,30 @@ pub(crate) fn phi_range(
 /// (rather than a per-call heap allocation) holds the blocks.
 const AES_BATCH: usize = 8;
 
-/// Function Psi that generates bounded randomness for PRSS.next()
-pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
-    // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices below
-    if ctr >= 1 << 112 {
+/// Shared core of [`psi`] and [`chi`]: derives the residue-polynomial value for `ctr` by
+/// encrypting one AES block per base-ring coefficient.
+///
+/// Each block carries the dimension index `i` in byte 14 and the block counter in byte 15; chi
+/// additionally carries its threshold index in byte 13 (pass `Some(j)`, psi passes `None`). Outputs
+/// are laid out as `coefs[i * num_u128_base_ring + block_ctr]` (i outer, block_ctr inner). Blocks
+/// are encrypted in fixed stack-buffer batches so the AES backend pipelines them without a per-call
+/// heap allocation.
+fn prf_residue_poly<Z: Ring + PRSSConversions>(
+    aes: &Aes128,
+    ctr: u128,
+    j: Option<u8>,
+) -> anyhow::Result<Z> {
+    // Bytes 14 (dimension) and 15 (block counter) are always written into the MSBs below; chi also
+    // writes byte 13 (threshold index j). ctr must stay below 2^(8 * free low bytes) so it cannot
+    // overwrite them: 2^112 for psi (bytes 14-15 reserved), 2^104 for chi (bytes 13-15 reserved).
+    let (name, ctr_bits): (&str, u32) = if j.is_some() {
+        ("chi", 104)
+    } else {
+        ("psi", 112)
+    };
+    if ctr >= 1u128 << ctr_bits {
         return Err(anyhow_error_and_log(format!(
-            "ctr in psi must be smaller than 2^112 but was {ctr}."
+            "ctr in {name} must be smaller than 2^{ctr_bits} but was {ctr}."
         )));
     }
 
@@ -175,12 +193,6 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
     let base = ctr.to_le_bytes();
 
-    // Compute the EXTENSION_DEGREE base-ring coefficients psi^(i) for this counter.
-    // Compute one AES block each, encrypted in stack-buffer batches.
-    // Block (i, block_ctr) carries the dimension index i and the block counter in its MSBs; the
-    // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
-    // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
-    // heap allocation for the block buffer.
     let mut coefs = vec![0_u128; n_blocks];
     #[allow(deprecated)]
     let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
@@ -189,12 +201,14 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
         let chunk = (n_blocks - start).min(AES_BATCH);
         for (slot, block) in buf[..chunk].iter_mut().enumerate() {
             let idx = start + slot;
-            let mut ctr_bytes = base;
-            ctr_bytes[15] = (idx % num_u128_base_ring) as u8; // v - the block counter
-            ctr_bytes[14] = (idx / num_u128_base_ring) as u8; // i - the dimension index
-            block.copy_from_slice(&ctr_bytes);
+            block.copy_from_slice(&base);
+            block[15] = (idx % num_u128_base_ring) as u8; // v - the block counter
+            block[14] = (idx / num_u128_base_ring) as u8; // i - the dimension index
+            if let Some(j) = j {
+                block[13] = j; // j - the threshold index (chi only)
+            }
         }
-        pa.aes.encrypt_blocks(&mut buf[..chunk]);
+        aes.encrypt_blocks(&mut buf[..chunk]);
         for (slot, block) in buf[..chunk].iter().enumerate() {
             coefs[start + slot] = u128::from_le_bytes((*block).into());
         }
@@ -204,49 +218,15 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     Ok(Z::from_u128_chunks(coefs))
 }
 
+/// Function Psi that generates bounded randomness for PRSS.next()
+pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
+    prf_residue_poly(&pa.aes, ctr, None)
+}
+
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
 pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
-    // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices below
-    if ctr >= 1 << 104 {
-        return Err(anyhow_error_and_log(format!(
-            "ctr in chi must be smaller than 2^104 but was {ctr}."
-        )));
-    }
-
-    //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
-    let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-    let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
-    let base = ctr.to_le_bytes();
-
-    // Compute the EXTENSION_DEGREE base-ring coefficients chi^(i) for this counter.
-    // Compute one AES block each, encrypted in stack-buffer batches.
-    // Block (i, block_ctr) carries the dimension index i, threshold index j and block counter; the
-    // outputs are laid out as coefs[i * num_u128_base_ring + block_ctr] (i outer, block_ctr inner).
-    // Encrypt in fixed stack-buffer batches so the AES backend still pipelines, without a per-call
-    // heap allocation for the block buffer.
-    let mut coefs = vec![0_u128; n_blocks];
-    #[allow(deprecated)]
-    let mut buf = [GenericArray::from([0u8; 16]); AES_BATCH];
-    let mut start = 0;
-    while start < n_blocks {
-        let chunk = (n_blocks - start).min(AES_BATCH);
-        for (slot, block) in buf[..chunk].iter_mut().enumerate() {
-            let idx = start + slot;
-            let mut ctr_bytes = base;
-            ctr_bytes[15] = (idx % num_u128_base_ring) as u8; // v - the block counter
-            ctr_bytes[14] = (idx / num_u128_base_ring) as u8; // i - the dimension index
-            ctr_bytes[13] = j; // j - the threshold index
-            block.copy_from_slice(&ctr_bytes);
-        }
-        pa.aes.encrypt_blocks(&mut buf[..chunk]);
-        for (slot, block) in buf[..chunk].iter().enumerate() {
-            coefs[start + slot] = u128::from_le_bytes((*block).into());
-        }
-        start += chunk;
-    }
-
-    Ok(Z::from_u128_chunks(coefs))
+    prf_residue_poly(&pa.aes, ctr, Some(j))
 }
 
 #[cfg(test)]
