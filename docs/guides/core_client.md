@@ -181,6 +181,8 @@ However, this will _NOT_ overwrite anything on the private storage. Hence the re
 
 After `backup-restore` has been executed the KMS server must be rebooted for the restored data to be fetched into memory.
 
+See [Backup restoring](#backup-restoring) below for the full command reference, including using `backup-restore` to move private material from one node to another.
+
 ### Custodian-based backup
 
 #### Configuration
@@ -219,14 +221,14 @@ More specifically the following steps must be done:
 1. Set up custodians.
   This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool.
   This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
-1. Add a new custodian context.
+2. Add a new custodian context.
   After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).
 
 NOTE: You may have multiple custodian contexts. However, the system will only make backups for a single custodian context. This will always be the most recent custodian context.
 
 #### Recovery
 
-WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
+> **WARNING — validate the `VerfKey` before starting recovery.** Recovery assumes the KMS does not have access to its private storage, so the `VerfKey` in the KMS's public storage is the trust anchor for the whole procedure. Before starting, you **must** verify that this `VerfKey` is byte-equal to the current verification key on the gateway. We do not assume the public storage is safe from modification by an adversary, so skipping this check would let an attacker substitute their own key.
 
 The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
 However, the procedure is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
@@ -263,6 +265,13 @@ The steps needed are as follows:
   This call will take the data in the backup and write this to the private storage.
   However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
   Furthermore note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
+1. Reboot the KMS operator after the recovery, as private material is only reloaded during boot.
+
+##### If recovery fails
+
+- **Fewer than `t + 1` valid custodian outputs.** Reconstruction needs at least `t + 1` custodian outputs that validate against the `RecoveryValidationMaterial` in public storage. If the command rejects too many outputs (e.g. an output came from the wrong custodian role, was generated against a different recovery request, or was corrupted in transit), collect a fresh output from another custodian and re-run `custodian-backup-recovery` with the full set. Outputs are validated individually, so adding more is safe.
+- **A `BackupCiphertext` fails to decrypt mid-restore.** Because the restore is non-destructive, the private storage is only ever added to, never overwritten. Remove any partially written private-storage entries, double-check that the `VerfKey` validation at the top of this section still holds, and re-run the command — already-restored entries will be skipped and the remaining ones retried.
+- **Re-initiating a stuck recovery.** If recovery cannot complete, re-run `custodian-recovery-init` with `-o true` (`--overwrite-ephemeral-key`) to discard the previous in-memory ephemeral key and start a fresh recovery session, then redistribute the new recovery request to the custodians.
 
 #### Destroy context
 
@@ -527,6 +536,8 @@ Upon success, both the command to request to generate a CRS _and_ the command to
 
 ### Backup restoring
 
+> This section is the command reference for the `backup-restore` command used by the **import/export-based** backup mode. For how to set that mode up, and for the alternative custodian-based mode, see [Backup and recovery](#backup-and-recovery) above.
+
 If a backup vault is specified in the server configuration toml file, then all non-volatile private key material (i.e. what is stored in the private vault) is backed up to this location. This also means that it is possible to restore this content in case access to the private vault is lost, or that the private vault needs to be moved.
 This is done through the backup recovery command:
 
@@ -641,6 +652,8 @@ Optional command line options for the public/user decryption command are:
  __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>`, `-n`/`--num-requests <NUM_REQUESTS>`, `--inter-request-delay-ms <DELAY>`, and `-p`/`--parallel-requests <NUM>` are supported.
 
 ### Custodian context
+
+> This section is the command reference for `new-custodian-context`. For where it fits in the end-to-end custodian backup flow — custodian setup, recovery, context rotation and destruction — see [Custodian-based backup](#custodian-based-backup) under [Backup and recovery](#backup-and-recovery) above.
 
 In order to be able to do custodian-based backup and recovery, the KMS nodes need to know the public keys of the custodians which will be able to help it recover. This is handled through custodian contexts.
 Multiple custodian contexts may exist at once, but only a single one is *active* at any given time: backups are always constructed under the most recent custodian context. Whenever a new custodian context is made, it becomes the active context and replaces the previous one as the current backup method.

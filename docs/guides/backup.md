@@ -1,6 +1,11 @@
-# KMS backup CLI Tool
+# KMS Custodian CLI Tool
 
-The tool allows to make custodian keys using a BIP39 seed phrase and help operators in recovery of backups (through reencryption) by using a seed phrase.
+The `kms-custodian` tool is run by a custodian on an air-gapped machine to support custodian-based backup and recovery. It has two roles:
+
+- **Setup** (`generate`): derive a custodian's key material from a BIP39 seed phrase and produce the public setup message an operator needs to create a custodian context.
+- **Recovery** (`decrypt`): use that seed phrase to decrypt a custodian's share of a backup and re-encrypt it for the recovering operator.
+
+A `verify` command is also provided to check that a seed phrase matches a given setup message.
 
 ## Prerequisites
 
@@ -63,7 +68,7 @@ $ cargo run --bin kms-custodian decrypt --seed-phrase <the seed phrase used for 
 Observe that the `randomness` supplied is used along with entropy of the current system to do re-encryption, and thus the command is *not* idempotent. 
 The base64-encoded recovery output is printed to stdout (prefixed with `The custodian recovery output is: `) to be copied back to the operator out-of-band.
 
-IMPORTANT: IT IS NOT POSSIBLE FOR THE CUSTODIAN TO VALIDATE THE AUTHENTICITY OF A REQUEST! HENCE IT IS PARAMOUNT THAT IT IS VALIDATED OUT-OF-BAND, E.G. THROUGH A DIGEST ON A BLOCKCHAIN.
+> **IMPORTANT — the custodian cannot validate a request's authenticity.** The tool has no way to tell whether a recovery request is legitimate. It is therefore paramount that the request is validated out-of-band before decrypting, e.g. by checking it against a digest published on a blockchain.
 
 For example:
 ```{bash}
