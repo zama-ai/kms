@@ -4,7 +4,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use std::hint::black_box;
 use std::sync::Arc;
-use threshold_execution::constants::B_SWITCH_SQUASH;
+
+const B_SWITCH_SQUASH: u128 = 1u128 << 70;
 use threshold_execution::{
     large_execution::vss::DummyVss,
     runtime::{
