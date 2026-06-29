@@ -105,8 +105,8 @@ where
         })
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
-        self.data.iter().map(|share| share.value()).collect_vec()
+    pub fn data_iter(&self) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
+        self.data.iter().map(|share| share.value())
     }
 
     pub fn from_lwe_secret_key(

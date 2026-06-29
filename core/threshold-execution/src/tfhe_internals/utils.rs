@@ -26,7 +26,7 @@ use super::glwe_key::GlweSecretKeyShare;
 pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     output: &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
     lhs: &[Z],
-    rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    rhs: impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>>,
 ) {
     debug_assert!(
         lhs.len() == rhs.len(),
@@ -41,7 +41,7 @@ pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DE
         lhs.len()
     );
     output.fill(ResiduePoly::ZERO);
-    let mut rev_rhs = rhs.to_vec();
+    let mut rev_rhs = rhs.collect_vec();
     rev_rhs.reverse();
     let lhs_pol = Poly::from_coefs(lhs.to_vec());
     let rhs_pol = Poly::from_coefs(rev_rhs);
@@ -50,11 +50,13 @@ pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DE
     *output = res.coefs().to_vec();
 }
 
-pub fn slice_to_polynomials<Z: Ring>(slice: &[Z], pol_size: usize) -> Vec<Poly<Z>> {
+pub fn slice_to_polynomials<Z: Ring>(
+    slice: impl ExactSizeIterator<Item = Z>,
+    pol_size: usize,
+) -> Vec<Poly<Z>> {
     let mut res: Vec<Poly<Z>> = Vec::new();
-    for coefs in &slice.iter().chunks(pol_size) {
-        let coef = coefs.copied().collect_vec();
-        res.push(Poly::from_coefs(coef));
+    for coefs in &slice.chunks(pol_size) {
+        res.push(Poly::from_coefs(coefs.collect()));
     }
     res
 }
@@ -103,7 +105,7 @@ pub fn pol_mul_reduce<Z: BaseRing, const EXTENSION_DEGREE: usize>(
 
 pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lhs: &[Z],
-    rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    rhs: impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>>,
 ) -> ResiduePoly<Z, EXTENSION_DEGREE> {
     assert_eq!(
         lhs.len(),
@@ -117,7 +119,7 @@ pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     // zip_eq can panic but we just asserted that lhs and rhs have the same length
     // so that'd panic first but would be a bug in the code
     lhs.iter()
-        .zip_eq(rhs.iter())
+        .zip_eq(rhs)
         .fold(ResiduePoly::ZERO, |acc, (left, right)| acc + right * *left)
 }
 
@@ -130,9 +132,9 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGR
 {
     let pol_dimension = glwe_secret_key_share.polynomial_size.0;
     let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
-    let pol_output_mask = slice_to_polynomials(output_mask, pol_dimension);
+    let pol_output_mask = slice_to_polynomials(output_mask.iter().copied(), pol_dimension);
     let pol_glwe_secret_key_share =
-        slice_to_polynomials(&glwe_secret_key_share.data_as_raw_vec(), pol_dimension);
+        slice_to_polynomials(glwe_secret_key_share.data_iter(), pol_dimension);
 
     for (poly_1, poly_2) in pol_output_mask
         .iter()
