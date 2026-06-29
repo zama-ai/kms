@@ -119,6 +119,13 @@ pub async fn run_server<
     );
     let server = Server::builder()
         .http2_adaptive_window(Some(true))
+        // Match the core-client's enlarged HTTP/2 flow-control windows so large
+        // (ciphertext-carrying) requests are not stalled mid-stream by the ~64 KiB defaults
+        // on the server's receive side; adaptive windowing tunes up from these floors. The
+        // higher stream cap keeps a burst of concurrent decrypt requests from queueing behind
+        // the per-connection MAX_CONCURRENT_STREAMS limit.
+        .initial_stream_window_size(8u32 * 1024 * 1024) // 8 MiB
+        .initial_connection_window_size(64u32 * 1024 * 1024) // 64 MiB
         .layer(trace_request)
         // Make sure we never abort because we spent too much time on the blocking part of the get result
         // as we mean to do it. Use the preprocessing wait window (the largest) so the server
