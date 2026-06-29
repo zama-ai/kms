@@ -72,6 +72,11 @@ use tokio::task::JoinSet;
 use tonic::transport::Channel;
 use tonic::{Response, Status};
 
+/// Polling budget (number of `get_key_gen_preproc_result` retries at
+/// [`PREPROC_POLL_SLEEP_MS`] each) for real, secure preprocessing.
+#[cfg(feature = "slow_tests")]
+const SECURE_PREPROC_POLL_MAX_ITER: usize = 6000;
+
 #[expect(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {

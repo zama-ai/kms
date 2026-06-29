@@ -681,8 +681,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
     async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
         let guarded_meta_store = self.preproc_buckets.read().await;
-        let request_ids = guarded_meta_store.get_completed_request_ids();
-        Ok(request_ids.map(|id| id.to_string()).collect())
+        let request_ids = guarded_meta_store.get_successful_completed_request_ids();
+        Ok(request_ids.into_iter().map(|id| id.to_string()).collect())
     }
 }
 
@@ -1134,11 +1134,14 @@ mod tests {
             .await
             .unwrap();
 
+        // Real preprocessing can far outlast the default poll window under heavy
+        // parallel test load, so use a generous attempt budget.
         assert_eq!(
-            prep.get_insecure_result(tonic::Request::new(req_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
+            crate::testing::utils::poll_result_until_ready_with_max_tries(6000, || prep
+                .get_insecure_result(tonic::Request::new(req_id.into())))
+            .await
+            .unwrap_err()
+            .code(),
             tonic::Code::FailedPrecondition
         );
     }

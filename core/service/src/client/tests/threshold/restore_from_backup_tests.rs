@@ -354,7 +354,6 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
         res??;
     }
 
-    // Wait for CRS generation to complete
     for client in clients.values() {
         retrying_poll(
             client.clone(),

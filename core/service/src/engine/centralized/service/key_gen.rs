@@ -964,13 +964,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let retry_request = KeyGenRequest {
-            preproc_id: Some(preproc_id_2.into()),
-            ..request.clone()
-        };
+        let mut duplicate_request = request.clone();
+        duplicate_request.preproc_id = Some(preproc_id_2.into());
         let err = key_gen_impl(
             &kms,
-            tonic::Request::new(retry_request),
+            tonic::Request::new(duplicate_request),
             #[cfg(feature = "insecure")]
             true,
         )

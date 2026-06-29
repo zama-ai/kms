@@ -257,15 +257,11 @@ impl MetaStoreStatusServiceImpl {
         let request_ids = match status_filter {
             Some(RequestProcessingStatus::Processing) => store_guard.get_processing_request_ids(),
             Some(RequestProcessingStatus::Completed) => {
-                store_guard.get_completed_request_ids().copied().collect()
+                store_guard.get_successful_completed_request_ids()
             }
             Some(RequestProcessingStatus::Failed) => store_guard.get_failed_request_ids(),
             Some(RequestProcessingStatus::Any) | None => {
-                let mut res = store_guard.get_processing_request_ids();
-                res.extend(store_guard.get_completed_request_ids());
-                res.extend(store_guard.get_failed_request_ids());
-                res.extend(store_guard.get_deleted_request_ids());
-                res
+                store_guard.get_any_seen_request_ids().copied().collect()
             }
             Some(RequestProcessingStatus::Deleted) => {
                 store_guard.get_deleted_request_ids().copied().collect()

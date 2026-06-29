@@ -298,13 +298,6 @@ pub async fn wait_for_crsgen_result(
 ) -> Vec<CrsInfo> {
     let amount_parties: usize = kms_clients.len();
 
-    let poll_secs = if insecure { 1 } else { 15 };
-    let poll_config = PollConfig {
-        initial_delay: tokio::time::Duration::from_secs(poll_secs),
-        retry_delay: tokio::time::Duration::from_secs(poll_secs),
-        max_retries: MAX_TRIES,
-    };
-
     // Poll each (client, request) pair independently until all succeed.
     let mut futs = Vec::new();
     for req in reqs {
@@ -318,7 +311,7 @@ pub async fn wait_for_crsgen_result(
                     client,
                     req_id.clone(),
                     "crs gen result",
-                    poll_config,
+                    PollConfig::long_poll_config(),
                     |c, req| Box::pin(c.get_crs_gen_result(req)),
                 )
                 .await

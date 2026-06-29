@@ -66,7 +66,7 @@ pub(crate) async fn run_insecure_preproc(
             client.clone(),
             (*preproc_id).into(),
             "insecure preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_insecure_key_gen_preproc_result(request).await })
             },
@@ -146,7 +146,7 @@ pub async fn threshold_insecure_key_gen(
             client.clone(),
             (*request_id).into(),
             "insecure keygen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_insecure_key_gen_result(request).await })
             },

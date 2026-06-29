@@ -2523,7 +2523,7 @@ mod tests {
         for _ in 0..MAX_TRIES {
             if matches!(
                 kg.preproc_buckets.read().await.retrieve(&insecure_prep_id),
-                None | Some(EntryState::Deleted)
+                Some(EntryState::Deleted)
             ) {
                 deleted = true;
                 break;
