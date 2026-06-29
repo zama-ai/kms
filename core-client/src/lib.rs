@@ -2759,6 +2759,35 @@ fn print_timings(
     tracing::debug!("All durations: {:?}", total_client_durations);
 }
 
+/// Like [`print_timings`], but reports throughput from the *collection* window only
+/// (request -> partial-decryption responses), keeping client-side reconstruction and
+/// verification out of the throughput figure.
+///
+/// This reports the collect-only throughput as the canonical figure,
+/// plus a legacy end-to-end figure (collect + reconstruction) for continuity.
+fn print_phased_timings(
+    cmd: &str,
+    collect_elapsed: tokio::time::Duration,
+    response_durations: &[tokio::time::Duration],
+    reconstruct_elapsed: tokio::time::Duration,
+) {
+    let num_results = response_durations.len();
+    let response_duration_stat = compute_stat_on_durations(response_durations);
+
+    tracing::info!("Latency for {cmd}: {}", response_duration_stat);
+
+    // This is the line the CI perf harness parses ("Throughput: N requests/s"). Collection only, i.e. the KMS serving
+    // rate, excluding client-side reconstruction.
+    tracing::info!(
+        "Collected {num_results} results for {cmd} in {collect_elapsed:?}. Throughput: {} requests/s",
+        num_results as f64 / collect_elapsed.as_secs_f64()
+    );
+
+    tracing::info!(
+        "Client-side reconstruction + verification for {cmd} of {num_results} results took {reconstruct_elapsed:?}"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
