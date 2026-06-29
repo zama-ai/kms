@@ -263,13 +263,23 @@ The steps needed are as follows:
   Furthermore note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
 
 #### Destroy context
-TODO
+
+Destroying a custodian context permanently removes that context **and all of its backups** — both the recovery material in the operators' public storage and the `BackupCiphertext`s in the backup vault — from memory and disk. This is driven through the KMS core's `DestroyCustodianContext` endpoint (`DestroyCustodianContextRequest`, defined in [kms.v1.proto](../../core/grpc/proto/kms.v1.proto)), which takes a single argument:
+- `context_id`: the custodian context ID to destroy (as returned by `new-custodian-context` when the context was created).
+
+Two conditions must hold before destroying a context:
+1. The context must be a valid custodian context that was previously created with `new-custodian-context`.
+2. There must be two custodians contexts in the system to be able to remove one. Recovery is only ever possible against a non-destroyed context.
+
+WARNING: This operation is irreversible and purges _all backups_ tied to the context. Only destroy a context once its replacement has been created and confirmed to work as intended (see [Rotating the custodian context](#rotating-the-custodian-context) below); otherwise you may be left with no usable backup.
+
+TODO add core client steps
 
 #### Rotating the custodian context
 In order to rotate the custodian context the following steps must be executed
 (In the following we assume there is already an existing custodian context setup):
 1. Using the new set of custodians. Make a new [Custodian setup](./backup.md#Custodian-setup) and use their setup messages to setup a new custodian context on all the KMS operators. That is, execute the steps of [Setup](#setup-1).
-2. After the new custodian setup has been completed successfully, and the KMS has run as expected for at least a week, you may delete the old custodian context. This is done by executing teh steps in [destroy context](#destroy-context).
+2. After the new custodian setup has been completed successfully, and the KMS has run as expected for at least a week, you may delete the old custodian context. This is done by executing the steps in [destroy context](#destroy-context).
 
 ### Concrete e2e example for custodian backup
 
