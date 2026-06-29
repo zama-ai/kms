@@ -234,9 +234,15 @@ where
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await?;
-        let mut cus_meta_store = self.custodian_meta_store.write().await;
         // Ensure we are not destroying the only backup vault there exists.
-        if cus_meta_store.get_completed_count() < 2 {
+        if self
+            .custodian_meta_store
+            .read()
+            .await
+            .get_successful_completed_request_ids()
+            .len()
+            < 2
+        {
             return Err(MetricedError::new(
                 OP_DESTROY_CUSTODIAN_CONTEXT,
                 Some(context_id),
@@ -245,11 +251,6 @@ where
                 ),
                 tonic::Code::FailedPrecondition,
             ))?;
-        }
-        if cus_meta_store.delete(&context_id).is_none() {
-            tracing::warn!(
-                "Custodian context with id {context_id} to be deleted does not exist in meta store"
-            );
         }
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
