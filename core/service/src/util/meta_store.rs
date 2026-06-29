@@ -2443,8 +2443,8 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::Aborted);
     }
 
-    /// End-to-end: a waiter blocked on a `Pending` entry whose permit is dropped
-    /// is woken by the reaper witha failing status (`Done(Err)` -> `Internal`).
+/// End-to-end: a waiter blocked on a `Pending` entry whose permit is dropped
+/// is woken by the reaper with a failing status (`Done(Err)` -> `Internal`).
     #[tokio::test]
     async fn retrieve_with_timeout_wakes_when_reaper_fails_orphan() {
         let store = MetaStore::<String>::new_unlimited();
