@@ -29,6 +29,7 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
+use crate::engine::utils::MetricedError;
 use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
@@ -37,12 +38,14 @@ use crate::{
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
     util::{
-        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store},
+        meta_store::{
+            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+            update_err_req_in_meta_store,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
-use crate::{engine::utils::MetricedError, util::meta_store::update_err_req_in_meta_store};
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -93,7 +96,7 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        let permit = self.rate_limiter.start_crsgen(op_tag).await?;
+        let rate_limiter_permit = self.rate_limiter.start_crsgen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
@@ -132,12 +135,6 @@ impl<
                 tonic::Code::AlreadyExists,
             ));
         }
-
-        add_req_to_meta_store(
-            &mut self.crs_meta_store.write().await,
-            &verified.req_id,
-            op_tag,
-        )?;
         let sigkey = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
                 op_tag,
@@ -146,6 +143,8 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        let meta_permit =
+            add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
             verified.req_id,
@@ -161,7 +160,8 @@ impl<
             verified.params,
             &verified.eip712_domain,
             verified.extra_data,
-            permit,
+            rate_limiter_permit,
+            meta_permit,
             verified.epoch_id,
             verified.context_id,
             sigkey,
@@ -182,19 +182,14 @@ impl<
         dkg_params: DKGParams,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
-        permit: OwnedSemaphorePermit,
+        rate_limiter_permit: OwnedSemaphorePermit,
+        meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
         context_id: ContextId,
         sk: Arc<PrivateSigKey>,
         timer: DurationGuard<'static>,
         insecure: bool,
     ) -> anyhow::Result<()> {
-        // Retrieve the correct tag
-        let op_tag = if insecure {
-            OP_INSECURE_CRS_GEN_REQUEST
-        } else {
-            OP_CRS_GEN_REQUEST
-        };
         let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
         let session = self
@@ -203,9 +198,7 @@ impl<
             .await?;
 
         let meta_store = Arc::clone(&self.crs_meta_store);
-        let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
 
         // we do not need to hold the handle,
@@ -217,43 +210,35 @@ impl<
             self.ongoing.lock().await.insert(req_id, token.clone());
         }
         let ongoing = Arc::clone(&self.ongoing);
-        self.tracker
-            .spawn(async move {
-                // Capture the timer inside the generation tasks, such that when the task
-                // exits, the timer is dropped and thus exported
+        self.tracker.spawn(
+            async move {
+                // Capture the timer inside the generation task, such that when the
+                // task exits, the timer is dropped and thus exported.
                 let _inner_timer = timer;
-                let _inner_permit = permit;
-                tokio::select! {
-                    ()  = Self::crs_gen_background(&req_id, &epoch_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, extra_data, insecure) => {
-                        // Remove cancellation token since generation is now done.
-                        ongoing.lock().await.remove(&req_id);
-                        tracing::info!("CRS generation of request {} exiting normally.", req_id);
-                    },
-                    () = token.cancelled() => {
-                        MetricedError::handle_unreturnable_error(
-                            op_tag,
-                            Some(req_id),
-                            anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
-                        );
-                        let del_res = crypto_storage_cancelled.inner.purge_crs_material(&req_id, &epoch_id).await;
-                        {
-                            let mut guarded_meta_store = meta_store_cancelled.write().await;
-                            let msg = if del_res {
-                                // Successful deletion
-                                let msg = format!("CRS generation aborted and crs material deleted successfully for request {}", req_id);
-                                tracing::info!(msg);
-                                msg
-                            } else {
-                                // Error during deletion
-                                let msg = format!("CRS generation aborted but failed to delete crs material for request {}", req_id);
-                                tracing::error!(msg);
-                                msg
-                            };
-                            update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, op_tag);
-                        }
-                    },
-                }
-            }.instrument(tracing::Span::current()));
+                let _inner_rate_limiter_permit = rate_limiter_permit;
+                Self::crs_gen_background(
+                    meta_permit,
+                    token,
+                    &req_id,
+                    &epoch_id,
+                    witness_dim,
+                    max_num_bits,
+                    session,
+                    rng,
+                    meta_store,
+                    crypto_storage,
+                    sk,
+                    dkg_params.to_owned(),
+                    eip712_domain_copy,
+                    extra_data,
+                    insecure,
+                )
+                .await;
+                // Cleanup runs on every termination
+                ongoing.lock().await.remove(&req_id);
+            }
+            .instrument(tracing::Span::current()),
+        );
         Ok(())
     }
 
@@ -272,10 +257,9 @@ impl<
             parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
-        let crs_data =
-            retrieve_from_meta_store(self.crs_meta_store.read().await, &request_id, op_tag).await?;
+        let crs_data = retrieve_from_meta_store(&self.crs_meta_store, &request_id, op_tag).await?;
 
-        match crs_data {
+        match crs_data.as_ref() {
             CrsGenMetadata::Current(crs_data) => {
                 if crs_data.crs_id != request_id {
                     return Err(MetricedError::new(
@@ -291,9 +275,9 @@ impl<
                 }
                 Ok(Response::new(CrsGenResult {
                     request_id: Some(request_id.into()),
-                    crs_digest: crs_data.crs_digest,
+                    crs_digest: crs_data.crs_digest.clone(),
                     max_num_bits: crs_data.max_num_bits,
-                    external_signature: crs_data.external_signature,
+                    external_signature: crs_data.external_signature.clone(),
                 }))
             }
             CrsGenMetadata::LegacyV0(_) => {
@@ -348,6 +332,8 @@ impl<
 
     #[expect(clippy::too_many_arguments)]
     async fn crs_gen_background(
+        permit: MetaStorePermit<CrsGenMetadata>,
+        cancel_token: CancellationToken,
         req_id: &RequestId,
         epoch_id: &EpochId,
         witness_dim: usize,
@@ -374,105 +360,110 @@ impl<
 
         let crs_start_timer = Instant::now();
         let pke_params = params.compact_pk_enc_params();
-        let pp = if insecure {
-            // sanity check to make sure we're using the insecure feature
-            #[cfg(not(feature = "insecure"))]
-            {
-                let _ = rng; // stop clippy from complaining
-                panic!("attempting to call insecure crsgen when the insecure feature is not set");
-            }
-            #[cfg(feature = "insecure")]
-            {
-                let my_role = base_session.my_role();
-                // We let the first party sample the seed (we are using 1-based party IDs)
-                let input_party_id = 1;
-                let domain = eip712_domain.clone();
-                if my_role.one_based() == input_party_id {
-                    let crs_res = async_generate_crs(
-                        &sk,
-                        params,
-                        max_num_bits,
-                        domain,
-                        extra_data.clone(),
-                        req_id,
-                        rng,
-                    )
+        let extra_data_for_compute = extra_data.clone();
+        let domain_for_compute = eip712_domain.clone();
+        let generate_pp = async {
+            if insecure {
+                // sanity check to make sure we're using the insecure feature
+                #[cfg(not(feature = "insecure"))]
+                {
+                    let _ = rng; // stop clippy from complaining
+                    panic!(
+                        "attempting to call insecure crsgen when the insecure feature is not set"
+                    );
+                }
+                #[cfg(feature = "insecure")]
+                {
+                    let my_role = base_session.my_role();
+                    // We let the first party sample the seed (we are using 1-based party IDs)
+                    let input_party_id = 1;
+                    let domain = eip712_domain.clone();
+                    if my_role.one_based() == input_party_id {
+                        let crs_res = async_generate_crs(
+                            &sk,
+                            params,
+                            max_num_bits,
+                            domain,
+                            extra_data.clone(),
+                            req_id,
+                            rng,
+                        )
+                        .await;
+                        let crs = crs_res
+                            .map(|(crs, _)| crs)
+                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        transfer_crs(&base_session, Some(crs), input_party_id).await
+                    } else {
+                        transfer_crs(&base_session, None, input_party_id).await
+                    }
+                }
+            } else {
+                // secure ceremony (insecure = false)
+                // CRS ceremony with production-sized params (e.g. 2048 bits) is CPU-intensive,
+                // each party's turn can take minutes. Increase the timeout to match BK SNS generation
+                // to prevent other parties from timing out and marking the computing party as corrupt.
+                base_session.network.set_timeout_for_bk_sns().await;
+                let real_ceremony = C::default();
+                let internal_pp = real_ceremony
+                    .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
                     .await;
-                    let crs = match crs_res {
-                        Ok((crs, _)) => crs,
-                        Err(e) => {
-                            let _ = update_err_req_in_meta_store(
-                                &mut meta_store.write().await,
-                                req_id,
-                                e.to_string(),
-                                op_tag,
-                            );
-                            return;
-                        }
-                    };
-                    transfer_crs(&base_session, Some(crs), input_party_id).await
+                internal_pp.and_then(|internal| {
+                    internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
+                })
+            }
+        };
+
+        // Race the long-running generation against cancellation.
+        let outcome: Result<(tfhe::zk::CompactPkeCrs, CrsGenMetadata), String> = tokio::select! {
+            biased;
+            () = cancel_token.cancelled() => Err(format!(
+                "CRS generation of request {req_id} aborted before completion because of a cancellation event"
+            )),
+            pp = generate_pp => pp
+                .and_then(|pp| compute_info_crs(
+                    &sk,
+                    &DSEP_PUBDATA_CRS,
+                    req_id,
+                    &pp,
+                    &domain_for_compute,
+                    extra_data_for_compute,
+                ).map(|info| (pp, info)))
+                .map_err(|e| e.to_string()),
+        };
+
+        match outcome {
+            Err(msg) => {
+                MetricedError::handle_unreturnable_error(
+                    op_tag,
+                    Some(*req_id),
+                    anyhow::anyhow!(msg.clone()),
+                );
+                let _ = crypto_storage
+                    .inner
+                    .purge_crs_material(req_id, epoch_id)
+                    .await;
+                let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
+            }
+            Ok((pp, crs_info)) => {
+                tracing::info!(
+                    "CRS generation completed for req_id={req_id} with digest={}, storing the CRS.",
+                    hex::encode(crs_info.digest())
+                );
+                // write_crs consumes the permit via update_meta_store internally
+                let res = crypto_storage
+                    .inner
+                    .write_crs(req_id, epoch_id, pp, crs_info, meta_store, permit, op_tag)
+                    .await;
+                let elapsed_time = Instant::now().duration_since(crs_start_timer);
+                if let Err(e) = res {
+                    tracing::error!("Failed to write CRS for request {req_id}: {e}");
                 } else {
-                    transfer_crs(&base_session, None, input_party_id).await
+                    tracing::info!(
+                        "CRS stored. CRS ceremony time was {} ms",
+                        elapsed_time.as_millis()
+                    );
                 }
             }
-        } else {
-            // secure ceremony (insecure = false)
-            // CRS ceremony with production-sized params (e.g. 2048 bits) is CPU-intensive,
-            // each party's turn can take minutes. Increase the timeout to match BK SNS generation
-            // to prevent other parties from timing out and marking the computing party as corrupt.
-            base_session.network.set_timeout_for_bk_sns().await;
-            let real_ceremony = C::default();
-            let internal_pp = real_ceremony
-                .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
-                .await;
-            internal_pp.and_then(|internal| {
-                internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
-            })
-        };
-
-        let res_info_pp = pp.and_then(|pp| {
-            compute_info_crs(
-                &sk,
-                &DSEP_PUBDATA_CRS,
-                req_id,
-                &pp,
-                &eip712_domain,
-                extra_data,
-            )
-            .map(|pub_info| (pp, pub_info))
-        });
-
-        let (pp, crs_info) = match res_info_pp {
-            Ok((pp, pp_id)) => (pp, pp_id),
-            Err(e) => {
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    req_id,
-                    e.to_string(),
-                    op_tag,
-                );
-                return;
-            }
-        };
-
-        tracing::info!(
-            "CRS generation completed for req_id={req_id} with digest={}, storing the CRS.",
-            hex::encode(crs_info.digest())
-        );
-
-        let res = crypto_storage
-            .inner
-            .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-            .await;
-        let crs_stop_timer = Instant::now();
-        let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-        if let Err(e) = res {
-            tracing::error!("Failed to write CRS for request {req_id}: {e}");
-        } else {
-            tracing::info!(
-                "CRS stored. CRS ceremony time was {:?} ms",
-                (elapsed_time).as_millis()
-            );
         }
     }
 }
@@ -594,6 +585,7 @@ mod tests {
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
+        testing::utils::poll_result_until_ready,
     };
 
     use super::*;
@@ -623,7 +615,7 @@ mod tests {
             Self {
                 base_kms,
                 crypto_storage,
-                crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                crs_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
                 ongoing,
@@ -681,8 +673,9 @@ mod tests {
             witness_dim: usize,
             max_num_bits: Option<u32>,
         ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            // We need to sleep for more than 60 seconds because
-            // the get response call blocks for 60 seconds if there is potentially a result
+            // Keep the ceremony running for a long time so the CRS entry stays
+            // `Pending` while the test issues a concurrent `get_result` / abort,
+            // letting those observe the in-flight state before completion.
             tokio::time::sleep(Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS + 10)).await;
             let ceremony = InsecureCeremony {};
             ceremony
@@ -881,8 +874,7 @@ mod tests {
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
 
         assert_eq!(
-            crs_gen
-                .get_result(Request::new(req_id.into()))
+            poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
                 .await
                 .unwrap_err()
                 .code(),
@@ -969,8 +961,7 @@ mod tests {
 
         let request = Request::new(req);
         crs_gen.crs_gen(request).await.unwrap();
-        let _crs = crs_gen
-            .get_result(Request::new(req_id.into()))
+        let _crs = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
             .await
             .unwrap();
     }
@@ -1019,9 +1010,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
-        // Try to get the result and see it has been aborted
-        let err = crs_gen
-            .get_result(Request::new(req_id.into()))
+        let err = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
