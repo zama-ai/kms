@@ -262,8 +262,14 @@ The steps needed are as follows:
   However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
   Furthermore note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
 
-#### Rotating the custodian context
+#### Destroy context
 TODO
+
+#### Rotating the custodian context
+In order to rotate the custodian context the following steps must be executed
+(In the following we assume there is already an existing custodian context setup):
+1. Using the new set of custodians. Make a new [Custodian setup](./backup.md#Custodian-setup) and use their setup messages to setup a new custodian context on all the KMS operators. That is, execute the steps of [Setup](#setup-1).
+2. After the new custodian setup has been completed successfully, and the KMS has run as expected for at least a week, you may delete the old custodian context. This is done by executing teh steps in [destroy context](#destroy-context).
 
 ### Concrete e2e example for custodian backup
 
@@ -290,7 +296,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 2. Add a new custodian context.
   In the `core-client` folder run the following, passing each custodian's base64 setup message after `-m`:
   ```{bash}
-  cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
+  cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -c "0700000000000000000000000000000000000000000000000000000000000001" -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
   ```
   > **Note:** Custodian management (`new-custodian-context`, `custodian-recovery-init`, `custodian-backup-recovery`) currently operates on a **single core at a time** — the core-client errors out if the config points at more than one core. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
 
@@ -305,7 +311,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```{bash}
   cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123 --custodian-role 1 --recovery-request "<operator recovery request>"
   cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123 --custodian-role 2 --recovery-request "<operator recovery request>"
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123 --custodian-role 3 --recovery-request "<recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123 --custodian-role 3 --recovery-request "<operator recovery request>"
   ```
 5. KMS node recovers the backup decryption key.
   Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
@@ -624,14 +630,15 @@ For custodian-based backup we currently only support a single active custodian c
 Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended.
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
+$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -c <custodian context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
 ```
-The parameter `-t` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m` list, which expresses the base64 setup messages of each of the custodians (as printed by `kms-custodian generate`), sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
+The parameter `-t`/`threshold` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m`/`setup_msgs` list, which expresses the base64 setup messages of each of the custodians (as printed by `kms-custodian generate`), sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
+The parameter `-c`/`--mpc-context-id` specifies the MPC context ID that the custodian context is bound to.
 See [the custodian setup section](./backup.md#custodian-setup) for details.
 
 Finally a concrete example of a command for a setup with 3 custodians is the following:
 ```{bash}
-$ cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
+$ cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -c "0700000000000000000000000000000000000000000000000000000000000001" -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
 ```
 
 ### New Epoch (Resharing)

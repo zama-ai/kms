@@ -1,7 +1,7 @@
 # Config for a threshold deployment to be used when handling custodian backups.
 # That is, this configuration is to be used with the CLI when doing custodian management.
 
-# The type of the KMS ("centralized" or "threshold")
+# The type of the KMS deployment ("centralized" or "threshold")
 kms_type = "threshold"
 
 # The minimum number of matching responses required to have an honest majority
@@ -20,8 +20,10 @@ num_reconstruct = 1
 # Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
-fhe_params = "Test" # Small, insecure parameters for testing
-# fhe_params = "Default" # Large, secure parameters
+# The parameters used in the deployment.
+# Options are "Test" or "Default"
+# MUST be "Default" in a real deployment
+fhe_params = "Default" # Large, secure parameters
 
 # List of connection info to each of the cores
 # Note that for custodian backup management this part of the file
