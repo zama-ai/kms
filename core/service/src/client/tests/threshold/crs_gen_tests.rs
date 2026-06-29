@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::{PollConfig, retrying_poll};
-use crate::consts::{MAX_TRIES, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
+use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -255,7 +255,6 @@ pub async fn run_crs(
         kms_clients,
         internal_client,
         &dkg_param,
-        insecure,
         test_path,
     )
     .await
@@ -293,17 +292,9 @@ pub async fn wait_for_crsgen_result(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     param: &DKGParams,
-    insecure: bool,
     test_path: Option<&Path>,
 ) -> Vec<CrsInfo> {
     let amount_parties: usize = kms_clients.len();
-
-    let poll_secs = if insecure { 1 } else { 15 };
-    let poll_config = PollConfig {
-        initial_delay: tokio::time::Duration::from_secs(poll_secs),
-        retry_delay: tokio::time::Duration::from_secs(poll_secs),
-        max_retries: MAX_TRIES,
-    };
 
     // Poll each (client, request) pair independently until all succeed.
     let mut futs = Vec::new();
@@ -318,7 +309,7 @@ pub async fn wait_for_crsgen_result(
                     client,
                     req_id.clone(),
                     "crs gen result",
-                    poll_config,
+                    PollConfig::long_poll_config(),
                     |c, req| Box::pin(c.get_crs_gen_result(req)),
                 )
                 .await

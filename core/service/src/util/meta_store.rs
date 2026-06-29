@@ -1891,7 +1891,7 @@ mod tests {
 
     /// An orphaned `Pending` entry (insert permit dropped without an outcome) is
     /// transitioned to `Done(Err)` and becomes a fully-fledged completed entry:
-    /// queued and listed as failed. Being a failure, it is not a success.
+    /// queued and listed as failed.
     #[test]
     fn fail_if_orphaned_fails_dropped_pending() {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
