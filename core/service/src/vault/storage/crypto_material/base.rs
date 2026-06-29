@@ -3,8 +3,9 @@
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::util::meta_store::update_ok_req_in_meta_store;
-use crate::util::meta_store::{ensure_meta_store_request_pending, update_err_req_in_meta_store};
+use crate::util::meta_store::{
+    MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
+};
 use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
@@ -46,7 +47,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
@@ -99,6 +100,8 @@ pub enum PublicKeySet {
 ///
 /// Warning: In relation to concurrency where multiple locks are needed always lock as follows:
 /// meta_store -> public_storage -> private_storage second -> backup_vault -> pk_cache.
+///
+/// TODO(#3036) Note that holding a MetaStore lock should eventually be sufficient to not require locking multiple things at once.
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -305,28 +308,17 @@ where
         priv_data: Option<(&'a PrivData, PrivDataType)>,
         meta_data: MetaT,
         meta_store: Arc<RwLock<MetaStore<MetaT>>>,
+        permit: MetaStorePermit<MetaT>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError>
     where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, req_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
             .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
-        update_meta_store(
-            res,
-            req_id,
-            meta_data,
-            &mut guarded_meta_store,
-            op_metric_tag,
-        )
-        .await
+        update_meta_store(res, meta_data, &meta_store, permit, op_metric_tag).await
     }
 
     /// General method for handling the storage of both public and private material along with the backup.
@@ -738,6 +730,7 @@ where
     /// Write the CRS to public and private storage and update the meta
     /// store with the outcome. On a write failure the partial data is
     /// purged before the error is returned.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_crs(
         &self,
         crs_id: &RequestId,
@@ -745,6 +738,7 @@ where
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        permit: MetaStorePermit<CrsGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
         self.handle_persistent_and_meta_storage(
@@ -754,6 +748,7 @@ where
             Some((&crs_info.clone(), PrivDataType::CrsInfo)),
             crs_info,
             meta_store,
+            permit,
             op_metric_tag,
         )
         .await
@@ -765,11 +760,8 @@ where
         meta_data: KeyGenMetadata,
         decompression_key: DecompressionKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        permit: MetaStorePermit<KeyGenMetadata>,
     ) -> Result<(), StorageError> {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, key_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let res = self
             .write_all::<DecompressionKey, DecompressionKey>(
                 key_id,
@@ -780,15 +772,7 @@ where
                 OP_DECOMPRESSION_KEYGEN,
             )
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
-        update_meta_store(
-            res,
-            key_id,
-            meta_data,
-            &mut guarded_meta_store,
-            OP_DECOMPRESSION_KEYGEN,
-        )
-        .await
+        update_meta_store(res, meta_data, &meta_store, permit, OP_DECOMPRESSION_KEYGEN).await
     }
 
     /// Write the backup keys to the storage and update the meta store.
@@ -812,16 +796,9 @@ where
         &self,
         recovery_material: RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
+        permit: MetaStorePermit<RecoveryValidationMaterial>,
     ) -> Result<(), StorageError> {
         let req_id = recovery_material.custodian_context().context_id;
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, &req_id)
-            .await
-            .map_err(|e| {
-                StorageError::MetaStore(format!(
-                    "Meta store is not ready for request ID {req_id}: {e}"
-                ))
-            })?;
         // Ensure we have a backup vault before starting
         let vault = match self.backup_vault.as_ref() {
             Some(vault) => vault,
@@ -854,12 +831,11 @@ where
                     StorageError::BackupVaultPurging
                 });
         }
-        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
-            &req_id,
             recovery_material,
-            &mut guarded_meta_store,
+            &meta_store,
+            permit,
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
@@ -1089,22 +1065,24 @@ where
 /// If the meta store update fails, then a MetaStoreError is returned, which includes the original StorageError.
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
-    req_id: &RequestId,
     meta_data: MetaT,
-    guarded_meta_store: &mut RwLockWriteGuard<'_, MetaStore<MetaT>>,
+    meta_store: &RwLock<MetaStore<MetaT>>,
+    permit: MetaStorePermit<MetaT>,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
-    let mut meta_store_ok = true;
-    if let Err(e) = &storage_res
-        && e != &StorageError::Backup
-    {
-        // We don't want to fail on backup errors
-        meta_store_ok &=
-            update_err_req_in_meta_store(guarded_meta_store, req_id, e.to_string(), op_metric_tag);
+    let req_id = *permit.req_id();
+    let is_storage_err = matches!(&storage_res, Err(e) if e != &StorageError::Backup);
+    let meta_store_ok = if is_storage_err {
+        update_err_req_in_meta_store(
+            meta_store,
+            permit,
+            storage_res.as_ref().err().unwrap().to_string(),
+            op_metric_tag,
+        )
+        .await
     } else {
-        meta_store_ok &=
-            update_ok_req_in_meta_store(guarded_meta_store, req_id, meta_data, op_metric_tag);
-    }
+        update_ok_req_in_meta_store(meta_store, permit, meta_data, op_metric_tag).await
+    };
     if !meta_store_ok {
         // NOTE this would indicate a bug since we have just verified that the meta can be updated in the start of this method
         // Thus the meta store update can only fail in case of a race condition, which would indicate a bug

@@ -15,7 +15,7 @@ use crate::{
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
         utils::verify_public_key_digest_from_bytes,
     },
-    util::meta_store::{MetaStore, ensure_meta_store_request_pending},
+    util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},
     vault::{
         Vault,
         storage::{
@@ -160,6 +160,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner.fhe_keys_exists(key_id, epoch_id, true).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_fhe_keys(
         &self,
         key_id: &RequestId,
@@ -167,12 +168,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        permit: MetaStorePermit<KeyGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, key_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let meta_res = threshold_fhe_keys.meta_data.clone();
         let res = self
             .inner
@@ -187,15 +185,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 op_metric_tag,
             )
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
-        update_meta_store(
-            res,
-            key_id,
-            meta_res,
-            &mut guarded_meta_store,
-            op_metric_tag,
-        )
-        .await
+        update_meta_store(res, meta_res, &meta_store, permit, op_metric_tag).await
     }
 
     /// Purge threshold FHE key material from disk **and** from the in-memory
@@ -243,10 +233,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ///
     /// The operation is split into validate-then-mutate phases: everything is read
     /// and checked before any backend is mutated, so a malformed migration input
-    /// cannot leave pub and priv storage in inconsistent states. Once validation
-    /// passes, pub storage, priv storage, backup vault, in-memory cache, and the
-    /// keygen meta-store are all updated under the same held locks so a concurrent
-    /// reader cannot observe a mixed pre/post state.
+    /// cannot leave pub and priv storage in inconsistent states.
     ///
     /// The old `CompactPublicKey` and `ServerKey` files at `old_key_id` are
     /// preserved for compatibility. The migration keygen also stores the old
@@ -266,219 +253,215 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         eip712_domain: &alloy_sol_types::Eip712Domain,
         dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
-        // Lock order: meta_store -> pub -> priv -> backup -> fhe_keys.
-        let mut guarded_meta_store = dkg_pubinfo_meta_store.write().await;
-        let mut pub_storage = self.inner.public_storage.lock().await;
-        let mut priv_storage = self.inner.private_storage.lock().await;
-        let mut back_vault = match self.inner.backup_vault {
-            Some(ref x) => Some(x.lock().await),
-            None => None,
-        };
+        // Hold a permit for `old_key_id` exclusively in the keygen meta-store for the whole
+        // migration.
+        let updated_fhe_keys =
+            with_overwriting_claim(&dkg_pubinfo_meta_store, old_key_id, async || {
+                // Lock order: pub -> priv -> backup.
+                let mut pub_storage = self.inner.public_storage.lock().await;
+                let mut priv_storage = self.inner.private_storage.lock().await;
+                let mut back_vault = match self.inner.backup_vault {
+                    Some(ref x) => Some(x.lock().await),
+                    None => None,
+                };
 
-        // --- Phase A: validate everything before mutating anything. ---
+                // --- Phase A: validate everything before mutating anything. ---
 
-        // Source of the migrated compressed keyset.
-        let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
-            &*pub_storage,
-            new_key_id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await?;
+                // Source of the migrated compressed keyset.
+                let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
+                    &*pub_storage,
+                    new_key_id,
+                    &PubDataType::CompressedXofKeySet.to_string(),
+                )
+                .await?;
 
-        // Source of the migrated ThresholdFheKeys (stored by the keygen at
-        // (new_key_id, new_epoch_id); this may differ from old_epoch_id).
-        let migrated_fhe_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
-            &*priv_storage,
-            new_key_id,
-            new_epoch_id,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await?;
+                // Source of the migrated ThresholdFheKeys (stored by the keygen at
+                // (new_key_id, new_epoch_id); this may differ from old_epoch_id).
+                let migrated_fhe_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+                    &*priv_storage,
+                    new_key_id,
+                    new_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
 
-        // Validate that the original key exists before mutating any backend.
-        let _: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
-            &*priv_storage,
-            old_key_id,
-            old_epoch_id,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "No existing ThresholdFheKeys at (old_key_id={old_key_id}, \
+                // Validate that the original key exists before mutating any backend.
+                let _: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+                    &*priv_storage,
+                    old_key_id,
+                    old_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "No existing ThresholdFheKeys at (old_key_id={old_key_id}, \
                  old_epoch_id={old_epoch_id:?}): {e}"
-            )
-        })?;
+                    )
+                })?;
 
-        // Reject LegacyV0 migrated metadata (we can't re-sign without the
-        // structured digest map) and confirm the CompressedXofKeySet digest
-        // is present.
-        let migrated_inner = match &migrated_fhe_keys.meta_data {
-            KeyGenMetadata::Current(inner) => inner,
-            KeyGenMetadata::LegacyV0(_) => {
-                anyhow::bail!(
-                    "Cannot copy compressed key to original: \
+                // Reject LegacyV0 migrated metadata (we can't re-sign without the
+                // structured digest map) and confirm the CompressedXofKeySet digest
+                // is present.
+                let migrated_inner = match &migrated_fhe_keys.meta_data {
+                    KeyGenMetadata::Current(inner) => inner,
+                    KeyGenMetadata::LegacyV0(_) => {
+                        anyhow::bail!(
+                            "Cannot copy compressed key to original: \
                      migrated ThresholdFheKeys has LegacyV0 metadata"
-                );
-            }
-        };
-        let compressed_digest = migrated_inner
-            .key_digest_map
-            .get(&PubDataType::CompressedXofKeySet)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Migrated ThresholdFheKeys metadata missing CompressedXofKeySet digest"
-                )
-            })?
-            .clone();
-        let public_key_digest = migrated_inner
-            .key_digest_map
-            .get(&PubDataType::PublicKey)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Migrated ThresholdFheKeys metadata missing PublicKey digest")
-            })?
-            .clone();
+                        );
+                    }
+                };
+                let compressed_digest = migrated_inner
+                    .key_digest_map
+                    .get(&PubDataType::CompressedXofKeySet)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Migrated ThresholdFheKeys metadata missing CompressedXofKeySet digest"
+                        )
+                    })?
+                    .clone();
+                let public_key_digest = migrated_inner
+                    .key_digest_map
+                    .get(&PubDataType::PublicKey)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Migrated ThresholdFheKeys metadata missing PublicKey digest"
+                        )
+                    })?
+                    .clone();
 
-        // The old PublicKey bytes are intentionally preserved in Phase B, so
-        // verify now that they are present, readable, and match the digest
-        // that will be signed into the migrated metadata.
-        let old_public_key_bytes = pub_storage
-            .load_bytes(old_key_id, &PubDataType::PublicKey.to_string())
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to load raw PublicKey bytes for old keyset {old_key_id}: {e}"
-                )
-            })?;
-        verify_public_key_digest_from_bytes(&old_public_key_bytes, &public_key_digest).map_err(
-            |e| {
-                anyhow::anyhow!(
-                    "PublicKey digest mismatch for old keyset {old_key_id}: {e}; \
+                // The old PublicKey bytes are intentionally preserved in Phase B, so
+                // verify now that they are present, readable, and match the digest
+                // that will be signed into the migrated metadata.
+                let old_public_key_bytes = pub_storage
+                    .load_bytes(old_key_id, &PubDataType::PublicKey.to_string())
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to load raw PublicKey bytes for old keyset {old_key_id}: {e}"
+                        )
+                    })?;
+                verify_public_key_digest_from_bytes(&old_public_key_bytes, &public_key_digest)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "PublicKey digest mismatch for old keyset {old_key_id}: {e}; \
                      expected={}, stored-bytes-hash={}",
-                    hex::encode(&public_key_digest),
-                    hex::encode(hashing::hash_element(
-                        &crate::engine::base::DSEP_PUBDATA_KEY,
-                        &old_public_key_bytes
-                    )),
+                            hex::encode(&public_key_digest),
+                            hex::encode(hashing::hash_element(
+                                &crate::engine::base::DSEP_PUBDATA_KEY,
+                                &old_public_key_bytes
+                            )),
+                        )
+                    })?;
+                let _: tfhe::CompactPublicKey = read_versioned_at_request_id(
+                    &*pub_storage,
+                    old_key_id,
+                    &PubDataType::PublicKey.to_string(),
                 )
-            },
-        )?;
-        let _: tfhe::CompactPublicKey = read_versioned_at_request_id(
-            &*pub_storage,
-            old_key_id,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to deserialize PublicKey for old keyset {old_key_id}: {e}")
-        })?;
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to deserialize PublicKey for old keyset {old_key_id}: {e}"
+                    )
+                })?;
 
-        // Re-sign the metadata under old_key_id, preserving the migrated
-        // extra_data bytes when they exist.
-        let extra_data = migrated_inner.extra_data.clone().unwrap_or_default();
-        let sol_type = KeygenVerification::new_compressed(
-            &migrated_inner.preprocessing_id,
-            old_key_id,
-            compressed_digest,
-            public_key_digest,
-            extra_data.clone(),
-        );
-        let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
-        let new_metadata = KeyGenMetadata::new(
-            *old_key_id,
-            migrated_inner.preprocessing_id,
-            migrated_inner.key_digest_map.clone(),
-            new_signature,
-            extra_data,
-        );
+                // Re-sign the metadata under old_key_id, preserving the migrated
+                // extra_data bytes when they exist.
+                let extra_data = migrated_inner.extra_data.clone().unwrap_or_default();
+                let sol_type = KeygenVerification::new_compressed(
+                    &migrated_inner.preprocessing_id,
+                    old_key_id,
+                    compressed_digest,
+                    public_key_digest,
+                    extra_data.clone(),
+                );
+                let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
+                let new_metadata = KeyGenMetadata::new(
+                    *old_key_id,
+                    migrated_inner.preprocessing_id,
+                    migrated_inner.key_digest_map.clone(),
+                    new_signature,
+                    extra_data,
+                );
 
-        let updated_fhe_keys = ThresholdFheKeys::new(
-            migrated_fhe_keys.private_keys.clone(),
-            migrated_fhe_keys.public_material.clone(),
-            new_metadata.clone(),
-        );
+                let updated_fhe_keys = ThresholdFheKeys::new(
+                    migrated_fhe_keys.private_keys.clone(),
+                    migrated_fhe_keys.public_material.clone(),
+                    new_metadata.clone(),
+                );
 
-        // --- Phase B: mutate all backends under the held locks. ---
+                // --- Phase B: mutate all backends under the held locks. ---
 
-        // Preserve the old PublicKey and ServerKey, and overwrite only the
-        // compressed keyset at the original key ID.
-        delete_at_request_id(
-            &mut *pub_storage,
-            old_key_id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await?;
-        store_versioned_at_request_id(
-            &mut *pub_storage,
-            old_key_id,
-            &compressed_keyset,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await?;
+                // Preserve the old PublicKey and ServerKey, and overwrite only the
+                // compressed keyset at the original key ID.
+                delete_at_request_id(
+                    &mut *pub_storage,
+                    old_key_id,
+                    &PubDataType::CompressedXofKeySet.to_string(),
+                )
+                .await?;
+                store_versioned_at_request_id(
+                    &mut *pub_storage,
+                    old_key_id,
+                    &compressed_keyset,
+                    &PubDataType::CompressedXofKeySet.to_string(),
+                )
+                .await?;
 
-        // Priv storage at (old_key_id, old_epoch_id): delete + re-store.
-        delete_at_request_and_epoch_id(
-            &mut *priv_storage,
-            old_key_id,
-            old_epoch_id,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await?;
-        store_versioned_at_request_and_epoch_id(
-            &mut *priv_storage,
-            old_key_id,
-            old_epoch_id,
-            &updated_fhe_keys,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await?;
+                // Priv storage at (old_key_id, old_epoch_id): delete + re-store.
+                delete_at_request_and_epoch_id(
+                    &mut *priv_storage,
+                    old_key_id,
+                    old_epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
+                store_versioned_at_request_and_epoch_id(
+                    &mut *priv_storage,
+                    old_key_id,
+                    old_epoch_id,
+                    &updated_fhe_keys,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
 
-        // Backup vault (if configured): delete + re-store at the same location
-        // so a restore brings back the migrated keys, not the pre-migration
-        // uncompressed ones.
-        if let Some(vault) = back_vault.as_deref_mut() {
-            delete_at_request_and_epoch_id(
-                vault,
-                old_key_id,
-                old_epoch_id,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await?;
-            store_versioned_at_request_and_epoch_id(
-                vault,
-                old_key_id,
-                old_epoch_id,
-                &updated_fhe_keys,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await?;
-        } else {
-            tracing::warn!(
-                "No backup vault configured. Skipping backup update during \
+                // Backup vault (if configured): delete + re-store at the same location
+                // so a restore brings back the migrated keys, not the pre-migration
+                // uncompressed ones.
+                if let Some(vault) = back_vault.as_deref_mut() {
+                    delete_at_request_and_epoch_id(
+                        vault,
+                        old_key_id,
+                        old_epoch_id,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )
+                    .await?;
+                    store_versioned_at_request_and_epoch_id(
+                        vault,
+                        old_key_id,
+                        old_epoch_id,
+                        &updated_fhe_keys,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )
+                    .await?;
+                } else {
+                    tracing::warn!(
+                        "No backup vault configured. Skipping backup update during \
                  copy_compressed_key_to_original for {old_key_id}"
-            );
-        }
+                    );
+                }
 
-        // --- Phase C: refresh dkg_pubinfo_meta_store for old_key_id. ---
-        // `MetaStore::update` only accepts pending entries, so replace the
-        // existing completed entry with delete + insert + update, all under
-        // the meta_store write guard already held since the top of the function.
-        let _ = guarded_meta_store.delete(old_key_id);
-        guarded_meta_store.insert(old_key_id).map_err(|e| {
-            anyhow::anyhow!("Failed to insert {old_key_id} into keygen meta-store: {e}")
-        })?;
-        guarded_meta_store
-            .update(old_key_id, Ok(new_metadata))
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to update {old_key_id} in keygen meta-store: {e}")
-            })?;
+                Ok((new_metadata, updated_fhe_keys))
+            })
+            .await?;
 
         tracing::info!(
             "Copied compressed key from {new_key_id} to original {old_key_id} \
              and updated metadata"
         );
 
-        // In-memory cache.
+        // In-memory cache (updated only after the commit above succeeds).
         {
             let mut guarded_fhe_keys = self.fhe_keys.write().await;
             guarded_fhe_keys.insert((*old_key_id, *old_epoch_id), updated_fhe_keys);
