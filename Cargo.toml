@@ -95,7 +95,8 @@ threshold-types = { path = "./core/threshold-types" } # Types share across the K
 thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)
-aes = "=0.8.4"  # AES encryption - LOW RISK: RustCrypto org, very popular (135M+ downloads), actively maintained
+aes = "=0.9.1"  # AES block cipher for direct hot-path use - LOW RISK: RustCrypto org, very popular, actively maintained
+aes08 = { package = "aes", version = "=0.8.4" }  # AES 0.8 compatibility for cipher 0.4 CBC users - LOW RISK: same trusted RustCrypto crate, retained only where required
 aes-gcm = { version = "=0.10.3", features = ["std"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
 aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (Zama) and Dragos (ex Zama)

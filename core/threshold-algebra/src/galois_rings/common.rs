@@ -783,6 +783,15 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENS
     fn from_i128(value: i128) -> Self {
         Self::from_scalar(Wrapping(value as u128))
     }
+
+    fn mul_by_i128(self, scalar: i128) -> Self {
+        // from_i128(scalar) is a scalar poly (only coef[0] is nonzero),
+        // so the full multiply reduces to simply scaling each coefficient.
+        let zscalar = Wrapping(scalar as u128); // signed scalar interpreted modulo 2^128 (Z128's modulus)
+        Self {
+            coefs: self.coefs.map(|c| c * zscalar),
+        }
+    }
 }
 
 impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z64, EXTENSION_DEGREE> {
