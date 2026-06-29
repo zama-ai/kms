@@ -789,7 +789,7 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENS
         // so the full multiply reduces to simply scaling each coefficient.
         let zscalar = Wrapping(scalar as u128); // signed scalar interpreted modulo 2^128 (Z128's modulus)
         Self {
-            coefs: self.coefs.map(|c| c * base),
+            coefs: self.coefs.map(|c| c * zscalar),
         }
     }
 }
