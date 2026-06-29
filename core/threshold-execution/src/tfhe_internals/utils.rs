@@ -132,7 +132,7 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGR
 {
     let pol_dimension = glwe_secret_key_share.polynomial_size.0;
     let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
-    let pol_output_mask = slice_to_polynomials(output_mask.iter().cloned(), pol_dimension);
+    let pol_output_mask = slice_to_polynomials(output_mask.iter().copied(), pol_dimension);
     let pol_glwe_secret_key_share =
         slice_to_polynomials(glwe_secret_key_share.data_iter(), pol_dimension);
 
