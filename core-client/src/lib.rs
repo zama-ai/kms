@@ -2731,40 +2731,10 @@ fn compute_stat_on_durations(durations: &[tokio::time::Duration]) -> DurationSta
         max,
     }
 }
-// Prints the timings for the command execution, showing latency and throughput based on the measured durations.
-fn print_timings(
-    cmd: &str,
-    total_client_durations: &[tokio::time::Duration],
-    durations_to_get_responses: &[tokio::time::Duration],
-    start: tokio::time::Instant,
-) {
-    let num_results = total_client_durations.len();
-    // compute total time that is elapsed since we sent the first request
-    let total_elapsed = start.elapsed();
 
-    // compute latency values
-    let total_duration_stat = compute_stat_on_durations(total_client_durations);
-    let response_duration_stat = compute_stat_on_durations(durations_to_get_responses);
-
-    tracing::debug!("Client total latency for {cmd}: {}", total_duration_stat);
-
-    tracing::info!("Latency for {cmd}: {}", response_duration_stat);
-
-    tracing::info!(
-        "Total elapsed time for {cmd} with {num_results} collected results: {total_elapsed:?}. Throughput: {} requests/s",
-        num_results as f64 / total_elapsed.as_secs_f64()
-    );
-
-    // For debugging, print all collected durations
-    tracing::debug!("All durations: {:?}", total_client_durations);
-}
-
-/// Like [`print_timings`], but reports throughput from the *collection* window only
-/// (request -> partial-decryption responses), keeping client-side reconstruction and
-/// verification out of the throughput figure.
-///
-/// This reports the collect-only throughput as the canonical figure,
-/// plus a legacy end-to-end figure (collect + reconstruction) for continuity.
+/// Reports latency + collect-only throughput for a decrypt command. The heavy client-side
+/// reconstruction/verification is excluded from the throughput figure (reported on its own line)
+/// so it reflects the KMS serving rate.
 fn print_phased_timings(
     cmd: &str,
     collect_elapsed: tokio::time::Duration,

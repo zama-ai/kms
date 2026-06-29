@@ -1,4 +1,4 @@
-use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings, print_timings};
+use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
     ContextId, EpochId, KeyId, RequestId,
@@ -121,13 +121,28 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     // keygen/CRS request builders.
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
 
-    let mut timings_start = HashMap::new();
-    let mut durations = Vec::new();
-    let mut durations_to_get_responses = Vec::new();
+    // PHASE 0: build every request up front.
+    let mut requests = Vec::with_capacity(num_requests);
+    for _ in 0..num_requests {
+        let req_id = RequestId::new_random(rng);
+        let dec_req = internal_client.write().await.public_decryption_request(
+            ct_batch.clone(),
+            &domain,
+            &req_id,
+            context_id.as_ref(),
+            &key_id.into(),
+            epoch_id.as_ref(),
+            &extra_data,
+        )?;
+        requests.push((req_id, dec_req));
+    }
 
+    // PHASE 1: send the prebuilt requests and collect their responses.
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+    let mut durations_to_get_responses = Vec::new();
     let start = tokio::time::Instant::now();
-    for i in 0..num_requests {
+
+    for (i, (req_id, dec_req)) in requests.into_iter().enumerate() {
         // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
         if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
             tracing::info!(
@@ -136,31 +151,14 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             );
             tokio::time::sleep(inter_request_delay).await;
         }
-        let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
-        let ct_batch = ct_batch.clone();
         let core_endpoints_req = core_endpoints_req.clone();
         let core_endpoints_resp = core_endpoints_resp.clone();
-        let ptxt = ptxt.clone();
         let kms_addrs = kms_addrs.clone();
-        let extra_data = extra_data.clone();
-        let domain = domain.clone();
-
-        // start timing measurement for this request
-        let request_start = tokio::time::Instant::now();
-        timings_start.insert(req_id, request_start); // start timing for this request
 
         join_set.spawn(async move {
-            // DECRYPTION REQUEST
-            let dec_req = internal_client.write().await.public_decryption_request(
-                ct_batch,
-                &domain,
-                &req_id,
-                context_id.as_ref(),
-                &key_id.into(),
-                epoch_id.as_ref(),
-                &extra_data,
-            )?;
+            // start timing this request's collect window
+            let request_start = tokio::time::Instant::now();
 
             // make parallel requests by calling [decrypt] in a thread
             let mut req_tasks = JoinSet::new();
@@ -204,10 +202,11 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 start.elapsed()
             );
 
+            // collect only — verification is deferred to phase 2 (below) so it stays out of the throughput window.
             let (resp_response_vec, time_to_get_responses) = get_public_decrypt_responses(
                 &core_endpoints_resp,
-                Some(PubDecVerificationMaterial::Request(dec_req)),
-                Some(ptxt),
+                None,
+                None,
                 req_id,
                 max_iter,
                 num_expected_responses,
@@ -217,30 +216,51 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             )
             .await?;
 
-            let res = format!("{resp_response_vec:x?}");
-            Ok((req_id, res, time_to_get_responses))
+            Ok((req_id, dec_req, resp_response_vec, time_to_get_responses))
         });
     }
 
-    let mut result_vec = Vec::new();
+    // Drain phase 1: gather every request, its responses, and its collect-only latency.
+    let mut collected = Vec::with_capacity(num_requests);
     while let Some(result) = join_set.join_next().await {
-        let (req_id, resp_msg, time_to_get_responses) = result??;
-        let elapsed = timings_start
-            .remove(&req_id)
-            .unwrap_or_else(|| {
-                panic!("programmer error, req_id {req_id} should have been inserted to timing map")
-            })
-            .elapsed();
+        let (req_id, dec_req, resp_response_vec, time_to_get_responses) = result??;
         durations_to_get_responses.push(time_to_get_responses);
-        durations.push(elapsed);
-        result_vec.push((Some(req_id), resp_msg));
+        collected.push((req_id, dec_req, resp_response_vec));
+    }
+    let collect_elapsed = start.elapsed();
+
+    // PHASE 2: verify each result in parallel. Measured and reported separately from the throughput figure.
+    let verify_start = tokio::time::Instant::now();
+    let mut verify_tasks: JoinSet<Result<(RequestId, String), anyhow::Error>> = JoinSet::new();
+    for (req_id, dec_req, resp_response_vec) in collected {
+        let internal_client = internal_client.clone();
+        let kms_addrs = kms_addrs.clone();
+        let ptxt = ptxt.clone();
+        verify_tasks.spawn(async move {
+            verify_public_decrypt_responses(
+                &resp_response_vec,
+                PubDecVerificationMaterial::Request(dec_req),
+                Some(ptxt),
+                &*internal_client.read().await,
+                &kms_addrs,
+                num_expected_responses,
+            )?;
+            Ok((req_id, format!("{resp_response_vec:x?}")))
+        });
     }
 
-    print_timings(
+    let mut result_vec = Vec::with_capacity(durations_to_get_responses.len());
+    while let Some(res) = verify_tasks.join_next().await {
+        let (req_id, msg) = res??;
+        result_vec.push((Some(req_id), msg));
+    }
+    let verify_elapsed = verify_start.elapsed();
+
+    print_phased_timings(
         "public decrypt",
-        &durations,
+        collect_elapsed,
         &durations_to_get_responses,
-        start,
+        verify_elapsed,
     );
 
     Ok(result_vec)
@@ -549,11 +569,86 @@ pub(crate) enum PubDecVerificationMaterial {
     },
 }
 
+/// Verify fetched public-decryption responses (internal + external signatures, and that the result
+/// matches `expected_answer`, or the first response when `None`).
+fn verify_public_decrypt_responses(
+    resp_response_vec: &[PublicDecryptionResponse],
+    verification: PubDecVerificationMaterial,
+    expected_answer: Option<TypedPlaintext>,
+    internal_client: &Client,
+    kms_addrs: &[alloy_primitives::Address],
+    num_expected_responses: usize,
+) -> anyhow::Result<()> {
+    // Resolve the verification material into (domain, external handles, extra_data) plus the
+    // optional original request used for the internal request-binding check.
+    let (domain, external_handles, extra_data, request) = match verification {
+        PubDecVerificationMaterial::Request(decryption_request) => {
+            let domain_msg = decryption_request
+                .domain
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("domain not set in decryption request"))?;
+            let domain = protobuf_to_alloy_domain(domain_msg)?;
+            // retrieve external handles from request
+            let external_handles: Vec<_> = decryption_request
+                .ciphertexts
+                .iter()
+                .map(|ct| ct.external_handle.clone())
+                .collect();
+            let extra_data = decryption_request.extra_data.clone();
+            (
+                domain,
+                external_handles,
+                extra_data,
+                Some(decryption_request),
+            )
+        }
+        PubDecVerificationMaterial::External {
+            domain,
+            external_handles,
+            extra_data,
+        } => (domain, external_handles, extra_data, None),
+    };
+
+    // If an expected answer is provided, use it; otherwise consider the first answer.
+    let ptxt = match expected_answer {
+        Some(pt) => pt,
+        None => resp_response_vec
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no public decryption responses available"))?
+            .payload
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
+            .plaintexts
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no plaintexts in first decryption response"))?
+            .clone(),
+    };
+
+    // check the internal signatures (verifies responses are signed by the trusted KMS keys;
+    // request-binding only applies for the `Request` variant)
+    internal_client.process_decryption_resp(
+        request,
+        num_expected_responses as u32,
+        resp_response_vec,
+    )?;
+
+    // check the external signatures
+    check_external_decryption_signature(
+        resp_response_vec,
+        ptxt,
+        &external_handles,
+        &domain,
+        kms_addrs,
+        &extra_data,
+    )?;
+
+    Ok(())
+}
+
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn get_public_decrypt_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    // Verification material for the fetched responses. `None` skips signature
-    // verification entirely (responses are returned unverified, with an error log).
+    // Verification material for the fetched responses. `None` returns them unverified.
     verification: Option<PubDecVerificationMaterial>,
     expected_answer: Option<TypedPlaintext>,
     request_id: RequestId,
@@ -641,89 +736,27 @@ pub(crate) async fn get_public_decrypt_responses(
         .map(|(_, resp)| resp)
         .collect();
 
-    // Resolve the verification material into (domain, external handles, extra_data)
-    // plus the optional original request used for the internal request-binding check.
-    // Full-flow callers pass `Request(..)` (everything derived from the request);
-    // pure-fetch callers pass `External { .. }` (built from config + CLI). `None`
-    // skips signature verification and just returns the fetched responses.
-    match verification {
-        Some(material) => {
-            let (domain, external_handles, extra_data, request) = match material {
-                PubDecVerificationMaterial::Request(decryption_request) => {
-                    let domain_msg = decryption_request
-                        .domain
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("domain not set in decryption request"))?;
-                    let domain = protobuf_to_alloy_domain(domain_msg)?;
-                    // retrieve external handles from request
-                    let external_handles: Vec<_> = decryption_request
-                        .ciphertexts
-                        .iter()
-                        .map(|ct| ct.external_handle.clone())
-                        .collect();
-                    let extra_data = decryption_request.extra_data.clone();
-                    (
-                        domain,
-                        external_handles,
-                        extra_data,
-                        Some(decryption_request),
-                    )
-                }
-                PubDecVerificationMaterial::External {
-                    domain,
-                    external_handles,
-                    extra_data,
-                } => (domain, external_handles, extra_data, None),
-            };
-
-            //If an expected answer is provided, then consider it,
-            //otherwise consider the first answer
-            let ptxt = match expected_answer {
-                Some(pt) => pt,
-                None => resp_response_vec
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("no public decryption responses available"))?
-                    .payload
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
-                    .plaintexts
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("no plaintexts in first decryption response"))?
-                    .clone(),
-            };
-
-            // check the internal signatures (verifies responses are signed by the
-            // trusted KMS keys; request-binding only applies for the `Request` variant)
-            internal_client.process_decryption_resp(
-                request,
-                num_expected_responses as u32,
-                &resp_response_vec,
-            )?;
-
-            // check the external signatures
-            check_external_decryption_signature(
-                &resp_response_vec,
-                ptxt,
-                &external_handles,
-                &domain,
-                kms_addrs,
-                &extra_data,
-            )?;
-
-            tracing::info!(
-                "{:?} ###! Verified public decypt responses. Since start {:?}",
-                request_id.as_str(),
-                start.elapsed()
-            );
-        }
-        None => {
-            tracing::error!(
-                "{:?} ###! Public decryption result fetched WITHOUT verification \
-                 (no verification material supplied). The returned plaintexts are NOT \
-                 verified against the original request.",
-                request_id.as_str(),
-            );
-        }
+    // Verify when material is supplied; `None` returns the responses unverified (the perf harness
+    // passes `None` and verifies in its own phase).
+    if let Some(material) = verification {
+        verify_public_decrypt_responses(
+            &resp_response_vec,
+            material,
+            expected_answer,
+            internal_client,
+            kms_addrs,
+            num_expected_responses,
+        )?;
+        tracing::info!(
+            "{:?} ###! Verified public decrypt responses. Since start {:?}",
+            request_id.as_str(),
+            start.elapsed()
+        );
+    } else {
+        tracing::debug!(
+            "{:?} ###! Public decryption result fetched WITHOUT verification (no material supplied).",
+            request_id.as_str(),
+        );
     }
 
     Ok((resp_response_vec, time_to_get_responses))
