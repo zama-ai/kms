@@ -1628,9 +1628,10 @@ mod tests {
             };
             setup_msgs.push(cur_msg.try_into().unwrap());
         }
+        let first_context_id = RequestId::from_bytes([4u8; 32]);
+        let second_context_id = RequestId::from_bytes([42u8; 32]);
         // Create a new custodian context
         let (context_manager, first_context_id) = {
-            let first_context_id = RequestId::from_bytes([4u8; 32]);
             let first_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
                 custodian_context_id: Some(first_context_id.into()),
@@ -1707,7 +1708,8 @@ mod tests {
             });
 
             let response = context_manager.destroy_custodian_context(request).await;
-            // This should fail since it is the current active context
+            // This should fail since it is the only custodian context left and we
+            // require at least 2 contexts to be present before allowing a deletion.
             assert!(response.is_err());
         }
 
@@ -1728,7 +1730,6 @@ mod tests {
             assert!(response.is_err());
 
             // Now try with a different context ID (should succeed)
-            let second_context_id = RequestId::from_bytes([42u8; 32]);
             let second_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
                 custodian_context_id: Some(second_context_id.into()),
@@ -1742,7 +1743,8 @@ mod tests {
             let response = context_manager.new_custodian_context(request).await;
             assert!(response.is_ok());
         }
-        // now try again to delete the first context
+        // now try again to delete the first context. This should succeed since
+        // there are now 2 contexts present.
         {
             let request = Request::new(DestroyCustodianContextRequest {
                 context_id: Some(first_context_id.into()),
@@ -1764,6 +1766,31 @@ mod tests {
                 .await
                 .is_err(),
                 "Custodian context was not deleted"
+            );
+        }
+        // Deleting the first context brought us back down to a single context.
+        // Attempting to delete that last remaining context must fail, since we
+        // require at least 2 contexts to be present before allowing a deletion.
+        {
+            let request = Request::new(DestroyCustodianContextRequest {
+                context_id: Some(second_context_id.into()),
+            });
+
+            let response = context_manager.destroy_custodian_context(request).await;
+            assert!(response.is_err());
+
+            // and the last context should still be present in storage
+            let pub_storage = Arc::clone(&crypto_storage.public_storage);
+            let guarded_pub_storage = pub_storage.lock().await;
+            assert!(
+                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
+                    &*guarded_pub_storage,
+                    &second_context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .is_ok(),
+                "Last remaining custodian context should not have been deleted"
             );
         }
     }
