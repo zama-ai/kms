@@ -98,7 +98,8 @@ cleanup() {
     fi
     sudo iptables -D FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || true
     sudo iptables -D FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    kill "$(jobs -p)" 2>/dev/null || true
+    # argument word splitting here is on purpose
+    kill $(jobs -p) 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM
@@ -144,7 +145,8 @@ if [ -z "$UPSTREAM_DNS" ]; then
 fi
 
 # find out through which network interface egress traffic is routed
-set -- "$(ip route get 1.1.1.1)"
+# (argument word splitting here is on purpose)
+set -- $(ip route get 1.1.1.1)
 while [ "$#" -gt 0 ]; do
     case "$1" in
         dev)
