@@ -2765,7 +2765,6 @@ fn print_timings(
 ///
 /// This reports the collect-only throughput as the canonical figure,
 /// plus a legacy end-to-end figure (collect + reconstruction) for continuity.
-// @reviewers: Maybe we keep the "legacy" number for a while and rip it out when we're convinced we don't need it?
 fn print_phased_timings(
     cmd: &str,
     collect_elapsed: tokio::time::Duration,
