@@ -222,6 +222,8 @@ More specifically the following steps must be done:
 1. Add a new custodian context.
   After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).
 
+NOTE: You may have multiple custodian contexts. However, the system will only make backups for a single custodian context. This will always be the most recent custodian context.
+
 #### Recovery
 
 WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!

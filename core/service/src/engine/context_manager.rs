@@ -225,6 +225,17 @@ where
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
         let mut cus_meta_store = self.custodian_meta_store.write().await;
+        // Ensure we are not destroying the only backup vault there exists.
+        if cus_meta_store.get_completed_count() < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_CUSTODIAN_CONTEXT,
+                Some(context_id),
+                anyhow::anyhow!(
+                    "Cannot destroy custodian context with id {context_id} since it is the only one left in the meta store"
+                ),
+                tonic::Code::FailedPrecondition,
+            ))?;
+        }
         if cus_meta_store.delete(&context_id).is_none() {
             tracing::warn!(
                 "Custodian context with id {context_id} to be deleted does not exist in meta store"
