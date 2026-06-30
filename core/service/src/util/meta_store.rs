@@ -2361,7 +2361,13 @@ mod tests {
         let writer_store = Arc::clone(&store);
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            delete_in_meta_store(&writer_store, permit, "gone".to_string(), "test").await;
+            delete_in_meta_store(
+                writer_store.write().await,
+                permit,
+                "gone".to_string(),
+                "test",
+            )
+            .await;
         });
 
         // A long budget proves we wake on the delete, not the deadline.

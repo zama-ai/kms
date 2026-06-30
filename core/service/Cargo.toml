@@ -53,6 +53,7 @@ aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
 aws-sdk-kms = { workspace = true, optional = true }
 aws-sdk-s3 = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
 bc2wrap.workspace = true
 bincode.workspace = true
 bip39.workspace = true
@@ -156,6 +157,7 @@ non-wasm = [
     "dep:aws-nitro-enclaves-nsm-api",
     "dep:aws-sdk-kms",
     "dep:aws-sdk-s3",
+    "dep:aws-smithy-types",
     "dep:iam-rs",
     "dep:observability",
     "dep:rustls-webpki",
