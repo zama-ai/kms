@@ -47,7 +47,7 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev@sha256:e96700e54bf1ab8abc34f8a3e91015da8edebcbe87fe483f976698fc26100ced AS prod
 
 USER root
 # Install required runtime dependencies
