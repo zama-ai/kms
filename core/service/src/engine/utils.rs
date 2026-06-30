@@ -664,7 +664,7 @@ where
     T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named,
 {
     // Guard against allocating unbounded memory on untrusted input before `safe_deserialize` runs.
-    let max_b64_len = ((SAFE_SER_SIZE_LIMIT as usize + 2) / 3) * 4;
+    let max_b64_len = (3 * SAFE_SER_SIZE_LIMIT).div_ceil(4) as usize;
     if element.len() > max_b64_len {
         return Err(anyhow::anyhow!(
             "Base64 payload too large (len={}, max={})",

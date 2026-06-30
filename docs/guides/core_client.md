@@ -237,7 +237,7 @@ However, the procedure is rather complex and requires multiple steps and manuall
 
 The steps needed are as follows:
 1. Initiate the recovery.
-  After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt; this is done with the following command:
+  After [setup](#setup-1), the backups will continuously be kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt; this is done with the following command:
   ```{bash}
   $ cargo run -- -f <single-core-config-file> custodian-recovery-init [-o <bool>]
   ```
