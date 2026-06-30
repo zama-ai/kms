@@ -2513,14 +2513,14 @@ pub async fn execute_cmd(
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
         }) => {
-            if num_cores > 1 {
+            // TODO(#3042) - currently we require backup operations to be done with a single core.
+            // This issue streamlines this and requires an update in this section
+            if num_cores != 1 {
                 return Err("Custodian recovery init is only supported for a single core".into());
             }
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
 
-            // TODO(#3042) - currently we require backup operations to be done with a single client.
-            // This issue streamlines this and requires an update in this section
             let serialized_res = base64_serialize(
                 res.first()
                     .expect("Expected at least one response for custodian recovery init"),
@@ -2533,7 +2533,7 @@ pub async fn execute_cmd(
             custodian_context_id,
             custodian_recovery_outputs,
         }) => {
-            if num_cores > 1 {
+            if num_cores != 1 {
                 return Err("Custodian recovery is only supported for a single core".into());
             }
             // We assume the output files are ordered the same way as the operators in the configuration file.
@@ -2637,7 +2637,7 @@ pub async fn execute_cmd(
         CCCommand::DestroyCustodianContext(DestroyCustodianContextParameters {
             custodian_context_id,
         }) => {
-            if num_cores > 1 {
+            if num_cores != 1 {
                 return Err("Custodian destruction is only supported for a single core".into());
             }
             do_destroy_custodian_context(&core_endpoints_req, custodian_context_id).await?;

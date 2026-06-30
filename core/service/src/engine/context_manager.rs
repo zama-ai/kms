@@ -234,11 +234,10 @@ where
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await?;
+        // Take a write-lock to ensure that no other operations can concurrency modify the meta store during destruction
+        let meta_store_guard = self.custodian_meta_store.write().await;
         // Ensure we are not destroying the only backup vault there exists.
-        if self
-            .custodian_meta_store
-            .read()
-            .await
+        if meta_store_guard
             .get_successful_completed_request_ids()
             .len()
             < 2
@@ -281,7 +280,7 @@ where
             )
         })?;
         delete_in_meta_store(
-            &self.custodian_meta_store,
+            meta_store_guard,
             permit,
             "Failed to delete context".to_string(),
             OP_DESTROY_CUSTODIAN_CONTEXT,

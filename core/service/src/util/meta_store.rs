@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
 };
 use thiserror::Error;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, RwLockWriteGuard, mpsc};
 use tracing;
 
 /// Operation metric attached to a [`MetaStorePermit`] minted by the inherent
@@ -988,14 +988,14 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
     }
 }
 
-pub(crate) async fn delete_in_meta_store<T>(
-    meta_store: &RwLock<MetaStore<T>>,
+pub(crate) async fn delete_in_meta_store<'a, T>(
+    mut meta_store_guard: RwLockWriteGuard<'a, MetaStore<T>>,
     permit: MetaStorePermit<T>,
     error: String,
     request_metric: &'static str,
 ) -> bool {
     let req_id = permit.req_id;
-    match meta_store.write().await.delete(permit) {
+    match meta_store_guard.delete(permit) {
         Ok(_) => true,
         Err(e) => {
             MetricedError::handle_unreturnable_error(request_metric, Some(req_id), error.clone());
