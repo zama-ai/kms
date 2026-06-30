@@ -2525,7 +2525,7 @@ pub async fn execute_cmd(
                 res.first()
                     .expect("Expected at least one response for custodian recovery init"),
             )?;
-            tracing::info!("Serialized custodian result:\n{}", serialized_res);
+            tracing::info!("Serialized custodian result");
 
             vec![(None, serialized_res)]
         }

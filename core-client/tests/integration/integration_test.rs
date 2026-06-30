@@ -56,11 +56,15 @@ fn write_core_client_toml(path: &Path, cfg: &CoreClientConfig) -> Result<()> {
 /// Derive a single-core client config from a multi-core one by keeping only the
 /// first core. This is used for custodian backup tests.
 fn single_core_config(config_path: &Path) -> Result<PathBuf> {
+    let initial_file_name = config_path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("No file name in config path: {config_path:?}"))?
+        .to_string_lossy();
     let raw = std::fs::read_to_string(config_path)?;
     let mut cfg: CoreClientConfig =
         toml::from_str(&raw).map_err(|e| anyhow::anyhow!("parsing client config: {e}"))?;
     cfg.cores.truncate(1);
-    let single_path = config_path.with_file_name("client_config_single.toml");
+    let single_path = config_path.with_file_name(format!("{}_single.toml", initial_file_name));
     write_core_client_toml(&single_path, &cfg)?;
     Ok(single_path)
 }

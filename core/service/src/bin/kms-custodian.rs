@@ -38,7 +38,7 @@ pub struct VerifyParams {
     /// The BIP39 seed phrase needed to recover the custodian keys
     #[clap(long, short = 's', required = true)]
     pub seed_phrase: String,
-    /// The relative path for reading the previously generated *public* keys.
+    /// The base64 encoded `RecoveryRequest`] string of the request of an operator for recovery
     #[clap(long, short = 'm', required = true)]
     pub setup_msg: String,
 }
