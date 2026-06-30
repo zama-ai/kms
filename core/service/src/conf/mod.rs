@@ -22,6 +22,8 @@ pub struct CoreConfig {
     #[validate(nested)]
     pub service: ServiceEndpoint,
     #[validate(nested)]
+    pub enclave_bootstrap: Option<EnclaveBootstrapConfig>,
+    #[validate(nested)]
     pub telemetry: Option<TelemetryConfig>,
     #[validate(nested)]
     pub aws: Option<AWSConfig>,
@@ -132,6 +134,18 @@ impl Default for BandwidthBenchmarkConfig {
             max_concurrent_runs: 1,
         }
     }
+}
+
+/// The enclave init script extracts networking configuration from the
+/// kms-server config before kms-server even starts. We add these fields to the
+/// config schema so serde validation wouldn't be thrown off by unknown
+/// fields. Kms-server doesn't actually use them.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct EnclaveBootstrapConfig {
+    // vsock to read fresh k8s web identity tokens from
+    #[validate(range(min = 1, max = 65535))]
+    pub web_identity_token_port: u16,
 }
 
 impl ConfigTracing for CoreConfig {
@@ -467,6 +481,20 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_centralized_enclave_config() {
+        let core_config: CoreConfig = init_conf("config/default_centralized_enclave").unwrap();
+        core_config
+            .validate()
+            .expect("centralized enclave config must validate");
+
+        let enclave_bootstrap = core_config
+            .enclave_bootstrap
+            .as_ref()
+            .expect("enclave_bootstrap section required for enclave config");
+        assert_eq!(enclave_bootstrap.web_identity_token_port, 4100);
     }
 
     // -----------------------------------------------------------------------
