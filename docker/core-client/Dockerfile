@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 
 ################################################################
 # Runtime Stage
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev@sha256:e96700e54bf1ab8abc34f8a3e91015da8edebcbe87fe483f976698fc26100ced AS prod
 
 # Install only required runtime dependencies
 USER root

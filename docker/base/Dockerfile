@@ -1,4 +1,4 @@
-FROM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev@sha256:e96700e54bf1ab8abc34f8a3e91015da8edebcbe87fe483f976698fc26100ced AS prod
 
 ARG RUST_IMAGE_VERSION=stable
 # Install essential tools and dependencies
