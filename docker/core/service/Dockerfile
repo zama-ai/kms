@@ -84,7 +84,7 @@ RUN git clone --depth 1 --branch ${VSOCKTUN_VERSION} https://github.com/zama-ai/
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:16-dev AS prod
 
 USER root
 # Install required runtime dependencies
