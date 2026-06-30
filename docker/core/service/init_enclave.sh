@@ -43,18 +43,18 @@ has_value() {
 export PATH="/app/kms/core/service/bin:$PATH"
 cd /app/kms/core/service |& logger  || fail "cannot set working directory"
 
-# receive kms-server configuration from the parent
-log "requesting kms-server config"
+# receive keygen or server configuration from the parent
+log "requesting KMS config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
       CREATE:$KMS_SERVER_CONFIG_FILE \
-    |& logger || fail "cannot receive kms-server config"
-[ -f "$KMS_SERVER_CONFIG_FILE" ] || fail "did not receive kms-server config"
+    |& logger || fail "cannot receive KMS config"
+[ -f "$KMS_SERVER_CONFIG_FILE" ] || fail "did not receive KMS config"
 
 # log configuration hash for sanity
 [ -f "$KMS_SERVER_CONFIG_FILE" ] && \
     {
 	KMS_SERVER_CONFIG_HASH="$(sha256sum $KMS_SERVER_CONFIG_FILE | cut -d " " -f 1)"
-	log "received kms-server config with sha256 $KMS_SERVER_CONFIG_HASH"
+	log "received KMS config with sha256 $KMS_SERVER_CONFIG_HASH"
     }
 
 # extract bootstrap settings from the received config
@@ -110,27 +110,25 @@ has_value "aws.sts_endpoint" && {
 # because kms-gen-keys also generates party CA certificates and those need to be
 # included in the peer list and voted on before all parties can start.
 
-# If the [keygen] section is present in the received configuration file,
-# kms-gen-keys will run. It is not a section understood by the kms-server
-# configuration parser, so kms-server will not start if this section is present.
-has_value "keygen" && \
-    {
-	# Ensure that signing keys exist. FHE keys and CRS are generated at
-	# runtime by kms-server (in centralized mode) or by the threshold
-	# protocol (in threshold mode), so this script only handles signing
-	# keys. kms-gen-keys parses the config file itself so values from the
-	# parent-provided config are never reinterpreted as shell syntax.
-	log "generating signing keys"
-	kms-gen-keys --config-file "$KMS_SERVER_CONFIG_FILE" \
-	    |& logger || fail "cannot generate keys"
-    }
-has_value "keygen" || \
-    log "[keygen] configuration section not present, skipping key generation"
+# Ensure that signing keys exist when this invocation received a keygen config.
+# FHE keys and CRS are generated at runtime by kms-server (in centralized mode)
+# or by the threshold protocol (in threshold mode), so this script only handles
+# signing keys. kms-gen-keys parses the config file itself so values from the
+# parent-provided config are never reinterpreted as shell syntax.
+log "attempting signing key generation"
+if kms-gen-keys --config-file "$KMS_SERVER_CONFIG_FILE" |& logger; then
+    KEYGEN_STATUS=0
+else
+    KEYGEN_STATUS=$?
+fi
 
-has_value "service" && \
-    {
-	log "starting kms-server"
-	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger
-    }
-has_value "service" || \
-    log "[service] configuration section not present, not launching kms-server"
+log "attempting to start kms-server"
+if kms-server --config-file="$KMS_SERVER_CONFIG_FILE" |& logger; then
+    SERVER_STATUS=0
+else
+    SERVER_STATUS=$?
+fi
+
+if [ "$KEYGEN_STATUS" -ne 0 ] && [ "$SERVER_STATUS" -ne 0 ]; then
+    fail "neither kms-gen-keys nor kms-server completed successfully"
+fi

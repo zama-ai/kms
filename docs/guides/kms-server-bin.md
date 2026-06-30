@@ -7,14 +7,13 @@
 To generate the signing material before the KMS server is started, pass a TOML config file:
 
 ```bash
-cargo run --bin kms-gen-keys -- --config-file config/default_1.toml
+cargo run --bin kms-gen-keys -- --config-file /path/to/kms-gen-keys.toml
 ```
 
-The config can be either a full `kms-server` config or a keygen-only config:
+The config must include a `[keygen]` section and the storage settings used to write the generated material:
 
 ```toml
 [keygen]
-enabled = true
 
 [threshold]
 my_id = 1
