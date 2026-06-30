@@ -63,11 +63,12 @@ use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
+use tonic::transport::{Channel, Endpoint};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
-// time to sleep between get_x_result poll requests in milliseconds
+// time to sleep between `get_result` poll requests in milliseconds
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
 /// Retries a function a given number of times with a given interval between retries.
@@ -89,6 +90,48 @@ macro_rules! retry {
     ($f:expr) => {
         retry!($f, 5, 100)
     };
+}
+
+/// Number of independent HTTP/2 connections opened per core endpoint.
+///
+/// All requests to a single party otherwise multiplex over one connection, so a burst of
+/// concurrent decrypt requests is serialized by that connection's `MAX_CONCURRENT_STREAMS`
+/// limit and its (small) flow-control window. Spreading the RPCs across a small pool of
+/// connections keeps the burst from queueing behind a single connection.
+const CORE_CONN_POOL_SIZE: usize = 8;
+
+/// Initial per-stream HTTP/2 flow-control window for core connections (default is ~64 KiB,
+/// which stalls large ciphertext-carrying requests mid-stream). Adaptive window tunes up from here.
+const CORE_INITIAL_STREAM_WINDOW: u32 = 8 * 1024 * 1024; // 8 MiB
+/// Initial per-connection HTTP/2 flow-control window for core connections.
+const CORE_INITIAL_CONNECTION_WINDOW: u32 = 64 * 1024 * 1024; // 64 MiB
+
+/// Build a single `Endpoint` to a core service with enlarged HTTP/2 flow-control windows,
+/// adaptive windowing, and Nagle disabled.
+fn core_endpoint(url: &str) -> Result<Endpoint, tonic::transport::Error> {
+    Ok(Endpoint::from_shared(url.to_string())?
+        .initial_stream_window_size(CORE_INITIAL_STREAM_WINDOW)
+        .initial_connection_window_size(CORE_INITIAL_CONNECTION_WINDOW)
+        .http2_adaptive_window(true)
+        .tcp_nodelay(true))
+}
+
+/// Connect to a core service endpoint using a small pool of independent connections behind one
+/// balanced [`Channel`]. Concurrent RPCs are spread across the pool, so a burst of requests is
+/// not bottlenecked on a single connection. Reachability is probed up front (so an unreachable
+/// party fails here and is retried by `retry!`, as before) rather than only on the first RPC.
+async fn connect_core_pool(
+    url: &str,
+) -> Result<CoreServiceEndpointClient<Channel>, tonic::transport::Error> {
+    // Pre-flight probe; the probe channel is dropped immediately.
+    core_endpoint(url)?.connect().await?;
+
+    let endpoints = std::iter::repeat_with(|| core_endpoint(url))
+        .take(CORE_CONN_POOL_SIZE)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CoreServiceEndpointClient::new(Channel::balance_list(
+        endpoints.into_iter(),
+    )))
 }
 
 #[derive(Serialize, Clone, Validate, Debug)]
@@ -1759,19 +1802,11 @@ pub async fn execute_cmd(
                     "http://".to_string() + &address
                 };
 
-                let core_endpoint_req = retry!(
-                    CoreServiceEndpointClient::connect(url.clone()).await,
-                    5,
-                    100
-                )?;
+                let core_endpoint_req = retry!(connect_core_pool(&url).await, 5, 100)?;
                 // Centralized is always party 1
                 core_endpoints_req.insert(core.clone(), core_endpoint_req);
 
-                let core_endpoint_resp = retry!(
-                    CoreServiceEndpointClient::connect(url.clone()).await,
-                    5,
-                    100
-                )?;
+                let core_endpoint_resp = retry!(connect_core_pool(&url).await, 5, 100)?;
                 core_endpoints_resp.insert(core.clone(), core_endpoint_resp);
 
                 // there's only 1 party, so use index 1
@@ -1812,20 +1847,12 @@ pub async fn execute_cmd(
                         url
                     );
 
-                    let core_endpoint_req = retry!(
-                        CoreServiceEndpointClient::connect(url.clone()).await,
-                        5,
-                        100
-                    )?;
+                    let core_endpoint_req = retry!(connect_core_pool(&url).await, 5, 100)?;
                     // NOTE CANT USE PARTY ID AS KEY CAUSE WE MAY HAVE SEVERAL CORES WITH SAME ID
                     // WHEN HAVING MULTIPLE CONTEXTS
                     core_endpoints_req.insert(cur_core.clone(), core_endpoint_req);
 
-                    let core_endpoint_resp = retry!(
-                        CoreServiceEndpointClient::connect(url.clone()).await,
-                        5,
-                        100
-                    )?;
+                    let core_endpoint_resp = retry!(connect_core_pool(&url).await, 5, 100)?;
                     core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
                     pub_storage.insert(

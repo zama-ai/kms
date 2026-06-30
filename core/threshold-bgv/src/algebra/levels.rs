@@ -1506,6 +1506,28 @@ mod tests {
     }
 
     #[test]
+    fn test_mul_by_i128_signed_prime_modulus() {
+        // Regression: LevelOne has a prime modulus (does not divide 2^128). Scaling by a negative
+        // scalar must go through from_i128; using mul_by_u128(scalar as u128) mis-reduces negative
+        // values (it adds 2^128) and previously corrupted noise-flooding masks in threshold
+        // decryption (the mask wrapped mod q and flipped the recovered plaintext).
+        use algebra::PRSSConversions;
+        use algebra::structure_traits::Ring;
+
+        let a = LevelOne::from_u128(7);
+        for scalar in [-1_000_000_i128, -7, -1, 1, 7, 1_000_000] {
+            assert_eq!(
+                a.mul_by_i128(scalar),
+                a * LevelOne::from_i128(scalar),
+                "mul_by_i128 must match the full multiply for scalar {scalar}"
+            );
+        }
+        // The buggy unsigned cast must differ for a negative scalar on a prime modulus.
+        let neg = -7_i128;
+        assert_ne!(a.mul_by_i128(neg), a.mul_by_u128(neg as u128));
+    }
+
+    #[test]
     fn test_l1_lagrange() {
         let poly = Poly::from_coefs(vec![
             LevelOne::from_u128(11),

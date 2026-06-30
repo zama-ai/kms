@@ -1033,11 +1033,7 @@ async fn test_backup_after_reshare_threshold() {
             client.clone(),
             new_epoch_req_id.into(),
             "reshare epoch result",
-            PollConfig {
-                initial_delay: tokio::time::Duration::from_millis(500),
-                retry_delay: tokio::time::Duration::from_millis(500),
-                max_retries: 50,
-            },
+            PollConfig::default(),
             |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
         )
         .await
