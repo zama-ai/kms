@@ -663,6 +663,15 @@ pub fn base64_deserialize<T>(element: &str) -> anyhow::Result<T>
 where
     T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named,
 {
+    // Guard against allocating unbounded memory on untrusted input before `safe_deserialize` runs.
+    let max_b64_len = ((SAFE_SER_SIZE_LIMIT as usize + 2) / 3) * 4;
+    if element.len() > max_b64_len {
+        return Err(anyhow::anyhow!(
+            "Base64 payload too large (len={}, max={})",
+            element.len(),
+            max_b64_len
+        ));
+    }
     let decoded_data = base64::decode(element)?;
     let mut cursor = std::io::Cursor::new(decoded_data);
     let deserialized: T = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
