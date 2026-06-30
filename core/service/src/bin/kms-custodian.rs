@@ -175,8 +175,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let serialized_res = base64_serialize(&res)?;
             tracing::info!("Verified reencryption successfully.");
             tracing::warn!(
-                "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR!\n
-                OPERATOR VERFICATION KEY ADDRESS IS: {:?}",
+                "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key address: {:?}",
                 recovery_request.operator_verf_key().address()
             );
             // Use println to lower the risk of accidental file logging of the recovery output

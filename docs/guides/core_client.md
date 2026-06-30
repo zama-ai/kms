@@ -247,7 +247,7 @@ The steps needed are as follows:
   ```{bash}
   $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
-  As output, the base64 recovery request and the custodian context ID are printed. (This custodian context ID is also the backup ID — the two are the same value.)
+  As output, the base64 recovery request is printed. Use the custodian context ID (backup ID) from `new-custodian-context` as the `-i` argument in the next step.
 1. Custodians do partial decryption.
   WARNING: The recovery information of each KMS operator must be communicated _securely_ with the custodians, since at this point the KMS nodes don't have any valid keys to prove their identity on any data payload.
   Using the base64 recovery request from the operator, each custodian uses the KMS Custodian CLI tool to prepare the partially decrypted (base64) response for the KMS node. Details on this can be found in the [manual for the KMS custodian tool](./backup.md#Recovery-(decryption-of-backup)). The base64 outputs from the custodians must then be consolidated at the KMS operator.

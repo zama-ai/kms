@@ -430,10 +430,9 @@ where
         let res = self
             .restore_from_backup(tonic::Request::new(Empty {}))
             .await;
-        // Finally remove the ephemeral keys
-        {
+        // Only clear the ephemeral keys after a successful restore so operators can retry on failure.
+        if res.is_ok() {
             let mut ephemeral_keys = self.ephemeral_keys.lock().await;
-            // Remove any decryption key now that restoration is done.
             *ephemeral_keys = None;
         }
         res

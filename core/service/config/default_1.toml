@@ -88,7 +88,7 @@ path = "./backup_vault"
 prefix = "BACKUP-p1"
 
 # If backup is to be actively used in a secure manner, either the AWS KMS or custodian 
-# backup approach must be selected. Note that at most ONE of these case be selected:
+# backup approach must be selected. Note that at most ONE of these can be selected:
 # --- 1. Custodian backup ---
 # The following variable MUST be enabled.
 # [backup_vault.keychain.secret_sharing]

@@ -2539,7 +2539,7 @@ pub async fn execute_cmd(
             // We assume the output files are ordered the same way as the operators in the configuration file.
             let mut deserialized_rec_out = Vec::new();
             for cur_cus_rec in custodian_recovery_outputs {
-                deserialized_rec_out.push(base64_deserialize(cur_cus_rec)?);
+                deserialized_rec_out.push(base64_deserialize(&cur_cus_rec)?);
             }
             do_custodian_backup_recovery(
                 &core_endpoints_req,

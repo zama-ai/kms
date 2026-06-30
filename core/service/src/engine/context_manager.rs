@@ -250,7 +250,7 @@ where
                     "Cannot destroy custodian context with id {context_id} since it is the only one left in the meta store"
                 ),
                 tonic::Code::FailedPrecondition,
-            ))?;
+            ));
         }
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
