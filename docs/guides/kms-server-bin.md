@@ -14,6 +14,18 @@ cargo run --bin kms-gen-keys -- centralized
 cargo run --bin kms-gen-keys -- threshold --signing-key-party-id <SIGNING_KEY_PARTY_ID>
 ```
 
+`kms-gen-keys` can also read the storage, AWS, and mode settings from a TOML
+configuration file:
+
+```bash
+cargo run --bin kms-gen-keys -- --config-file config/default_1.toml
+```
+
+For threshold configs, `threshold.my_id` selects the party. The TLS certificate
+subject is read from `threshold.tls_subject` when present; otherwise it is
+derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
+and falling back to `address`.
+
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
 
 ## Threshold KMS TLS Certificates
@@ -80,7 +92,8 @@ mock_enclave = true
 
 See `core/service/config/compose_*.toml` for working examples used by the docker-compose threshold setup.
 
-On the key-generation side, pass the matching CLI flag:
+On the key-generation side, pass the matching CLI flag or set the same field in
+the config used with `--config-file`:
 
 ```bash
 cargo run --bin kms-gen-keys --features insecure -- --mock-enclave ...

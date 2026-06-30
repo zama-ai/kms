@@ -111,66 +111,18 @@ has_value "aws.sts_endpoint" && {
 # included in the peer list and voted on before all parties can start.
 
 # If the [keygen] section is present in the received configuration file,
-# kms-gen-keys will run. It doesn't have any fields. It's not a section
-# understood by the configuration parser in kms-server, so kms-server will not
-# start if this section is present.
+# kms-gen-keys will run. It is not a section understood by the kms-server
+# configuration parser, so kms-server will not start if this section is present.
 has_value "keygen" && \
     {
-	AWS_IMDS_ENDPOINT_ARG=""
-	has_value "aws.imds_endpoint" && \
-	    AWS_IMDS_ENDPOINT_ARG="--aws-imds-endpoint $(get_value "aws.imds_endpoint")"
-
-	AWS_STS_ENDPOINT_ARG=""
-	has_value "aws.sts_endpoint" && \
-	    AWS_STS_ENDPOINT_ARG="--aws-sts-endpoint $(get_value "aws.sts_endpoint")"
-
-	AWS_S3_ENDPOINT_ARG=""
-	has_value "aws.s3_endpoint" && \
-	    AWS_S3_ENDPOINT_ARG="--aws-s3-endpoint $(get_value "aws.s3_endpoint")"
-
-	AWS_KMS_ENDPOINT_ARG=""
-	has_value "aws.awskms_endpoint" && \
-	    AWS_KMS_ENDPOINT_ARG="--aws-kms-endpoint $(get_value "aws.awskms_endpoint")"
-	
-	AWS_ARGS="--aws-region $(get_value "aws.region") $AWS_IMDS_ENDPOINT_ARG $AWS_STS_ENDPOINT_ARG $AWS_S3_ENDPOINT_ARG $AWS_KMS_ENDPOINT_ARG"
-
-	PUBLIC_S3_PREFIX_ARG=""
-	has_value "public_vault.storage.s3.prefix" && \
-	    PUBLIC_S3_PREFIX_ARG="--public-s3-prefix $(get_value "public_vault.storage.s3.prefix")"
-	PRIVATE_S3_PREFIX_ARG=""
-	has_value "private_vault.storage.s3.prefix" && \
-	    PRIVATE_S3_PREFIX_ARG="--private-s3-prefix $(get_value "private_vault.storage.s3.prefix")"
-
-	VAULT_ARGS="--public-storage s3 \
-		    --public-s3-bucket $(get_value "public_vault.storage.s3.bucket") $PUBLIC_S3_PREFIX_ARG \
-                    --private-storage s3 \
-                    --private-s3-bucket $(get_value "private_vault.storage.s3.bucket") $PRIVATE_S3_PREFIX_ARG \
-                    --root-key-id $(get_value "private_vault.keychain.aws_kms.root_key_id") \
-                    --root-key-spec $(get_value "private_vault.keychain.aws_kms.root_key_spec")"
-
-	KMS_GEN_KEYS_CMD="kms-gen-keys $AWS_ARGS $VAULT_ARGS"
-
 	# Ensure that signing keys exist. FHE keys and CRS are generated at
 	# runtime by kms-server (in centralized mode) or by the threshold
 	# protocol (in threshold mode), so this script only handles signing
-	# keys. Note that in threshold mode, the [threshold] section used for
-	# kms-gen-keys is not the same as one used for kms-server. It has two
-	# fields only: my_id and tls_subject. The latter is not accepted by
-	# kms-server.
-	if has_value "threshold"; then
-	    log "generating signing keys for threshold KMS"
-	    PARTY_ID_ARG=""
-	    has_value "threshold.my_id" && \
-		PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
-	    eval "$KMS_GEN_KEYS_CMD \
-                   threshold $PARTY_ID_ARG \
-                   --tls-subject $(get_value "threshold.tls_subject")" \
-		|& logger || fail "cannot generate keys"
-	else
-	    log "generating signing keys for centralized KMS"
-	    eval "$KMS_GEN_KEYS_CMD centralized" \
-		|& logger || fail "cannot generate keys"
-	fi
+	# keys. kms-gen-keys parses the config file itself so values from the
+	# parent-provided config are never reinterpreted as shell syntax.
+	log "generating signing keys"
+	kms-gen-keys --config-file "$KMS_SERVER_CONFIG_FILE" \
+	    |& logger || fail "cannot generate keys"
     }
 has_value "keygen" || \
     log "[keygen] configuration section not present, skipping key generation"
