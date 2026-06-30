@@ -6,7 +6,7 @@ use crate::{
     anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, cryptography::attestation::SecurityModule,
     some_or_err,
 };
-use aes::{
+use aes08::{
     Aes256,
     cipher::{BlockDecryptMut, IvSizeUser, KeyIvInit, KeySizeUser, block_padding::Pkcs7},
 };

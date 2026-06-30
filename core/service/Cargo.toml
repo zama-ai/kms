@@ -40,7 +40,7 @@ path = "src/bin/kms-custodian.rs"
 aes-gcm-siv.workspace = true
 aes-gcm.workspace = true
 aes-prng.workspace = true
-aes.workspace = true
+aes08.workspace = true
 algebra = { workspace= true }
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
@@ -48,7 +48,6 @@ alloy-signer-local.workspace = true
 alloy-signer.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
-async_cell.workspace = true
 attestation-doc-validation = { workspace = true, optional = true}
 aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
