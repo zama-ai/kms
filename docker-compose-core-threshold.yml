@@ -32,7 +32,6 @@ services:
         mock_enclave = true
 
         [keygen]
-        enabled = true
 
         [threshold]
         my_id = $${i}

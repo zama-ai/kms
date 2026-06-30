@@ -74,7 +74,6 @@ mod kms_gen_keys_binary_test {
             format!(
                 r#"
 [keygen]
-enabled = true
 {keygen_options}
 {threshold_config}
 [public_vault.storage.file]
@@ -102,6 +101,20 @@ path = "{private_path}"
             .unwrap()
             .assert()
             .success();
+    }
+
+    #[test]
+    #[integration_test]
+    fn server_config_is_rejected() {
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--config-file")
+            .arg("config/default_1.toml")
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("expected a [keygen] section"));
     }
 
     #[test]
@@ -313,7 +326,6 @@ tls_subject = "kms-party"
             format!(
                 r#"
 [keygen]
-enabled = true
 deterministic = true
 overwrite = true
 
@@ -367,6 +379,36 @@ mod kms_server_binary_test {
             .unwrap()
             .assert()
             .success();
+    }
+
+    #[test]
+    #[integration_test]
+    fn keygen_config_is_rejected() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let config_path = config_dir.path().join("kms-gen-keys.toml");
+        fs::write(
+            &config_path,
+            r#"
+[keygen]
+
+[public_vault.storage.file]
+path = "/tmp"
+
+[private_vault.storage.file]
+path = "/tmp"
+"#,
+        )
+        .unwrap();
+
+        let output = Command::cargo_bin(KMS_SERVER)
+            .unwrap()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("expected a [service] section"));
     }
 }
 

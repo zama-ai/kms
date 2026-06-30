@@ -1,4 +1,4 @@
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 use clap::Parser;
 use core::fmt;
 use futures_util::future::OptionFuture;
@@ -6,9 +6,8 @@ use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::{
     conf::{
-        AWSConfig, CoreConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig,
-        VaultConfig, init_conf,
-        threshold::{PeerConf, ThresholdPartyConf},
+        AWSConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig, VaultConfig,
+        init_conf, threshold::PeerConf,
     },
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
@@ -26,7 +25,7 @@ use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, sync::Arc};
-use validator::{Validate, ValidationErrors};
+use validator::Validate;
 
 #[derive(Parser)]
 #[clap(name = "Zama KMS Signing Key and Certificate Generator")]
@@ -67,26 +66,11 @@ struct KmsGenKeysRunConfig {
     mock_enclave: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(untagged)]
-enum KmsGenKeysConfigFile {
-    Keygen(Box<KmsGenKeysOnlyConfig>),
-    Server(Box<CoreConfig>),
-}
-
-impl Validate for KmsGenKeysConfigFile {
-    fn validate(&self) -> Result<(), ValidationErrors> {
-        match self {
-            Self::Keygen(config) => config.validate(),
-            Self::Server(config) => config.validate(),
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KmsGenKeysOnlyConfig {
-    keygen: Option<KeygenConfig>,
+    #[validate(nested)]
+    keygen: KeygenConfig,
     #[validate(nested)]
     aws: Option<AWSConfig>,
     #[validate(nested)]
@@ -106,7 +90,6 @@ struct KmsGenKeysOnlyConfig {
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KeygenConfig {
-    enabled: Option<bool>,
     deterministic: Option<bool>,
     overwrite: Option<bool>,
     show_existing: Option<bool>,
@@ -146,37 +129,21 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
 }
 
 fn resolve_args(args: &Args) -> anyhow::Result<KmsGenKeysRunConfig> {
-    let config = init_conf::<KmsGenKeysConfigFile>(&args.config_file).with_context(|| {
+    let config = init_conf::<KmsGenKeysOnlyConfig>(&args.config_file).with_context(|| {
         format!(
-            "failed to load kms-gen-keys config file {}",
+            "failed to load kms-gen-keys config file {}; expected a [keygen] section",
             args.config_file
         )
     })?;
     config
         .validate()
         .context("invalid kms-gen-keys config file")?;
-    resolve_config_file(config)
-}
-
-fn resolve_config_file(config: KmsGenKeysConfigFile) -> anyhow::Result<KmsGenKeysRunConfig> {
-    match config {
-        KmsGenKeysConfigFile::Keygen(config) => resolve_keygen_config_file(*config),
-        KmsGenKeysConfigFile::Server(config) => resolve_server_config_file(*config),
-    }
+    resolve_keygen_config_file(config)
 }
 
 fn resolve_keygen_config_file(config: KmsGenKeysOnlyConfig) -> anyhow::Result<KmsGenKeysRunConfig> {
-    if config
-        .keygen
-        .as_ref()
-        .and_then(|keygen| keygen.enabled)
-        .is_some_and(|enabled| !enabled)
-    {
-        bail!("[keygen].enabled is false");
-    }
-
     let mode = resolve_keygen_config_mode(config.threshold.as_ref())?;
-    let keygen = config.keygen.as_ref();
+    let keygen = &config.keygen;
     let public_storage = config.public_vault.map(|vault| vault.storage);
     let (private_storage, private_keychain) = config
         .private_vault
@@ -189,40 +156,11 @@ fn resolve_keygen_config_file(config: KmsGenKeysOnlyConfig) -> anyhow::Result<Km
         public_storage,
         private_storage,
         private_keychain,
-        deterministic: keygen
-            .and_then(|keygen| keygen.deterministic)
-            .unwrap_or(false),
-        overwrite: keygen.and_then(|keygen| keygen.overwrite).unwrap_or(false),
-        show_existing: keygen
-            .and_then(|keygen| keygen.show_existing)
-            .unwrap_or(false),
+        deterministic: keygen.deterministic.unwrap_or(false),
+        overwrite: keygen.overwrite.unwrap_or(false),
+        show_existing: keygen.show_existing.unwrap_or(false),
         #[cfg(feature = "insecure")]
-        mock_enclave: keygen
-            .and_then(|keygen| keygen.mock_enclave)
-            .or(config.mock_enclave)
-            .unwrap_or(false),
-    })
-}
-
-fn resolve_server_config_file(config: CoreConfig) -> anyhow::Result<KmsGenKeysRunConfig> {
-    let mode = resolve_server_config_mode(config.threshold.as_ref())?;
-    let public_storage = config.public_vault.map(|vault| vault.storage);
-    let (private_storage, private_keychain) = config
-        .private_vault
-        .map(|vault| (Some(vault.storage), vault.keychain))
-        .unwrap_or((None, None));
-
-    Ok(KmsGenKeysRunConfig {
-        mode,
-        aws: config.aws,
-        public_storage,
-        private_storage,
-        private_keychain,
-        deterministic: false,
-        overwrite: false,
-        show_existing: false,
-        #[cfg(feature = "insecure")]
-        mock_enclave: config.mock_enclave.unwrap_or(false),
+        mock_enclave: keygen.mock_enclave.or(config.mock_enclave).unwrap_or(false),
     })
 }
 
@@ -248,27 +186,6 @@ fn resolve_keygen_config_mode(
         signing_key_party_id,
         tls_subject,
         tls_wildcard: threshold.tls_wildcard.unwrap_or(false),
-    })
-}
-
-fn resolve_server_config_mode(
-    threshold: Option<&ThresholdPartyConf>,
-) -> anyhow::Result<KeygenMode> {
-    let Some(threshold) = threshold else {
-        return Ok(KeygenMode::Centralized);
-    };
-
-    let my_id = threshold
-        .my_id
-        .context("threshold.my_id is required when generating threshold signing keys")?;
-    let signing_key_party_id =
-        NonZeroUsize::new(my_id).context("threshold.my_id must be non-zero")?;
-    let tls_subject = resolve_threshold_tls_subject(None, threshold.peers.as_deref(), my_id)?;
-
-    Ok(KeygenMode::Threshold {
-        signing_key_party_id,
-        tls_subject,
-        tls_wildcard: false,
     })
 }
 
@@ -313,7 +230,7 @@ fn resolve_threshold_tls_subject(
 ///
 /// Examples:
 /// ```
-/// cargo run --bin kms-gen-keys -- --config-file config/default_1.toml
+/// cargo run --bin kms-gen-keys -- --config-file /path/to/kms-gen-keys.toml
 /// cargo run --bin kms-gen-keys -- --help
 /// ```
 #[tokio::main]
@@ -580,14 +497,13 @@ mod tests {
 
     fn base_config() -> KmsGenKeysOnlyConfig {
         KmsGenKeysOnlyConfig {
-            keygen: Some(KeygenConfig {
-                enabled: Some(true),
+            keygen: KeygenConfig {
                 deterministic: None,
                 overwrite: None,
                 show_existing: None,
                 #[cfg(feature = "insecure")]
                 mock_enclave: None,
-            }),
+            },
             aws: None,
             public_vault: None,
             private_vault: None,
@@ -620,9 +536,9 @@ mod tests {
     }
 
     fn resolve_config_for_test(
-        config: KmsGenKeysConfigFile,
+        config: KmsGenKeysOnlyConfig,
     ) -> anyhow::Result<KmsGenKeysRunConfig> {
-        resolve_config_file(config)
+        resolve_keygen_config_file(config)
     }
 
     fn resolved_tls_subject(resolved: KmsGenKeysRunConfig) -> String {
@@ -634,8 +550,7 @@ mod tests {
 
     #[test]
     fn config_file_resolves_centralized_defaults() {
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(base_config()))).unwrap();
+        let resolved = resolve_config_for_test(base_config()).unwrap();
 
         assert_eq!(resolved.mode, KeygenMode::Centralized);
         assert!(resolved.public_storage.is_none());
@@ -646,17 +561,15 @@ mod tests {
     #[test]
     fn keygen_flags_are_read_from_config() {
         let mut config = base_config();
-        config.keygen = Some(KeygenConfig {
-            enabled: Some(true),
+        config.keygen = KeygenConfig {
             deterministic: Some(true),
             overwrite: Some(true),
             show_existing: Some(true),
             #[cfg(feature = "insecure")]
             mock_enclave: None,
-        });
+        };
 
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+        let resolved = resolve_config_for_test(config).unwrap();
 
         assert!(resolved.deterministic);
         assert!(resolved.overwrite);
@@ -667,16 +580,14 @@ mod tests {
     #[test]
     fn mock_enclave_is_read_from_config() {
         let mut config = base_config();
-        config.keygen = Some(KeygenConfig {
-            enabled: Some(true),
+        config.keygen = KeygenConfig {
             deterministic: None,
             overwrite: None,
             show_existing: None,
             mock_enclave: Some(true),
-        });
+        };
 
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+        let resolved = resolve_config_for_test(config).unwrap();
 
         assert!(resolved.mock_enclave);
     }
@@ -689,8 +600,7 @@ mod tests {
         threshold.peers = Some(vec![peer(2, "peer-address", Some("peer-identity"))]);
         config.threshold = Some(threshold);
 
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+        let resolved = resolve_config_for_test(config).unwrap();
 
         assert_eq!(resolved_tls_subject(resolved), "explicit-party");
     }
@@ -705,8 +615,7 @@ mod tests {
         ]);
         config.threshold = Some(threshold);
 
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+        let resolved = resolve_config_for_test(config).unwrap();
 
         assert_eq!(resolved_tls_subject(resolved), "party-two");
     }
@@ -718,8 +627,7 @@ mod tests {
         threshold.peers = Some(vec![peer(1, "party-one-address", Some("   "))]);
         config.threshold = Some(threshold);
 
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+        let resolved = resolve_config_for_test(config).unwrap();
 
         assert_eq!(resolved_tls_subject(resolved), "party-one-address");
     }
@@ -731,9 +639,7 @@ mod tests {
         threshold.tls_subject = Some("party-one".to_string());
         config.threshold = Some(threshold);
 
-        let err = resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config)))
-            .unwrap_err()
-            .to_string();
+        let err = resolve_config_for_test(config).unwrap_err().to_string();
 
         assert!(err.contains("threshold.my_id"));
     }
@@ -745,9 +651,7 @@ mod tests {
         threshold.peers = Some(vec![peer(1, "party-one-address", None)]);
         config.threshold = Some(threshold);
 
-        let err = resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config)))
-            .unwrap_err()
-            .to_string();
+        let err = resolve_config_for_test(config).unwrap_err().to_string();
 
         assert!(err.contains("no entry for party 2"));
     }
@@ -781,8 +685,7 @@ mod tests {
             })),
         });
 
-        let resolved =
-            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+        let resolved = resolve_config_for_test(config).unwrap();
 
         assert_eq!(
             resolved.aws.as_ref().map(|aws| aws.region.as_str()),
@@ -812,16 +715,6 @@ mod tests {
     }
 
     #[test]
-    fn server_config_uses_core_config_threshold_shape() {
-        let config = init_conf::<KmsGenKeysConfigFile>("config/default_1").unwrap();
-        config.validate().unwrap();
-
-        let resolved = resolve_config_for_test(config).unwrap();
-
-        assert_eq!(resolved_tls_subject(resolved), "p1");
-    }
-
-    #[test]
     fn keygen_toml_deserializes_and_resolves() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("kms-gen-keys.toml");
@@ -829,7 +722,6 @@ mod tests {
             &config_path,
             r#"
 [keygen]
-enabled = true
 deterministic = true
 overwrite = true
 
@@ -857,7 +749,7 @@ root_key_spec = "symm"
         )
         .unwrap();
 
-        let config = init_conf::<KmsGenKeysConfigFile>(config_path.to_str().unwrap()).unwrap();
+        let config = init_conf::<KmsGenKeysOnlyConfig>(config_path.to_str().unwrap()).unwrap();
         config.validate().unwrap();
         let resolved = resolve_config_for_test(config).unwrap();
 
