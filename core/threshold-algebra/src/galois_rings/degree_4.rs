@@ -913,6 +913,21 @@ mod tests {
     }
 
     #[test]
+    fn test_mul_by_i128_matches_full_mul_z128() {
+        // The fast coefficient-scale override must equal the generic `self * from_i128(scalar)`
+        // for every scalar, including negative ones.
+        let mut rng = AesRng::seed_from_u64(42);
+        for scalar in [-1_000_000_i128, -7, -1, 0, 1, 7, 1_000_000] {
+            let rpoly = ResiduePolyF4Z128::sample(&mut rng);
+            assert_eq!(
+                rpoly.mul_by_i128(scalar),
+                rpoly * ResiduePolyF4Z128::from_i128(scalar),
+                "mul_by_i128 mismatch for scalar {scalar}"
+            );
+        }
+    }
+
+    #[test]
     fn test_to_from_bytes_z128() {
         let rpoly = ResiduePolyF4Z128::sample(&mut AesRng::seed_from_u64(0));
         let byte_vec: [u8; ResiduePolyF4Z128::BIT_LENGTH >> 3] =

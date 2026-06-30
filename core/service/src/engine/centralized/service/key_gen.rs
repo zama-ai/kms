@@ -945,11 +945,11 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        // The first key generation consumed (tombstoned) the original
-        // preprocessing entry, and a tombstoned ID cannot be reused. Register a
-        // *fresh* preprocessing entry and point the duplicate request at it, so
-        // the second request fails on the duplicate key request ID rather than on
-        // missing/consumed preprocessing.
+        // The first key generation consumed the preprocessing entry, tombstoning
+        // it so its ID can no longer be reused. Register a *fresh* preprocessing
+        // entry and point a second keygen (with the same key request ID) at it, so
+        // the retry fails on the duplicate request ID and not on missing/consumed
+        // preprocessing.
         let preproc_id_2 = derive_request_id("test_keygen_already_exists_preproc_id_2").unwrap();
         let preproc_req = KeyGenPreprocRequest {
             params: FheParameter::Test.into(),

@@ -183,7 +183,7 @@ async fn preproc_centralized(
         kms_client.clone(),
         (*preproc_id).into(),
         "key gen preprocessing result",
-        PollConfig::default(),
+        PollConfig::long_poll_config(),
         |client, request| Box::pin(async move { client.get_key_gen_preproc_result(request).await }),
     )
     .await;
@@ -284,7 +284,6 @@ pub async fn run_key_gen_centralized(
         kms_client.clone(),
         (*key_req_id).into(),
         "key gen result",
-        // Real keygen (especially `FheParameter::Default`) far outlasts the default
         PollConfig::long_poll_config(),
         |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
     )

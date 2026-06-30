@@ -1,8 +1,8 @@
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
-use aes::Aes128;
-#[allow(deprecated)]
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::{
+    Aes128, Block as AesBlock,
+    cipher::{BlockCipherEncrypt, KeyInit},
+};
 pub use algebra::PRSSConversions;
 use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
@@ -95,118 +95,136 @@ impl PsiAes {
 
 //NOTE: I BELIEVE WE NEVER NEED PRSS-MASK TO GENERATE MASK BIGGER THAN 2^126 EVEN FOR BGV
 //AFAICT, ONLY USED IN BGV DDEC WITH BD1<Q1 AND Q1 IS 94BIT LONG
-/// Function Phi that generates bounded randomness for PRSS-Mask.Next()
-/// This currently assumes that the value Bd_1 in the NIST doc is smaller than 2^126
-pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
-    // we currently assume that Bd1 is at most 126 bits large, so we only need a single block of AES and can fit the result in an i128.
-    // check that bd1 is small enough to not cause overflow of the result
+/// Function Phi that generates bounded randomness for PRSS-Mask.Next(), evaluated over the
+/// contiguous counter range `[start, start + count)`.
+///
+/// This currently assumes and checks that the value Bd_1 in the NIST doc is smaller than 2^126.
+/// A single `encrypt_blocks` call is issued so the AES-NI backend can pipeline the blocks,
+/// and the (loop-invariant) bounds are checked only once for the whole range.
+pub(crate) fn phi_range(
+    pa: &PhiAes,
+    start: u128,
+    count: usize,
+    bd1: u128,
+) -> anyhow::Result<Vec<i128>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    // check that bd1 is within expected bounds, to avoid overflow when computing -Bd1 + (AES mod 2*Bd1)
     if bd1 > (1 << 126) {
         return Err(anyhow_error_and_log(
             "Bd1 must be at most 2^126 to not overflow, but is larger".to_string(),
         ));
     }
 
-    // check ctr is smaller 2^120, so nothing gets overwritten by setting the index below
-    if ctr >= 1 << 120 {
+    // We assume the block counter is stored in ctr_bytes[15] (even though it's currently fixed to zero, given our parameters)
+    // Thus, we need to check that ctr is smaller 2^120, so nothing gets overwritten by setting the index below.
+    // Also ensure it doesn't overflow when adding count-1 to it.
+    let max_ctr = start.saturating_add(count as u128 - 1);
+    if max_ctr >= 1 << 120 {
         return Err(anyhow_error_and_log(format!(
-            "ctr in phi must be smaller than 2^120 but was {ctr}."
+            "ctr in phi must be smaller than 2^120 but was {max_ctr}."
         )));
     }
 
-    // number of AES blocks, currently limited to 1. See NOTE above.
+    // Number of AES blocks per value, currently limited to 1. See NOTE above.
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
 
-    // TODO iterate over blocks form 0..v here if we ever need Bd1 > 2^126
-    let mut ctr_bytes = ctr.to_le_bytes();
-    ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
-    #[allow(deprecated)]
-    let mut to_enc = GenericArray::from(ctr_bytes);
-    pa.aes.encrypt_block(&mut to_enc);
-    let out = u128::from_le_bytes(to_enc.into());
+    // TODO iterate over blocks from 0..v here, if we ever need Bd1 > 2^126
+    let mut blocks = Vec::with_capacity(count);
+    for k in 0..count {
+        let mut ctr_bytes = (start + k as u128).to_le_bytes();
+        ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
+        let block = AesBlock::from(ctr_bytes);
+        blocks.push(block);
+    }
 
-    // compute output as -BD1 + (AES (mod 2*BD1)), a uniform random value in [-BD1 .. BD1)
-    let ret: i128 = -(bd1 as i128) + (out % (2 * bd1)) as i128;
+    // single pipelined AES call over the whole range
+    pa.aes.encrypt_blocks(&mut blocks);
 
-    Ok(ret)
+    let modulus = 2 * bd1;
+    let neg_bd1 = -(bd1 as i128);
+    let mut res = Vec::with_capacity(count);
+    for block in blocks {
+        let out = u128::from_le_bytes(block.into());
+        // compute output as -BD1 + (AES (mod 2*BD1)), a uniform random value in [-BD1 .. BD1)
+        res.push(neg_bd1 + (out % modulus) as i128);
+    }
+    Ok(res)
+}
+
+/// Number of AES blocks encrypted per `encrypt_blocks` call in psi/chi. Sized to the AES-NI /
+/// ARMv8 parallel width so a single batch covers the common degree-8 case, while a stack buffer
+/// (rather than a per-call heap allocation) holds the blocks.
+const AES_BATCH: usize = 8;
+
+#[inline(always)]
+fn encrypt_indexed_prf_blocks<Z, F>(aes: &Aes128, ctr: u128, mut encode_block_indices: F) -> Z
+where
+    Z: Ring + PRSSConversions,
+    F: FnMut(&mut AesBlock, usize, usize),
+{
+    // Compute v = ceil(log(q)/128) if q is a power of 2, v = dist + log(q)/128 otherwise.
+    let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
+    let n_blocks = Z::EXTENSION_DEGREE * num_u128_base_ring;
+    let base = ctr.to_le_bytes();
+
+    let mut chunks = Vec::with_capacity(n_blocks);
+    let mut buf = [AesBlock::from([0u8; 16]); AES_BATCH];
+    let mut start = 0;
+    while start < n_blocks {
+        let chunk = (n_blocks - start).min(AES_BATCH);
+        for (slot, block) in buf[..chunk].iter_mut().enumerate() {
+            let idx = start + slot;
+            block.copy_from_slice(&base);
+            let v = idx % num_u128_base_ring;
+            let i = idx / num_u128_base_ring;
+            encode_block_indices(block, i, v);
+        }
+        aes.encrypt_blocks(&mut buf[..chunk]);
+        for block in &buf[..chunk] {
+            chunks.push(u128::from_le_bytes((*block).into()));
+        }
+        start += chunk;
+    }
+
+    Z::from_u128_chunks(chunks)
 }
 
 /// Function Psi that generates bounded randomness for PRSS.next()
 pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
-    // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices in inner_psi
+    // Bytes 14 and 15 are reserved for the dimension index and block counter. Keep ctr below
+    // 2^112 so those bytes are zero before we write the indices below.
     if ctr >= 1 << 112 {
         return Err(anyhow_error_and_log(format!(
             "ctr in psi must be smaller than 2^112 but was {ctr}."
         )));
     }
 
-    //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
-    let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-    let mut coefs = vec![0_u128; Z::EXTENSION_DEGREE * num_u128_base_ring];
-
-    //Loop over psi^(i)
-    for i in 0..Z::EXTENSION_DEGREE {
-        //loop over block counter for each base ring element
-        for block_ctr in 0..num_u128_base_ring {
-            coefs[i * num_u128_base_ring + block_ctr] =
-                inner_psi(pa, ctr, i as u8, block_ctr as u8);
-        }
-    }
-
-    Ok(Z::from_u128_chunks(coefs))
-}
-
-/// Inner function Psi^(i) that generates bounded randomness for PRSS.next()
-fn inner_psi(pa: &PsiAes, ctr: u128, i: u8, block_ctr: u8) -> u128 {
-    let mut ctr_bytes = ctr.to_le_bytes();
-
-    // pad/truncate ctr value and put v and i in the MSBs
-    ctr_bytes[15] = block_ctr; // v - the block counter
-    ctr_bytes[14] = i; // i - the dimension index
-    #[allow(deprecated)]
-    let mut to_enc = GenericArray::from(ctr_bytes);
-    pa.aes.encrypt_block(&mut to_enc);
-    u128::from_le_bytes(to_enc.into())
+    Ok(encrypt_indexed_prf_blocks(&pa.aes, ctr, |block, i, v| {
+        block[15] = v as u8;
+        block[14] = i as u8;
+    }))
 }
 
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
 pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
-    // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices in inner_chi
+    // Bytes 13, 14, and 15 are reserved for the threshold index, dimension index, and block
+    // counter. Keep ctr below 2^104 so those bytes are zero before we write the indices below.
     if ctr >= 1 << 104 {
         return Err(anyhow_error_and_log(format!(
             "ctr in chi must be smaller than 2^104 but was {ctr}."
         )));
     }
 
-    //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
-    let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
-    let mut coefs = vec![0_u128; Z::EXTENSION_DEGREE * num_u128_base_ring];
-
-    //Loop over chi^(i)
-    for i in 0..Z::EXTENSION_DEGREE {
-        //loop over block counter for each base ring element
-        for block_ctr in 0..num_u128_base_ring {
-            coefs[i * num_u128_base_ring + block_ctr] =
-                inner_chi(pa, ctr, i as u8, j, block_ctr as u8);
-        }
-    }
-
-    Ok(Z::from_u128_chunks(coefs))
-}
-
-/// Inner function Chi^(i) that generates bounded randomness for PRZS.next()
-fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
-    let mut ctr_bytes = ctr.to_le_bytes();
-
-    // pad/truncate ctr value and put v and i in the MSBs, and j in the LSBs
-    ctr_bytes[15] = block_ctr; // v - the block counter
-    ctr_bytes[14] = i; // i - the dimension index
-    ctr_bytes[13] = j; // j - the threshold index
-    #[allow(deprecated)]
-    let mut to_enc = GenericArray::from(ctr_bytes);
-    pa.aes.encrypt_block(&mut to_enc);
-    u128::from_le_bytes(to_enc.into())
+    Ok(encrypt_indexed_prf_blocks(&pa.aes, ctr, |block, i, v| {
+        block[15] = v as u8;
+        block[14] = i as u8;
+        block[13] = j;
+    }))
 }
 
 #[cfg(test)]
@@ -214,6 +232,11 @@ mod tests {
     use super::*;
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+
+    /// Single-value convenience wrapper over [`phi_range`] used by the phi tests.
+    fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
+        Ok(phi_range(pa, ctr, 1, bd1)?[0])
+    }
 
     #[test]
     fn test_phi() {
@@ -313,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_chi_z64() {
-        test_chi::<ResiduePolyF4Z128>();
+        test_chi::<ResiduePolyF4Z64>();
     }
 
     /// check that all three PRFs cause different encryptions, even when initialized from the same key
@@ -328,12 +351,9 @@ mod tests {
         assert_ne!(chi::<Z>(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
 
         // initialize identical 128-bit block
-        #[allow(deprecated)]
-        let mut chi_block = GenericArray::from([42u8; 16]);
-        #[allow(deprecated)]
-        let mut psi_block = GenericArray::from([42u8; 16]);
-        #[allow(deprecated)]
-        let mut phi_block = GenericArray::from([42u8; 16]);
+        let mut chi_block = AesBlock::from([42u8; 16]);
+        let mut psi_block = AesBlock::from([42u8; 16]);
+        let mut phi_block = AesBlock::from([42u8; 16]);
 
         // encrypt with different PRFs
         chiaes.aes.encrypt_block(&mut chi_block);

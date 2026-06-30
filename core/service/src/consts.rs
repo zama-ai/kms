@@ -62,7 +62,7 @@ pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
 pub const DURATION_WAITING_ON_PREPROC_RESULT_SECONDS: u64 = 300;
 
 /// Maximum number of attempts to try to wait for a result to be done on the server.
-pub const MAX_TRIES: usize = 50;
+pub const MAX_TRIES: usize = 100;
 
 /// Default URL for local KMS service connections.
 pub const DEFAULT_URL: &str = "127.0.0.1";
