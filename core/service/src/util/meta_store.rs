@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
 };
 use thiserror::Error;
-use tokio::sync::{RwLock, RwLockWriteGuard, mpsc};
+use tokio::sync::{RwLock, RwLockWriteGuard, mpsc, watch};
 use tracing;
 
 /// Operation metric attached to a [`MetaStorePermit`] minted by the inherent
@@ -200,7 +200,7 @@ impl<T> Drop for MetaStorePermit<T> {
 }
 
 /// Public-facing snapshot of an entry's state.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum EntryState<T> {
     /// Entry exists, but is being worked on (either being computed or being deleted)
     Pending,
@@ -208,6 +208,17 @@ pub enum EntryState<T> {
     Done(Result<Arc<T>, String>),
     /// The entry has been deleted.
     Deleted,
+}
+
+// Hand-written so cloning does not require `T: Clone`.
+impl<T> Clone for EntryState<T> {
+    fn clone(&self) -> Self {
+        match self {
+            EntryState::Pending => EntryState::Pending,
+            EntryState::Done(result) => EntryState::Done(result.clone()),
+            EntryState::Deleted => EntryState::Deleted,
+        }
+    }
 }
 
 impl<T> std::fmt::Display for EntryState<T> {
@@ -222,36 +233,89 @@ impl<T> std::fmt::Display for EntryState<T> {
     }
 }
 
-enum StoredEntry<T> {
-    Pending(Arc<()>),
-    Done(Result<Arc<T>, String>, Arc<()>),
+/// Lifecycle state of an entry.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EntryStatus {
+    Pending,
+    Done,
     Deleted,
 }
 
-impl<T> StoredEntry<T> {
-    fn done(value: Result<Arc<T>, String>) -> Self {
-        StoredEntry::Done(value, Arc::new(()))
+impl<T> From<&EntryState<T>> for EntryStatus {
+    fn from(state: &EntryState<T>) -> Self {
+        match state {
+            EntryState::Pending => EntryStatus::Pending,
+            EntryState::Done(_) => EntryStatus::Done,
+            EntryState::Deleted => EntryStatus::Deleted,
+        }
     }
 }
 
-impl<T> From<StoredEntry<T>> for EntryState<T> {
-    fn from(stored: StoredEntry<T>) -> Self {
-        match stored {
-            StoredEntry::Pending(_claim) => EntryState::Pending,
-            StoredEntry::Done(res, _claim) => EntryState::Done(res),
-            StoredEntry::Deleted => EntryState::Deleted,
+/// A single meta-store entry, holding the locking `claim` and the result channel
+/// `result_tx`.
+///
+/// `claim` is the locking primitive: an `Arc<()>` whose strong count reveals
+/// whether a [`MetaStorePermit`] is outstanding (`> 1` ⇒ held). A tombstoned
+/// (`Deleted`) entry keeps its claim, but the permit has been consumed by then so
+/// its strong count is back to 1 (⇒ not held).
+struct StoredEntry<T> {
+    claim: Arc<()>,
+    result_tx: watch::Sender<EntryState<T>>,
+}
+
+impl<T> StoredEntry<T> {
+    /// A fresh `Pending` entry: a new claim arc (the locking primitive) paired
+    /// with an empty result channel that waiters can await. Returns the claim so
+    /// the caller can mint the matching [`MetaStorePermit`].
+    fn new_pending() -> (Self, Arc<()>) {
+        let claim = Arc::new(());
+
+        let (result_tx, _) = watch::channel(EntryState::Pending);
+        let entry = StoredEntry {
+            claim: Arc::clone(&claim),
+            result_tx,
+        };
+        (entry, claim)
+    }
+
+    /// An already-`Done` entry built directly (not through a permit), used to
+    /// seed a store from a pre-existing map.
+    fn new_done(value: Result<Arc<T>, String>) -> Self {
+        let (result_tx, _) = watch::channel(EntryState::Done(value));
+        StoredEntry {
+            claim: Arc::new(()),
+            result_tx,
         }
+    }
+
+    /// The entry's current lifecycle status, derived from the result channel.
+    fn status(&self) -> EntryStatus {
+        EntryStatus::from(&*self.result_tx.borrow())
+    }
+
+    /// Settle the entry to `Done(result)`, publishing the result on the channel
+    /// (which both records it and wakes any waiter).
+    fn set_complete(&mut self, result: Result<Arc<T>, String>) {
+        self.result_tx.send_replace(EntryState::Done(result));
+    }
+
+    /// Tombstone the entry: publish `Deleted` on the result channel (waking any
+    /// waiter, which maps it to `NotFound`). Valid from either `Pending` or
+    /// `Done`; only a `Pending` entry can have a waiter, and it wakes with
+    /// `Deleted`. The channel publish is a no-op when no waiter is subscribed.
+    fn set_deleted(&mut self) {
+        self.result_tx.send_replace(EntryState::Deleted);
+    }
+
+    /// Whether a [`MetaStorePermit`] is currently being held for this entry.
+    fn is_permit_held(&self) -> bool {
+        Arc::strong_count(&self.claim) > 1
     }
 }
 
 impl<T> From<&StoredEntry<T>> for EntryState<T> {
     fn from(stored: &StoredEntry<T>) -> Self {
-        match stored {
-            StoredEntry::Pending(_) => EntryState::Pending,
-            StoredEntry::Done(Ok(arc), _) => EntryState::Done(Ok(Arc::clone(arc))),
-            StoredEntry::Done(Err(e), _) => EntryState::Done(Err(e.clone())),
-            StoredEntry::Deleted => EntryState::Deleted,
-        }
+        (*stored.result_tx.borrow()).clone()
     }
 }
 
@@ -332,7 +396,7 @@ impl<T> MetaStore<T> {
             .into_iter()
             .map(|(key, value)| {
                 completed_queue.push(key);
-                (key, StoredEntry::done(Ok(Arc::new(value))))
+                (key, StoredEntry::new_done(Ok(Arc::new(value))))
             })
             .collect();
         let (store, rx) = Self::inner_new(usize::MAX, usize::MAX, completed_queue, storage);
@@ -361,7 +425,9 @@ impl<T> MetaStore<T> {
         store
     }
 
-    pub(crate) fn exists(&self, request_id: &RequestId) -> bool {
+    /// Check whether `request_id` has ever occupied a slot in the store, including
+    /// a tombstoned (`Deleted`) entry.
+    pub(crate) fn has_existed(&self, request_id: &RequestId) -> bool {
         self.storage.contains_key(request_id)
     }
 
@@ -414,10 +480,9 @@ impl<T> MetaStore<T> {
                 let evict_pos = {
                     let storage = &self.storage;
                     self.complete_queue.iter().position(|id| {
-                        matches!(
-                            storage.get(id),
-                            Some(StoredEntry::Done(_, claim)) if Arc::strong_count(claim) == 1
-                        )
+                        storage
+                            .get(id)
+                            .is_some_and(|e| e.status() == EntryStatus::Done && !e.is_permit_held())
                     })
                 };
                 let Some(pos) = evict_pos else {
@@ -444,10 +509,9 @@ impl<T> MetaStore<T> {
                 }
             }
         }
-        let claim = Arc::new(());
-        let permit = MetaStorePermit::new(*request_id, Arc::clone(&claim), self.reaper_tx.clone());
-        self.storage
-            .insert(*request_id, StoredEntry::Pending(claim));
+        let (entry, claim) = StoredEntry::new_pending();
+        let permit = MetaStorePermit::new(*request_id, claim, self.reaper_tx.clone());
+        self.storage.insert(*request_id, entry);
         Ok(permit)
     }
 
@@ -467,16 +531,16 @@ impl<T> MetaStore<T> {
                 .ok_or(MetaStoreError::NotFound {
                     req_id: *request_id,
                 })?;
-            match entry {
-                StoredEntry::Pending(arc) | StoredEntry::Done(_, arc) => {
-                    if Arc::strong_count(arc) > 1 {
+            match entry.status() {
+                EntryStatus::Pending | EntryStatus::Done => {
+                    if entry.is_permit_held() {
                         return Err(MetaStoreError::Locked {
                             req_id: *request_id,
                         });
                     }
-                    Arc::clone(arc)
+                    Arc::clone(&entry.claim)
                 }
-                StoredEntry::Deleted => {
+                EntryStatus::Deleted => {
                     return Err(MetaStoreError::CannotUpdate {
                         req_id: *request_id,
                     });
@@ -506,14 +570,14 @@ impl<T> MetaStore<T> {
         // We own the outcome from here on, so a later drop must not reap.
         permit.defuse();
         let req_id = permit.req_id;
-        let cell = self
+        let entry = self
             .storage
             .get_mut(&req_id)
             .ok_or(MetaStoreError::NotFound { req_id })?;
-        if !matches!(cell, StoredEntry::Pending(_)) {
+        if entry.status() != EntryStatus::Pending {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
-        *cell = StoredEntry::done(update.map(Arc::new));
+        entry.set_complete(update.map(Arc::new));
         self.complete_queue.push(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
@@ -537,20 +601,19 @@ impl<T> MetaStore<T> {
         // We own the outcome from here on, so a later drop must not reap.
         permit.defuse();
         let req_id = permit.req_id;
-        let cell = self
+        let value = Arc::new(value);
+        let entry = self
             .storage
             .get_mut(&req_id)
             .ok_or(MetaStoreError::NotFound { req_id })?;
-        match cell {
-            StoredEntry::Deleted => return Err(MetaStoreError::CannotUpdate { req_id }),
-            StoredEntry::Pending(_) => {
-                // First completion of this entry — record it as completed.
-                *cell = StoredEntry::done(Ok(Arc::new(value)));
+        match entry.status() {
+            EntryStatus::Deleted => return Err(MetaStoreError::CannotUpdate { req_id }),
+            EntryStatus::Pending => {
+                entry.set_complete(Ok(value));
                 self.complete_queue.push(req_id);
             }
-            StoredEntry::Done(_, _) => {
-                // Existing Done locked in place — overwrite, keep the queue slot.
-                *cell = StoredEntry::done(Ok(Arc::new(value)));
+            EntryStatus::Done => {
+                entry.set_complete(Ok(value));
             }
         }
         // `permit` (and its claim) dropped at end of scope.
@@ -566,15 +629,23 @@ impl<T> MetaStore<T> {
     /// claim adopted via `lock_entry`) it is **removed outright** — not
     /// tombstoned — so `request_id` stays reusable.
     ///
+    /// Note: this does not publish a new state, but removing a `Pending` entry drops its result channel,
+    /// so any waiter in `retrieve_from_meta_store_with_timeout` will wake with `Unavailable`.
     /// Deliberately **private**, like [`finalize`](MetaStore::finalize): reached
     /// only through [`with_overwriting_claim`], the migration-only entry point.
     fn abort_reservation(&mut self, mut permit: MetaStorePermit<T>) {
         // The rollback is the recorded outcome, so a later drop must not reap.
         permit.defuse();
         let req_id = permit.req_id;
-        if matches!(self.storage.get(&req_id), Some(StoredEntry::Pending(_))) {
-            // Orphaned `Pending` claim: drop it entirely. A `Pending` entry is
-            // never in the completion queue, so no queue cleanup is needed.
+        if let Some(entry) = self.storage.get(&req_id)
+            && entry.status() == EntryStatus::Pending
+        {
+            // Orphaned `Pending` claim: drop the entry entirely. A `Pending` entry
+            // is never in the completion queue, so no queue cleanup is needed.
+            //
+            // Removing it drops the result channel without publishing, so a waiter
+            // blocked in `retrieve_from_meta_store_with_timeout` would wake with
+            // `Unavailable`.
             self.storage.remove(&req_id);
         }
         // `Done` (locked existing) or already gone: nothing to undo.
@@ -597,21 +668,21 @@ impl<T> MetaStore<T> {
         // We own the outcome (tombstone) from here on, so a later drop must not reap.
         permit.defuse();
         let req_id = permit.req_id;
-        let cell = self
+        let entry = self
             .storage
             .get_mut(&req_id)
             .ok_or(MetaStoreError::NotFound { req_id })?;
-        if matches!(cell, StoredEntry::Deleted) {
+        if entry.status() == EntryStatus::Deleted {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
-        let old = std::mem::replace(cell, StoredEntry::Deleted);
-        // `old` is Pending or Done here (the Deleted case errored above), so this
-        // is always a fresh transition into a tombstone.
+        let prev = EntryState::from(&*entry);
+        let was_done = matches!(prev, EntryState::Done(_));
+        entry.set_deleted();
         self.deleted_set.insert(req_id);
-        if matches!(old, StoredEntry::Done(_, _),) {
+        if was_done {
             self.complete_queue.retain(|id| id != &req_id);
         }
-        Ok(old.into())
+        Ok(prev)
     }
 
     /// Like [`delete`], but for callers that do not hold a permit. Succeeds
@@ -628,24 +699,15 @@ impl<T> MetaStore<T> {
                 .ok_or(MetaStoreError::NotFound {
                     req_id: *request_id,
                 })?;
-            match entry {
-                StoredEntry::Pending(arc) => {
-                    if Arc::strong_count(arc) > 1 {
+            match entry.status() {
+                EntryStatus::Pending | EntryStatus::Done => {
+                    if entry.is_permit_held() {
                         return Err(MetaStoreError::Locked {
                             req_id: *request_id,
                         });
                     }
                 }
-                StoredEntry::Done(_, arc) => {
-                    // A `Done` entry can be permit-held (via `reserve` /
-                    // `lock_entry`); block a permit-less delete while it is.
-                    if Arc::strong_count(arc) > 1 {
-                        return Err(MetaStoreError::Locked {
-                            req_id: *request_id,
-                        });
-                    }
-                }
-                StoredEntry::Deleted => {
+                EntryStatus::Deleted => {
                     return Err(MetaStoreError::CannotUpdate {
                         req_id: *request_id,
                     });
@@ -653,15 +715,15 @@ impl<T> MetaStore<T> {
             }
         }
         // Safe: we just verified the entry exists and is not Deleted.
-        let cell = self.storage.get_mut(request_id).unwrap();
-        let old = std::mem::replace(cell, StoredEntry::Deleted);
-        // `old` is Pending or Done here (the Deleted case errored above), so this
-        // is always a fresh transition into a tombstone.
+        let entry = self.storage.get_mut(request_id).unwrap();
+        let prev = EntryState::from(&*entry);
+        let was_done = matches!(prev, EntryState::Done(_));
+        entry.set_deleted();
         self.deleted_set.insert(*request_id);
-        if matches!(old, StoredEntry::Done(_, _)) {
+        if was_done {
             self.complete_queue.retain(|id| id != request_id);
         }
-        Ok(old.into())
+        Ok(prev)
     }
 
     /// Reaper hook: if `req_id` names an *orphaned* `Pending` entry — one whose
@@ -675,20 +737,21 @@ impl<T> MetaStore<T> {
     /// absent, or still permit-held — the last case guards against an id that was
     /// reclaimed and reused after the abandonment message was enqueued.
     fn fail_if_orphaned(&mut self, req_id: &RequestId, reason: String) -> bool {
-        let is_orphaned_pending = matches!(
-            self.storage.get(req_id),
-            Some(StoredEntry::Pending(arc)) if Arc::strong_count(arc) == 1
-        );
+        let is_orphaned_pending = self
+            .storage
+            .get(req_id)
+            .is_some_and(|entry| entry.status() == EntryStatus::Pending && !entry.is_permit_held());
         if !is_orphaned_pending {
             return false;
         }
         // Safe: we just observed the entry as Pending under this same write lock,
         // and nothing else can mutate it while we hold the lock.
-        let cell = self
+        let entry = self
             .storage
             .get_mut(req_id)
             .expect("entry observed as Pending under this lock cannot vanish");
-        *cell = StoredEntry::done(Err(reason));
+        // `set_complete` records the failure and wakes any waiter via the channel.
+        entry.set_complete(Err(reason));
         self.complete_queue.push(*req_id);
         true
     }
@@ -707,29 +770,33 @@ impl<T> MetaStore<T> {
     ) -> Result<MetaStorePermit<T>, MetaStoreError> {
         match self.storage.get(req_id) {
             None => return Err(MetaStoreError::NotFound { req_id: *req_id }),
-            Some(StoredEntry::Deleted) => {
-                return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
-            }
-            Some(StoredEntry::Pending(_)) => {
-                return Err(MetaStoreError::Locked { req_id: *req_id });
-            }
-            Some(StoredEntry::Done(Ok(_), _)) => {
-                return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
-            }
-            Some(StoredEntry::Done(Err(_), arc)) => {
-                // A failed entry can still be permit-held (reserved via
-                // `lock_entry`); block the retry until that permit is released.
-                if Arc::strong_count(arc) > 1 {
+            Some(entry) => match entry.status() {
+                EntryStatus::Deleted => {
+                    return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
+                }
+                EntryStatus::Pending => {
                     return Err(MetaStoreError::Locked { req_id: *req_id });
                 }
-            }
+                EntryStatus::Done => {
+                    // Only a previously *failed* entry may be retried; a
+                    // successful `Done(Ok)` is not restartable.
+                    if !matches!(&*entry.result_tx.borrow(), EntryState::Done(Err(_))) {
+                        return Err(MetaStoreError::CannotUpdate { req_id: *req_id });
+                    }
+                    // A failed entry can still be permit-held (reserved via
+                    // `lock_entry`); block the retry until that permit is released.
+                    if entry.is_permit_held() {
+                        return Err(MetaStoreError::Locked { req_id: *req_id });
+                    }
+                }
+            },
         }
-        // Reset to a fresh `Pending`: drop it from the completion queue and
-        // install a new claim, then hand back a permit (mirroring `insert`).
+        // Reset to a fresh `Pending` (with a new, empty result channel): drop it
+        // from the completion queue and install a new claim, then hand back a
+        // permit (mirroring `insert`).
         self.complete_queue.retain(|id| id != req_id);
-        let claim = Arc::new(());
-        self.storage
-            .insert(*req_id, StoredEntry::Pending(Arc::clone(&claim)));
+        let (entry, claim) = StoredEntry::new_pending();
+        self.storage.insert(*req_id, entry);
         Ok(MetaStorePermit::new(*req_id, claim, self.reaper_tx.clone()))
     }
 
@@ -739,13 +806,8 @@ impl<T> MetaStore<T> {
     }
 
     /// Get the current number of items in the store
-    pub(crate) fn get_current_count(&self) -> usize {
-        self.storage.len()
-    }
-
-    /// Get the total number of items in the store (alias for get_current_count)
     pub(crate) fn get_total_count(&self) -> usize {
-        self.get_current_count()
+        self.storage.len()
     }
 
     /// Get the number of deleted (tombstoned) items
@@ -780,7 +842,9 @@ impl<T> MetaStore<T> {
         self.complete_queue
             .iter()
             .filter_map(|id| match self.storage.get(id) {
-                Some(StoredEntry::Done(Ok(_), _)) => Some(*id),
+                Some(entry) if matches!(&*entry.result_tx.borrow(), EntryState::Done(Ok(_))) => {
+                    Some(*id)
+                }
                 Some(_) => None,
                 None => {
                     tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
@@ -795,7 +859,7 @@ impl<T> MetaStore<T> {
     pub(crate) fn get_processing_request_ids(&self) -> Vec<RequestId> {
         self.storage
             .iter()
-            .filter(|(_, e)| matches!(e, StoredEntry::Pending(_)))
+            .filter(|(_, e)| e.status() == EntryStatus::Pending)
             .map(|(id, _)| *id)
             .collect()
     }
@@ -806,7 +870,7 @@ impl<T> MetaStore<T> {
         self.complete_queue
             .iter()
             .filter_map(|id| match self.storage.get(id) {
-                Some(StoredEntry::Done(Err(_), _)) => Some(*id),
+                Some(entry) if matches!(&*entry.result_tx.borrow(), EntryState::Done(Err(_))) => Some(*id),
                 Some(_) => None,
                 None => {
                     tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
@@ -876,7 +940,7 @@ pub(crate) async fn ensure_not_in_meta_store<T>(
     req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<(), MetricedError> {
-    if meta_store.read().await.exists(req_id) {
+    if meta_store.read().await.has_existed(req_id) {
         return Err(MetaStoreError::AlreadyExists { req_id: *req_id }.into_metriced(request_metric));
     }
     Ok(())
@@ -1065,6 +1129,48 @@ where
     }
 }
 
+/// Map an absent / `Deleted` entry to the shared `NotFound` [`MetricedError`].
+fn entry_not_found_or_deleted(req_id: &RequestId, metric_scope: &'static str) -> MetricedError {
+    let msg = format!(
+        "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
+    );
+    MetricedError::new(
+        metric_scope,
+        Some(*req_id),
+        anyhow!(msg),
+        tonic::Code::NotFound,
+    )
+}
+
+/// Map a settled `Done` result (`Result<Arc<T>, String>`) to a caller-facing
+/// outcome.
+fn metriced_result<T>(
+    result: Result<Arc<T>, String>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+) -> Result<Arc<T>, MetricedError> {
+    match result {
+        Ok(arc) => Ok(arc),
+        Err(e) => {
+            let msg = format!(
+                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
+            );
+            tracing::warn!(msg);
+            let code = if e.to_ascii_lowercase().contains("abort") {
+                tonic::Code::Aborted
+            } else {
+                tonic::Code::Internal
+            };
+            Err(MetricedError::new(
+                metric_scope,
+                Some(*req_id),
+                anyhow!(msg),
+                code,
+            ))
+        }
+    }
+}
+
 /// Helper for retrieving the result of a request from a meta store.
 ///
 /// Performs a single, non-blocking read and returns immediately:
@@ -1084,17 +1190,7 @@ pub(crate) async fn retrieve_from_meta_store<T>(
 ) -> Result<Arc<T>, MetricedError> {
     let guard = meta_store.read().await;
     match guard.retrieve(req_id) {
-        None | Some(EntryState::Deleted) => {
-            let msg = format!(
-                "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
-            );
-            Err(MetricedError::new(
-                metric_scope,
-                Some(*req_id),
-                anyhow!(msg),
-                tonic::Code::NotFound,
-            ))
-        }
+        None | Some(EntryState::Deleted) => Err(entry_not_found_or_deleted(req_id, metric_scope)),
         Some(EntryState::Pending) => {
             let msg =
                 format!("Result in scope {metric_scope} with request ID {req_id} is not ready yet");
@@ -1106,24 +1202,84 @@ pub(crate) async fn retrieve_from_meta_store<T>(
                 tonic::Code::Unavailable,
             ))
         }
-        Some(EntryState::Done(Ok(arc))) => Ok(arc),
-        Some(EntryState::Done(Err(e))) => {
-            let msg = format!(
-                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
-            );
-            tracing::warn!(msg);
-            let code = if e.to_ascii_lowercase().contains("abort") {
-                tonic::Code::Aborted
-            } else {
-                tonic::Code::Internal
-            };
-            Err(MetricedError::new(
-                metric_scope,
-                Some(*req_id),
-                anyhow!(msg),
-                code,
-            ))
+        Some(EntryState::Done(result)) => metriced_result(result, req_id, metric_scope),
+    }
+}
+
+/// Helper for retrieving the result of a request from a meta store.
+/// Like [`retrieve_from_meta_store`] but blocking up to `wait_secs` for a
+/// `Pending` entry to settle.
+///
+/// - `Done(Ok)`  → `Arc<T>`.
+/// - `Pending`   → `Unavailable`; the result is not ready yet and the caller
+///   (client) is expected to retry later.
+/// - missing / `Deleted` → `NotFound`.
+/// - `Done(Err)` → `Internal`, or `Aborted` if the stored error mentions
+///   "abort".
+///
+/// Acquires the read lock only for the duration of the snapshot, so writers are
+/// not blocked.
+pub(crate) async fn retrieve_from_meta_store_with_timeout<T>(
+    meta_store: &RwLock<MetaStore<T>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+    wait_secs: u64,
+) -> Result<Arc<T>, MetricedError> {
+    // Snapshot the entry under the read lock. A settled (or absent) entry is
+    // classified and returned immediately; a `Pending` entry yields a receiver on
+    // its result channel that we await below, after dropping the lock.
+    let mut rx = {
+        let guard = meta_store.read().await;
+        match guard.storage.get(req_id) {
+            // Absent or tombstoned: the same `NotFound` the snapshot path returns.
+            None => return Err(entry_not_found_or_deleted(req_id, metric_scope)),
+            Some(entry) => match &*entry.result_tx.borrow() {
+                EntryState::Pending => {
+                    // Still pending: take a receiver so we can await completion
+                    // off-lock (subscribing under the lock, so no publish is missed).
+                    entry.result_tx.subscribe()
+                }
+                EntryState::Done(res) => return metriced_result(res.clone(), req_id, metric_scope),
+                EntryState::Deleted => {
+                    return Err(entry_not_found_or_deleted(req_id, metric_scope));
+                }
+            },
         }
+        // lock dropped here
+    };
+
+    let unavailable = |msg: String| {
+        tracing::info!(msg);
+        MetricedError::new(
+            metric_scope,
+            Some(*req_id),
+            anyhow!(msg),
+            tonic::Code::Unavailable,
+        )
+    };
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(wait_secs),
+        rx.wait_for(|state| !matches!(state, EntryState::Pending)),
+    )
+    .await
+    {
+        Ok(Ok(state)) => match &*state {
+            EntryState::Done(result) => metriced_result(result.clone(), req_id, metric_scope),
+            // Deleted/aborted while we waited — same outcome as the snapshot path.
+            EntryState::Deleted => Err(entry_not_found_or_deleted(req_id, metric_scope)),
+            // `wait_for`'s predicate excludes `Pending`, so this is unreachable.
+            EntryState::Pending => Err(unavailable(format!(
+                "Result in scope {metric_scope} with request ID {req_id} is not ready yet"
+            ))),
+        },
+        // The sender was dropped before settling (e.g. the store is shutting
+        // down); treat it as not-yet-available.
+        Ok(Err(_recv_err)) => Err(unavailable(format!(
+            "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since its result channel closed before completion"
+        ))),
+        Err(_elapsed) => Err(unavailable(format!(
+            "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {wait_secs} seconds"
+        ))),
     }
 }
 
@@ -1154,7 +1310,7 @@ impl<T> MetaStore<T> {
             .into_iter()
             .map(|(key, value)| {
                 complete_queue.push(key);
-                (key, StoredEntry::done(Ok(Arc::new(value))))
+                (key, StoredEntry::new_done(Ok(Arc::new(value))))
             })
             .collect();
         Self::inner_new(usize::MAX, usize::MAX, complete_queue, storage).0
@@ -1166,6 +1322,7 @@ mod tests {
     use super::*;
     use crate::engine::base::derive_request_id;
     use kms_grpc::RequestId;
+    use std::time::{Duration, Instant};
 
     /// Insert `id` and immediately drive it to `Done(Ok(value))`, consuming the
     /// permit. Mirrors the common `insert -> update` lifecycle used by callers.
@@ -1188,7 +1345,7 @@ mod tests {
         store: &mut MetaStore<String>,
         id: &RequestId,
     ) -> Result<MetaStorePermit<String>, MetaStoreError> {
-        if store.exists(id) {
+        if store.has_existed(id) {
             store.lock_entry(id)
         } else {
             store.insert(id)
@@ -1217,10 +1374,10 @@ mod tests {
     fn sunshine() {
         let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
-        assert!(!meta_store.exists(&request_id));
+        assert!(!meta_store.has_existed(&request_id));
 
         let permit = meta_store.insert(&request_id).unwrap();
-        assert!(meta_store.exists(&request_id));
+        assert!(meta_store.has_existed(&request_id));
         assert!(meta_store.update(Ok("OK".to_string()), permit).is_ok());
         assert_done_ok(&meta_store, &request_id, &"OK".to_string());
     }
@@ -1239,9 +1396,9 @@ mod tests {
         let p3 = meta_store.insert(&id3).unwrap();
         assert!(meta_store.update(Err("Err3".to_string()), p3).is_ok());
 
-        assert!(!meta_store.exists(&id1));
-        assert!(meta_store.exists(&id2));
-        assert!(meta_store.exists(&id3));
+        assert!(!meta_store.has_existed(&id1));
+        assert!(meta_store.has_existed(&id2));
+        assert!(meta_store.has_existed(&id3));
     }
 
     #[test]
@@ -1285,17 +1442,30 @@ mod tests {
     }
 
     #[test]
-    fn try_delete_blocked_by_live_permit() {
-        let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
+    fn try_delete_blocked_by_live_permit_on_pending() {
+        // A live permit on a Pending entry blocks a permit-less `try_delete`
+        let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id: RequestId = derive_request_id("locked-del").unwrap();
-        let permit = meta_store.insert(&id).unwrap();
-        assert!(meta_store.try_delete(&id).is_err());
-        drop(permit);
-        assert!(meta_store.try_delete(&id).is_ok());
+
+        // Insert permit blocks until dropped.
+        let insert_permit = store.insert(&id).unwrap();
         assert!(matches!(
-            meta_store.retrieve(&id),
-            Some(EntryState::Deleted)
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
         ));
+        drop(insert_permit);
+
+        // A fresh lock_entry permit on the same Pending entry blocks just the same.
+        let lock_permit = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Locked { .. })
+        ));
+        drop(lock_permit);
+
+        // Released: try_delete now tombstones the entry.
+        assert!(store.try_delete(&id).is_ok());
+        assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
     }
 
     #[test]
@@ -1653,11 +1823,11 @@ mod tests {
         let store = MetaStore::new_from_map_inner(map);
 
         assert_eq!(store.get_capacity(), usize::MAX);
-        assert_eq!(store.get_current_count(), 2);
+        assert_eq!(store.get_total_count(), 2);
         assert_eq!(store.get_successful_completed_request_ids().len(), 2);
         assert_eq!(store.get_processing_count(), 0);
-        assert!(store.exists(&a));
-        assert!(store.exists(&b));
+        assert!(store.has_existed(&a));
+        assert!(store.has_existed(&b));
         assert_done_ok(&store, &a, &"A".to_string());
         assert_done_ok(&store, &b, &"B".to_string());
 
@@ -1680,8 +1850,7 @@ mod tests {
         insert_done_err(&mut store, &err, "boom");
 
         // Aggregate counts.
-        assert_eq!(store.get_current_count(), 4);
-        assert_eq!(store.get_total_count(), store.get_current_count());
+        assert_eq!(store.get_total_count(), 4);
         // Only the `ok` entry is a success; the `err` entry is excluded.
         assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         assert_eq!(store.get_processing_count(), 2);
@@ -1733,7 +1902,7 @@ mod tests {
 
         // storage holds pending + done + tombstone = 3, but only the single
         // Pending entry counts as processing (the tombstone is excluded).
-        assert_eq!(store.get_current_count(), 3);
+        assert_eq!(store.get_total_count(), 3);
         assert_eq!(store.get_successful_completed_request_ids().len(), 1);
         assert_eq!(store.get_processing_count(), 1);
 
@@ -1742,7 +1911,7 @@ mod tests {
         drop(permit);
         store.try_delete(&pending).unwrap();
         assert_eq!(store.get_processing_count(), 0);
-        assert_eq!(store.get_current_count(), 3);
+        assert_eq!(store.get_total_count(), 3);
     }
 
     #[test]
@@ -2129,5 +2298,176 @@ mod tests {
             .err()
             .expect("an in-flight id must not be restarted");
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
+    }
+
+    /// A `Pending` entry that completes while a caller is waiting wakes the
+    /// waiter as soon as the result is recorded (rather than timing out).
+    #[tokio::test]
+    async fn retrieve_with_timeout_wakes_when_result_arrives() {
+        let store = MetaStore::<String>::new_unlimited();
+        let id = derive_request_id("wait-wake").unwrap();
+        let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
+
+        // Complete the entry shortly after the waiter starts blocking.
+        let writer_store = Arc::clone(&store);
+        let writer_id = id;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            update_ok_req_in_meta_store(&writer_store, permit, "late".to_string(), "test").await;
+        });
+
+        let start = Instant::now();
+        // Generous timeout: the wait should end on the result, not the deadline.
+        let arc = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
+            .await
+            .expect("waiter should observe the completed result");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "took too long: {:?}",
+            start.elapsed()
+        );
+        assert_eq!(arc.as_ref(), "late");
+        // Sanity: the entry really is the one we waited on.
+        assert!(matches!(
+            store.read().await.retrieve(&writer_id),
+            Some(EntryState::Done(Ok(_)))
+        ));
+    }
+
+    /// A `Pending` entry that never completes yields `Unavailable` once the wait
+    /// budget elapses.
+    #[tokio::test]
+    async fn retrieve_with_timeout_times_out_on_stuck_pending() {
+        let store = MetaStore::<String>::new_unlimited();
+        let id = derive_request_id("wait-stuck").unwrap();
+        // Hold the permit for the whole test so the entry stays Pending.
+        let _permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
+
+        let err = retrieve_from_meta_store_with_timeout(&store, &id, "test", 0)
+            .await
+            .expect_err("a stuck pending entry should time out");
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+    }
+
+    /// A waiter on a `Pending` entry that gets deleted wakes promptly — and with
+    /// `NotFound`, the same outcome the snapshot path gives for a deleted entry —
+    /// rather than blocking until the timeout.
+    #[tokio::test]
+    async fn retrieve_with_timeout_wakes_on_delete() {
+        let store = MetaStore::<String>::new_unlimited();
+        let id = derive_request_id("wait-delete").unwrap();
+        let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
+
+        let writer_store = Arc::clone(&store);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            delete_in_meta_store(&writer_store, permit, "gone".to_string(), "test").await;
+        });
+
+        // A long budget proves we wake on the delete, not the deadline.
+        let err = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
+            .await
+            .expect_err("a deleted entry should surface an error to the waiter");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// An absent id is `NotFound` on the wait path, just like the non-blocking one.
+    #[tokio::test]
+    async fn retrieve_with_timeout_missing_is_not_found() {
+        let store = MetaStore::<String>::new_unlimited();
+        let id = derive_request_id("wait-missing").unwrap();
+        let err = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
+            .await
+            .expect_err("an absent id must not be returned");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// The non-blocking `retrieve_from_meta_store` helper maps each entry state to
+    /// its caller-facing outcome: `Done(Ok)` returns the value, `Pending` is
+    /// `Unavailable`, and both an absent and a tombstoned id are `NotFound`.
+    #[tokio::test]
+    async fn retrieve_from_meta_store_maps_states() {
+        let store = RwLock::new(MetaStore::<String>::new_unlimited_inner());
+
+        // Absent id -> NotFound.
+        let missing = derive_request_id("ret-missing").unwrap();
+        let err = retrieve_from_meta_store(&store, &missing, "test")
+            .await
+            .expect_err("an absent id must not be returned");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        // Pending id -> Unavailable. The permit keeps the entry Pending.
+        let pending = derive_request_id("ret-pending").unwrap();
+        let _permit = store.write().await.insert(&pending).unwrap();
+        let err = retrieve_from_meta_store(&store, &pending, "test")
+            .await
+            .expect_err("a pending entry is not ready yet");
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+
+        // Done(Ok) id -> the stored value.
+        let ok = derive_request_id("ret-ok").unwrap();
+        insert_done_ok(&mut *store.write().await, &ok, "value");
+        let arc = retrieve_from_meta_store(&store, &ok, "test")
+            .await
+            .expect("a completed entry should be returned");
+        assert_eq!(arc.as_ref(), "value");
+
+        // Deleted id -> NotFound, the same outcome as an absent id.
+        store.write().await.try_delete(&ok).unwrap();
+        let err = retrieve_from_meta_store(&store, &ok, "test")
+            .await
+            .expect_err("a tombstoned id must not be returned");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// A `Done(Err)` result surfaces through the retrieve helper as `Internal`,
+    /// unless the stored error mentions "abort", which maps to `Aborted`.
+    #[tokio::test]
+    async fn retrieve_from_meta_store_maps_error_codes() {
+        let store = RwLock::new(MetaStore::<String>::new_unlimited_inner());
+
+        // Generic failure -> Internal.
+        let boom = derive_request_id("ret-boom").unwrap();
+        insert_done_err(&mut *store.write().await, &boom, "boom");
+        let err = retrieve_from_meta_store(&store, &boom, "test")
+            .await
+            .expect_err("a failed entry must surface an error");
+        assert_eq!(err.code(), tonic::Code::Internal);
+
+        // Error mentioning "abort" -> Aborted.
+        let aborted = derive_request_id("ret-abort").unwrap();
+        insert_done_err(&mut *store.write().await, &aborted, "task was aborted");
+        let err = retrieve_from_meta_store(&store, &aborted, "test")
+            .await
+            .expect_err("an aborted entry must surface an error");
+        assert_eq!(err.code(), tonic::Code::Aborted);
+    }
+
+    /// End-to-end: a waiter blocked on a `Pending` entry whose permit is dropped
+    /// is woken by the reaper with a failing status (`Done(Err)` -> `Internal`).
+    #[tokio::test]
+    async fn retrieve_with_timeout_wakes_when_reaper_fails_orphan() {
+        let store = MetaStore::<String>::new_unlimited();
+        let id = derive_request_id("wait-orphan").unwrap();
+
+        let permit = add_req_to_meta_store(&store, &id, "test").await.unwrap();
+        // Abandon the request shortly after the waiter starts blocking; the reaper
+        // then fails the now-orphaned Pending entry.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drop(permit);
+        });
+
+        let start = Instant::now();
+        // Generous budget: we should wake on the reaper's failure, not the deadline.
+        let err = retrieve_from_meta_store_with_timeout(&store, &id, "test", 60)
+            .await
+            .expect_err("an abandoned request should surface an error to the waiter");
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "took too long: {:?}",
+            start.elapsed()
+        );
     }
 }

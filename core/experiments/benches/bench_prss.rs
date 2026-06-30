@@ -1,9 +1,11 @@
-use std::sync::Arc;
-
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
+use std::hint::black_box;
+use std::sync::Arc;
+
+const B_SWITCH_SQUASH: u128 = 1u128 << 70;
 use threshold_execution::{
     large_execution::vss::DummyVss,
     runtime::{
@@ -24,21 +26,19 @@ use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 
 fn bench_prss(c: &mut Criterion) {
-    let sizes = vec![1_usize, 100, 10000];
+    let sizes = vec![1_usize, 10, 100, 10_000];
     let mut group = c.benchmark_group("prss");
 
+    // params for PRSS.init
     let num_parties = 7;
     let threshold = 2;
 
-    let sid = SessionId::from(42);
+    let bench_role = Role::indexed_from_one(1); // we can pick an arbitrary role for the bench, needed to derive the PRSS state
+    let sid = SessionId::from(42); // pick an arbitrary session id for the bench, needed to derive the PRSS state
 
-    //Going with sync although PRSS init_with_abort can work in both
-    let mut sess = get_base_session_for_parties(
-        num_parties,
-        threshold,
-        Role::indexed_from_one(1),
-        NetworkMode::Sync,
-    );
+    //Going with a sync network even though PRSS init_with_abort can work in both
+    let mut sess =
+        get_base_session_for_parties(num_parties, threshold, bench_role, NetworkMode::Sync);
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
@@ -55,9 +55,38 @@ fn bench_prss(c: &mut Criterion) {
     for size in &sizes {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {
             b.iter(|| {
-                for _ in 0..*size {
-                    let _e_shares = state.mask_next(Role::indexed_from_one(1), 1_u128 << 70);
-                }
+                rt.block_on(async {
+                    let shares = state
+                        .mask_next_vec(bench_role, B_SWITCH_SQUASH, *size)
+                        .await
+                        .unwrap();
+                    black_box(shares);
+                });
+            });
+        });
+    }
+
+    for size in &sizes {
+        group.bench_function(BenchmarkId::new("prss_next", size), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let shares = state.prss_next_vec(bench_role, *size).await.unwrap();
+                    black_box(shares);
+                });
+            });
+        });
+    }
+
+    for size in &sizes {
+        group.bench_function(BenchmarkId::new("przs_next", size), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let shares = state
+                        .przs_next_vec(bench_role, threshold, *size)
+                        .await
+                        .unwrap();
+                    black_box(shares);
+                });
             });
         });
     }

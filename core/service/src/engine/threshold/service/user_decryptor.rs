@@ -50,6 +50,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::{
         compute_external_user_decrypt_signature,
         encryption::UnifiedPublicEncKey,
@@ -72,7 +73,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
             update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
@@ -589,10 +590,11 @@ impl<
                 })?;
 
         // Retrieve the UserDecryptMetaStore object
-        let arc = retrieve_from_meta_store(
+        let arc = retrieve_from_meta_store_with_timeout(
             &self.user_decrypt_meta_store,
             &request_id,
             OP_USER_DECRYPT_RESULT,
+            DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
         let (payload, external_signature, extra_data) = (*arc).clone();

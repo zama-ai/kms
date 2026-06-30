@@ -282,11 +282,7 @@ pub(crate) async fn user_decryption_centralized(
                 cur_client,
                 req_id_clone.clone(),
                 "user decryption result",
-                PollConfig {
-                    initial_delay: tokio::time::Duration::from_millis(50),
-                    retry_delay: tokio::time::Duration::from_millis(50),
-                    max_retries: 1000,
-                },
+                PollConfig::default(),
                 |client, request| {
                     Box::pin(async move { client.get_user_decryption_result(request).await })
                 },
