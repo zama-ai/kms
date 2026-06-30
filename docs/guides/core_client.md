@@ -33,7 +33,7 @@ The core client library is also used for running tests.
 ## Configuration File
 
 To run the core client you need a configuration file.
-The file to be used must be specified with the `-f` flag, e.g. `-f config/client_local_centralized.toml`.
+The file to be used must be specified with the `-f` flag, e.g. `-f core-client/config/client_local_centralized.toml`.
 
 The core client currently ships with the following pre-defined configurations:
 - `./config/client_local_centralized.toml` for the centralized version run via docker-compose.
@@ -174,7 +174,7 @@ root_key_spec = "asymm"
 
 To recover a backup the following command can be used:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> backup-restore
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> backup-restore
 ```
 This call will take the data in the backup, decrypt (if needed), and write this to the private storage.
 However, this will _NOT_ overwrite anything on the private storage. Hence the restore operation is non-destructive and idempotent. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first.
@@ -229,6 +229,7 @@ NOTE: You may have multiple custodian contexts. However, the system will only ma
 #### Recovery
 
 > **WARNING — validate the `VerfKey` before starting recovery.** Recovery assumes the KMS does not have access to its private storage, so the `VerfKey` in the KMS's public storage is the trust anchor for the whole procedure. Before starting, you **must** verify that this `VerfKey` is byte-equal to the current verification key on the gateway. We do not assume the public storage is safe from modification by an adversary, so skipping this check would let an attacker substitute their own key.
+> **NOTE — TLS may need be disabled during recovery** In case the loss of private data includes the `SigKey` then it is not possible for the KMS core to initialize TLS (as this key is required). Hence the KMS will boot without TLS. 
 
 The recovery procedure allows an operator to recover their backed up private storage at any point in time _after_ the [setup phase](#setup-1) has been successfully completed.
 However, the procedure is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
@@ -239,13 +240,13 @@ The steps needed are as follows:
 1. Initiate the recovery.
   After [setup](#setup-1), the backups will continuously be kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt; this is done with the following command:
   ```{bash}
-  $ cargo run -- -f <single-core-config-file> custodian-recovery-init [-o <bool>]
+  $ cargo run --bin kms-core-client -- -f <single-core-config-file> custodian-recovery-init [-o <bool>]
   ```
   The optional boolean expresses whether to allow overwriting any potential existing ephemeral key (default is false, expanded parameter `overwrite-ephemeral-key`). The command prints a base64 recovery request (prefixed with `Serialized custodian result:`) which must then be communicated to the custodians to proceed with the recovery.
 
   As a concrete example:
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init
+  $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
   As output, the base64 recovery request is printed. Use the custodian context ID (backup ID) from `new-custodian-context` as the `-i` argument in the next step.
 1. Custodians do partial decryption.
@@ -255,12 +256,12 @@ The steps needed are as follows:
   After the custodians have completed the partial decryption the results are communicated _individually_ to the KMS node.
   The KMS uses the custodians recovery request to recover the backup decryption key, which it uses to restore from the backup. This is done with the following command, passing each custodian's base64 output after `-r`:
   ```{bash}
-  $ cargo run -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
+  $ cargo run --bin kms-core-client -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
   ```
   That is, `-i` expresses the custodian context ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
   As a concrete example:
   ```{bash}
-  $ cargo run -- -f  config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
+  $ cargo run --bin kms-core-client -- -f  core-client/config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i bca56548a3913ac0067b0b84f1544cd53880eb553a71e3a29444dbf10209aba8 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
   ```
   This call will take the data in the backup and write this to the private storage.
   However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
@@ -286,13 +287,13 @@ WARNING: This operation is irreversible and purges _all backups_ tied to the con
 
 To destroy a custodian context using the core client run the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> destroy-custodian-context -i <custodian context ID>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> destroy-custodian-context -i <custodian context ID>
 ```
 The `-i`/`--custodian-context-id` argument is the ID of the custodian context to destroy, as printed by `new-custodian-context` when it was created.
 
 As a concrete example:
 ```{bash}
-$ cargo run -- -f config/client_local_threshold_custodian_backup.toml destroy-custodian-context -i 0700000000000000000000000000000000000000000000000000000000000001
+$ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml destroy-custodian-context -i 0700000000000000000000000000000000000000000000000000000000000001
 ```
 
 #### Rotating the custodian context
@@ -324,16 +325,16 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```
   Each of these prints a seed phrase and a base64-encoded setup message (prefixed with `The custodian setup message is: `) to the CLI. Remember the seed phrases, and collect the setup messages for the next step.
 2. Add a new custodian context.
-  In the `core-client` folder run the following, passing each custodian's base64 setup message after `-m`:
+  Run the following, passing each custodian's base64 setup message after `-m`:
   ```{bash}
-  cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
+  cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
   ```
   > **Note:** As described in the [Recovery](#recovery-1) section, these custodian commands operate on a **single core at a time**. The `client_local_threshold_custodian_backup.toml` config used here lists exactly one core; to back up / recover another operator, point an equivalent single-core config at it and repeat these steps.
 
 3. Initiate the recovery.
   In the `core-client` folder run the following:
   ```{bash}
-  cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-recovery-init
+  cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
   This prints a base64 recovery request to the CLI (prefixed with `Serialized custodian result:`) and the custodian-context ID. Take note of both.
 4. Custodians do partial decryption.
@@ -346,7 +347,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 5. KMS node recovers the backup decryption key.
   Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
   ```{bash}
-  $ cargo run -- -f config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
+  $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i 0700000000000000000000000000000000000000000000000000000000000001 -r "<custodian recovery output 1>" -r "<custodian recovery output 2>" -r "<custodian recovery output 3>"
   ```
   The backup is restored automatically as part of this step.
 
@@ -361,7 +362,7 @@ These commands generate a set of private and public FHE keys. It will return a `
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen --preproc-id <REQUEST_ID> [--uncompressed]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-key-gen --preproc-id <REQUEST_ID> [--uncompressed]
 ```
 
 Required arguments:
@@ -376,7 +377,7 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -392,7 +393,7 @@ Upon success, both the command to request to generate a key _and_ the command to
 Like the secure flow, an insecure key-generation consumes a preprocessing entry, but the insecure preprocessing is a dummy: no correlated randomness is generated and only metadata such as the request ID, parameters, and external signature is recorded, so the call completes almost instantly. It can be triggered explicitly via:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -405,7 +406,7 @@ Note that in the threshold setting an insecure preprocessing entry can only be c
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
 ```
 
 #### Preprocessing for Secure Key-Generation
@@ -414,7 +415,7 @@ $ cargo run -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --r
 Secure key-generation (see [below](#secure-key-generation)) requires a pre-processing step, that can be triggered via the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -425,7 +426,7 @@ Note that this will generate large amounts of preprocessing data, which is expen
 
 It is also possible to fetch the status of a preprocessing for key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client f-- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID>
 ```
 
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
@@ -436,7 +437,7 @@ One can thus specify the percentage of the offline phase that should run, as wel
 Partial preprocessing can be triggered via the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -450,7 +451,7 @@ Optional arguments:
 Analogously to above, _secure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID> [--uncompressed]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID> [--uncompressed]
 ```
 Note that this will run the full distributed keygen protocol, which is expensive and time-consuming (read: several minutes of computation on a powerful machine with many cores).
 This command requires a set of pre-processing information, specified via `--preproc-id <PREPROC_ID>`.
@@ -464,7 +465,7 @@ Optional arguments:
 To migrate an existing keyset to the compressed storage layout while preserving the old key ID, run secure key generation from existing shares and ask the KMS to copy the compressed material back to the original ID:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen \
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> key-gen \
     --preproc-id <PREPROC_ID> \
     --existing-keyset-id <OLD_KEY_ID> \
     --use-existing-key-tag \
@@ -475,7 +476,7 @@ After this migration completes, the old key ID can be used without `--uncompress
 
 It is also possible to fetch the result of a key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -495,14 +496,14 @@ These commands compute a CRS that is used in proving and verifying ZK proofs. It
 A CRS can _insecurely_ be created using the following command, where `<max-num-bits>` is the number of bits that one can prove with the CRS:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
 ```
 
 Note that this operation does *NOT* run a secure distributed CRS generation protocol, and therefore must *NOT* be used in production, as the security of the CRS cannot be guaranteed. This function is intended only for testing and debugging, to quickly generate a CRS, as the full distributed version is more expensive and time-consuming.
 
 It is also possible to fetch the result of an insecure CRS generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -517,14 +518,14 @@ Upon success, both the command to request to generate a CRS _and_ the command to
 A CRS can _securely_ be created using the following command, where `<max-num-bits>` is the number of bits that one can prove with the CRS:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> crs-gen --max-num-bits <max-num-bits>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> crs-gen --max-num-bits <max-num-bits>
 ```
 
 Note that this operation runs the secure distributed CRS generation protocol, which is more expensive and time-consuming than the insecure version above. Typically in the order of minutes.
 
 It is also possible to fetch the result of a CRS generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -542,7 +543,7 @@ If a backup vault is specified in the server configuration toml file, then all n
 This is done through the backup recovery command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> backup-restore
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> backup-restore
 ```
 
 Note that this operation will copy the content from the backup vault to the private vault. In case any of the backed up content already exists in the private vault, then the request will fail.
@@ -557,7 +558,7 @@ WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS
 We provide a way to perform an encryption without actually sending any request to the kms-core:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --ciphertext-output-path <output-file-path>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --ciphertext-output-path <output-file-path>
 ```
 
 This allows storing the encryption to file which can then be re-used in future commands.
@@ -575,12 +576,12 @@ To decrypt a given value of the provided FHE type, using the specified public ke
 
 Either directly from arguments provided to the cli:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> public-decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> public-decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
 
 Or from a file generated via the _Encryption_ command described above:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> public-decrypt from-file --input-path <input-file-path>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> public-decrypt from-file --input-path <input-file-path>
 ```
 
 Note that the key must have been previously generated using the (secure or insecure) [keygen](#key-generation) above.
@@ -588,7 +589,7 @@ Note that the key must have been previously generated using the (secure or insec
 
 It is also possible to fetch the result of a public decryption through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> public-decrypt-result --request-id <REQUEST_ID> [--handle <HANDLE>]... [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> public-decrypt-result --request-id <REQUEST_ID> [--handle <HANDLE>]... [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -622,12 +623,12 @@ Similar to public decryption, user decryption can be done as follows. To decrypt
 
 Either directly from arguments provided to the cli:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> user-decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> user-decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
 
 Or from a file generated via the _Encryption_ command described above:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> user-decrypt from-file --input-path <input-file-path>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> user-decrypt from-file --input-path <input-file-path>
 ```
 
 Upon success, the above commands print `User decrypted Plaintext <PLAINTEXT> - <REQUEST_ID>` for each request (specified via `--num-requests`).
@@ -660,15 +661,15 @@ Multiple custodian contexts may exist at once, but only a single one is *active*
 Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended (see [Destroy context](#destroy-context)).
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -i <custodian context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -i <MPC context ID> -m "<setup message from custodian 1>" -m "<setup message from custodian 2>" ...
 ```
 The parameter `-t`/`threshold` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m`/`setup_msgs` list, which expresses the base64 setup messages of each of the custodians (as printed by `kms-custodian generate`), sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have been communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
-The parameter `-i`/`--mpc-context-id` specifies the MPC context ID that the custodian context is bound to.
+Note: the parameter `-i`/`--mpc-context-id` specifies the *MPC context ID* to be used for the custodian context. As a result of the command the core client will print the *custodian context ID*.
 See [the custodian setup section](./backup.md#custodian-setup) for details.
 
 Finally a concrete example of a command for a setup with 3 custodians is the following:
 ```{bash}
-$ cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
+$ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml new-custodian-context -t 1 -i 0700000000000000000000000000000000000000000000000000000000000001 -m "<setup message 1>" -m "<setup message 2>" -m "<setup message 3>"
 ```
 
 ### New Epoch (Resharing)
@@ -681,7 +682,7 @@ The kms core locally checks for existence of the public key material, and if it 
 If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>];previous_crs:[crs_id:<CRS_ID>,digest=<CRS_DIGEST>]"]
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>];previous_crs:[crs_id:<CRS_ID>,digest=<CRS_DIGEST>]"]
 ```
 
 Required arguments:
@@ -704,7 +705,7 @@ Optional argument `--previous-epoch-params` (for resharing from a previous epoch
 #### Destroying an MPC Epoch
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH_ID>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH_ID>
 ```
 
 ### MPC Context Management
@@ -714,14 +715,14 @@ $ cargo run -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH
 A new MPC context can be created from a serialized context file or a TOML context file:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-mpc-context serialized-context-path --input-path <path-to-context-file>
-$ cargo run -- -f <path-to-toml-config-file> new-mpc-context context-toml --input-path <path-to-context-toml>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context serialized-context-path --input-path <path-to-context-file>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context context-toml --input-path <path-to-context-toml>
 ```
 
 #### Destroying an MPC Context
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <CONTEXT_ID>
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <CONTEXT_ID>
 ```
 
 ### Retrieving Operator Public Key
@@ -729,7 +730,7 @@ $ cargo run -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <C
 To retrieve the operator public keys from the KMS cores:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> get-operator-public-key
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> get-operator-public-key
 ```
 
 This prints the public key for each configured core.
