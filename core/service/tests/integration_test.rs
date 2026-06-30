@@ -40,6 +40,8 @@ mod kms_init_binary_test {
 
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
+    use std::path::{Path, PathBuf};
+
     use tempfile::tempdir;
 
     use super::*;
@@ -59,29 +61,42 @@ mod kms_gen_keys_binary_test {
         command
     }
 
+    fn write_file_storage_config(
+        config_dir: &tempfile::TempDir,
+        private_path: &Path,
+        public_path: &Path,
+        keygen_options: &str,
+        threshold_config: Option<&str>,
+    ) -> PathBuf {
+        let config_path = config_dir.path().join("kms-gen-keys.toml");
+        fs::write(
+            &config_path,
+            format!(
+                r#"
+[keygen]
+enabled = true
+{keygen_options}
+{threshold_config}
+[public_vault.storage.file]
+path = "{public_path}"
+
+[private_vault.storage.file]
+path = "{private_path}"
+"#,
+                public_path = public_path.display(),
+                private_path = private_path.display(),
+                threshold_config = threshold_config.unwrap_or_default(),
+            ),
+        )
+        .unwrap();
+        config_path
+    }
+
     #[test]
     #[integration_test]
     fn help() {
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--help")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("centralized")
-            .arg("--help")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("threshold")
             .arg("--help")
             .output()
             .unwrap()
@@ -96,15 +111,17 @@ mod kms_gen_keys_binary_test {
         // written by the first.
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
+        let config_dir = tempdir().unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "overwrite = true",
+            None,
+        );
         let output = kms_gen_keys_command()
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg("--overwrite")
-            .arg("centralized")
+            .arg("--config-file")
+            .arg(&config_path)
             .output()
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
@@ -115,14 +132,16 @@ mod kms_gen_keys_binary_test {
             "Successfully stored public centralized server signing key under the handle"
         ));
 
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "",
+            None,
+        );
         let new_output = kms_gen_keys_command()
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg("centralized")
+            .arg("--config-file")
+            .arg(config_path)
             .output()
             .unwrap();
         assert!(new_output.status.success());
@@ -135,14 +154,17 @@ mod kms_gen_keys_binary_test {
     fn central_signing_address_format() {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
+        let config_dir = tempdir().unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "",
+            None,
+        );
         let output = kms_gen_keys_command()
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg("centralized")
+            .arg("--config-file")
+            .arg(config_path)
             .output()
             .unwrap();
 
@@ -173,26 +195,31 @@ mod kms_gen_keys_binary_test {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
 
-        // party id 0 is invalid (parties are 1-indexed); the value parser
-        // rejects id 0 at parse time.
+        // party id 0 is invalid (parties are 1-indexed).
+        let config_dir = tempdir().unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "",
+            Some(
+                r#"
+[threshold]
+my_id = 0
+tls_subject = "kms-party"
+
+"#,
+            ),
+        );
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg("threshold")
-            .arg("--signing-key-party-id=0")
+            .arg("--config-file")
+            .arg(config_path)
             .output()
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("invalid value '0' for '--signing-key-party-id")
-        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid kms-gen-keys config"));
     }
 
     #[test]
@@ -201,21 +228,29 @@ mod kms_gen_keys_binary_test {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
 
-        // --signing-key-party-id is a required flag now.
+        let config_dir = tempdir().unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "",
+            Some(
+                r#"
+[threshold]
+tls_subject = "kms-party"
+
+"#,
+            ),
+        );
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg("threshold")
+            .arg("--config-file")
+            .arg(config_path)
             .output()
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("--signing-key-party-id"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("threshold.my_id"));
     }
 
     #[test]
@@ -224,16 +259,25 @@ mod kms_gen_keys_binary_test {
     fn threshold_signing_key() {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
+        let config_dir = tempdir().unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "",
+            Some(
+                r#"
+[threshold]
+my_id = 5
+tls_subject = "kms-party"
+
+"#,
+            ),
+        );
 
         let output = kms_gen_keys_command()
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--public-storage=file")
-            .arg("--public-file-path")
-            .arg(temp_dir_pub.path())
-            .arg("threshold")
-            .arg("--signing-key-party-id=5")
+            .arg("--config-file")
+            .arg(config_path)
             .output()
             .unwrap();
 
@@ -262,22 +306,35 @@ mod kms_gen_keys_binary_test {
         );
         let temp_dir_priv = tempdir().unwrap();
 
-        // Test the following command:
-        // cargo run --bin kms-gen-keys -- --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=<unique> --private-storage=file --private-file-path=<tempdir> --overwrite --deterministic centralized
+        let config_dir = tempdir().unwrap();
+        let config_path = config_dir.path().join("kms-gen-keys.toml");
+        fs::write(
+            &config_path,
+            format!(
+                r#"
+[keygen]
+enabled = true
+deterministic = true
+overwrite = true
+
+[aws]
+region = "{AWS_REGION}"
+s3_endpoint = "{AWS_S3_ENDPOINT}"
+
+[public_vault.storage.s3]
+bucket = "{BUCKET_NAME}"
+prefix = "{s3_prefix}"
+
+[private_vault.storage.file]
+path = "{private_path}"
+"#,
+                private_path = temp_dir_priv.path().display(),
+            ),
+        )
+        .unwrap();
         let output = kms_gen_keys_command()
-            .arg(format!("--aws-region={AWS_REGION}"))
-            .arg(format!("--aws-s3-endpoint={AWS_S3_ENDPOINT}"))
-            .arg("--public-storage=s3")
-            .arg("--public-s3-bucket")
-            .arg(BUCKET_NAME)
-            .arg("--public-s3-prefix")
-            .arg(&s3_prefix)
-            .arg("--private-storage=file")
-            .arg("--private-file-path")
-            .arg(temp_dir_priv.path())
-            .arg("--overwrite")
-            .arg("--deterministic")
-            .arg("centralized")
+            .arg("--config-file")
+            .arg(config_path)
             .output()
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);

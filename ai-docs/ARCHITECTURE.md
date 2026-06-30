@@ -109,7 +109,7 @@ All under [core/service/src/bin/](core/service/src/bin/):
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
   signing keys (and, in threshold mode, per-party self-signed CA certificates
   for mTLS). Can read a keygen or server TOML with `--config-file`; supports
-  `--mock-enclave` for local dev, which must be compiled with the `insecure`
+  `mock_enclave` in config for local dev when compiled with the `insecure`
   feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
