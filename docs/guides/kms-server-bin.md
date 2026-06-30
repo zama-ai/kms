@@ -4,21 +4,27 @@
 
 `kms-gen-keys` generates the server signing keys (and, in threshold mode, the per-party self-signed CA certificates used for mTLS).
 
-To generate the signing material before the KMS server is started, run one of:
-
-```bash
-# for centralized:
-cargo run --bin kms-gen-keys -- centralized
-
-# for threshold (run this once per party, with party IDs 1..N):
-cargo run --bin kms-gen-keys -- threshold --signing-key-party-id <SIGNING_KEY_PARTY_ID>
-```
-
-`kms-gen-keys` can also read the storage, AWS, and mode settings from a TOML
-configuration file:
+To generate the signing material before the KMS server is started, pass a TOML config file:
 
 ```bash
 cargo run --bin kms-gen-keys -- --config-file config/default_1.toml
+```
+
+The config can be either a full `kms-server` config or a keygen-only config:
+
+```toml
+[keygen]
+enabled = true
+
+[threshold]
+my_id = 1
+tls_subject = "kms-core-1"
+
+[public_vault.storage.file]
+path = "./keys"
+
+[private_vault.storage.file]
+path = "./keys"
 ```
 
 For threshold configs, `threshold.my_id` selects the party. The TLS certificate
@@ -92,11 +98,11 @@ mock_enclave = true
 
 See `core/service/config/compose_*.toml` for working examples used by the docker-compose threshold setup.
 
-On the key-generation side, pass the matching CLI flag or set the same field in
-the config used with `--config-file`:
+On the key-generation side, set the same field in the config used with
+`--config-file`:
 
-```bash
-cargo run --bin kms-gen-keys --features insecure -- --mock-enclave ...
+```toml
+mock_enclave = true
 ```
 
 Both sides must agree: a server with `mock_enclave = true` will only accept attestations from peers and KMS keys that were also produced under the mock module, and vice versa.

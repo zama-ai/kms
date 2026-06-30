@@ -1,17 +1,16 @@
 use anyhow::{Context, bail, ensure};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::Parser;
 use core::fmt;
 use futures_util::future::OptionFuture;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::{
     conf::{
-        AWSConfig, AwsKmsKeySpec, AwsKmsKeychain, CoreConfig, EnclaveBootstrapConfig,
-        FileStorage as FileStorageConfig, Keychain, S3Storage as S3StorageConfig,
-        Storage as StorageConfig, VaultConfig, init_conf,
+        AWSConfig, CoreConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig,
+        VaultConfig, init_conf,
         threshold::{PeerConf, ThresholdPartyConf},
     },
-    consts::{KEY_PATH_PREFIX, SIGNING_KEY_ID},
+    consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
         ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
@@ -26,9 +25,7 @@ use kms_lib::{
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
-use strum::EnumIs;
-use url::Url;
+use std::{num::NonZeroUsize, sync::Arc};
 use validator::{Validate, ValidationErrors};
 
 #[derive(Parser)]
@@ -38,148 +35,12 @@ use validator::{Validate, ValidationErrors};
     In centralized mode it produces a single signing key plus its verification material. \
     In threshold mode it produces the signing key and self-signed CA certificate for one party; \
     run it once per party in a multi-party deployment. \
-    Multiple options are supported which can be explored with \
-    kms-gen-keys --help"
+    Pass --config-file to provide the key-generation settings."
 )]
 struct Args {
     /// Read key-generation settings from a TOML config file.
-    ///
-    /// This accepts the keygen-only enclave config and the full kms-server
-    /// config. When present, the mode subcommand and storage/AWS CLI flags are
-    /// ignored; `deterministic`, `overwrite`, and `show-existing` still apply.
-    #[clap(long, default_value = None)]
-    config_file: Option<String>,
-
-    #[clap(subcommand)]
-    mode: Option<Mode>,
-
-    /// AWS region to use for S3 storage
-    #[clap(long, default_value = "eu-west-3")]
-    aws_region: String,
-    /// Optional AWS IMDS API endpoint
-    #[clap(long, default_value = None)]
-    aws_imds_endpoint: Option<Url>,
-    /// Optional AWS STS API endpoint
-    #[clap(long, default_value = None)]
-    aws_sts_endpoint: Option<Url>,
-    /// Optional AWS S3 API endpoint
-    #[clap(long, default_value = None)]
-    aws_s3_endpoint: Option<Url>,
-    /// Optional AWS KMS API endpoint
-    #[clap(long, default_value = None)]
-    aws_kms_endpoint: Option<Url>,
-    /// Optional AWS KMS key id that encrypts the private storage
-    #[clap(long, default_value = None)]
-    root_key_id: Option<String>,
-    /// Optional AWS KMS key spec that encrypts the private storage
-    #[clap(long, default_value = None, value_enum)]
-    root_key_spec: Option<AwsKmsKeySpec>,
-    /// Use a software-emulated AWS Nitro security module instead of the real
-    /// NSM device. Only available with the `insecure` Cargo feature. See
-    /// `kms-server-bin.md` for more information.
-    #[cfg(feature = "insecure")]
-    #[clap(long, default_value_t = false)]
-    mock_enclave: bool,
-    #[clap(long, default_value_t = StorageCommand::File, value_enum)]
-    private_storage: StorageCommand,
-    #[clap(
-        long,
-        default_value = None,
-        conflicts_with_all = ["private_s3_bucket", "private_s3_prefix"],
-    )]
-    private_file_path: Option<PathBuf>,
-    #[clap(
-        long,
-        default_value = None,
-        conflicts_with_all = ["private_s3_bucket", "private_s3_prefix"],
-    )]
-    private_file_prefix: Option<String>,
-    #[clap(
-        long,
-        default_value = None,
-        required_if_eq("private_storage", "s3"),
-        conflicts_with_all = ["private_file_path", "private_file_prefix"],
-    )]
-    private_s3_bucket: Option<String>,
-    #[clap(
-        long,
-        default_value = None,
-        conflicts_with_all = ["private_file_path", "private_file_prefix"],
-    )]
-    private_s3_prefix: Option<String>,
-
-    #[clap(long, default_value_t = StorageCommand::File, value_enum)]
-    public_storage: StorageCommand,
-    #[clap(
-        long,
-        default_value = None,
-        conflicts_with_all = ["public_s3_bucket", "public_s3_prefix"],
-    )]
-    public_file_path: Option<PathBuf>,
-    #[clap(
-        long,
-        default_value = None,
-        conflicts_with_all = ["public_s3_bucket", "public_s3_prefix"],
-    )]
-    public_file_prefix: Option<String>,
-    #[clap(
-        long,
-        default_value = None,
-        required_if_eq("public_storage", "s3"),
-        conflicts_with_all = ["public_file_path", "public_file_prefix"],
-    )]
-    public_s3_bucket: Option<String>,
-    #[clap(
-        long,
-        default_value = None,
-        conflicts_with_all = ["public_file_path", "public_file_prefix"],
-    )]
-    public_s3_prefix: Option<String>,
-    /// Whether to generate keys deterministically,
-    /// only use this option for testing.
-    /// The determinism is not guaranteed to be the same between releases.
-    #[clap(long, default_value_t = false)]
-    deterministic: bool,
-    /// Whether to overwrite ALL the existing keys,
-    #[clap(long, default_value_t = false)]
-    overwrite: bool,
-    /// Only show existing keys, do not generate any
-    #[clap(long, default_value_t = false)]
-    show_existing: bool,
-}
-
-#[derive(Clone, Copy, Subcommand, Default, ValueEnum, EnumIs)]
-enum StorageCommand {
-    #[default]
-    File,
-    S3,
-}
-
-#[derive(Clone, Subcommand)]
-enum Mode {
-    /// Generate the centralized server signing key.
-    Centralized,
-
-    /// Generate the signing key and self-signed CA certificate for one
-    /// threshold party.
-    ///
-    /// One invocation generates the material for exactly one party; callers
-    /// that operate multiple parties (docker-compose loops, Helm per-pod jobs,
-    /// the enclave bootstrap script) invoke `kms-gen-keys threshold` once per
-    /// party.
-    Threshold {
-        /// Index of the party to generate keys for (1-based).
-        #[clap(long)]
-        signing_key_party_id: NonZeroUsize,
-
-        /// Subject used in the issued TLS certificate.
-        #[clap(long, default_value = "kms-party")]
-        tls_subject: String,
-
-        /// Whether to include a wildcard SAN entry for the CA certificates
-        #[clap(long, default_value_t = false)]
-        tls_wildcard: bool,
-    },
+    #[clap(long, short = 'f')]
+    config_file: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -246,6 +107,11 @@ struct KmsGenKeysOnlyConfig {
 #[serde(deny_unknown_fields)]
 struct KeygenConfig {
     enabled: Option<bool>,
+    deterministic: Option<bool>,
+    overwrite: Option<bool>,
+    show_existing: Option<bool>,
+    #[cfg(feature = "insecure")]
+    mock_enclave: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
@@ -280,67 +146,26 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
 }
 
 fn resolve_args(args: &Args) -> anyhow::Result<KmsGenKeysRunConfig> {
-    if let Some(config_file) = args.config_file.as_deref() {
-        ensure!(
-            args.mode.is_none(),
-            "--config-file cannot be combined with a mode subcommand"
-        );
-        let config = init_conf::<KmsGenKeysConfigFile>(config_file)
-            .with_context(|| format!("failed to load kms-gen-keys config file {config_file}"))?;
-        config
-            .validate()
-            .context("invalid kms-gen-keys config file")?;
-        return resolve_config_file(
-            config,
-            args.deterministic,
-            args.overwrite,
-            args.show_existing,
-            #[cfg(feature = "insecure")]
-            args.mock_enclave,
-        );
-    }
-
-    let mode = args
-        .mode
-        .clone()
-        .context("kms-gen-keys requires either --config-file or a mode subcommand")?;
-    resolve_cli_args(args, mode)
+    let config = init_conf::<KmsGenKeysConfigFile>(&args.config_file).with_context(|| {
+        format!(
+            "failed to load kms-gen-keys config file {}",
+            args.config_file
+        )
+    })?;
+    config
+        .validate()
+        .context("invalid kms-gen-keys config file")?;
+    resolve_config_file(config)
 }
 
-fn resolve_config_file(
-    config: KmsGenKeysConfigFile,
-    deterministic: bool,
-    overwrite: bool,
-    show_existing: bool,
-    #[cfg(feature = "insecure")] cli_mock_enclave: bool,
-) -> anyhow::Result<KmsGenKeysRunConfig> {
+fn resolve_config_file(config: KmsGenKeysConfigFile) -> anyhow::Result<KmsGenKeysRunConfig> {
     match config {
-        KmsGenKeysConfigFile::Keygen(config) => resolve_keygen_config_file(
-            *config,
-            deterministic,
-            overwrite,
-            show_existing,
-            #[cfg(feature = "insecure")]
-            cli_mock_enclave,
-        ),
-        KmsGenKeysConfigFile::Server(config) => resolve_server_config_file(
-            *config,
-            deterministic,
-            overwrite,
-            show_existing,
-            #[cfg(feature = "insecure")]
-            cli_mock_enclave,
-        ),
+        KmsGenKeysConfigFile::Keygen(config) => resolve_keygen_config_file(*config),
+        KmsGenKeysConfigFile::Server(config) => resolve_server_config_file(*config),
     }
 }
 
-fn resolve_keygen_config_file(
-    config: KmsGenKeysOnlyConfig,
-    deterministic: bool,
-    overwrite: bool,
-    show_existing: bool,
-    #[cfg(feature = "insecure")] cli_mock_enclave: bool,
-) -> anyhow::Result<KmsGenKeysRunConfig> {
+fn resolve_keygen_config_file(config: KmsGenKeysOnlyConfig) -> anyhow::Result<KmsGenKeysRunConfig> {
     if config
         .keygen
         .as_ref()
@@ -351,6 +176,7 @@ fn resolve_keygen_config_file(
     }
 
     let mode = resolve_keygen_config_mode(config.threshold.as_ref())?;
+    let keygen = config.keygen.as_ref();
     let public_storage = config.public_vault.map(|vault| vault.storage);
     let (private_storage, private_keychain) = config
         .private_vault
@@ -363,21 +189,22 @@ fn resolve_keygen_config_file(
         public_storage,
         private_storage,
         private_keychain,
-        deterministic,
-        overwrite,
-        show_existing,
+        deterministic: keygen
+            .and_then(|keygen| keygen.deterministic)
+            .unwrap_or(false),
+        overwrite: keygen.and_then(|keygen| keygen.overwrite).unwrap_or(false),
+        show_existing: keygen
+            .and_then(|keygen| keygen.show_existing)
+            .unwrap_or(false),
         #[cfg(feature = "insecure")]
-        mock_enclave: cli_mock_enclave || config.mock_enclave.unwrap_or(false),
+        mock_enclave: keygen
+            .and_then(|keygen| keygen.mock_enclave)
+            .or(config.mock_enclave)
+            .unwrap_or(false),
     })
 }
 
-fn resolve_server_config_file(
-    config: CoreConfig,
-    deterministic: bool,
-    overwrite: bool,
-    show_existing: bool,
-    #[cfg(feature = "insecure")] cli_mock_enclave: bool,
-) -> anyhow::Result<KmsGenKeysRunConfig> {
+fn resolve_server_config_file(config: CoreConfig) -> anyhow::Result<KmsGenKeysRunConfig> {
     let mode = resolve_server_config_mode(config.threshold.as_ref())?;
     let public_storage = config.public_vault.map(|vault| vault.storage);
     let (private_storage, private_keychain) = config
@@ -391,11 +218,11 @@ fn resolve_server_config_file(
         public_storage,
         private_storage,
         private_keychain,
-        deterministic,
-        overwrite,
-        show_existing,
+        deterministic: false,
+        overwrite: false,
+        show_existing: false,
         #[cfg(feature = "insecure")]
-        mock_enclave: cli_mock_enclave || config.mock_enclave.unwrap_or(false),
+        mock_enclave: config.mock_enclave.unwrap_or(false),
     })
 }
 
@@ -478,91 +305,6 @@ fn resolve_threshold_tls_subject(
     Ok(subject.to_string())
 }
 
-fn resolve_cli_args(args: &Args, mode: Mode) -> anyhow::Result<KmsGenKeysRunConfig> {
-    Ok(KmsGenKeysRunConfig {
-        mode: match mode {
-            Mode::Centralized => KeygenMode::Centralized,
-            Mode::Threshold {
-                signing_key_party_id,
-                tls_subject,
-                tls_wildcard,
-            } => KeygenMode::Threshold {
-                signing_key_party_id,
-                tls_subject,
-                tls_wildcard,
-            },
-        },
-        aws: Some(AWSConfig {
-            region: args.aws_region.clone(),
-            role_arn: None,
-            imds_endpoint: args.aws_imds_endpoint.clone(),
-            sts_endpoint: args.aws_sts_endpoint.clone(),
-            s3_endpoint: args.aws_s3_endpoint.clone(),
-            awskms_endpoint: args.aws_kms_endpoint.clone(),
-        }),
-        public_storage: resolve_cli_storage(
-            "public",
-            args.public_storage,
-            &args.public_file_path,
-            &args.public_file_prefix,
-            &args.public_s3_bucket,
-            &args.public_s3_prefix,
-        )?,
-        private_storage: resolve_cli_storage(
-            "private",
-            args.private_storage,
-            &args.private_file_path,
-            &args.private_file_prefix,
-            &args.private_s3_bucket,
-            &args.private_s3_prefix,
-        )?,
-        private_keychain: resolve_cli_keychain(args)?,
-        deterministic: args.deterministic,
-        overwrite: args.overwrite,
-        show_existing: args.show_existing,
-        #[cfg(feature = "insecure")]
-        mock_enclave: args.mock_enclave,
-    })
-}
-
-fn resolve_cli_storage(
-    name: &str,
-    storage: StorageCommand,
-    file_path: &Option<PathBuf>,
-    file_prefix: &Option<String>,
-    s3_bucket: &Option<String>,
-    s3_prefix: &Option<String>,
-) -> anyhow::Result<Option<StorageConfig>> {
-    match storage {
-        StorageCommand::File => Ok((file_path.is_some() || file_prefix.is_some()).then(|| {
-            StorageConfig::File(FileStorageConfig {
-                path: file_path
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from(KEY_PATH_PREFIX)),
-                prefix: file_prefix.clone(),
-            })
-        })),
-        StorageCommand::S3 => Ok(Some(StorageConfig::S3(S3StorageConfig {
-            bucket: s3_bucket.clone().with_context(|| {
-                format!("--{name}-s3-bucket is required with --{name}-storage s3")
-            })?,
-            prefix: s3_prefix.clone(),
-        }))),
-    }
-}
-
-fn resolve_cli_keychain(args: &Args) -> anyhow::Result<Option<Keychain>> {
-    match (&args.root_key_id, &args.root_key_spec) {
-        (Some(root_key_id), Some(root_key_spec)) => Ok(Some(Keychain::AwsKms(AwsKmsKeychain {
-            root_key_id: root_key_id.clone(),
-            root_key_spec: root_key_spec.clone(),
-        }))),
-        (None, None) => Ok(None),
-        (Some(_), None) => bail!("--root-key-spec is required when --root-key-id is set"),
-        (None, Some(_)) => bail!("--root-key-id is required when --root-key-spec is set"),
-    }
-}
-
 /// Generate the server signing keys and TLS material for a KMS deployment.
 ///
 /// Two modes are supported:
@@ -571,7 +313,7 @@ fn resolve_cli_keychain(args: &Args) -> anyhow::Result<Option<Keychain>> {
 ///
 /// Examples:
 /// ```
-/// cargo run --bin kms-gen-keys -- centralized
+/// cargo run --bin kms-gen-keys -- --config-file config/default_1.toml
 /// cargo run --bin kms-gen-keys -- --help
 /// ```
 #[tokio::main]
@@ -829,11 +571,22 @@ async fn show_key<S: Storage>(storage: &S, data_type: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_lib::conf::{
+        AwsKmsKeySpec, AwsKmsKeychain, FileStorage as FileStorageConfig,
+        S3Storage as S3StorageConfig,
+    };
+    use std::path::PathBuf;
+    use url::Url;
 
     fn base_config() -> KmsGenKeysOnlyConfig {
         KmsGenKeysOnlyConfig {
             keygen: Some(KeygenConfig {
                 enabled: Some(true),
+                deterministic: None,
+                overwrite: None,
+                show_existing: None,
+                #[cfg(feature = "insecure")]
+                mock_enclave: None,
             }),
             aws: None,
             public_vault: None,
@@ -869,14 +622,7 @@ mod tests {
     fn resolve_config_for_test(
         config: KmsGenKeysConfigFile,
     ) -> anyhow::Result<KmsGenKeysRunConfig> {
-        resolve_config_file(
-            config,
-            false,
-            false,
-            false,
-            #[cfg(feature = "insecure")]
-            false,
-        )
+        resolve_config_file(config)
     }
 
     fn resolved_tls_subject(resolved: KmsGenKeysRunConfig) -> String {
@@ -895,6 +641,44 @@ mod tests {
         assert!(resolved.public_storage.is_none());
         assert!(resolved.private_storage.is_none());
         assert!(resolved.private_keychain.is_none());
+    }
+
+    #[test]
+    fn keygen_flags_are_read_from_config() {
+        let mut config = base_config();
+        config.keygen = Some(KeygenConfig {
+            enabled: Some(true),
+            deterministic: Some(true),
+            overwrite: Some(true),
+            show_existing: Some(true),
+            #[cfg(feature = "insecure")]
+            mock_enclave: None,
+        });
+
+        let resolved =
+            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+
+        assert!(resolved.deterministic);
+        assert!(resolved.overwrite);
+        assert!(resolved.show_existing);
+    }
+
+    #[cfg(feature = "insecure")]
+    #[test]
+    fn mock_enclave_is_read_from_config() {
+        let mut config = base_config();
+        config.keygen = Some(KeygenConfig {
+            enabled: Some(true),
+            deterministic: None,
+            overwrite: None,
+            show_existing: None,
+            mock_enclave: Some(true),
+        });
+
+        let resolved =
+            resolve_config_for_test(KmsGenKeysConfigFile::Keygen(Box::new(config))).unwrap();
+
+        assert!(resolved.mock_enclave);
     }
 
     #[test]
@@ -1046,6 +830,8 @@ mod tests {
             r#"
 [keygen]
 enabled = true
+deterministic = true
+overwrite = true
 
 [threshold]
 my_id = 2
@@ -1076,6 +862,8 @@ root_key_spec = "symm"
         let resolved = resolve_config_for_test(config).unwrap();
 
         assert_eq!(resolved_tls_subject(resolved.clone()), "kms-core-2");
+        assert!(resolved.deterministic);
+        assert!(resolved.overwrite);
         assert_eq!(
             resolved.public_storage,
             Some(StorageConfig::S3(S3StorageConfig {
