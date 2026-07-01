@@ -1,0 +1,657 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: sustained-rate-kms-<version>-
+  namespace: kms-ci
+  labels:
+    app: sustained-rate-kms
+spec:
+  serviceAccountName: workflow-runner
+  activeDeadlineSeconds: 28800  # 8 hours total timeout
+  # Delete the completed Workflow object and pod metadata after 24h. Test output
+  # remains in pod logs, Slack, and any external log/artifact sinks.
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+  tolerations:
+  - key: karpenter.sh/nodepool
+    effect: NoSchedule
+    operator: Equal
+    value: kms-pool
+  volumes:
+  - name: slack-webhook-volume
+    secret:
+      secretName: slack-webhook
+
+  entrypoint: sustained-rate-kms
+  arguments:
+    parameters:
+    - name: tls
+      value: "disabled"
+    - name: run_url
+      value: "Manually triggered"
+    - name: duration
+      value: "90"
+    - name: max-in-flight
+      value: "10000"
+    - name: data-type
+      value: "euint64"
+    - name: batch-size
+      value: "1"
+    # TODO: parameterize num-parties, num-majority, and num-reconstruct together
+    # with the CI deployment. Useful target: 4 parties with 2/3 thresholds in
+    # addition to the current 13-party 5/9 setup.
+
+  templates:
+    - name: sustained-rate-kms
+      dag:
+        tasks:
+          - name: udec-setup
+            template: prepare-udec-key
+
+          - name: sustained-rate-udec-100
+            dependencies: ["udec-setup"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "100"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "true"
+
+          - name: sustained-rate-udec-200
+            dependencies: ["sustained-rate-udec-100"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "200"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-100.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-300
+            dependencies: ["sustained-rate-udec-200"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "300"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-200.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-400
+            dependencies: ["sustained-rate-udec-300"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "400"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-300.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-500
+            dependencies: ["sustained-rate-udec-400"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "500"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-400.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-600
+            dependencies: ["sustained-rate-udec-500"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "600"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-500.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-700
+            dependencies: ["sustained-rate-udec-600"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "700"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-600.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-800
+            dependencies: ["sustained-rate-udec-700"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "800"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-700.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-900
+            dependencies: ["sustained-rate-udec-800"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "900"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-800.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-1000
+            dependencies: ["sustained-rate-udec-900"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "1000"
+              - name: key-id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-900.outputs.parameters.capacity-ok}}"
+
+          - name: summary
+            dependencies: [
+              "sustained-rate-udec-100",
+              "sustained-rate-udec-200",
+              "sustained-rate-udec-300",
+              "sustained-rate-udec-400",
+              "sustained-rate-udec-500",
+              "sustained-rate-udec-600",
+              "sustained-rate-udec-700",
+              "sustained-rate-udec-800",
+              "sustained-rate-udec-900",
+              "sustained-rate-udec-1000"
+            ]
+            template: summary-report
+            arguments:
+              parameters:
+              - name: test-result-100
+                value: "{{tasks.sustained-rate-udec-100.outputs.parameters.test-result}}"
+              - name: test-result-200
+                value: "{{tasks.sustained-rate-udec-200.outputs.parameters.test-result}}"
+              - name: test-result-300
+                value: "{{tasks.sustained-rate-udec-300.outputs.parameters.test-result}}"
+              - name: test-result-400
+                value: "{{tasks.sustained-rate-udec-400.outputs.parameters.test-result}}"
+              - name: test-result-500
+                value: "{{tasks.sustained-rate-udec-500.outputs.parameters.test-result}}"
+              - name: test-result-600
+                value: "{{tasks.sustained-rate-udec-600.outputs.parameters.test-result}}"
+              - name: test-result-700
+                value: "{{tasks.sustained-rate-udec-700.outputs.parameters.test-result}}"
+              - name: test-result-800
+                value: "{{tasks.sustained-rate-udec-800.outputs.parameters.test-result}}"
+              - name: test-result-900
+                value: "{{tasks.sustained-rate-udec-900.outputs.parameters.test-result}}"
+              - name: test-result-1000
+                value: "{{tasks.sustained-rate-udec-1000.outputs.parameters.test-result}}"
+              - name: tls
+                value: "{{workflow.parameters.tls}}"
+              - name: run_url
+                value: "{{workflow.parameters.run_url}}"
+              - name: duration
+                value: "{{workflow.parameters.duration}}"
+              - name: max-in-flight
+                value: "{{workflow.parameters.max-in-flight}}"
+
+    - name: prepare-udec-key
+      outputs:
+        parameters:
+        - name: key-id
+          valueFrom:
+            path: /tmp/artifacts/key_id.txt
+      metadata:
+        labels:
+          test: udec-setup
+          app: sustained-rate-kms
+      script:
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
+        command: ["/bin/bash", "-c"]
+        source: |
+          set -euo pipefail
+          write_config() {
+            cat <<EOF > config.toml
+            kms_type = "threshold"
+            num_majority=${NUM_MAJORITY}
+            num_reconstruct=${NUM_RECONSTRUCT}
+            decryption_mode="${DECRYPTION_MODE}"
+            fhe_params="Default"
+            [[cores]]
+            party_id=1
+            address="kms-core-1-core-1:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p1"
+            [[cores]]
+            party_id=2
+            address="kms-core-2-core-2:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p2"
+            [[cores]]
+            party_id=3
+            address="kms-core-3-core-3:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p3"
+            [[cores]]
+            party_id=4
+            address="kms-core-4-core-4:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p4"
+            [[cores]]
+            party_id=5
+            address="kms-core-5-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-core-6-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-core-7-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-core-8-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-core-9-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-core-10-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-core-11-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-core-12-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-core-13-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
+          EOF
+          }
+
+          mkdir -p /tmp/artifacts
+          write_config
+
+          ./bin/kms-core-client --logs -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
+          preproc_id=$(grep -o '"request_id": "[^"]*"' /tmp/preproc_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+          if [ -z "$preproc_id" ]; then
+            echo "Failed to extract udec preprocessing request id"
+            exit 1
+          fi
+
+          ./bin/kms-core-client --logs -f config.toml insecure-key-gen -i "$preproc_id" 2>&1 | tee /tmp/keygen_logs.txt
+          key_id=$(grep -o '"request_id": "[^"]*"' /tmp/keygen_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+          if [ -z "$key_id" ]; then
+            echo "Failed to extract udec key id"
+            exit 1
+          fi
+
+          echo "$key_id" > /tmp/artifacts/key_id.txt
+          echo "Prepared udec key $key_id"
+        env: &core-client-env
+          - name: S3_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: kms-ci-1
+                key: CORE_CLIENT__S3_ENDPOINT
+          - name: NUM_MAJORITY
+            value: '5'
+          - name: NUM_RECONSTRUCT
+            value: '9'
+          - name: DECRYPTION_MODE
+            value: 'NoiseFloodSmall'
+        resources: &core-client-resources
+          requests:
+            memory: "24Gi"
+            cpu: "4"
+          limits:
+            memory: "24Gi"
+            cpu: "4"
+
+    - name: run-udec-rate
+      inputs:
+        parameters:
+        - name: rate
+        - name: key-id
+        - name: previous-ok
+      outputs:
+        parameters:
+        - name: test-result
+          valueFrom:
+            path: /tmp/artifacts/sustained-rate-udec-{{inputs.parameters.rate}}.json
+        - name: capacity-ok
+          valueFrom:
+            path: /tmp/artifacts/sustained-rate-udec-{{inputs.parameters.rate}}.ok
+      metadata:
+        labels:
+          test: sustained-rate-udec-{{inputs.parameters.rate}}
+          app: sustained-rate-kms
+      script:
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
+        command: ["/bin/bash", "-c"]
+        source: |
+          cat <<EOF > config.toml
+            kms_type = "threshold"
+            num_majority=${NUM_MAJORITY}
+            num_reconstruct=${NUM_RECONSTRUCT}
+            decryption_mode="${DECRYPTION_MODE}"
+            fhe_params="Default"
+            [[cores]]
+            party_id=1
+            address="kms-core-1-core-1:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p1"
+            [[cores]]
+            party_id=2
+            address="kms-core-2-core-2:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p2"
+            [[cores]]
+            party_id=3
+            address="kms-core-3-core-3:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p3"
+            [[cores]]
+            party_id=4
+            address="kms-core-4-core-4:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p4"
+            [[cores]]
+            party_id=5
+            address="kms-core-5-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-core-6-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-core-7-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-core-8-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-core-9-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-core-10-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-core-11-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-core-12-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-core-13-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
+          EOF
+
+          test_name="sustained-rate-udec-{{inputs.parameters.rate}}"
+          test_command="user-decrypt from-args -d {{workflow.parameters.data-type}} -k {{inputs.parameters.key-id}} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          mkdir -p /tmp/artifacts
+
+          if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
+              "$test_name" \
+              "$test_command" \
+              "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              "{{inputs.parameters.rate}}" \
+              > /tmp/artifacts/${test_name}.json
+            echo "false" > /tmp/artifacts/${test_name}.ok
+            echo "Skipping $test_name because a lower sustained udec rate failed"
+            exit 0
+          fi
+
+          echo "=========================================="
+          echo "Starting test: $test_command"
+          echo "=========================================="
+
+          start_time=$(date +%s)
+          ./bin/kms-core-client --logs -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          test_exit=${PIPESTATUS[0]}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+
+          sustained_rate_metrics="{\"target_rate\":{{inputs.parameters.rate}}}"
+          if grep -q "SUSTAINED_RATE_METRICS" /tmp/test_logs.txt; then
+            sustained_rate_metrics=$(grep "SUSTAINED_RATE_METRICS" /tmp/test_logs.txt | tail -1 | sed 's/.*SUSTAINED_RATE_METRICS //')
+          fi
+
+          if [ "$test_exit" -eq 0 ]; then
+            status="passed"
+            capacity_ok="true"
+          else
+            status="failed"
+            capacity_ok="false"
+          fi
+
+          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": %s\n  }\n}\n' \
+            "$test_name" \
+            "$test_command" \
+            "$status" \
+            "$test_exit" \
+            "$duration" \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            "$sustained_rate_metrics" \
+            > /tmp/artifacts/${test_name}.json
+          echo "$capacity_ok" > /tmp/artifacts/${test_name}.ok
+
+          exit 0
+        env: *core-client-env
+        resources: *core-client-resources
+
+    - name: summary-report
+      inputs:
+        parameters:
+        - name: test-result-100
+        - name: test-result-200
+        - name: test-result-300
+        - name: test-result-400
+        - name: test-result-500
+        - name: test-result-600
+        - name: test-result-700
+        - name: test-result-800
+        - name: test-result-900
+        - name: test-result-1000
+        - name: tls
+        - name: run_url
+        - name: duration
+        - name: max-in-flight
+      script:
+        image: public.ecr.aws/docker/library/alpine:3.23
+        command: ["/bin/sh", "-c"]
+        env:
+        - name: WORKFLOW_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['workflows.argoproj.io/workflow']
+        volumeMounts:
+        - name: slack-webhook-volume
+          mountPath: /etc/slack
+        source: |
+          apk add --no-cache jq curl
+          mkdir -p /mnt/results
+          echo '{{inputs.parameters.test-result-100}}' > /mnt/results/sustained-rate-udec-100.json
+          echo '{{inputs.parameters.test-result-200}}' > /mnt/results/sustained-rate-udec-200.json
+          echo '{{inputs.parameters.test-result-300}}' > /mnt/results/sustained-rate-udec-300.json
+          echo '{{inputs.parameters.test-result-400}}' > /mnt/results/sustained-rate-udec-400.json
+          echo '{{inputs.parameters.test-result-500}}' > /mnt/results/sustained-rate-udec-500.json
+          echo '{{inputs.parameters.test-result-600}}' > /mnt/results/sustained-rate-udec-600.json
+          echo '{{inputs.parameters.test-result-700}}' > /mnt/results/sustained-rate-udec-700.json
+          echo '{{inputs.parameters.test-result-800}}' > /mnt/results/sustained-rate-udec-800.json
+          echo '{{inputs.parameters.test-result-900}}' > /mnt/results/sustained-rate-udec-900.json
+          echo '{{inputs.parameters.test-result-1000}}' > /mnt/results/sustained-rate-udec-1000.json
+
+          echo "=========================================="
+          echo "KMS SUSTAINED UDEC RATE SUMMARY"
+          echo "=========================================="
+          echo "Report generated: $(date -u)"
+          echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
+          echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
+          echo ""
+
+          total=0
+          passed=0
+          failed=0
+          skipped=0
+          summary_lines=""
+
+          for rate in 100 200 300 400 500 600 700 800 900 1000; do
+            result="/mnt/results/sustained-rate-udec-${rate}.json"
+            if ! jq empty "$result" 2>/dev/null; then
+              echo "Skipping invalid JSON file: $result"
+              continue
+            fi
+
+            total=$((total + 1))
+            test_name=$(jq -r '.test_name // "unknown"' "$result")
+            status=$(jq -r '.status // empty' "$result")
+            exit_code=$(jq -r '.exit_code // "1"' "$result")
+            target_rate=$(jq -r '.performance_metrics.sustained_rate.target_rate // empty' "$result")
+            offered=$(jq -r '.performance_metrics.sustained_rate.offered // empty' "$result")
+            completed=$(jq -r '.performance_metrics.sustained_rate.completed // empty' "$result")
+            failed_requests=$(jq -r '.performance_metrics.sustained_rate.failed // empty' "$result")
+            shed=$(jq -r '.performance_metrics.sustained_rate.shed // empty' "$result")
+            achieved_rate=$(jq -r '.performance_metrics.sustained_rate.achieved_rate // empty' "$result")
+            saturated=$(jq -r '.performance_metrics.sustained_rate.saturated // empty' "$result")
+            p50=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p50 // empty' "$result")
+            p95=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p95 // empty' "$result")
+            p99=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p99 // empty' "$result")
+
+            if [ "$status" = "skipped" ]; then
+              skipped=$((skipped + 1))
+              line="SKIP ${test_name}: skipped because a lower sustained udec rate failed"
+            elif [ "$exit_code" = "0" ]; then
+              passed=$((passed + 1))
+              perf_info="target=${target_rate} req/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} achieved=${achieved_rate} req/s saturated=${saturated} p50=${p50}ms p95=${p95}ms p99=${p99}ms"
+              line="PASS ${test_name}: ${perf_info}"
+            else
+              failed=$((failed + 1))
+              perf_info="target=${target_rate} req/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} achieved=${achieved_rate} req/s saturated=${saturated} p50=${p50}ms p95=${p95}ms p99=${p99}ms"
+              line="FAIL ${test_name}: ${perf_info}"
+            fi
+
+            echo "$line"
+            summary_lines="${summary_lines}${line}\n"
+          done
+
+          if [ $total -gt 0 ]; then
+            success_rate=$(( (passed * 100) / total ))
+          else
+            success_rate=0
+          fi
+
+          echo "----------------------------------------"
+          echo "Total tests: $total"
+          echo "Passed: $passed"
+          echo "Failed: $failed"
+          echo "Skipped: $skipped"
+          echo "Success rate: $success_rate%"
+          echo "=========================================="
+
+          if [ $failed -gt 0 ]; then
+            color="danger"
+            title="KMS sustained udec rate test failed"
+          else
+            color="good"
+            title="KMS sustained udec rate test passed"
+          fi
+
+          slack_webhook_url=$(cat /etc/slack/url)
+          slack_text=$(printf "%b" "$summary_lines" | sed 's/"/\\"/g')
+          slack_message=$(cat <<EOF
+          {
+            "attachments": [
+              {
+                "color": "$color",
+                "title": "$title",
+                "fields": [
+                  {
+                    "title": "Environment",
+                    "value": "kms-ci",
+                    "short": true
+                  },
+                  {
+                    "title": "Status",
+                    "value": "$passed passed, $failed failed, $skipped skipped ($success_rate% success)",
+                    "short": true
+                  },
+                  {
+                    "title": "Config",
+                    "value": "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}",
+                    "short": false
+                  },
+                  {
+                    "title": "Run ID",
+                    "value": "$WORKFLOW_NAME",
+                    "short": true
+                  },
+                  {
+                    "title": "GH Run URL",
+                    "value": "{{inputs.parameters.run_url}}",
+                    "short": false
+                  }
+                ],
+                "text": "\`\`\`\n$slack_text\n\`\`\`"
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
+
+          if [ $failed -gt 0 ]; then
+            exit 1
+          fi
