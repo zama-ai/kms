@@ -20,38 +20,9 @@ use algebra::{
 };
 use threshold_types::role::Role;
 
-use super::glwe_key::GlweSecretKeyShare;
-
-pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    output: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
-    lhs: &[Z],
-    rhs: impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>>,
-) {
-    debug_assert!(
-        lhs.len() == rhs.len(),
-        "lhs (len: {}) and rhs (len: {}) must have the same length",
-        lhs.len(),
-        rhs.len()
-    );
-    debug_assert!(
-        output.len() == lhs.len(),
-        "output (len: {}) and lhs (len: {}) must have the same length",
-        output.len(),
-        lhs.len()
-    );
-    let mut rev_rhs = rhs.collect_vec();
-    rev_rhs.reverse();
-    // `output` is overwritten with the product (not accumulated into), so zero it
-    // before accumulating in place.
-    output.fill(ResiduePoly::ZERO);
-    negacyclic_mul_reduce_acc(output, lhs, &rev_rhs);
-}
-
 /// Negacyclic multiply-accumulate over slices, all of length `n = acc.len()`: computes `acc += lhs * rhs mod (X^n + 1)`
 /// in place, allocating nothing.
-///
-/// Used by [`slice_semi_reverse_negacyclic_convolution`] and [`polynomial_wrapping_add_multisum_assign`].
-fn negacyclic_mul_reduce_acc<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+pub(crate) fn negacyclic_mul_reduce_acc<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     acc: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
     lhs: &[Z],
     rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
@@ -91,27 +62,6 @@ pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lhs.iter()
         .zip_eq(rhs)
         .fold(ResiduePoly::ZERO, |acc, (left, right)| acc + right * *left)
-}
-
-pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
-    output_mask: &[Z],
-    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-) where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let pol_dimension = glwe_secret_key_share.polynomial_size.0;
-    // Materialize the secret-key shares once so we can chunk them into polynomials;
-    // `output_mask` is chunked directly from the caller's buffer. Both feed the
-    // in-place kernel, which accumulates each `mask_chunk * sk_chunk` product into
-    // `output_body`.
-    let sk: Vec<_> = glwe_secret_key_share.data_iter().collect();
-    for (mask_chunk, sk_chunk) in output_mask
-        .chunks(pol_dimension)
-        .zip_eq(sk.chunks(pol_dimension))
-    {
-        negacyclic_mul_reduce_acc(output_body, mask_chunk, sk_chunk);
-    }
 }
 
 pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
