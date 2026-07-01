@@ -4318,6 +4318,7 @@ dependencies = [
  "aws-nitro-enclaves-nsm-api 0.5.1",
  "aws-sdk-kms",
  "aws-sdk-s3",
+ "aws-smithy-types",
  "backward-compatibility",
  "bc2wrap",
  "bincode 2.0.1",

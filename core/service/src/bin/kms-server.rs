@@ -612,8 +612,8 @@ async fn main_exec() -> anyhow::Result<()> {
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     // load key
-    let base_kms = match get_core_signing_key(&private_vault).await {
-        Ok(sk) => BaseKmsStruct::new(kms_type, sk)?,
+    let (base_kms, able_to_use_tls) = match get_core_signing_key(&private_vault).await {
+        Ok(sk) => (BaseKmsStruct::new(kms_type, sk)?, true), // The signing key is present, so we can use TLS if configured
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -624,7 +624,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            BaseKmsStruct::new_no_signing_key(kms_type, verf_key)
+            (BaseKmsStruct::new_no_signing_key(kms_type, verf_key), false) // No signing key, so we cannot use TLS even if configured
         }
     };
 
@@ -650,9 +650,8 @@ async fn main_exec() -> anyhow::Result<()> {
     match core_config.threshold {
         Some(ref threshold_config) => {
             let mpc_listener = make_mpc_listener(threshold_config).await;
-
-            let tls_identity = match &threshold_config.tls {
-                Some(tls_config) => Some(
+            let tls_identity = if able_to_use_tls && let Some(tls_config) = &threshold_config.tls {
+                Some(
                     build_tls_config(
                         &threshold_config.peers,
                         tls_config,
@@ -667,13 +666,10 @@ async fn main_exec() -> anyhow::Result<()> {
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
                     .await?,
-                ),
-                None => {
-                    tracing::warn!(
-                        "No TLS identity - using plaintext communication between MPC nodes"
-                    );
-                    None
-                }
+                )
+            } else {
+                tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
+                None
             };
 
             let service_config = core_config.service.clone();
