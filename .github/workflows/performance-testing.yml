@@ -48,7 +48,7 @@ on:
       fhe_params:
         description: 'FHE parameters for preprocessing and keygen'
         required: true
-        default: 'Test'
+        default: 'Default'
         type: choice
         options:
           - 'Default'
