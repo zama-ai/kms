@@ -17,6 +17,7 @@ use kms_lib::{
     engine::base::deserialize_to_low_level,
 };
 use rand::{Rng, SeedableRng};
+use rayon::prelude::*;
 use tfhe::{
     CompressedSquashedNoiseCiphertextListBuilder, FheTypes, FheUint64, FheUint256,
     prelude::SquashNoise, safe_serialization::safe_serialize, set_server_key,
@@ -155,6 +156,40 @@ fn bench_user_decrypt(c: &mut Criterion) {
                 criterion::black_box(out)
             });
         });
+
+        // Parallelization experiment: the dot-product over packed blocks is independent per block. Pre-collect the
+        // block refs once (outside timing) so seq_vec vs par isolate *only* the rayon fork/join. Finding (idle 18-core
+        // box): par is 1.9x (euint64, n=16) / 3.7x (euint256, n=64) faster. Real latency win, but throughput under concurrent
+        // load is a separate question.
+        let blocks: Vec<&_> = ct_large.packed_blocks().collect();
+
+        // Sequential case (current `main`)
+        group.bench_function(
+            format!("partial_decrypt128_seqvec/{size} [n={}]", blocks.len()),
+            |b| {
+                b.iter(|| {
+                    let out: Vec<_> = blocks
+                        .iter()
+                        .map(|&blk| partial_decrypt128::<EXT>(sk_share, blk, DDEC_KEY).unwrap())
+                        .collect();
+                    criterion::black_box(out)
+                });
+            },
+        );
+
+        // Concurrent dot-prod, experiment.
+        group.bench_function(
+            format!("partial_decrypt128_par/{size} [n={}]", blocks.len()),
+            |b| {
+                b.iter(|| {
+                    let out: Vec<_> = blocks
+                        .par_iter()
+                        .map(|&blk| partial_decrypt128::<EXT>(sk_share, blk, DDEC_KEY).unwrap())
+                        .collect();
+                    criterion::black_box(out)
+                });
+            },
+        );
 
         // pack and serialize measured separately: each closure times exactly one operation.
         group.bench_function(format!("pack/{size}"), |b| {

@@ -4469,6 +4469,7 @@ dependencies = [
  "kms",
  "kms-grpc",
  "rand 0.8.6",
+ "rayon",
  "test-utils",
  "tfhe",
  "threshold-algebra",
