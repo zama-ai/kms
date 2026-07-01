@@ -54,9 +54,9 @@ on:
         required: true
         type: choice
         options:
-          - '1.4.17'
+          - '1.7.2'
           - 'repository'
-        default: '1.4.17'
+        default: '1.7.2'
       tkms_infra_chart_version:
         description: 'TKMS Infra chart version'
         required: true

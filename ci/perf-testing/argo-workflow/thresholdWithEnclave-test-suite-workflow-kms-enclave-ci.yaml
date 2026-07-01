@@ -317,6 +317,41 @@ spec:
                 - name: fhe-params
                   value: "Default"
 
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req1000-with-delay
+            dependencies: ["user-decrypt-euint64-req1000"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req1000-with-delay"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000 -i 5 -p 50"
+                - name: fhe-params
+                  value: "Default"
+
+
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req1000-with-delay
+            dependencies: ["public-decrypt-euint64-req1000-with-delay"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req1000-with-delay"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000 -i 5 -p 50"
+                - name: fhe-params
+                  value: "Default"
+
           # Summary report generation
           - name: generate-summary
             dependencies: [
@@ -333,7 +368,9 @@ spec:
               "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Default
               "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Default
               "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req1000",    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req1000-with-delay", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req1000-with-delay"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
             ]
             template: summary-report
             continueOn:
@@ -368,6 +405,10 @@ spec:
                 value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: test-result-14
                 value: "{{tasks.user-decrypt-euint64-req1000.outputs.parameters.test-result}}"
+              - name: test-result-15
+                value: "{{tasks.public-decrypt-euint64-req1000-with-delay.outputs.parameters.test-result}}"
+              - name: test-result-16
+                value: "{{tasks.user-decrypt-euint64-req1000-with-delay.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -606,6 +647,8 @@ spec:
         - name: test-result-12
         - name: test-result-13
         - name: test-result-14
+        - name: test-result-15
+        - name: test-result-16
         - name: tls
         - name: run_url
       script:
@@ -637,6 +680,8 @@ spec:
           echo '{{inputs.parameters.test-result-12}}' > /mnt/results/user-decrypt-euint64-req500.json
           echo '{{inputs.parameters.test-result-13}}' > /mnt/results/public-decrypt-euint64-req1000.json
           echo '{{inputs.parameters.test-result-14}}' > /mnt/results/user-decrypt-euint64-req1000.json
+          echo '{{inputs.parameters.test-result-15}}' > /mnt/results/public-decrypt-euint64-req1000-with-delay.json
+          echo '{{inputs.parameters.test-result-16}}' > /mnt/results/user-decrypt-euint64-req1000-with-delay.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -669,7 +714,9 @@ spec:
             /mnt/results/public-decrypt-euint64-req500.json \
             /mnt/results/user-decrypt-euint64-req500.json \
             /mnt/results/public-decrypt-euint64-req1000.json \
-            /mnt/results/user-decrypt-euint64-req1000.json; do
+            /mnt/results/user-decrypt-euint64-req1000.json \
+            /mnt/results/public-decrypt-euint64-req1000-with-delay.json \
+            /mnt/results/user-decrypt-euint64-req1000-with-delay.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -819,7 +866,7 @@ spec:
                   },
                   {
                     "title": ":gear: Config",
-                    "value": "• tokioWorkerThreads: 10\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
+                    "value": "• tokioWorkerThreads: 40\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
                     "short": false
                   },
                   {
@@ -842,7 +889,9 @@ spec:
                   /mnt/results/public-decrypt-euint64-req500.json \
                   /mnt/results/user-decrypt-euint64-req500.json \
                   /mnt/results/public-decrypt-euint64-req1000.json \
-                  /mnt/results/user-decrypt-euint64-req1000.json; do
+                  /mnt/results/user-decrypt-euint64-req1000.json \
+                  /mnt/results/public-decrypt-euint64-req1000-with-delay.json \
+                  /mnt/results/user-decrypt-euint64-req1000-with-delay.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
