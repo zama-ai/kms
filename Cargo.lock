@@ -4392,6 +4392,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kms-benches"
+version = "0.14.0-0"
+dependencies = [
+ "aes-prng",
+ "bc2wrap",
+ "criterion",
+ "kms",
+ "kms-grpc",
+ "rand 0.8.6",
+ "rayon",
+ "test-utils",
+ "tfhe",
+ "threshold-algebra",
+ "threshold-execution",
+ "threshold-hashing",
+ "threshold-types",
+ "tokio",
+]
+
+[[package]]
 name = "kms-core-client"
 version = "0.14.0-0"
 dependencies = [
