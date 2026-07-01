@@ -211,6 +211,9 @@ impl K8sTestContext {
             parallel_requests: 1,
             ciphertext_output_path: Some(cipher_path.clone()),
             inter_request_delay_ms: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
         }))
         .await;
 
@@ -248,6 +251,9 @@ impl K8sTestContext {
                     num_requests: 1,
                     inter_request_delay_ms: 0,
                     parallel_requests: 1,
+                    rate: None,
+                    duration: None,
+                    max_in_flight: None,
                 },
             )))
             .await;

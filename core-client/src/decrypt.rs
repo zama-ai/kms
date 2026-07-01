@@ -2,12 +2,16 @@ use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
     ContextId, EpochId, KeyId, RequestId,
-    kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext},
+    kms::v1::{
+        PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
+        UserDecryptionRequest,
+    },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::protobuf_to_alloy_domain,
 };
 use kms_lib::{
     client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest},
+    cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     cryptography::signatures::recover_address_from_ext_signature,
     engine::base::compute_public_decryption_message,
     util::key_setup::test_tools::TestingPlaintext,
@@ -539,6 +543,433 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 
     print_phased_timings(
         "user decrypt",
+        collect_elapsed,
+        &durations_to_get_responses,
+        reconstruct_elapsed,
+    );
+
+    Ok(result_vec)
+}
+
+struct CollectedUserDecrypt {
+    req_id: RequestId,
+    user_decrypt_req: UserDecryptionRequest,
+    enc_pk: UnifiedPublicEncKey,
+    enc_sk: UnifiedPrivateEncKey,
+    resp_response_vec: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
+    collect_duration: tokio::time::Duration,
+}
+
+struct SustainedRateMetrics {
+    target_rate: u64,
+    duration_secs: u64,
+    max_in_flight: usize,
+    offered: u64,
+    completed: u64,
+    failed: u64,
+    shed: u64,
+    achieved_rate: f64,
+    saturated: bool,
+    latency_stat: crate::DurationStat,
+}
+
+impl SustainedRateMetrics {
+    fn log_json(&self) {
+        let metrics = format!(
+            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}}}}",
+            self.target_rate,
+            self.duration_secs,
+            self.max_in_flight,
+            self.offered,
+            self.completed,
+            self.failed,
+            self.shed,
+            self.achieved_rate,
+            self.saturated,
+            self.latency_stat.avg.as_secs_f64() * 1000.0,
+            self.latency_stat.std_dev.as_secs_f64() * 1000.0,
+            self.latency_stat.p50.as_secs_f64() * 1000.0,
+            self.latency_stat.p95.as_secs_f64() * 1000.0,
+            self.latency_stat.p99.as_secs_f64() * 1000.0,
+            self.latency_stat.min.as_secs_f64() * 1000.0,
+            self.latency_stat.max.as_secs_f64() * 1000.0,
+        );
+        tracing::info!("SUSTAINED_RATE_METRICS {metrics}");
+        println!("SUSTAINED_RATE_METRICS {metrics}");
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn send_and_collect_user_decrypt(
+    req_id: RequestId,
+    user_decrypt_req: UserDecryptionRequest,
+    enc_pk: UnifiedPublicEncKey,
+    enc_sk: UnifiedPrivateEncKey,
+    core_endpoints_req: HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    num_parties: usize,
+    max_iter: usize,
+    num_expected_responses: usize,
+    run_start: tokio::time::Instant,
+) -> anyhow::Result<CollectedUserDecrypt> {
+    let request_start = tokio::time::Instant::now();
+
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints_req.values() {
+        let req_cloned = user_decrypt_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .user_decrypt(tonic::Request::new(req_cloned))
+                .await
+        });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("User decrypt request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("User decrypt request task panicked: {e}");
+            }
+        }
+    }
+    if req_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only {}/{} user decrypt requests succeeded, need at least {}",
+            req_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
+
+    tracing::info!(
+        "{:?} ###! Sent {}/{} user decrypt requests successfully. Since sustained start {:?}",
+        req_id.as_str(),
+        req_response_vec.len(),
+        num_parties,
+        run_start.elapsed()
+    );
+
+    let mut resp_tasks = JoinSet::new();
+    for ce in core_endpoints_resp.values() {
+        let mut cur_client = ce.clone();
+        let req_id_clone = user_decrypt_req
+            .request_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("request_id not set in user decrypt request"))?
+            .clone();
+
+        resp_tasks.spawn(async move {
+            let mut response = cur_client
+                .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for user decryption after {max_iter} retries."
+                    );
+                }
+                ctr += 1;
+                response = cur_client
+                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                    .await;
+            }
+            let resp =
+                response.map_err(|e| anyhow::anyhow!("user decryption response failed: {e}"))?;
+            Ok((req_id_clone, resp.into_inner()))
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        match resp {
+            Ok(Ok((_req_id, inner))) => {
+                resp_response_vec.push(inner);
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return user decryption result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("User decryption response task panicked: {e}");
+            }
+        }
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} user decryption responses, need at least {}",
+            resp_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
+
+    let collect_duration = request_start.elapsed();
+    tracing::info!(
+        "{:?} ###! Received {} sustained user decrypt responses. Since request start {:?}",
+        req_id.as_str(),
+        resp_response_vec.len(),
+        collect_duration
+    );
+
+    Ok(CollectedUserDecrypt {
+        req_id,
+        user_decrypt_req,
+        enc_pk,
+        enc_sk,
+        resp_response_vec,
+        collect_duration,
+    })
+}
+
+fn drain_finished_user_decrypts(
+    join_set: &mut JoinSet<Result<CollectedUserDecrypt, anyhow::Error>>,
+    collected: &mut Vec<CollectedUserDecrypt>,
+    durations: &mut Vec<tokio::time::Duration>,
+    failed: &mut u64,
+) {
+    while let Some(result) = join_set.try_join_next() {
+        match result {
+            Ok(Ok(collected_result)) => {
+                durations.push(collected_result.collect_duration);
+                collected.push(collected_result);
+            }
+            Ok(Err(e)) => {
+                *failed += 1;
+                tracing::warn!("Sustained user decrypt request failed: {e}");
+            }
+            Err(e) => {
+                *failed += 1;
+                tracing::warn!("Sustained user decrypt task panicked: {e}");
+            }
+        }
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
+    rng: &mut R,
+    rate: u64,
+    duration_secs: u64,
+    max_in_flight: usize,
+    internal_client: Arc<RwLock<Client>>,
+    ct_batch: Vec<TypedCiphertext>,
+    key_id: KeyId,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    ptxt: TypedPlaintext,
+    num_parties: usize,
+    max_iter: usize,
+    num_expected_responses: usize,
+    domain: Eip712Domain,
+) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    let total_requests = (rate * duration_secs) as usize;
+    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
+    let expected = TestingPlaintext::try_from(ptxt)?;
+
+    tracing::info!(
+        "Prebuilding {total_requests} user decrypt requests for sustained run: rate={rate}/s, duration={duration_secs}s, max_in_flight={max_in_flight}"
+    );
+    let mut requests = Vec::with_capacity(total_requests);
+    for _ in 0..total_requests {
+        let req_id = RequestId::new_random(rng);
+        let (user_decrypt_req, enc_pk, enc_sk) =
+            internal_client.write().await.user_decryption_request(
+                &domain,
+                ct_batch.clone(),
+                &req_id,
+                &key_id.into(),
+                context_id.as_ref(),
+                epoch_id.as_ref(),
+                &extra_data,
+            )?;
+        requests.push((req_id, user_decrypt_req, enc_pk, enc_sk));
+    }
+
+    let mut request_iter = requests.into_iter();
+    let mut join_set: JoinSet<Result<CollectedUserDecrypt, anyhow::Error>> = JoinSet::new();
+    let mut collected = Vec::with_capacity(total_requests);
+    let mut durations_to_get_responses = Vec::with_capacity(total_requests);
+    let mut offered = 0_u64;
+    let mut failed = 0_u64;
+    let mut shed = 0_u64;
+    let mut saturated = false;
+
+    let run_start = tokio::time::Instant::now();
+    let deadline = run_start + tokio::time::Duration::from_secs(duration_secs);
+    let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(5));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut launch_accumulator = 0_u64;
+
+    while tokio::time::Instant::now() < deadline {
+        ticker.tick().await;
+        drain_finished_user_decrypts(
+            &mut join_set,
+            &mut collected,
+            &mut durations_to_get_responses,
+            &mut failed,
+        );
+
+        launch_accumulator = launch_accumulator.saturating_add(rate);
+        let launches = launch_accumulator / 200;
+        launch_accumulator %= 200;
+
+        for _ in 0..launches {
+            let Some((req_id, user_decrypt_req, enc_pk, enc_sk)) = request_iter.next() else {
+                break;
+            };
+            offered += 1;
+            if join_set.len() >= max_in_flight {
+                // Shed: client drops this arrival because the in-flight cap says saturated.
+                shed += 1;
+                saturated = true;
+                continue;
+            }
+            let core_endpoints_req = core_endpoints_req.clone();
+            let core_endpoints_resp = core_endpoints_resp.clone();
+            join_set.spawn(send_and_collect_user_decrypt(
+                req_id,
+                user_decrypt_req,
+                enc_pk,
+                enc_sk,
+                core_endpoints_req,
+                core_endpoints_resp,
+                num_parties,
+                max_iter,
+                num_expected_responses,
+                run_start,
+            ));
+        }
+    }
+
+    let drain_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
+    while !join_set.is_empty() && tokio::time::Instant::now() < drain_deadline {
+        if let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(collected_result)) => {
+                    durations_to_get_responses.push(collected_result.collect_duration);
+                    collected.push(collected_result);
+                }
+                Ok(Err(e)) => {
+                    failed += 1;
+                    tracing::warn!("Sustained user decrypt request failed: {e}");
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!("Sustained user decrypt task panicked: {e}");
+                }
+            }
+        }
+    }
+    if !join_set.is_empty() {
+        saturated = true;
+        let remaining = join_set.len();
+        failed += remaining as u64;
+        tracing::warn!(
+            "Sustained user decrypt drain timed out with {remaining} requests still in flight"
+        );
+        join_set.abort_all();
+    }
+
+    let collect_elapsed = run_start.elapsed();
+    let completed = collected.len() as u64;
+    let metrics = SustainedRateMetrics {
+        target_rate: rate,
+        duration_secs,
+        max_in_flight,
+        offered,
+        completed,
+        failed,
+        shed,
+        achieved_rate: completed as f64 / collect_elapsed.as_secs_f64(),
+        saturated,
+        latency_stat: crate::compute_stat_on_durations(&durations_to_get_responses),
+    };
+    metrics.log_json();
+
+    let reconstruct_start = tokio::time::Instant::now();
+    let mut recon_tasks: JoinSet<Result<(RequestId, String), anyhow::Error>> = JoinSet::new();
+    for CollectedUserDecrypt {
+        req_id,
+        user_decrypt_req,
+        enc_pk,
+        enc_sk,
+        resp_response_vec,
+        collect_duration: _,
+    } in collected
+    {
+        let internal_client = internal_client.clone();
+        recon_tasks.spawn(async move {
+            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req)
+                .map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
+            let eip712_domain = protobuf_to_alloy_domain(
+                user_decrypt_req
+                    .domain
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?,
+            )?;
+            let plaintexts = internal_client
+                .read()
+                .await
+                .process_user_decryption_resp(
+                    &client_request,
+                    &eip712_domain,
+                    &enc_pk,
+                    &enc_sk,
+                    None,
+                    &resp_response_vec,
+                )
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "Error: User decryption response is NOT valid! Reason: {}",
+                        e
+                    )
+                })?;
+
+            let mut decoded = plaintexts.into_iter().map(TestingPlaintext::try_from);
+            let first = decoded
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("no plaintexts in user decryption response"))??;
+            anyhow::ensure!(
+                first == expected,
+                "user decryption result mismatch: expected {expected:?}, got {first:?}"
+            );
+            for pt in decoded {
+                let pt = pt?;
+                anyhow::ensure!(
+                    pt == expected,
+                    "user decryption result mismatch: expected {expected:?}, got {pt:?}"
+                );
+            }
+
+            Ok((req_id, format!("User decrypted Plaintext {first:?}")))
+        });
+    }
+
+    let mut result_vec = Vec::with_capacity(durations_to_get_responses.len());
+    while let Some(res) = recon_tasks.join_next().await {
+        let (req_id, msg) = res??;
+        result_vec.push((Some(req_id), msg));
+    }
+    let reconstruct_elapsed = reconstruct_start.elapsed();
+
+    print_phased_timings(
+        "sustained user decrypt",
         collect_elapsed,
         &durations_to_get_responses,
         reconstruct_elapsed,

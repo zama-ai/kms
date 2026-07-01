@@ -1013,6 +1013,9 @@ fn cipher_params(
         parallel_requests: 1,
         ciphertext_output_path,
         inter_request_delay_ms: 0,
+        rate: None,
+        duration: None,
+        max_in_flight: None,
     }
 }
 
@@ -1187,6 +1190,9 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1194,6 +1200,9 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
         })),
     ];
 
@@ -1256,6 +1265,9 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1263,6 +1275,9 @@ async fn integration_test_commands(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
         })),
     ];
 
@@ -3198,6 +3213,9 @@ async fn test_threshold_reshare() -> Result<()> {
             ciphertext_output_path: None,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
         })),
         200,
     );

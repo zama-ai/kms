@@ -19,7 +19,8 @@ use crate::backup::{
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{
-    PubDecVerificationMaterial, do_public_decrypt, do_user_decrypt, get_public_decrypt_responses,
+    PubDecVerificationMaterial, do_public_decrypt, do_user_decrypt, do_user_decrypt_sustained,
+    get_public_decrypt_responses,
 };
 use crate::keygen::{
     do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
@@ -347,6 +348,48 @@ fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
         ));
     }
 
+    match (cf.get_rate(), cf.get_duration()) {
+        (Some(_), None) => {
+            return Err(anyhow::anyhow!(
+                "--duration is required when --rate is set."
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(anyhow::anyhow!(
+                "--rate is required when --duration is set."
+            ));
+        }
+        (Some(rate), Some(duration)) => {
+            if rate == 0 {
+                return Err(anyhow::anyhow!("Rate cannot be zero."));
+            }
+            if duration == 0 {
+                return Err(anyhow::anyhow!("Duration cannot be zero."));
+            }
+            if cf.get_num_requests() != 1 {
+                return Err(anyhow::anyhow!(
+                    "--num-requests is a burst-mode option and cannot be used with --rate."
+                ));
+            }
+            if cf.get_parallel_requests() != 0 {
+                return Err(anyhow::anyhow!(
+                    "--parallel-requests is a burst-mode option and cannot be used with --rate."
+                ));
+            }
+            if !cf.get_inter_request_delay_ms().is_zero() {
+                return Err(anyhow::anyhow!(
+                    "--inter-request-delay-ms is a burst-mode option and cannot be used with --rate."
+                ));
+            }
+            if let Some(max_in_flight) = cf.get_max_in_flight()
+                && max_in_flight == 0
+            {
+                return Err(anyhow::anyhow!("Max in-flight cannot be zero."));
+            }
+        }
+        (None, None) => {}
+    }
+
     Ok(())
 }
 
@@ -599,6 +642,27 @@ impl CipherArguments {
             }
         }
     }
+
+    pub fn get_rate(&self) -> Option<u64> {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.rate,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.rate,
+        }
+    }
+
+    pub fn get_duration(&self) -> Option<u64> {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.duration,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.duration,
+        }
+    }
+
+    pub fn get_max_in_flight(&self) -> Option<usize> {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.max_in_flight,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.max_in_flight,
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -653,6 +717,18 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
+    /// Sustained request launch rate, in requests per second. Requires --duration.
+    #[serde(skip)]
+    #[clap(long)]
+    pub rate: Option<u64>,
+    /// Sustained test duration, in seconds. Requires --rate.
+    #[serde(skip)]
+    #[clap(long)]
+    pub duration: Option<u64>,
+    /// Maximum number of in-flight requests allowed during sustained mode.
+    #[serde(skip)]
+    #[clap(long)]
+    pub max_in_flight: Option<usize>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -673,6 +749,15 @@ pub struct CipherFile {
     /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
+    /// Sustained request launch rate, in requests per second. Requires --duration.
+    #[clap(long)]
+    pub rate: Option<u64>,
+    /// Sustained test duration, in seconds. Requires --rate.
+    #[clap(long)]
+    pub duration: Option<u64>,
+    /// Maximum number of in-flight requests allowed during sustained mode.
+    #[clap(long)]
+    pub max_in_flight: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2010,25 +2095,52 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
-            do_user_decrypt(
-                &mut rng,
-                cipher_args.get_num_requests(),
-                internal_client,
-                ct_batch,
-                key_id,
-                context_id,
-                epoch_id,
-                &core_endpoints_req,
-                &core_endpoints_resp,
-                ptxt,
-                num_parties,
-                max_iter,
-                num_expected_responses,
-                cipher_args.get_inter_request_delay_ms(),
-                cipher_args.get_parallel_requests(),
-                cc_conf.default_domain()?,
-            )
-            .await?
+            if let (Some(rate), Some(duration)) =
+                (cipher_args.get_rate(), cipher_args.get_duration())
+            {
+                let max_in_flight = cipher_args
+                    .get_max_in_flight()
+                    .unwrap_or_else(|| (rate as usize).saturating_mul(10).max(1));
+                do_user_decrypt_sustained(
+                    &mut rng,
+                    rate,
+                    duration,
+                    max_in_flight,
+                    internal_client,
+                    ct_batch,
+                    key_id,
+                    context_id,
+                    epoch_id,
+                    &core_endpoints_req,
+                    &core_endpoints_resp,
+                    ptxt,
+                    num_parties,
+                    max_iter,
+                    num_expected_responses,
+                    cc_conf.default_domain()?,
+                )
+                .await?
+            } else {
+                do_user_decrypt(
+                    &mut rng,
+                    cipher_args.get_num_requests(),
+                    internal_client,
+                    ct_batch,
+                    key_id,
+                    context_id,
+                    epoch_id,
+                    &core_endpoints_req,
+                    &core_endpoints_resp,
+                    ptxt,
+                    num_parties,
+                    max_iter,
+                    num_expected_responses,
+                    cipher_args.get_inter_request_delay_ms(),
+                    cipher_args.get_parallel_requests(),
+                    cc_conf.default_domain()?,
+                )
+                .await?
+            }
         }
         CCCommand::KeyGen(KeyGenParameters {
             preproc_id,
@@ -2749,18 +2861,24 @@ fn print_phased_timings(
     let num_results = response_durations.len();
     let response_duration_stat = compute_stat_on_durations(response_durations);
 
-    tracing::info!("Latency for {cmd}: {}", response_duration_stat);
+    let latency_line = format!("Latency for {cmd}: {response_duration_stat}");
+    tracing::info!("{latency_line}");
+    println!("{latency_line}");
 
     // This is the line the CI perf harness parses ("Throughput: N requests/s"). Collection only, i.e. the KMS serving
     // rate, excluding client-side reconstruction.
-    tracing::info!(
+    let throughput_line = format!(
         "Collected {num_results} results for {cmd} in {collect_elapsed:?}. Throughput: {} requests/s",
-        num_results as f64 / collect_elapsed.as_secs_f64()
+        num_results as f64 / collect_elapsed.as_secs_f64(),
     );
+    tracing::info!("{throughput_line}");
+    println!("{throughput_line}");
 
-    tracing::info!(
+    let reconstruction_line = format!(
         "Client-side reconstruction + verification for {cmd} of {num_results} results took {reconstruct_elapsed:?}"
     );
+    tracing::info!("{reconstruction_line}");
+    println!("{reconstruction_line}");
 }
 
 #[cfg(test)]
@@ -2824,6 +2942,68 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    fn test_cipher_parameters() -> CipherParameters {
+        CipherParameters {
+            to_encrypt: "0x1".to_string(),
+            data_type: FheType::Ebool,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id: derive_request_id("sustained_rate_args").unwrap().into(),
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            inter_request_delay_ms: 0,
+            ciphertext_output_path: None,
+            parallel_requests: 0,
+            rate: None,
+            duration: None,
+            max_in_flight: None,
+        }
+    }
+
+    #[test]
+    fn test_sustained_rate_args_validation() {
+        let assert_error_contains = |params: CipherParameters, expected: &str| {
+            let err = validate_cipher_args(&CipherArguments::FromArgs(params)).unwrap_err();
+            assert!(err.to_string().contains(expected));
+        };
+
+        let mut params = test_cipher_parameters();
+        params.rate = Some(10);
+        assert_error_contains(params, "--duration");
+
+        let mut params = test_cipher_parameters();
+        params.duration = Some(10);
+        assert_error_contains(params, "--rate");
+
+        let mut params = test_cipher_parameters();
+        params.rate = Some(10);
+        params.duration = Some(10);
+        validate_cipher_args(&CipherArguments::FromArgs(params.clone())).unwrap();
+
+        params.num_requests = 2;
+        assert_error_contains(params, "--num-requests");
+
+        let mut params = test_cipher_parameters();
+        params.rate = Some(10);
+        params.duration = Some(10);
+        params.parallel_requests = 1;
+        assert_error_contains(params, "--parallel-requests");
+
+        let mut params = test_cipher_parameters();
+        params.rate = Some(10);
+        params.duration = Some(10);
+        params.inter_request_delay_ms = 1;
+        assert_error_contains(params, "--inter-request-delay-ms");
+
+        let mut params = test_cipher_parameters();
+        params.rate = Some(10);
+        params.duration = Some(10);
+        params.max_in_flight = Some(0);
+        assert_error_contains(params, "Max in-flight");
     }
 
     #[test]
