@@ -2861,18 +2861,24 @@ fn print_phased_timings(
     let num_results = response_durations.len();
     let response_duration_stat = compute_stat_on_durations(response_durations);
 
-    tracing::info!("Latency for {cmd}: {}", response_duration_stat);
+    let latency_line = format!("Latency for {cmd}: {response_duration_stat}");
+    tracing::info!("{latency_line}");
+    println!("{latency_line}");
 
     // This is the line the CI perf harness parses ("Throughput: N requests/s"). Collection only, i.e. the KMS serving
     // rate, excluding client-side reconstruction.
-    tracing::info!(
+    let throughput_line = format!(
         "Collected {num_results} results for {cmd} in {collect_elapsed:?}. Throughput: {} requests/s",
-        num_results as f64 / collect_elapsed.as_secs_f64()
+        num_results as f64 / collect_elapsed.as_secs_f64(),
     );
+    tracing::info!("{throughput_line}");
+    println!("{throughput_line}");
 
-    tracing::info!(
+    let reconstruction_line = format!(
         "Client-side reconstruction + verification for {cmd} of {num_results} results took {reconstruct_elapsed:?}"
     );
+    tracing::info!("{reconstruction_line}");
+    println!("{reconstruction_line}");
 }
 
 #[cfg(test)]

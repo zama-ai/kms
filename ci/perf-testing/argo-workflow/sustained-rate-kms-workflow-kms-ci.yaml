@@ -27,8 +27,12 @@ spec:
     parameters:
     - name: tls
       value: "disabled"
+    - name: client-logs
+      value: "enabled"
     - name: run_url
       value: "Manually triggered"
+    - name: fhe-params
+      value: "Default"
     - name: duration
       value: "90"
     - name: max-in-flight
@@ -37,6 +41,8 @@ spec:
       value: "euint64"
     - name: batch-size
       value: "1"
+    - name: s3-config-map-name
+      value: "kms-ci-1"
     # TODO: parameterize num-parties, num-majority, and num-reconstruct together
     # with the CI deployment. Useful target: 4 parties with 2/3 thresholds in
     # addition to the current 13-party 5/9 setup.
@@ -234,7 +240,7 @@ spec:
             num_majority=${NUM_MAJORITY}
             num_reconstruct=${NUM_RECONSTRUCT}
             decryption_mode="${DECRYPTION_MODE}"
-            fhe_params="Default"
+            fhe_params="${FHE_PARAMETER:=Default}"
             [[cores]]
             party_id=1
             address="kms-core-1-core-1:50100"
@@ -305,15 +311,19 @@ spec:
 
           mkdir -p /tmp/artifacts
           write_config
+          client_logs_arg=""
+          if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
+            client_logs_arg="--logs"
+          fi
 
-          ./bin/kms-core-client --logs -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
+          ./bin/kms-core-client ${client_logs_arg} -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
           preproc_id=$(grep -o '"request_id": "[^"]*"' /tmp/preproc_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
           if [ -z "$preproc_id" ]; then
             echo "Failed to extract udec preprocessing request id"
             exit 1
           fi
 
-          ./bin/kms-core-client --logs -f config.toml insecure-key-gen -i "$preproc_id" 2>&1 | tee /tmp/keygen_logs.txt
+          ./bin/kms-core-client ${client_logs_arg} -f config.toml insecure-key-gen -i "$preproc_id" 2>&1 | tee /tmp/keygen_logs.txt
           key_id=$(grep -o '"request_id": "[^"]*"' /tmp/keygen_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
           if [ -z "$key_id" ]; then
             echo "Failed to extract udec key id"
@@ -326,7 +336,7 @@ spec:
           - name: S3_ENDPOINT
             valueFrom:
               configMapKeyRef:
-                name: kms-ci-1
+                name: '{{workflow.parameters.s3-config-map-name}}'
                 key: CORE_CLIENT__S3_ENDPOINT
           - name: NUM_MAJORITY
             value: '5'
@@ -334,13 +344,15 @@ spec:
             value: '9'
           - name: DECRYPTION_MODE
             value: 'NoiseFloodSmall'
+          - name: FHE_PARAMETER
+            value: '{{workflow.parameters.fhe-params}}'
         resources: &core-client-resources
           requests:
-            memory: "24Gi"
-            cpu: "4"
+            memory: "96Gi"
+            cpu: "64"
           limits:
-            memory: "24Gi"
-            cpu: "4"
+            memory: "96Gi"
+            cpu: "64"
 
     - name: run-udec-rate
       inputs:
@@ -369,7 +381,7 @@ spec:
             num_majority=${NUM_MAJORITY}
             num_reconstruct=${NUM_RECONSTRUCT}
             decryption_mode="${DECRYPTION_MODE}"
-            fhe_params="Default"
+            fhe_params="${FHE_PARAMETER:=Default}"
             [[cores]]
             party_id=1
             address="kms-core-1-core-1:50100"
@@ -442,7 +454,7 @@ spec:
           mkdir -p /tmp/artifacts
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
@@ -457,8 +469,12 @@ spec:
           echo "Starting test: $test_command"
           echo "=========================================="
 
+          client_logs_arg=""
+          if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
+            client_logs_arg="--logs"
+          fi
           start_time=$(date +%s)
-          ./bin/kms-core-client --logs -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)
           duration=$((end_time - start_time))
@@ -476,7 +492,7 @@ spec:
             capacity_ok="false"
           fi
 
-          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": %s\n  }\n}\n' \
+          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": %s\n  }\n}\n' \
             "$test_name" \
             "$test_command" \
             "$status" \
@@ -538,6 +554,7 @@ spec:
           echo "=========================================="
           echo "Report generated: $(date -u)"
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
+          echo "FHE params: {{workflow.parameters.fhe-params}}"
           echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
 
@@ -629,7 +646,7 @@ spec:
                   },
                   {
                     "title": "Config",
-                    "value": "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}",
+                    "value": "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request, fhe-params={{workflow.parameters.fhe-params}}, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}",
                     "short": false
                   },
                   {

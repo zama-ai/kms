@@ -32,6 +32,19 @@ on:
           - 'thresholdWithEnclave'
           - 'centralized'
           - 'centralizedWithEnclave'
+      test_suite:
+        description: 'Performance test suite'
+        required: true
+        default: 'burst'
+        type: choice
+        options:
+          - 'burst'
+          - 'sustained-rate-udec'
+      client_logs:
+        description: 'Enable core-client tracing logs during perf tests'
+        required: true
+        default: true
+        type: boolean
       fhe_params:
         description: 'FHE parameters for preprocessing and keygen'
         required: true
@@ -169,6 +182,8 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
           TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
+          TEST_SUITE: ${{ inputs.test_suite || 'burst' }}
+          CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'true' }}
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
@@ -178,6 +193,8 @@ jobs:
           {
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
             echo "TLS=${TLS}"
+            echo "TEST_SUITE=${TEST_SUITE}"
+            echo "CLIENT_LOGS=${CLIENT_LOGS}"
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
             echo "NAMESPACE=${NAMESPACE}"
@@ -204,6 +221,29 @@ jobs:
             echo "Using standard threshold configuration..."
             echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
+
+      - name: Validate perf test suite selection
+        run: |
+          ###################################################################
+          # Validate test-suite/deployment combinations before deploying.
+          ###################################################################
+          case "${TEST_SUITE}" in
+            burst)
+              echo "Using existing burst perf suite."
+              ;;
+            sustained-rate-udec)
+              if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+                echo "ERROR: sustained-rate-udec supports only threshold deployment types."
+                echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
+                exit 1
+              fi
+              echo "Using sustained-rate udec perf suite."
+              ;;
+            *)
+              echo "ERROR: Unknown test_suite=${TEST_SUITE}."
+              exit 1
+              ;;
+          esac
 
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
@@ -362,18 +402,41 @@ jobs:
           else
             TLS_STATUS="disabled"
           fi
+          if [[ "${CLIENT_LOGS}" == "true" ]]; then
+            CLIENT_LOGS_STATUS="enabled"
+          else
+            CLIENT_LOGS_STATUS="disabled"
+          fi
+
+          if [[ "${TEST_SUITE}" == "sustained-rate-udec" ]]; then
+            WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml"
+            if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+              S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
+            else
+              S3_CONFIG_MAP_NAME="kms-ci-1"
+            fi
+            EXTRA_SUBMIT_ARGS=(
+              -p "fhe-params=${FHE_PARAMS}"
+              -p "s3-config-map-name=${S3_CONFIG_MAP_NAME}"
+            )
+          else
+            WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/${DEPLOYMENT_TYPE}-test-suite-workflow-${PATH_SUFFIX}.yaml"
+            EXTRA_SUBMIT_ARGS=(-p "fhe-params=${FHE_PARAMS}")
+          fi
+
           # Update the workflow template with the current image tag
-          echo "Updating workflow template — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
+          echo "Updating workflow template ${WORKFLOW_TEMPLATE} — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
           sed -i \
             -e "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" \
             -e "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
-            ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml
+            "${WORKFLOW_TEMPLATE}"
 
           echo "Submitting Argo workflow..."
           argo submit -n argo \
-            ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+            "${WORKFLOW_TEMPLATE}" \
             -p tls="${TLS_STATUS}" \
-            -p fhe-params="${FHE_PARAMS}" \
+            -p client-logs="${CLIENT_LOGS_STATUS}" \
+            "${EXTRA_SUBMIT_ARGS[@]}" \
             -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
 
           echo "Streaming workflow logs..."
