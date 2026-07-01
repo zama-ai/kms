@@ -181,6 +181,13 @@ cargo run -- --help
 cargo run -- -f config/client_local_threshold.toml crs-gen
 ```
 
+When using the core client for custodian backup CLI management instead use:
+```
+cd core-client
+cargo run -- --help
+cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context
+```
+
 More: [docs/guides/core_client.md](../docs/guides/core_client.md).
 
 ## Git / LFS

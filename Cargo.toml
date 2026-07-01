@@ -115,6 +115,7 @@ aws-lc-rs = { version = "=1.17.0" } # AWS-LC cryptographic library - LOW RISK: O
 aws-nitro-enclaves-nsm-api = { version = "=0.5.1" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
 aws-sdk-kms = { version = "=1.111.0", default-features = false, features = ["default-https-client", "rt-tokio"] }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
 aws-sdk-s3 = { version = "=1.137.0", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
+aws-smithy-types = { version = "=1.5.0" }  # AWS Smithy types (used for low risk base64 implementation) - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.9", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised

@@ -228,14 +228,29 @@ where
             )
         })?;
 
-        // Note that care must be taken in the order of getting locks here
-        // Use meta store as sync point
         let permit = lock_entry_in_meta_store(
             &self.custodian_meta_store,
             &context_id,
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await?;
+        // Take a write-lock to ensure that no other operations can concurrency modify the meta store during destruction
+        let meta_store_guard = self.custodian_meta_store.write().await;
+        // Ensure we are not destroying the only backup vault there exists.
+        if meta_store_guard
+            .get_successful_completed_request_ids()
+            .len()
+            < 2
+        {
+            return Err(MetricedError::new(
+                OP_DESTROY_CUSTODIAN_CONTEXT,
+                Some(context_id),
+                anyhow::anyhow!(
+                    "Cannot destroy custodian context with id {context_id} since it is the only one left in the meta store"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
@@ -265,7 +280,7 @@ where
             )
         })?;
         delete_in_meta_store(
-            &self.custodian_meta_store,
+            meta_store_guard,
             permit,
             "Failed to delete context".to_string(),
             OP_DESTROY_CUSTODIAN_CONTEXT,
@@ -641,12 +656,6 @@ where
             )
         })?;
 
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        self.inner
-            .crypto_storage
-            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
-            .await;
-
         Ok(Response::new(Empty {}))
     }
 
@@ -899,12 +908,6 @@ where
             )
         })?;
 
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        self.inner
-            .crypto_storage
-            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
-            .await;
-
         Ok(Response::new(Empty {}))
     }
 
@@ -1030,7 +1033,7 @@ mod tests {
     use super::*;
     use crate::{
         backup::{
-            custodian::{Custodian, HEADER, InternalCustodianSetupMessage},
+            custodian::{Custodian, DSEP_BACKUP_CUSTODIAN, HEADER, InternalCustodianSetupMessage},
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
@@ -1038,7 +1041,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
-            signcryption::UnifiedUnsigncryptionKey,
+            signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
         },
         engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -1674,9 +1677,10 @@ mod tests {
             };
             setup_msgs.push(cur_msg.try_into().unwrap());
         }
+        let first_context_id = RequestId::from_bytes([4u8; 32]);
+        let second_context_id = RequestId::from_bytes([42u8; 32]);
         // Create a new custodian context
         let (context_manager, first_context_id) = {
-            let first_context_id = RequestId::from_bytes([4u8; 32]);
             let first_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
                 custodian_context_id: Some(first_context_id.into()),
@@ -1753,7 +1757,8 @@ mod tests {
             });
 
             let response = context_manager.destroy_custodian_context(request).await;
-            // This should fail since it is the current active context
+            // This should fail since it is the only custodian context left and we
+            // require at least 2 contexts to be present before allowing a deletion.
             assert!(response.is_err());
         }
 
@@ -1774,7 +1779,6 @@ mod tests {
             assert!(response.is_err());
 
             // Now try with a different context ID (should succeed)
-            let second_context_id = RequestId::from_bytes([42u8; 32]);
             let second_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
                 custodian_context_id: Some(second_context_id.into()),
@@ -1788,7 +1792,8 @@ mod tests {
             let response = context_manager.new_custodian_context(request).await;
             assert!(response.is_ok());
         }
-        // now try again to delete the first context
+        // now try again to delete the first context. This should succeed since
+        // there are now 2 contexts present.
         {
             let request = Request::new(DestroyCustodianContextRequest {
                 context_id: Some(first_context_id.into()),
@@ -1810,6 +1815,31 @@ mod tests {
                 .await
                 .is_err(),
                 "Custodian context was not deleted"
+            );
+        }
+        // Deleting the first context brought us back down to a single context.
+        // Attempting to delete that last remaining context must fail, since we
+        // require at least 2 contexts to be present before allowing a deletion.
+        {
+            let request = Request::new(DestroyCustodianContextRequest {
+                context_id: Some(second_context_id.into()),
+            });
+
+            let response = context_manager.destroy_custodian_context(request).await;
+            assert!(response.is_err());
+
+            // and the last context should still be present in storage
+            let pub_storage = Arc::clone(&crypto_storage.public_storage);
+            let guarded_pub_storage = pub_storage.lock().await;
+            assert!(
+                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
+                    &*guarded_pub_storage,
+                    &second_context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .is_ok(),
+                "Last remaining custodian context should not have been deleted"
             );
         }
     }
@@ -1860,9 +1890,14 @@ mod tests {
         .unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
+            server_verf_key.clone(),
             recovery_material.payload.cts,
         )
         .unwrap();
+        // The constructed request must round-trip the operator's verification key.
+        assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_key);
+        // And the signcryption destined for custodian 1 must validate under that
+        // custodian's unsigncryption key, confirming the backup material was sealed correctly.
         let custodian_id = custodian1.verification_key().verf_key_id();
         let unsign_key = UnifiedUnsigncryptionKey::new(
             custodian1.public_dec_key(),
@@ -1870,10 +1905,14 @@ mod tests {
             &server_verf_key,
             &custodian_id,
         );
+        let role_1_ct = internal_rec_req
+            .signcryptions()
+            .remove(&Role::indexed_from_one(1))
+            .expect("recovery request must contain a ciphertext for custodian role 1");
         assert!(
-            internal_rec_req
-                .is_valid(Role::indexed_from_one(1), &unsign_key)
-                .unwrap()
+            unsign_key
+                .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &role_1_ct.signcryption)
+                .is_ok()
         );
     }
 

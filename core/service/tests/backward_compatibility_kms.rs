@@ -890,6 +890,7 @@ fn test_internal_recovery_request(
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let (verification_key, _signing_key) = gen_sig_keys(&mut rng);
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.amount {
         let cur_role = Role::indexed_from_one(role_j as usize);
@@ -902,7 +903,7 @@ fn test_internal_recovery_request(
         };
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
-    let new_versionized = InternalRecoveryRequest::new(enc_key, cts).unwrap();
+    let new_versionized = InternalRecoveryRequest::new(enc_key, verification_key, cts).unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
