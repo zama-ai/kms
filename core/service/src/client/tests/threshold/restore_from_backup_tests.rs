@@ -354,13 +354,14 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
         res??;
     }
 
-    // Wait for CRS generation to complete
     for client in clients.values() {
         retrying_poll(
             client.clone(),
             req_id.into(),
             "CRS gen result",
-            PollConfig::default(),
+            // A real (non-insecure) threshold CRS gen routinely takes longer than
+            // the short default budget
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_crs_gen_result(request).await }),
         )
         .await?;

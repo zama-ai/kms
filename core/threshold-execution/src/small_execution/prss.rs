@@ -14,7 +14,7 @@ use crate::{
         runtime::sessions::{
             base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
-        small_execution::prf::{PhiAes, chi, phi, psi},
+        small_execution::prf::{PhiAes, chi, phi_range, psi},
     },
 };
 use algebra::{
@@ -26,6 +26,7 @@ use anyhow::Context;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::slice::ParallelSliceMut;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -628,40 +629,57 @@ where
         let prss_setup = self.prss_setup.clone();
         let mask_ctr = self.counters.mask_ctr;
 
-        // Each element consumes two distinct phi counters, matching `amount` sequential
-        // mask_next() calls. Element `idx` uses `ctr = mask_ctr + 2*idx` (and `ctr + 1`). The
-        // counter pairs must NOT overlap between elements: `mask_ctr + idx` would make adjacent
-        // elements share a phi value, diverging from the scalar path and reducing the
-        // independence of the noise-flooding masks.
-        let res = spawn_compute_bound(move || {
-        (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
-        let ctr = mask_ctr + 2 * idx as u128;
-        let mut res = Z::ZERO;
-        for (i, set) in prss_setup.sets.iter().enumerate() {
-            if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = prfs.get(i) {
-                    let phi0 = phi(&aes_prf.phi_aes, ctr , bd1)?;
-                    let phi1 = phi(&aes_prf.phi_aes, ctr + 1, bd1)?;
-                    let phi = phi0 + phi1;
+        // Element `idx` is the f_A-weighted sum over all sets of
+        // phi(mask_ctr+2*idx) + phi(mask_ctr+2*idx+1). This matches repeated
+        // scalar calls while still batching each chunk's AES-PRF evaluations.
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            let chunk = (*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).max(1);
+            let mut res = vec![Z::ZERO; amount];
+            res.par_chunks_mut(chunk)
+                .enumerate()
+                .try_for_each(|(chunk_idx, out)| -> anyhow::Result<()> {
+                    let lo = chunk_idx * chunk;
+                    for (i, set) in prss_setup.sets.iter().enumerate() {
+                        if !set.parties.contains(&party_role) {
+                            return Err(anyhow_error_and_log(format!(
+                                "Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!"
+                            )));
+                        }
+                        let aes_prf = prfs.get(i).ok_or_else(|| {
+                            anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                        })?;
+                        // compute f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                        let f_a = set.f_a_points[&party_role];
 
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
-                    let f_a = set.f_a_points[&party_role];
+                        // One pipelined AES call for the chunk's counter range. Element `idx`
+                        // consumes two distinct phi counters, matching one scalar mask_next().
+                        let phi_vals = phi_range(
+                            &aes_prf.phi_aes,
+                            mask_ctr + 2 * lo as u128,
+                            2 * out.len(),
+                            bd1,
+                        )?;
 
-                    //Leave it to the Ring's implementation to deal with negative values
-                    res += f_a * Z::from_i128(phi);
-                } else {
-                    return Err(anyhow_error_and_log(
-                        "PRFs not properly initialized!".to_string(),
-                    ));
-                }
-            } else {
-                return Err(anyhow_error_and_log(format!("Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!")));
-            }
-        }
-            Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
-    }).instrument(tracing::Span::current()).await??;
+                        for (j, out_elem) in out.iter_mut().enumerate() {
+                            let phi = phi_vals[2 * j] + phi_vals[2 * j + 1];
+                            // mul_by_i128 scales by the signed scalar via from_i128, so it is a
+                            // cheap coefficient scale for ResiduePoly yet still correct for base
+                            // rings whose modulus does not divide 2^128 (e.g. the BGV prime
+                            // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
+                            // negative phi on such rings (the wrong large mask would wrap mod q and
+                            // corrupt the decrypted plaintext).
+                            *out_elem += f_a.mul_by_i128(phi);
+                        }
+                    }
+                    Ok(())
+                })?;
+            Ok(res)
+        })
+        .instrument(tracing::Span::current())
+        .await??;
 
-        // increase counter by two for each element generated, since we have two phi calls above
+        // Advance the counter by two per element, matching one mask_next() call per
+        // element (each consumes two phi counters).
         self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)
@@ -680,30 +698,42 @@ where
 
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = prss_ctr + idx`.
-        let res = spawn_compute_bound(move ||{
-            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
-        let ctr = prss_ctr + idx as u128;
-        let mut res = Z::ZERO;
-        for (i, set) in prss_setup.sets.iter().enumerate() {
-            if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = prfs.get(i) {
-                    let psi = psi(&aes_prf.psi_aes, ctr)?;
-
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the precomputed f_a_points (indexed from zero)
-                    let f_a = set.f_a_points[&party_role];
-
-                    res += f_a * psi;
-                } else {
-                    return Err(anyhow_error_and_log(
-                        "PRFs not properly initialized!".to_string(),
-                    ));
-                }
-            } else {
-                return Err(anyhow_error_and_log(format!("Called prss.next() with party role {party_role} that is not in a precomputed set of parties!")));
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
             }
-        }
-        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
-    }).instrument(tracing::Span::current()).await??;
+
+            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
+            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                set_data.push((aes_prf, set.f_a_points[&party_role]));
+            }
+
+            (0..amount)
+                .into_par_iter()
+                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .map(|idx| {
+                    let ctr = prss_ctr + idx as u128;
+                    let mut res = Z::ZERO;
+                    for &(aes_prf, f_a) in &set_data {
+                        let psi = psi(&aes_prf.psi_aes, ctr)?;
+                        res += f_a * psi;
+                    }
+                    Ok(res)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
 
         self.counters.prss_ctr += amount as u128;
 
@@ -730,32 +760,52 @@ where
 
         // Independent per-counter elements, assembled in parallel. Element `idx`
         // uses `ctr = przs_ctr + idx`.
-        let res = spawn_compute_bound(move ||{
-            (0..amount).into_par_iter().with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).map(|idx| {
-        let ctr = przs_ctr + idx as u128;
-        let mut res = Z::ZERO;
-        for (i, set) in prss_setup.sets.iter().enumerate() {
-            if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = prfs.get(i) {
-                    for j in 1..=threshold {
-                        let chi = chi(&aes_prf.chi_aes, ctr, j)?;
-                        // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
-                        let f_a = set.f_a_points[&party_role];
-                        // power of alpha_i^j
-                        let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
-                        res += f_a * alpha_j * chi;
-                    }
-                } else {
-                    return Err(anyhow_error_and_log(
-                        "PRFs not properly initialized!".to_string(),
-                    ));
-                }
-            } else {
-                return Err(anyhow_error_and_log(format!("Called przs.next() with party role {party_role} that is not in a precomputed set of parties!")));
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
             }
-        }
-        Ok(res)}).collect::<anyhow::Result<Vec<_>>>()
-}).instrument(tracing::Span::current()).await??;
+
+            // Per-set invariants, computed once instead of per element: the products
+            // f_A(alpha_i) * alpha_i^j (for j in 1..=threshold) do not depend on the counter.
+            let mut set_data: Vec<(&PrfAes, Vec<Z>)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called przs.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                let f_a = set.f_a_points[&party_role];
+                let mut fa_alpha = Vec::with_capacity(threshold as usize);
+                for j in 1..=threshold {
+                    // power of alpha_i^j
+                    let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
+                    fa_alpha.push(f_a * alpha_j);
+                }
+                set_data.push((aes_prf, fa_alpha));
+            }
+
+            (0..amount)
+                .into_par_iter()
+                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .map(|idx| {
+                    let ctr = przs_ctr + idx as u128;
+                    let mut res = Z::ZERO;
+                    for (aes_prf, fa_alpha) in &set_data {
+                        for (j_idx, fa_alpha_j) in fa_alpha.iter().enumerate() {
+                            let chi = chi(&aes_prf.chi_aes, ctr, (j_idx + 1) as u8)?;
+                            res += *fa_alpha_j * chi;
+                        }
+                    }
+                    Ok(res)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
 
         self.counters.przs_ctr += amount as u128;
 
@@ -1399,9 +1449,10 @@ mod tests {
         let sid = SessionId::from(23425);
 
         let role_one = Role::indexed_from_one(1);
-        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
-            .await
-            .unwrap();
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+                .await
+                .unwrap();
 
         let mut state = prss.new_prss_session_state(sid);
 
@@ -1462,6 +1513,100 @@ mod tests {
         // ... must produce the same values (and counter state) as one batched call.
         let batched_values = batch_state
             .mask_next_vec(role_one, B_SWITCH_SQUASH, amount)
+            .await
+            .unwrap();
+
+        assert_eq!(batched_values, scalar_values);
+        assert_eq!(
+            batch_state.counters.mask_ctr,
+            scalar_state.counters.mask_ctr
+        );
+        assert_eq!(
+            batch_state.counters.prss_ctr,
+            scalar_state.counters.prss_ctr
+        );
+        assert_eq!(
+            batch_state.counters.przs_ctr,
+            scalar_state.counters.przs_ctr
+        );
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(23)]
+    // amount above spans multiple rayon chunks (default PRSS_GEN_PAR_MIN_CHUNK = 1024)
+    #[case(1025)]
+    async fn test_prss_next_vec_matches_scalar_calls(#[case] amount: usize) {
+        let num_parties = 4;
+        let threshold = 1;
+
+        let sid = SessionId::from(23425);
+
+        let role_one = Role::indexed_from_one(1);
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+                .await
+                .unwrap();
+
+        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut batch_state = scalar_state.clone();
+
+        let mut scalar_values = Vec::with_capacity(amount);
+        for _ in 0..amount {
+            scalar_values.push(scalar_state.prss_next(role_one).await.unwrap());
+        }
+
+        let batched_values = batch_state.prss_next_vec(role_one, amount).await.unwrap();
+
+        assert_eq!(batched_values, scalar_values);
+        assert_eq!(
+            batch_state.counters.mask_ctr,
+            scalar_state.counters.mask_ctr
+        );
+        assert_eq!(
+            batch_state.counters.prss_ctr,
+            scalar_state.counters.prss_ctr
+        );
+        assert_eq!(
+            batch_state.counters.przs_ctr,
+            scalar_state.counters.przs_ctr
+        );
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(23)]
+    // amount above spans multiple rayon chunks (default PRSS_GEN_PAR_MIN_CHUNK = 1024)
+    #[case(1025)]
+    async fn test_przs_next_vec_matches_scalar_calls(#[case] amount: usize) {
+        // n = 7, t = 2 exercises multiple alpha powers (j = 1..=t) per set
+        let num_parties = 7;
+        let threshold: u8 = 2;
+
+        let sid = SessionId::from(23425);
+
+        let role_one = Role::indexed_from_one(1);
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold as usize, role_one)
+                .await
+                .unwrap();
+
+        let mut scalar_state = prss.new_prss_session_state(sid);
+        let mut batch_state = scalar_state.clone();
+
+        let mut scalar_values = Vec::with_capacity(amount);
+        for _ in 0..amount {
+            scalar_values.push(scalar_state.przs_next(role_one, threshold).await.unwrap());
+        }
+
+        let batched_values = batch_state
+            .przs_next_vec(role_one, threshold, amount)
             .await
             .unwrap();
 

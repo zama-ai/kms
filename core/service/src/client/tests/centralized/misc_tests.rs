@@ -226,7 +226,7 @@ async fn test_largecipher() -> Result<()> {
         kms_client.clone(),
         req.request_id.clone().unwrap(),
         "user decryption result",
-        PollConfig::default(),
+        PollConfig::long_poll_config(),
         |client, request| Box::pin(async move { client.get_user_decryption_result(request).await }),
     )
     .await;

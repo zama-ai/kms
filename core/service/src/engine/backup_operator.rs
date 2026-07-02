@@ -2,6 +2,7 @@ use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::consts::DEFAULT_EPOCH_ID;
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
@@ -102,6 +103,7 @@ where
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
+        let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;
@@ -123,6 +125,7 @@ where
         )?;
         let recovery_request = RecoveryRequest {
             ephem_op_enc_key: serialized_pub_key,
+            operator_verf_key,
             cts: grpc_cts,
         };
         tracing::info!(
@@ -401,25 +404,38 @@ where
                             )
                         })?;
                         keychain.set_dec_key(Some(backup_dec_key));
-                        Ok(Response::new(Empty {}))
                     }
-                    _ => Err(MetricedError::new(
-                        OP_CUSTODIAN_BACKUP_RECOVERY,
-                        None,
-                        anyhow::anyhow!(
-                            "Backup vault is not setup with a keychain for custodian-based backup recovery"
-                        ),
-                        tonic::Code::Unavailable,
-                    )),
+                    _ => {
+                        return Err(MetricedError::new(
+                            OP_CUSTODIAN_BACKUP_RECOVERY,
+                            None,
+                            anyhow::anyhow!(
+                                "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                            ),
+                            tonic::Code::Unavailable,
+                        ));
+                    }
                 }
             }
-            None => Err(MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!("Backup vault is not configured"),
-                tonic::Code::Unavailable,
-            )),
+            None => {
+                return Err(MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Backup vault is not configured"),
+                    tonic::Code::Unavailable,
+                ));
+            }
         }
+        // Finally restore the backup data
+        let res = self
+            .restore_from_backup(tonic::Request::new(Empty {}))
+            .await;
+        // Only clear the ephemeral keys after a successful restore so operators can retry on failure.
+        if res.is_ok() {
+            let mut ephemeral_keys = self.ephemeral_keys.lock().await;
+            *ephemeral_keys = None;
+        }
+        res
     }
 
     /// Restores the private data from the backup vault.
@@ -454,12 +470,6 @@ where
                                 tonic::Code::Internal,
                             )
                         })?;
-                }
-                // Finally remove the ephemeral keys
-                {
-                    let mut ephemeral_keys = self.ephemeral_keys.lock().await;
-                    // Remove any decryption key (if it is there) now that restoration is done.
-                    *ephemeral_keys = None;
                 }
                 tracing::info!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
@@ -497,7 +507,7 @@ where
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
     custodian_context_id: &ContextId,
-    verf_key: &Arc<PublicSigKey>,
+    verf_key: &PublicSigKey,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
     S: StorageReader + Send,

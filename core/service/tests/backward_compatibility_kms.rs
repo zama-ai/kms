@@ -55,7 +55,7 @@ use kms_lib::{
     },
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
-        context::{ContextInfo, NodeInfo, SoftwareVersion},
+        context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
     util::key_setup::FhePublicKey,
@@ -720,12 +720,12 @@ fn test_context_info(
     let node_info = NodeInfo {
         mpc_identity: "Staoshi Nakamoto".to_string(),
         party_id: 42,
-        verification_key: None,
+        signer_address: None,
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
         public_storage_prefix: Some("PUB".to_string()),
-        extra_verification_keys: vec![],
+        extra_signer_addresses: vec![],
     };
     let software_version = SoftwareVersion {
         major: 2,
@@ -771,12 +771,12 @@ fn test_node_info(
     let new_versionized = NodeInfo {
         mpc_identity: test.mpc_identity.to_string(),
         party_id: test.party_id,
-        verification_key: Some(verf_key),
+        signer_address: Some(SignerAddress(verf_key.address())),
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
         public_storage_prefix: Some(test.public_storage_prefix.to_string()),
-        extra_verification_keys: vec![verf_key2],
+        extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
     };
 
     if original_versionized != new_versionized {
@@ -890,6 +890,7 @@ fn test_internal_recovery_request(
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let (verification_key, _signing_key) = gen_sig_keys(&mut rng);
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.amount {
         let cur_role = Role::indexed_from_one(role_j as usize);
@@ -902,7 +903,7 @@ fn test_internal_recovery_request(
         };
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
-    let new_versionized = InternalRecoveryRequest::new(enc_key, cts).unwrap();
+    let new_versionized = InternalRecoveryRequest::new(enc_key, verification_key, cts).unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(

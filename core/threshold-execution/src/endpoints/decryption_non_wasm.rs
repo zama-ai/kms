@@ -1248,7 +1248,7 @@ where
 {
     let sns_secret_key = match ddec_key_type {
         SnsDecryptionKeyType::SnsKey => match &sk_share.glwe_secret_key_share_sns_as_lwe {
-            Some(key) => key.data_as_raw_iter(),
+            Some(key) => key.data_iter(),
             None => {
                 return Err(anyhow_error_and_log(
                     "Missing the switch and squash secret key".to_string(),
@@ -1257,7 +1257,7 @@ where
         },
         SnsDecryptionKeyType::SnsCompressionKey => {
             match &sk_share.glwe_sns_compression_key_as_lwe {
-                Some(key) => key.data_as_raw_iter(),
+                Some(key) => key.data_iter(),
                 None => {
                     return Err(anyhow_error_and_log(
                         "Missing the switch and squash compression secret key".to_string(),
@@ -1322,7 +1322,7 @@ where
                 .convert_to_z64()
         }
     };
-    let key_share64_iter = key_share64.data_as_raw_iter();
+    let key_share64_iter = key_share64.data_iter();
     let a_time_s = key_share64_iter.zip_eq(mask.as_ref()).fold(
         ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO,
         |acc, (sk, m)| {
@@ -1392,12 +1392,12 @@ mod tests {
         (0..parties).for_each(|i| {
             first_bit_shares.push(Share::new(
                 Role::indexed_from_zero(i),
-                *shares[i]
+                shares[i]
                     .glwe_secret_key_share_sns_as_lwe
                     .as_ref()
                     .unwrap()
-                    .data_as_raw_vec()
-                    .first()
+                    .data_iter()
+                    .next()
                     .unwrap(),
             ));
         });

@@ -511,7 +511,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    peer_tcp_proxy: bool,
     ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
@@ -583,7 +582,6 @@ where
             .as_ref()
             .map(|(_, client_config, _)| client_config.clone()),
         threshold_config.core_to_core_net,
-        peer_tcp_proxy,
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
@@ -678,19 +676,19 @@ where
             std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
         });
 
-    let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let preproc_buckets = MetaStore::new_unlimited();
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
-    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
-    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
-    let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
+    let crs_meta_store = MetaStore::new_from_map(crs_info);
+    let dkg_pubinfo_meta_store = MetaStore::new_from_map(public_key_info);
+    let pub_dec_meta_store = MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
-    )));
-    let user_decrypt_meta_store = Arc::new(RwLock::new(MetaStore::new(
+    );
+    let user_decrypt_meta_store = MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
-    )));
-    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
+    );
+    let custodian_meta_store = MetaStore::new_from_map(validation_material);
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
@@ -760,7 +758,7 @@ where
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance().await,
-        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,

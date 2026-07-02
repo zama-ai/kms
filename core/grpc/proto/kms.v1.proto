@@ -532,13 +532,14 @@ message MpcNode {
   // every party in an MPC protocol must have a unique ID.
   int32 party_id = 2;
 
-  // The verification key of the KMS node operator,
-  // this is the public key used to verify the signatures produced by the KMS node.
+  // The 20-byte Ethereum address of the KMS node operator's signing key, used to verify
+  // signatures produced by the KMS node and to identify the node.
+  // Stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
   //
   // This is optional to be compatible with configuration files that's used in
-  // older KMS versions, which are not aware of the verification key of the other parties.
+  // older KMS versions, which are not aware of the signing keys of the other parties.
   // But any new context must set this field.
-  optional bytes verification_key = 3;
+  optional bytes signer_address = 3;
 
   // The external port and host of the KMS node,
   // this is used for connecting to the KMS node from other KMS parties.
@@ -556,10 +557,10 @@ message MpcNode {
   // When not given, this defaults to "PUB".
   optional string public_storage_prefix = 7;
 
-  // A list of public keys that are permitted to make transactions to the public chain on behalf this node.
-  // I.e. the signing keys of this entity which they will use to make transactions to the Gateway.
-  // It may be empty if the node does not have any such keys, in this case the verification_key will be used.
-  repeated bytes extra_verification_keys = 8;
+  // A list of 20-byte Ethereum addresses of additional signing keys that are permitted to make
+  // transactions on behalf of this node.
+  // Each entry is stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
+  repeated bytes extra_signer_addresses = 8;
 }
 
 // The context of the MPC, containing the list of MPC nodes and other metadata.
@@ -697,8 +698,10 @@ enum SigningSchemeType {
 message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes ephem_op_enc_key = 1;
+  // The public verification key of the KMS server. MUST be manually validated by custodian
+  bytes operator_verf_key = 2; 
   /// The ciphertexts that are the backup. Indexed by the custodian role.
-  map<uint64, OperatorBackupOutput> cts = 2;
+  map<uint64, OperatorBackupOutput> cts = 3;
 }
 
 // Response containing available key material information

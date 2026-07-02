@@ -57,6 +57,7 @@ The repository is a Cargo workspace. The members are declared in
 | `kms-grpc` | [core/grpc/](core/grpc/) | Protobuf definitions + generated types and client stubs |
 | `core-client` | [core-client/](core-client/) | CLI client that drives the gRPC API |
 | `observability` | [observability/](observability/) | OpenTelemetry / Prometheus wiring |
+| `vsocktun` | [vsocktun/](vsocktun/) | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
 | `bc2wrap` | [bc2wrap/](bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
 | `error-utils` | [core/error-utils/](core/error-utils/) | Shared error types and helpers |
 | `thread-handles` | [core/thread-handles/](core/thread-handles/) | Rayon thread-pool management |
@@ -203,9 +204,8 @@ Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
 `NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit`
 / `CustodianBackupRecovery` RPCs defined in
-[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). A separate
-`RestoreFromBackup` RPC completes restoration on the node and also covers
-the no-custodian AWS-KMS path.
+[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). 
+A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at

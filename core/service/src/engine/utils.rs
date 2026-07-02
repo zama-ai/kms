@@ -1,5 +1,7 @@
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata};
 use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
+use aws_smithy_types::base64;
 use hashing::hash_element;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
@@ -9,8 +11,11 @@ use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
 };
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Display;
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tonic::Status;
 
 pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
@@ -642,10 +647,42 @@ thread_local! {
     static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Serialize an element to a base64 string using safe serialization.
+pub fn base64_serialize<T>(element: &T) -> anyhow::Result<String>
+where
+    T: Serialize + tfhe::Versionize + tfhe::named::Named,
+{
+    let mut serialized_data = Vec::new();
+    safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Serialization failed: {e:?}"))?;
+    Ok(base64::encode(&serialized_data))
+}
+
+/// Deserialize an element from a base64 string using safe deserialization.
+pub fn base64_deserialize<T>(element: &str) -> anyhow::Result<T>
+where
+    T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named,
+{
+    // Guard against allocating unbounded memory on untrusted input before `safe_deserialize` runs.
+    let max_b64_len = (3 * SAFE_SER_SIZE_LIMIT).div_ceil(4) as usize;
+    if element.len() > max_b64_len {
+        return Err(anyhow::anyhow!(
+            "Base64 payload too large (len={}, max={})",
+            element.len(),
+            max_b64_len
+        ));
+    }
+    let decoded_data = base64::decode(element)?;
+    let mut cursor = std::io::Cursor::new(decoded_data);
+    let deserialized: T = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Deserialization failed: {e:?}"))?;
+    Ok(deserialized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
@@ -694,6 +731,31 @@ mod tests {
             after,
             before + 1,
             "Drop should have called handle_error exactly once"
+        );
+    }
+
+    #[test]
+    fn test_base64_serialize_deserialize_roundtrip() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (pk, _sk) = gen_sig_keys(&mut rng);
+
+        let serialized = base64_serialize(&pk).expect("serialization should succeed");
+        // The output must be valid base64 (decodable on its own).
+        base64::decode(&serialized).expect("output should be valid base64");
+
+        let deserialized: PublicSigKey =
+            base64_deserialize(&serialized).expect("deserialization should succeed");
+        assert_eq!(pk, deserialized, "roundtrip should preserve the value");
+    }
+
+    #[test]
+    fn test_base64_deserialize_rejects_invalid_base64() {
+        // '!' is not part of the base64 alphabet.
+        let err = base64_deserialize::<PublicSigKey>("not valid base64!!").unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("base64")
+                || err.downcast_ref::<base64::DecodeError>().is_some(),
+            "expected a base64 decode error, got: {err}"
         );
     }
 

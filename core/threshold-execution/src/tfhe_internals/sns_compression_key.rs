@@ -55,10 +55,6 @@ where
         }
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
-        self.post_packing_ks_key.data_as_raw_vec()
-    }
-
     pub fn into_lwe_secret_key(self) -> LweSecretKeyShare<Z, EXTENSION_DEGREE> {
         self.post_packing_ks_key.into_lwe_secret_key()
     }

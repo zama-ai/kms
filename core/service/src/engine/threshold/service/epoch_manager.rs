@@ -88,8 +88,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store,
-            update_req_in_meta_store,
+            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -461,7 +461,7 @@ impl<
         new_epoch_id: EpochId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
     ) -> Result<
-        impl Future<Output = anyhow::Result<()>> + use<PubS, PrivS, Init, Reshare>,
+        impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
         MetricedError,
     > {
         let epoch_id_as_request_id = new_epoch_id.into();
@@ -473,8 +473,6 @@ impl<
         let crs_metadata = self
             .fetch_existing_crs_metadata(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
-
-        let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
@@ -520,14 +518,9 @@ impl<
                 keys_metadata.push(key_metadata);
             }
 
-            // We update the meta store with the same metadata as in the epoch we reshare from
-            // i.e. parties in Set 1 only do NOT re-sign the metadata
-            meta_store.write().await.update(
-                &epoch_id_as_request_id,
-                Ok(EpochOutput::Reshare((keys_metadata, crs_metadata))),
-            )?;
-
-            Ok(())
+            // Parties in Set 1 only do NOT re-sign the metadata — we return the
+            // same metadata as in the epoch we reshare from.
+            Ok(EpochOutput::Reshare((keys_metadata, crs_metadata)))
         };
 
         Ok(task)
@@ -599,7 +592,6 @@ impl<
     #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
@@ -608,7 +600,7 @@ impl<
         new_private_keysets: Vec<PrivateKeySet<4>>,
         eip712_domain: &Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<EpochOutput> {
         let mut fhe_key_infos = Vec::new();
         let mut storage_tasks = Vec::new();
         for (verified_material, (new_private_keyset, key_info)) in
@@ -706,6 +698,7 @@ impl<
 
                     storage_tasks.push(
                         async move {
+                            // Skip incremental update of backup vault and just do the backup at the end of the resharing
                             crypto_storage
                                 .resharing_fhe_write_no_backup(
                                     &key_info.key_id,
@@ -736,6 +729,7 @@ impl<
                 new_extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
+            // Skip incremental update of backup vault and just do the backup at the end of the resharing
             storage_tasks.push(
                 crypto_storage
                     .resharing_crs_write_no_backup(&crs_info.crs_id, &new_epoch_id, crs_meta_data)
@@ -745,13 +739,11 @@ impl<
 
         let res = join_all(storage_tasks).await;
         let error_agg = res.iter().filter(|r| r.is_err()).collect::<Vec<_>>();
-        let mut err_msgs = Vec::new();
-        let agg_res = if !error_agg.is_empty() {
+        if !error_agg.is_empty() {
             let storage_err_msg = format!(
                 "Failed to store all reshared keys for new epoch {}: {:?}",
                 new_epoch_id, error_agg
             );
-            err_msgs.push(storage_err_msg.clone());
 
             // Roll back any partial successes in case something fails during the resharing,
             // to not leave the storage in a partial state.
@@ -781,32 +773,15 @@ impl<
                 }
             }
 
-            Err(storage_err_msg)
-        } else {
-            // If the resharing went well, then update the backup
-            crypto_storage
-                .inner
-                .update_backup_vault(false, OP_NEW_EPOCH)
-                .await;
-            Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
-        };
-        // Finally update the meta store
-        if !update_req_in_meta_store(
-            &mut meta_store.write().await,
-            &new_epoch_id.into(),
-            agg_res,
-            OP_NEW_EPOCH,
-        ) {
-            err_msgs.push(format!(
-                "Failed to update the meta store with error for new epoch {}.",
-                new_epoch_id
-            ));
+            return Err(anyhow::anyhow!(storage_err_msg));
         }
-        if err_msgs.is_empty() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(err_msgs.join(", ")))
-        }
+
+        // If the resharing went well, then update the backup
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_NEW_EPOCH)
+            .await;
+        Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -820,7 +795,7 @@ impl<
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<
-        impl Future<Output = anyhow::Result<()>> + use<PubS, PrivS, Init, Reshare>,
+        impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
         MetricedError,
     > {
         let epoch_id_as_request_id = new_epoch_id.into();
@@ -853,7 +828,6 @@ impl<
             )
         })?;
 
-        let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
         let crypto_storage = self.crypto_storage.clone();
 
         let task = async move {
@@ -909,7 +883,6 @@ impl<
 
             Self::store_reshared_keys(
                 &crypto_storage,
-                meta_store,
                 &sk,
                 new_epoch_id,
                 new_extra_data,
@@ -936,7 +909,7 @@ impl<
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<
-        impl Future<Output = anyhow::Result<()>> + use<PubS, PrivS, Init, Reshare>,
+        impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
         MetricedError,
     > {
         let epoch_id_as_request_id = new_epoch_id.into();
@@ -972,7 +945,6 @@ impl<
             )
         })?;
 
-        let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
         let crypto_storage = self.crypto_storage.clone();
 
         let task = async move {
@@ -1044,7 +1016,6 @@ impl<
 
             Self::store_reshared_keys(
                 &crypto_storage,
-                meta_store,
                 &sk,
                 new_epoch_id,
                 new_extra_data,
@@ -1195,7 +1166,7 @@ impl<
         new_extra_data: &[u8],
         previous_epoch: PreviousEpochInfo,
         eip712_domain: Eip712Domain,
-    ) -> Result<BoxFuture<'static, anyhow::Result<()>>, MetricedError> {
+    ) -> Result<BoxFuture<'static, anyhow::Result<EpochOutput>>, MetricedError> {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
             previous_epoch.context_id,
@@ -1297,7 +1268,7 @@ impl<
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        let permit = self.rate_limiter.start_new_epoch().await?;
+        let rate_limiter_permit = self.rate_limiter.start_new_epoch().await?;
 
         let inner = request.into_inner();
         let VerifiedNewMpcEpochRequest {
@@ -1350,25 +1321,17 @@ impl<
             .is_some();
 
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
-        // Update status
 
-        {
-            let mut guarded_meta_store = self.reshare_pubinfo_meta_store.write().await;
-            guarded_meta_store.insert(&epoch_id.into()).map_err(|e| {
-                MetricedError::new(
-                    OP_NEW_EPOCH,
-                    Some(epoch_id.into()),
-                    e,
-                    // Note that there are other reason why insert can fail, but
-                    // AlreadyExists seems the most appropriate
-                    tonic::Code::AlreadyExists,
-                )
-            })?;
-        }
+        let meta_permit = add_req_to_meta_store(
+            &self.reshare_pubinfo_meta_store,
+            &epoch_id.into(),
+            OP_NEW_EPOCH,
+        )
+        .await?;
         let session_maker = self.session_maker.clone();
         let crypto_storage = self.crypto_storage.clone();
         self.tracker.spawn(async move {
-            let _permit = permit;
+            let _rate_limiter_permit = rate_limiter_permit;
             let crypto_storage = crypto_storage;
             let context_id = context_id;
             let epoch_id = epoch_id;
@@ -1379,31 +1342,26 @@ impl<
                         .await
             {
                 let err = format!("PRSS initialization failed during epoch creation: {e:?}");
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    &epoch_id.into(),
-                    err,
-                    OP_NEW_EPOCH,
-                );
+                let _ =
+                    update_err_req_in_meta_store(&meta_store, meta_permit, err, OP_NEW_EPOCH).await;
                 return;
             }
-            if let Some(resharing_task) = resharing_task {
-                if let Err(e) = resharing_task.await {
-                    let err = format!("Resharing failed during epoch creation: {e:?}");
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        &epoch_id.into(),
-                        err,
-                        OP_NEW_EPOCH,
-                    );
-                }
-            } else {
-                // Can't do much if inserts fails here
-                let _ = meta_store
-                    .write()
+            // Either reshare and commit the resulting EpochOutput, or commit
+            // PRSSInitOnly. Either way, the permit is consumed exactly once.
+            let result: Result<EpochOutput, String> = if let Some(resharing_task) = resharing_task {
+                resharing_task
                     .await
-                    .update(&epoch_id.into(), Ok(EpochOutput::PRSSInitOnly));
-            }
+                    .map_err(|e| format!("Resharing failed during epoch creation: {e:?}"))
+            } else {
+                Ok(EpochOutput::PRSSInitOnly)
+            };
+            let _ = update_req_in_meta_store::<_, String>(
+                &meta_store,
+                meta_permit,
+                result,
+                OP_NEW_EPOCH,
+            )
+            .await;
         });
 
         Ok(Response::new(Empty {}))
@@ -1459,13 +1417,13 @@ impl<
                 })?;
 
         let res = retrieve_from_meta_store(
-            self.reshare_pubinfo_meta_store.read().await,
+            &self.reshare_pubinfo_meta_store,
             &request_id,
             OP_GET_EPOCH_RESULT,
         )
         .await?;
 
-        match res {
+        match res.as_ref() {
             EpochOutput::PRSSInitOnly => {
                 tracing::info!(
                     "New Epoch with only PRSS initialization for request ID {:?}.",
@@ -1492,18 +1450,18 @@ impl<
                             // which must be kept stable (in particular, ServerKey must be before PublicKey)
                             let key_digests = res
                                 .key_digest_map
-                                .into_iter()
+                                .iter()
                                 .sorted_by_key(|x| x.0)
                                 .map(|(key, digest)| KeyDigest {
                                     key_type: key.to_string(),
-                                    digest,
+                                    digest: digest.clone(),
                                 })
                                 .collect::<Vec<_>>();
                             reshare_responses.push(KeyGenResult {
                                 request_id: Some(res.key_id.into()),
                                 preprocessing_id: Some(res.preprocessing_id.into()),
                                 key_digests,
-                                external_signature: res.external_signature,
+                                external_signature: res.external_signature.clone(),
                             });
                         }
                         KeyGenMetadata::LegacyV0(_res) => {
@@ -1530,9 +1488,9 @@ impl<
                             );
                             crs_responses.push(CrsGenResult {
                                 request_id: Some(crs.crs_id.into()),
-                                crs_digest: crs.crs_digest,
+                                crs_digest: crs.crs_digest.clone(),
                                 max_num_bits: crs.max_num_bits,
-                                external_signature: crs.external_signature,
+                                external_signature: crs.external_signature.clone(),
                             });
                         }
                         CrsGenMetadata::LegacyV0(_crs) => {
@@ -1617,7 +1575,7 @@ pub(crate) mod tests {
                     None,
                     HashMap::new(),
                 ),
-                reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new(10, 10))),
+                reshare_pubinfo_meta_store: MetaStore::new(10, 10),
                 tracker: Arc::new(TaskTracker::new()),
                 rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
                 _reshare: PhantomData,
@@ -1833,11 +1791,12 @@ pub(crate) mod tests {
             }))
             .await
             .unwrap();
-        let _result = epoch_manager
-            .get_epoch_result(tonic::Request::new(epoch_id.into()))
-            .await
-            .unwrap()
-            .into_inner();
+        let _result = crate::testing::utils::poll_result_until_ready(|| {
+            epoch_manager.get_epoch_result(tonic::Request::new(epoch_id.into()))
+        })
+        .await
+        .unwrap()
+        .into_inner();
     }
 
     //TODO(#2882): Make a test for answer unavailable.

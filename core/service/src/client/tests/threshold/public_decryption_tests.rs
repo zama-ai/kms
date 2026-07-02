@@ -315,7 +315,6 @@ pub async fn run_decryption_threshold_optionally_fail(
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
-    let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             data_root_path,
@@ -332,7 +331,6 @@ pub async fn run_decryption_threshold_optionally_fail(
             external_handle: i.to_be_bytes().to_vec(),
         };
         cts.push(ctt);
-        bits += msg.bits() as u64;
     }
 
     // make parallel requests by calling [decrypt] in a thread
@@ -408,20 +406,11 @@ pub async fn run_decryption_threshold_optionally_fail(
             let cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
-                // Sleep initially to give the server time to complete decryption,
-                // then poll every 4*bits ms (clamped to [100ms, 1s]) for up to 600
-                // tries (~10 minutes for large types).
                 let response = retrying_poll(
                     cur_client,
                     req_id_clone.clone(),
                     "public decryption result",
-                    PollConfig {
-                        initial_delay: tokio::time::Duration::from_millis(
-                            100 * bits * parallelism as u64,
-                        ),
-                        retry_delay: tokio::time::Duration::from_millis(4 * bits.clamp(100, 1000)),
-                        max_retries: 600,
-                    },
+                    PollConfig::default(),
                     |client, request| {
                         Box::pin(async move { client.get_public_decryption_result(request).await })
                     },
