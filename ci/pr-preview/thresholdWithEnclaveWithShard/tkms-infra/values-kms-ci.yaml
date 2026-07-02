@@ -67,10 +67,19 @@ kmsParties:
     amiType: AL2023_x86_64_STANDARD
     capacityType: ON_DEMAND
     deletionPolicy: Delete
-    # Override resources spec for the enclave node group
+    # Override resources spec for the enclave node group.
+    # IMPORTANT: these are the resources RESERVED FOR THE NITRO ENCLAVE ALLOCATOR
+    # (i.e. carved out of the node for the enclaves), NOT what is left for regular
+    # Kubernetes pods. They must cover BOTH co-located enclaves:
+    #   primary (cpuCount 32 / memoryGiB 64) + secondary (cpuCount 32 / memoryGiB 64)
+    #   = 64 vCPU and 128 GiB of hugepages.
+    # On a c7a.24xlarge (96 vCPU / 192 GiB) this leaves ~32 vCPU and ~64 GiB for the
+    # parent containers, sidecars (2 network tunnels), and the nitro device-plugin
+    # DaemonSet. Setting these too high starves the node (0 allocatable memory) and
+    # nothing — not even the device plugin — can schedule.
     resources:
-      cpuAllocatable: 90
-      memoryAllocatableInGiB: 180
+      cpuAllocatable: 64
+      memoryAllocatableInGiB: 128
     # Find the release version here: https://github.com/awslabs/amazon-eks-ami/releases
     releaseVersion: "1.32.3-20250620"
     version: "1.32"
