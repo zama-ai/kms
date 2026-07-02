@@ -61,7 +61,7 @@ spec:
               parameters:
               - name: rate
                 value: "100"
-              - name: key-id
+              - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
                 value: "true"
@@ -179,15 +179,15 @@ spec:
             client_logs_arg="--logs"
           fi
 
-          ./bin/kms-core-client ${client_logs_arg} -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
-          preproc_id=$(grep -o '"request_id": "[^"]*"' /tmp/preproc_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
+          preproc_id=$(awk -F'"' '/"request_id":/ { id=$4 } END { print id }' /tmp/preproc_logs.txt)
           if [ -z "$preproc_id" ]; then
             echo "Failed to extract udec preprocessing request id"
             exit 1
           fi
 
-          ./bin/kms-core-client ${client_logs_arg} -f config.toml insecure-key-gen -i "$preproc_id" 2>&1 | tee /tmp/keygen_logs.txt
-          key_id=$(grep -o '"request_id": "[^"]*"' /tmp/keygen_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml insecure-key-gen -i "$preproc_id" 2>&1 | tee /tmp/keygen_logs.txt
+          key_id=$(awk -F'"' '/"request_id":/ { id=$4 } END { print id }' /tmp/keygen_logs.txt)
           if [ -z "$key_id" ]; then
             echo "Failed to extract udec key id"
             exit 1
@@ -221,7 +221,7 @@ spec:
       inputs:
         parameters:
         - name: rate
-        - name: key-id
+        - name: key_id
         - name: previous-ok
       outputs:
         parameters:
@@ -313,8 +313,21 @@ spec:
           EOF
 
           test_name="sustained-rate-udec-{{inputs.parameters.rate}}"
-          test_command="user-decrypt from-args -d {{workflow.parameters.data-type}} -k {{inputs.parameters.key-id}} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          key_id="{{inputs.parameters.key_id}}"
+          test_command="user-decrypt from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
           mkdir -p /tmp/artifacts
+
+          if [ -z "$key_id" ]; then
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
+              "$test_name" \
+              "$test_command" \
+              "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              "{{inputs.parameters.rate}}" \
+              > /tmp/artifacts/${test_name}.json
+            echo "false" > /tmp/artifacts/${test_name}.ok
+            echo "Missing key_id from udec-setup; refusing to run sustained-rate udec"
+            exit 0
+          fi
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
             printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
@@ -339,7 +352,7 @@ spec:
           rate_timeout=$(({{workflow.parameters.duration}} + 300))
           start_time=$(date +%s)
           if command -v timeout >/dev/null 2>&1; then
-            timeout --signal=TERM "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+            timeout --signal=TERM "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           else
             echo "WARNING: timeout command not found; running without per-rate wall timeout"
             ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt

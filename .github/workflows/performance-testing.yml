@@ -236,7 +236,9 @@ jobs:
 
           case "${TEST_SUITE}" in
             burst)
-              echo "Using existing burst perf suite."
+              echo "ERROR: burst perf suite is temporarily disabled on this branch."
+              echo "Select test_suite=sustained-rate-udec while iterating on sustained udec."
+              exit 1
               ;;
             sustained-rate-udec)
               if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then

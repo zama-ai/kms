@@ -477,7 +477,7 @@ spec:
             client_logs_arg="--logs"
           fi
           start_time=$(date +%s)
-          ./bin/kms-core-client ${client_logs_arg} -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)
           duration=$((end_time - start_time))
