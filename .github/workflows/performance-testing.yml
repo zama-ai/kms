@@ -225,8 +225,15 @@ jobs:
       - name: Validate perf test suite selection
         run: |
           ###################################################################
-          # Validate test-suite/deployment combinations before deploying.
+          # Validate test-suite/deployment/TLS combinations before deploying.
           ###################################################################
+          if [[ "${TLS}" == "true" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+            echo "ERROR: TLS is only supported for deployment_type=thresholdWithEnclave in performance-testing."
+            echo "Selected deployment_type=${DEPLOYMENT_TYPE}, tls=${TLS}."
+            echo "Set tls=false for non-enclave deployments, or choose thresholdWithEnclave."
+            exit 1
+          fi
+
           case "${TEST_SUITE}" in
             burst)
               echo "Using existing burst perf suite."
