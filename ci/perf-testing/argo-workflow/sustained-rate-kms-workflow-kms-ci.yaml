@@ -66,13 +66,41 @@ spec:
               - name: previous-ok
                 value: "true"
 
+          - name: sustained-rate-udec-200
+            dependencies: ["udec-setup", "sustained-rate-udec-100"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "200"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-100.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-300
+            dependencies: ["udec-setup", "sustained-rate-udec-200"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "300"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-200.outputs.parameters.capacity-ok}}"
+
           - name: summary
-            dependencies: ["sustained-rate-udec-100"]
+            dependencies: ["sustained-rate-udec-100", "sustained-rate-udec-200", "sustained-rate-udec-300"]
             template: summary-report
             arguments:
               parameters:
               - name: test-result-100
                 value: "{{tasks.sustained-rate-udec-100.outputs.parameters.test-result}}"
+              - name: test-result-200
+                value: "{{tasks.sustained-rate-udec-200.outputs.parameters.test-result}}"
+              - name: test-result-300
+                value: "{{tasks.sustained-rate-udec-300.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -397,6 +425,8 @@ spec:
       inputs:
         parameters:
         - name: test-result-100
+        - name: test-result-200
+        - name: test-result-300
         - name: tls
         - name: run_url
         - name: duration
@@ -416,6 +446,8 @@ spec:
           apk add --no-cache jq curl
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-100}}' > /mnt/results/sustained-rate-udec-100.json
+          echo '{{inputs.parameters.test-result-200}}' > /mnt/results/sustained-rate-udec-200.json
+          echo '{{inputs.parameters.test-result-300}}' > /mnt/results/sustained-rate-udec-300.json
 
           echo "=========================================="
           echo "KMS SUSTAINED UDEC RATE SUMMARY"
@@ -432,7 +464,7 @@ spec:
           skipped=0
           summary_lines=""
 
-          for rate in 100; do
+          for rate in 100 200 300; do
             result="/mnt/results/sustained-rate-udec-${rate}.json"
             if ! jq empty "$result" 2>/dev/null; then
               echo "Skipping invalid JSON file: $result"
@@ -449,22 +481,22 @@ spec:
             failed_requests=$(jq -r '.performance_metrics.sustained_rate.failed // empty' "$result")
             shed=$(jq -r '.performance_metrics.sustained_rate.shed // empty' "$result")
             achieved_rate=$(jq -r '.performance_metrics.sustained_rate.achieved_rate // empty' "$result")
-            saturated=$(jq -r '.performance_metrics.sustained_rate.saturated // empty' "$result")
+            saturated=$(jq -r '.performance_metrics.sustained_rate | if has("saturated") then .saturated else "" end' "$result")
             p50=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p50 // empty' "$result")
             p95=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p95 // empty' "$result")
             p99=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p99 // empty' "$result")
 
             if [ "$status" = "skipped" ]; then
               skipped=$((skipped + 1))
-              line="SKIP ${test_name}: skipped because a lower sustained udec rate failed"
+              line="SKIP scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: skipped because a lower sustained udec rate failed"
             elif [ "$status" = "passed" ]; then
               passed=$((passed + 1))
-              perf_info="target=${target_rate} req/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} achieved=${achieved_rate} req/s saturated=${saturated} p50=${p50}ms p95=${p95}ms p99=${p99}ms"
-              line="PASS ${test_name}: ${perf_info}"
+              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms"
+              line="PASS scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
             else
               failed=$((failed + 1))
-              perf_info="target=${target_rate} req/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} achieved=${achieved_rate} req/s saturated=${saturated} p50=${p50}ms p95=${p95}ms p99=${p99}ms"
-              line="FAIL ${test_name}: ${perf_info}"
+              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms"
+              line="FAIL scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
             fi
 
             echo "$line"
@@ -478,10 +510,10 @@ spec:
           fi
 
           echo "----------------------------------------"
-          echo "Total tests: $total"
-          echo "Passed: $passed"
-          echo "Failed: $failed"
-          echo "Skipped: $skipped"
+          echo "Rate scenarios evaluated: $total"
+          echo "Rate scenarios passed: $passed"
+          echo "Rate scenarios failed: $failed"
+          echo "Rate scenarios skipped: $skipped"
           echo "Success rate: $success_rate%"
           echo "=========================================="
 
@@ -509,7 +541,7 @@ spec:
                   },
                   {
                     "title": "Status",
-                    "value": "$passed passed, $failed failed, $skipped skipped ($success_rate% success)",
+                    "value": "$passed rate scenarios passed, $failed failed, $skipped skipped ($success_rate% success)",
                     "short": true
                   },
                   {
