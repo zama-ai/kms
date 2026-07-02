@@ -485,23 +485,14 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?,
             )?;
-            let plaintexts = internal_client
-                .read()
-                .await
-                .process_user_decryption_resp(
-                    &client_request,
-                    &eip712_domain,
-                    &enc_pk,
-                    &enc_sk,
-                    None,
-                    &resp_response_vec,
-                )
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "Error: User decryption response is NOT valid! Reason: {}",
-                        e
-                    )
-                })?;
+            let plaintexts = internal_client.read().await.process_user_decryption_resp(
+                &client_request,
+                &eip712_domain,
+                &enc_pk,
+                &enc_sk,
+                None,
+                &resp_response_vec,
+            )?;
 
             // every decrypted block must match the expected plaintext (`TestingPlaintext` is `Copy`,
             // and we convert by value, so no per-block clones)
@@ -544,7 +535,6 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 }
 
 struct CollectedUserDecrypt {
-    req_id: RequestId,
     user_decrypt_req: UserDecryptionRequest,
     enc_pk: UnifiedPublicEncKey,
     enc_sk: UnifiedPrivateEncKey,
@@ -596,7 +586,6 @@ impl SustainedRateMetrics {
             self.reconstruction_stat.max.as_secs_f64() * 1000.0,
             self.reconstruction_wall.as_secs_f64() * 1000.0,
         );
-        tracing::info!("SUSTAINED_RATE_METRICS {metrics}");
         println!("SUSTAINED_RATE_METRICS {metrics}");
     }
 }
@@ -604,7 +593,6 @@ impl SustainedRateMetrics {
 #[expect(clippy::too_many_arguments)]
 async fn send_and_collect_user_decrypt(
     rate: u64,
-    req_id: RequestId,
     user_decrypt_req: UserDecryptionRequest,
     enc_pk: UnifiedPublicEncKey,
     enc_sk: UnifiedPrivateEncKey,
@@ -632,10 +620,10 @@ async fn send_and_collect_user_decrypt(
         match inner {
             Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
             Ok(Err(e)) => {
-                tracing::warn!("User decrypt request to a core failed: {e}");
+                tracing::debug!("User decrypt request to a core failed: {e}");
             }
             Err(e) => {
-                tracing::warn!("User decrypt request task panicked: {e}");
+                tracing::debug!("User decrypt request task panicked: {e}");
             }
         }
     }
@@ -692,10 +680,10 @@ async fn send_and_collect_user_decrypt(
                 resp_response_vec.push(inner);
             }
             Ok(Err(e)) => {
-                tracing::warn!("A core failed to return user decryption result: {e}");
+                tracing::debug!("A core failed to return user decryption result: {e}");
             }
             Err(e) => {
-                tracing::warn!("User decryption response task panicked: {e}");
+                tracing::debug!("User decryption response task panicked: {e}");
             }
         }
         if resp_response_vec.len() >= num_expected_responses {
@@ -712,7 +700,7 @@ async fn send_and_collect_user_decrypt(
     }
 
     let collect_duration = request_start.elapsed();
-    tracing::info!(
+    tracing::debug!(
         rate,
         got = resp_response_vec.len(),
         needed = num_expected_responses,
@@ -721,7 +709,6 @@ async fn send_and_collect_user_decrypt(
     );
 
     Ok(CollectedUserDecrypt {
-        req_id,
         user_decrypt_req,
         enc_pk,
         enc_sk,
@@ -744,7 +731,7 @@ fn drain_finished_user_decrypts(
             }
             Ok(Err(e)) => {
                 *failed += 1;
-                tracing::warn!("Sustained user decrypt request failed: {e}");
+                tracing::debug!("Sustained user decrypt request failed: {e}");
             }
             Err(e) => {
                 *failed += 1;
@@ -825,7 +812,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         launch_accumulator %= 200;
 
         for _ in 0..launches {
-            let Some((req_id, user_decrypt_req, enc_pk, enc_sk)) = request_iter.next() else {
+            let Some((_req_id, user_decrypt_req, enc_pk, enc_sk)) = request_iter.next() else {
                 break;
             };
             offered += 1;
@@ -839,7 +826,6 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
             let core_endpoints_resp = core_endpoints_resp.clone();
             join_set.spawn(send_and_collect_user_decrypt(
                 rate,
-                req_id,
                 user_decrypt_req,
                 enc_pk,
                 enc_sk,
@@ -864,7 +850,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                 }
                 Ok(Err(e)) => {
                     failed += 1;
-                    tracing::warn!("Sustained user decrypt request failed: {e}");
+                    tracing::debug!("Sustained user decrypt request failed: {e}");
                 }
                 Err(e) => {
                     failed += 1;
@@ -890,11 +876,8 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     let latency_stat = crate::compute_stat_on_durations(&durations_to_get_responses);
 
     let reconstruct_start = tokio::time::Instant::now();
-    let mut recon_tasks: JoinSet<
-        Result<(RequestId, String, tokio::time::Duration), anyhow::Error>,
-    > = JoinSet::new();
+    let mut recon_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
     for CollectedUserDecrypt {
-        req_id,
         user_decrypt_req,
         enc_pk,
         enc_sk,
@@ -913,23 +896,14 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?,
             )?;
-            let plaintexts = internal_client
-                .read()
-                .await
-                .process_user_decryption_resp(
-                    &client_request,
-                    &eip712_domain,
-                    &enc_pk,
-                    &enc_sk,
-                    None,
-                    &resp_response_vec,
-                )
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "Error: User decryption response is NOT valid! Reason: {}",
-                        e
-                    )
-                })?;
+            let plaintexts = internal_client.read().await.process_user_decryption_resp(
+                &client_request,
+                &eip712_domain,
+                &enc_pk,
+                &enc_sk,
+                None,
+                &resp_response_vec,
+            )?;
 
             let mut decoded = plaintexts.into_iter().map(TestingPlaintext::try_from);
             let first = decoded
@@ -947,20 +921,14 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                 );
             }
 
-            Ok((
-                req_id,
-                format!("User decrypted Plaintext {first:?}"),
-                reconstruct_one_start.elapsed(),
-            ))
+            Ok(reconstruct_one_start.elapsed())
         });
     }
 
-    let mut result_vec = Vec::with_capacity(durations_to_get_responses.len());
     let mut reconstruction_durations = Vec::with_capacity(durations_to_get_responses.len());
     while let Some(res) = recon_tasks.join_next().await {
-        let (req_id, msg, reconstruct_duration) = res??;
+        let reconstruct_duration = res??;
         reconstruction_durations.push(reconstruct_duration);
-        result_vec.push((Some(req_id), msg));
     }
     let reconstruct_elapsed = reconstruct_start.elapsed();
     let reconstruction_stat = crate::compute_stat_on_durations(&reconstruction_durations);
@@ -988,7 +956,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         reconstruct_elapsed,
     );
 
-    Ok(result_vec)
+    Ok(Vec::new())
 }
 
 /// Material used to verify fetched public-decryption responses.
