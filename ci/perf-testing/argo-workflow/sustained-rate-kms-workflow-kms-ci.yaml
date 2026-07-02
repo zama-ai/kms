@@ -371,6 +371,9 @@ spec:
         labels:
           test: sustained-rate-udec-{{inputs.parameters.rate}}
           app: sustained-rate-kms
+      nodeSelector:
+        karpenter.sh/nodepool: kms-pool
+        karpenter.k8s.aws/instance-family: m5n
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
