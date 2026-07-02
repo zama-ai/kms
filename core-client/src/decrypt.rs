@@ -859,7 +859,9 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
 
     let drain_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
     while !join_set.is_empty() && tokio::time::Instant::now() < drain_deadline {
-        if let Some(result) = join_set.join_next().await {
+        if let Ok(Some(result)) =
+            tokio::time::timeout_at(drain_deadline, join_set.join_next()).await
+        {
             match result {
                 Ok(Ok(collected_result)) => {
                     durations_to_get_responses.push(collected_result.collect_duration);
@@ -874,6 +876,8 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                     tracing::warn!("Sustained user decrypt task panicked: {e}");
                 }
             }
+        } else {
+            break;
         }
     }
     if !join_set.is_empty() {

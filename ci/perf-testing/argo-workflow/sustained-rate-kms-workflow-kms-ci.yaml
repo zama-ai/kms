@@ -7,7 +7,7 @@ metadata:
     app: sustained-rate-kms
 spec:
   serviceAccountName: workflow-runner
-  activeDeadlineSeconds: 28800  # 8 hours total timeout
+  activeDeadlineSeconds: 1800  # 30 minutes while iterating on the sustained-rate workflow
   # Delete the completed Workflow object and pod metadata after 24h. Test output
   # remains in pod logs, Slack, and any external log/artifact sinks.
   ttlStrategy:
@@ -34,7 +34,7 @@ spec:
     - name: fhe-params
       value: "Default"
     - name: duration
-      value: "90"
+      value: "60"
     - name: max-in-flight
       value: "10000"
     - name: data-type
@@ -66,150 +66,13 @@ spec:
               - name: previous-ok
                 value: "true"
 
-          - name: sustained-rate-udec-200
-            dependencies: ["sustained-rate-udec-100"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "200"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-100.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-300
-            dependencies: ["sustained-rate-udec-200"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "300"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-200.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-400
-            dependencies: ["sustained-rate-udec-300"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "400"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-300.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-500
-            dependencies: ["sustained-rate-udec-400"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "500"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-400.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-600
-            dependencies: ["sustained-rate-udec-500"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "600"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-500.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-700
-            dependencies: ["sustained-rate-udec-600"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "700"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-600.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-800
-            dependencies: ["sustained-rate-udec-700"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "800"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-700.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-900
-            dependencies: ["sustained-rate-udec-800"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "900"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-800.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-1000
-            dependencies: ["sustained-rate-udec-900"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "1000"
-              - name: key-id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-900.outputs.parameters.capacity-ok}}"
-
           - name: summary
-            dependencies: [
-              "sustained-rate-udec-100",
-              "sustained-rate-udec-200",
-              "sustained-rate-udec-300",
-              "sustained-rate-udec-400",
-              "sustained-rate-udec-500",
-              "sustained-rate-udec-600",
-              "sustained-rate-udec-700",
-              "sustained-rate-udec-800",
-              "sustained-rate-udec-900",
-              "sustained-rate-udec-1000"
-            ]
+            dependencies: ["sustained-rate-udec-100"]
             template: summary-report
             arguments:
               parameters:
               - name: test-result-100
                 value: "{{tasks.sustained-rate-udec-100.outputs.parameters.test-result}}"
-              - name: test-result-200
-                value: "{{tasks.sustained-rate-udec-200.outputs.parameters.test-result}}"
-              - name: test-result-300
-                value: "{{tasks.sustained-rate-udec-300.outputs.parameters.test-result}}"
-              - name: test-result-400
-                value: "{{tasks.sustained-rate-udec-400.outputs.parameters.test-result}}"
-              - name: test-result-500
-                value: "{{tasks.sustained-rate-udec-500.outputs.parameters.test-result}}"
-              - name: test-result-600
-                value: "{{tasks.sustained-rate-udec-600.outputs.parameters.test-result}}"
-              - name: test-result-700
-                value: "{{tasks.sustained-rate-udec-700.outputs.parameters.test-result}}"
-              - name: test-result-800
-                value: "{{tasks.sustained-rate-udec-800.outputs.parameters.test-result}}"
-              - name: test-result-900
-                value: "{{tasks.sustained-rate-udec-900.outputs.parameters.test-result}}"
-              - name: test-result-1000
-                value: "{{tasks.sustained-rate-udec-1000.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -473,8 +336,14 @@ spec:
           if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
             client_logs_arg="--logs"
           fi
+          rate_timeout=$(({{workflow.parameters.duration}} + 300))
           start_time=$(date +%s)
-          ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          if command -v timeout >/dev/null 2>&1; then
+            timeout --signal=TERM "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          else
+            echo "WARNING: timeout command not found; running without per-rate wall timeout"
+            ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          fi
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)
           duration=$((end_time - start_time))
@@ -484,7 +353,11 @@ spec:
             sustained_rate_metrics=$(grep "SUSTAINED_RATE_METRICS" /tmp/test_logs.txt | tail -1 | sed 's/.*SUSTAINED_RATE_METRICS //')
           fi
 
-          if [ "$test_exit" -eq 0 ]; then
+          metrics_failed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.failed // 0' 2>/dev/null || echo 0)
+          metrics_shed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.shed // 0' 2>/dev/null || echo 0)
+          metrics_saturated=$(printf '%s' "$sustained_rate_metrics" | jq -r '.saturated // false' 2>/dev/null || echo false)
+
+          if [ "$test_exit" -eq 0 ] && [ "$metrics_failed" = "0" ] && [ "$metrics_shed" = "0" ] && [ "$metrics_saturated" != "true" ]; then
             status="passed"
             capacity_ok="true"
           else
@@ -511,15 +384,6 @@ spec:
       inputs:
         parameters:
         - name: test-result-100
-        - name: test-result-200
-        - name: test-result-300
-        - name: test-result-400
-        - name: test-result-500
-        - name: test-result-600
-        - name: test-result-700
-        - name: test-result-800
-        - name: test-result-900
-        - name: test-result-1000
         - name: tls
         - name: run_url
         - name: duration
@@ -539,15 +403,6 @@ spec:
           apk add --no-cache jq curl
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-100}}' > /mnt/results/sustained-rate-udec-100.json
-          echo '{{inputs.parameters.test-result-200}}' > /mnt/results/sustained-rate-udec-200.json
-          echo '{{inputs.parameters.test-result-300}}' > /mnt/results/sustained-rate-udec-300.json
-          echo '{{inputs.parameters.test-result-400}}' > /mnt/results/sustained-rate-udec-400.json
-          echo '{{inputs.parameters.test-result-500}}' > /mnt/results/sustained-rate-udec-500.json
-          echo '{{inputs.parameters.test-result-600}}' > /mnt/results/sustained-rate-udec-600.json
-          echo '{{inputs.parameters.test-result-700}}' > /mnt/results/sustained-rate-udec-700.json
-          echo '{{inputs.parameters.test-result-800}}' > /mnt/results/sustained-rate-udec-800.json
-          echo '{{inputs.parameters.test-result-900}}' > /mnt/results/sustained-rate-udec-900.json
-          echo '{{inputs.parameters.test-result-1000}}' > /mnt/results/sustained-rate-udec-1000.json
 
           echo "=========================================="
           echo "KMS SUSTAINED UDEC RATE SUMMARY"
@@ -564,7 +419,7 @@ spec:
           skipped=0
           summary_lines=""
 
-          for rate in 100 200 300 400 500 600 700 800 900 1000; do
+          for rate in 100; do
             result="/mnt/results/sustained-rate-udec-${rate}.json"
             if ! jq empty "$result" 2>/dev/null; then
               echo "Skipping invalid JSON file: $result"
@@ -589,7 +444,7 @@ spec:
             if [ "$status" = "skipped" ]; then
               skipped=$((skipped + 1))
               line="SKIP ${test_name}: skipped because a lower sustained udec rate failed"
-            elif [ "$exit_code" = "0" ]; then
+            elif [ "$status" = "passed" ]; then
               passed=$((passed + 1))
               perf_info="target=${target_rate} req/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} achieved=${achieved_rate} req/s saturated=${saturated} p50=${p50}ms p95=${p95}ms p99=${p99}ms"
               line="PASS ${test_name}: ${perf_info}"
