@@ -155,10 +155,14 @@ jobs:
             echo "Using freshly built images from docker-build job"
             CORE_TAG="${DOCKER_BUILD_TAG}"
             CLIENT_TAG="${DOCKER_BUILD_TAG}"
+            TAG_SOURCE="docker-build output"
+            TAG_SOURCE_ENV="docker-build"
           else
             echo "Using provided image tags from inputs"
             CORE_TAG="${INPUT_CORE_TAG}"
             CLIENT_TAG="${INPUT_CLIENT_TAG}"
+            TAG_SOURCE="workflow inputs"
+            TAG_SOURCE_ENV="workflow-inputs"
           fi
 
           # Validate that we have image tags
@@ -166,13 +170,40 @@ jobs:
             echo "ERROR: No image tag available. Either build images or provide kms_core_image_tag"
             exit 1
           fi
+          if [[ -z "${CLIENT_TAG}" ]]; then
+            echo "ERROR: No client image tag available. Either build images or provide kms_core_client_image_tag"
+            exit 1
+          fi
 
-          echo "Core image tag: ${CORE_TAG}"
-          echo "Client image tag: ${CLIENT_TAG}"
+          echo "============================================================"
+          echo "KMS PERF IMAGE TAGS"
+          echo "============================================================"
+          echo "Source:                    ${TAG_SOURCE}"
+          echo "KMS Core image tag:        ${CORE_TAG}"
+          echo "KMS Core client image tag: ${CLIENT_TAG}"
+          echo ""
+          echo "Re-run without Docker build:"
+          echo "  Build new Docker images: unchecked"
+          echo "  KMS Core image tag: ${CORE_TAG}"
+          echo "  KMS Core client image tag: ${CLIENT_TAG}"
+          echo "============================================================"
+
+          {
+            echo "## KMS perf image tags"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source | \`${TAG_SOURCE}\` |"
+            echo "| KMS Core image tag | \`${CORE_TAG}\` |"
+            echo "| KMS Core client image tag | \`${CLIENT_TAG}\` |"
+            echo ""
+            echo "For a rerun without rebuilding, uncheck \`Build new Docker images\` and use the tags above."
+          } >> "$GITHUB_STEP_SUMMARY"
 
           {
             echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
+            echo "KMS_IMAGE_TAG_SOURCE=${TAG_SOURCE_ENV}"
           } >> "$GITHUB_ENV"
 
       # ======================================================================
@@ -290,6 +321,17 @@ jobs:
             echo "image tags were actually pushed; otherwise re-run with build=true."
             exit 1
           fi
+
+          {
+            echo ""
+            echo "## Verified perf images"
+            echo ""
+            echo "| Image |"
+            echo "| --- |"
+            for img in "${images[@]}"; do
+              echo "| \`${img}\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ======================================================================
       # TOOLING SETUP
@@ -434,6 +476,7 @@ jobs:
           fi
 
           # Update the workflow template with the current image tag
+          echo "Using image tags: core=${KMS_CORE_IMAGE_TAG}, client=${KMS_CORE_CLIENT_IMAGE_TAG}"
           echo "Updating workflow template ${WORKFLOW_TEMPLATE} — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
           sed -i \
             -e "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" \

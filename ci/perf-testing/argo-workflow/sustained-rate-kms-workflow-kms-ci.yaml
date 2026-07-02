@@ -607,17 +607,21 @@ spec:
             p50=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p50 // empty' "$result")
             p95=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p95 // empty' "$result")
             p99=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p99 // empty' "$result")
+            recon_avg=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.avg // empty' "$result")
+            recon_p50=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.p50 // empty' "$result")
+            recon_p99=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.p99 // empty' "$result")
+            recon_wall=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.wall // empty' "$result")
 
             if [ "$status" = "skipped" ]; then
               skipped=$((skipped + 1))
               line="SKIP scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: skipped because a lower sustained udec rate failed"
             elif [ "$status" = "passed" ]; then
               passed=$((passed + 1))
-              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms"
+              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
               line="PASS scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
             else
               failed=$((failed + 1))
-              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms"
+              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
               line="FAIL scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
             fi
 

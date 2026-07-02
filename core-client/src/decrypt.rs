@@ -563,12 +563,14 @@ struct SustainedRateMetrics {
     achieved_rate: f64,
     saturated: bool,
     latency_stat: crate::DurationStat,
+    reconstruction_stat: crate::DurationStat,
+    reconstruction_wall: tokio::time::Duration,
 }
 
 impl SustainedRateMetrics {
     fn log_json(&self) {
         let metrics = format!(
-            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}}}}",
+            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
             self.target_rate,
             self.duration_secs,
             self.max_in_flight,
@@ -585,6 +587,14 @@ impl SustainedRateMetrics {
             self.latency_stat.p99.as_secs_f64() * 1000.0,
             self.latency_stat.min.as_secs_f64() * 1000.0,
             self.latency_stat.max.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.avg.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.std_dev.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.p50.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.p95.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.p99.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.min.as_secs_f64() * 1000.0,
+            self.reconstruction_stat.max.as_secs_f64() * 1000.0,
+            self.reconstruction_wall.as_secs_f64() * 1000.0,
         );
         tracing::info!("SUSTAINED_RATE_METRICS {metrics}");
         println!("SUSTAINED_RATE_METRICS {metrics}");
@@ -877,22 +887,12 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
 
     let collect_elapsed = run_start.elapsed();
     let completed = collected.len() as u64;
-    let metrics = SustainedRateMetrics {
-        target_rate: rate,
-        duration_secs,
-        max_in_flight,
-        offered,
-        completed,
-        failed,
-        shed,
-        achieved_rate: completed as f64 / collect_elapsed.as_secs_f64(),
-        saturated,
-        latency_stat: crate::compute_stat_on_durations(&durations_to_get_responses),
-    };
-    metrics.log_json();
+    let latency_stat = crate::compute_stat_on_durations(&durations_to_get_responses);
 
     let reconstruct_start = tokio::time::Instant::now();
-    let mut recon_tasks: JoinSet<Result<(RequestId, String), anyhow::Error>> = JoinSet::new();
+    let mut recon_tasks: JoinSet<
+        Result<(RequestId, String, tokio::time::Duration), anyhow::Error>,
+    > = JoinSet::new();
     for CollectedUserDecrypt {
         req_id,
         user_decrypt_req,
@@ -904,6 +904,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     {
         let internal_client = internal_client.clone();
         recon_tasks.spawn(async move {
+            let reconstruct_one_start = tokio::time::Instant::now();
             let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req)
                 .map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
             let eip712_domain = protobuf_to_alloy_domain(
@@ -946,16 +947,39 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                 );
             }
 
-            Ok((req_id, format!("User decrypted Plaintext {first:?}")))
+            Ok((
+                req_id,
+                format!("User decrypted Plaintext {first:?}"),
+                reconstruct_one_start.elapsed(),
+            ))
         });
     }
 
     let mut result_vec = Vec::with_capacity(durations_to_get_responses.len());
+    let mut reconstruction_durations = Vec::with_capacity(durations_to_get_responses.len());
     while let Some(res) = recon_tasks.join_next().await {
-        let (req_id, msg) = res??;
+        let (req_id, msg, reconstruct_duration) = res??;
+        reconstruction_durations.push(reconstruct_duration);
         result_vec.push((Some(req_id), msg));
     }
     let reconstruct_elapsed = reconstruct_start.elapsed();
+    let reconstruction_stat = crate::compute_stat_on_durations(&reconstruction_durations);
+
+    let metrics = SustainedRateMetrics {
+        target_rate: rate,
+        duration_secs,
+        max_in_flight,
+        offered,
+        completed,
+        failed,
+        shed,
+        achieved_rate: completed as f64 / collect_elapsed.as_secs_f64(),
+        saturated,
+        latency_stat,
+        reconstruction_stat,
+        reconstruction_wall: reconstruct_elapsed,
+    };
+    metrics.log_json();
 
     print_phased_timings(
         "sustained user decrypt",
