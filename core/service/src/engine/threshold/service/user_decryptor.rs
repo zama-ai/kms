@@ -339,7 +339,7 @@ impl<
                     }?;
 
                     tracing::debug!(
-                        "User decryption {req_id} in session {session_id} ccompleted for type {:?}. Inner thread took {:?} ms",
+                        "User decryption {req_id} in session {session_id} completed for type {:?}. Partial decrypt took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );
