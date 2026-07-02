@@ -60,6 +60,7 @@ spec:
               cat kms-server.toml
               echo "### END - kms-server.toml ###"
               {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
+              {{- include "kmsCoreSecondaryCaCerts" . | nindent 14 }}
               envsubst < /var/lib/kms-core/config/kms-server-b.toml > kms-server-b.toml
               envsubst < /var/lib/kms-core/config/aws.toml >> kms-server-b.toml
               envsubst < /var/lib/kms-core/config/vaults-b.toml >> kms-server-b.toml

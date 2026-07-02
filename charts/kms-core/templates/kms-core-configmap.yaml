@@ -350,6 +350,9 @@ data:
     mpc_identity = {{ .host | quote }}
     address = {{ .host | quote }}
     port = {{ int .port }}
+      {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
+    tls_cert.pem = ${KMS_CA_PEM_B_{{ .id }}}
+      {{- end }}
     {{- end }}
 
     {{- if .Values.redis.enabled }}
@@ -402,10 +405,14 @@ data:
     {{- else }}
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
     {{- end }}
+    {{- /* The secondary enclave shares the pod (and its DNS name / headless
+           service) with the primary; B peers dial it at kmsCoreName-<id> on the
+           secondary peer port. The TLS subject must therefore match that host
+           identity (NOT the "-b" name), exactly like the primary network. */}}
     {{- if .Values.kmsCore.addressOverride }}
-    tls_subject = "{{ .Values.kmsCore.addressOverride }}-b-{{ default .Values.kmsPeers.id $sec.thresholdMode.myId }}"
+    tls_subject = "{{ .Values.kmsCore.addressOverride }}-{{ default .Values.kmsPeers.id $sec.thresholdMode.myId }}"
     {{- else }}
-    tls_subject = "{{ include "kmsCoreSecondaryName" . }}-{{ default .Values.kmsPeers.id $sec.thresholdMode.myId }}"
+    tls_subject = "{{ include "kmsCoreName" . }}-{{ default .Values.kmsPeers.id $sec.thresholdMode.myId }}"
     {{- end }}
     [enclave_bootstrap]
     web_identity_token_port = {{ int $sec.nitroEnclave.webIdentityTokenPort }}

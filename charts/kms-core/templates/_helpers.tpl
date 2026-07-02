@@ -447,3 +447,56 @@ env
 echo "### END - env ###"
 {{- end }}
 {{- end -}}
+
+{{/* Fetch CA certificates for the SECONDARY (co-located shard) network peers.
+     Mirrors the primary CA fetch in kmsCoreInitEnvVars, but reads from the
+     secondary public-vault prefix (PUB-b-p<id>) and exports KMS_CA_PEM_B_<id>
+     so kms-server-b.toml can pin each network-B peer's CA. The secondary is
+     enclave-only, so this covers the minio and AWS-enclave S3 layouts. */}}
+{{- define "kmsCoreSecondaryCaCerts" -}}
+{{- $sec := .Values.kmsCore.secondaryEnclave -}}
+{{- if and .Values.kmsCore.thresholdMode.tls.enabled $sec.enabled $sec.thresholdMode.peersList }}
+# Fetch CA certificates for all SECONDARY-network (B) peers
+{{- if $.Values.minio.enabled }}
+S3_BASE_URL_B="${CORE_CLIENT__S3_ENDPOINT}/{{ .Values.kmsCore.publicVault.s3.bucket }}"
+{{- else }}
+S3_BASE_URL_B="${CORE_CLIENT__S3_ENDPOINT}"
+{{- end }}
+echo "Fetching network-B TLS certificates from S3 base URL: ${S3_BASE_URL_B}"
+{{- range $sec.thresholdMode.peersList }}
+{{- if $.Values.minio.enabled }}
+CERT_PATH_B="PUB-b-p{{ .id }}/CACert/cert.pem"
+echo "Fetching B CA cert for party {{ .id }} from: ${S3_BASE_URL_B}/${CERT_PATH_B}"
+MAX_RETRIES=30
+RETRY_COUNT=0
+RETRY_DELAY=2
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s -f -o ./ca_pem_b_{{ .id }} "${S3_BASE_URL_B}/${CERT_PATH_B}"; then
+    export KMS_CA_PEM_B_{{ .id }}="\"\"\"$(cat ./ca_pem_b_{{ .id }})\"\"\""
+    echo "Successfully fetched B CA cert for party {{ .id }}"
+    break
+  else
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+      echo "B certificate not found yet, retry $RETRY_COUNT/$MAX_RETRIES in ${RETRY_DELAY}s..."
+      sleep $RETRY_DELAY
+    else
+      echo "WARNING: No B CA cert found for party {{ .id }} at ${CERT_PATH_B} after $MAX_RETRIES retries"
+    fi
+  fi
+done
+{{- else }}
+echo "Looking for B CA cert for party {{ .id }} at: ${S3_BASE_URL_B}?list-type=2&prefix=PUB-b-p{{ .id }}/CACert/"
+BUCKET_PATH_B_{{ .id }}=$(curl -s "${S3_BASE_URL_B}?list-type=2&prefix=PUB-b-p{{ .id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+echo "Found B bucket path: ${BUCKET_PATH_B_{{ .id }}}"
+if [ -n "${BUCKET_PATH_B_{{ .id }}}" ]; then
+  curl -s -o ./ca_pem_b_{{ .id }} "${S3_BASE_URL_B}/${BUCKET_PATH_B_{{ .id }}}"
+  export KMS_CA_PEM_B_{{ .id }}="\"\"\"$(cat ./ca_pem_b_{{ .id }})\"\"\""
+  echo "Fetched B CA cert for party {{ .id }}"
+else
+  echo "WARNING: No B CA cert found for party {{ .id }}"
+fi
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
