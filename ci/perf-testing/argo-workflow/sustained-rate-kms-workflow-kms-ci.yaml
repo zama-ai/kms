@@ -498,9 +498,12 @@ spec:
           duration=$((end_time - start_time))
 
           sustained_rate_metrics=""
-          if grep -q "^SUSTAINED_RATE_METRICS " /tmp/test_logs.txt; then
-            sustained_rate_metrics=$(grep "^SUSTAINED_RATE_METRICS " /tmp/test_logs.txt | tail -1 | sed 's/^SUSTAINED_RATE_METRICS //')
-          fi
+          while IFS= read -r metrics_line; do
+            candidate="${metrics_line#*SUSTAINED_RATE_METRICS }"
+            if printf '%s' "$candidate" | jq -e 'has("failed") and has("shed") and has("saturated")' >/dev/null 2>&1; then
+              sustained_rate_metrics="$candidate"
+            fi
+          done < <(grep "SUSTAINED_RATE_METRICS " /tmp/test_logs.txt || true)
 
           if [ -n "$sustained_rate_metrics" ] && printf '%s' "$sustained_rate_metrics" | jq -e 'has("failed") and has("shed") and has("saturated")' >/dev/null 2>&1; then
             metrics_failed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.failed')
@@ -511,7 +514,7 @@ spec:
             metrics_shed=0
             metrics_saturated=true
             sustained_rate_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
-            echo "ERROR: no valid raw SUSTAINED_RATE_METRICS line with failed/shed/saturated found"
+            echo "ERROR: no valid SUSTAINED_RATE_METRICS JSON with failed/shed/saturated found"
           fi
 
           if [ "$test_exit" -eq 0 ] && [ "$metrics_failed" -eq 0 ] && [ "$metrics_shed" -eq 0 ] && [ "$metrics_saturated" != "true" ]; then
