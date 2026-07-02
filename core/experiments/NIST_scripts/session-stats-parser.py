@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parse session_stats from per-run folders and emit aggregated CSVs.
 
-Layout expected at ``input_dir`` (the campaign folder produced by
+Layout expected at each ``input_dir`` (the campaign folder produced by
 ``threshold-test-params.sh`` or the local archive scp'd back by the
 ``bench_nist`` shutdown script):
 
@@ -14,12 +14,23 @@ Layout expected at ``input_dir`` (the campaign folder produced by
             session_stats_<i>.txt
         ...
 
-Each per-run subfolder is one chronologically-distinct run. ``BENCH_PARAMS.txt``
-declares the run's identity and the operation schedule (``PROTOCOL``,
-``SESSION_TYPE``, ``HAS_PRSS_INIT`` / ``HAS_CRS`` / ``HAS_RESHARE``,
-``DDEC_MODES``). The ``session_stats_*.txt`` files are flat lists of
-``name=...,role=...,...`` metric lines in the order the parties emitted them
-(which matches the operation schedule, so matching is positional).
+The parser walks each input_dir recursively, so it can be pointed at
+either a single campaign or a parent directory that contains many
+sibling campaigns. Multiple ``input_dir`` arguments can be supplied on the
+CLI to explicitly union heterogeneous sources.
+
+Each per-run subfolder is one chronologically-distinct run.
+``BENCH_PARAMS.txt`` declares the run's identity and the operation
+schedule (``PROTOCOL``, ``SESSION_TYPE``, ``HAS_PRSS_INIT`` /
+``HAS_CRS`` / ``HAS_RESHARE``, ``DDEC_MODES``, plus fleet identity
+``NUM_PARTIES`` / ``REGIONS`` / ``MACHINE_TYPE``). The
+``session_stats_*.txt`` files are flat lists of
+``name=...,role=...,...`` metric lines in the order the parties
+emitted them (which matches the operation schedule, so matching is
+positional). ``-mem`` runs pair with their non-mem twins by
+``(experiment_name, num_parties, regions, machine_type)`` so multiple
+campaigns sharing an experiment name (e.g. same params run on both
+LAN and WAN fleets) don't cross-contaminate memory columns.
 
 Output (one set per invocation, written next to the campaign folder or to
 ``--output-dir``):
@@ -160,6 +171,14 @@ class BenchParams:
     num_sessions: int
     percentage_offline: int
     params: str  # TFHE parameter set name; "" for bgv
+    # Fleet identity — recorded by bench_nist (REGIONS=…, MACHINE_TYPE=…
+    # in BENCH_PARAMS.txt) and by the kms reproducible scripts. Missing
+    # in older archives; empty string on those. Used together with
+    # ``experiment_name`` and ``num_parties`` to key the -mem-pairing
+    # lookup so cross-folder campaigns don't collide (see
+    # ``_campaign_key``).
+    regions: str
+    machine_type: str
     ddec_modes: List[str]  # e.g. ["noise-flood-small", "bit-dec-small"]
     # Message types swept inside each DDEC mode for this run. Recorded in
     # BENCH_PARAMS.txt as ``CTXT_TYPES`` (space-separated, in the order the
@@ -324,6 +343,8 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
         has_dkg=has_dkg,
         has_crs=has_crs,
         has_reshare=has_reshare,
+        regions=raw.get("REGIONS", "").strip(),
+        machine_type=raw.get("MACHINE_TYPE", "").strip(),
     )
 
 
@@ -711,20 +732,43 @@ class Run:
 
 
 def discover_runs(input_dir: str, spread_threshold: float) -> List[Run]:
-    """Scan ``input_dir`` for per-run subfolders and aggregate each one."""
+    """Recursively scan ``input_dir`` for per-run folders and aggregate
+    each one.
+
+    A "per-run folder" is any directory that contains a
+    ``BENCH_PARAMS.txt`` file. The walk descends until it hits such a
+    folder, then treats it as a leaf (doesn't descend further into it).
+    That lets the parser be pointed either at a single campaign folder
+    (the historical layout, still a leaf-level parent) or at a
+    collection of campaigns (e.g. ``NIST-RESULTS/July/`` which holds
+    six sibling campaigns).
+
+    Real-path deduplication guards against symlink loops and against
+    the same run being picked up twice when a caller supplies a
+    directory alongside a symlink into it.
+    """
     runs: List[Run] = []
-    for entry in sorted(os.listdir(input_dir)):
-        full = os.path.join(input_dir, entry)
-        if not os.path.isdir(full):
+    seen: set = set()
+    # Sort entries at each level for stable output ordering.
+    for root, dirs, files in os.walk(input_dir, followlinks=True):
+        dirs.sort()
+        real = os.path.realpath(root)
+        if real in seen:
+            dirs[:] = []
             continue
-        bp = parse_bench_params(full)
-        if bp is None:
-            logger.warning("Skipping %s: no readable BENCH_PARAMS.txt", full)
-            continue
-        aggs = aggregate_run(full, bp, spread_threshold)
-        if aggs is None:
-            continue
-        runs.append(Run(folder=full, params=bp, aggregates=aggs))
+        if "BENCH_PARAMS.txt" in files:
+            seen.add(real)
+            bp = parse_bench_params(root)
+            if bp is None:
+                logger.warning("Skipping %s: no readable BENCH_PARAMS.txt", root)
+                # Don't descend into a run folder even on parse failure.
+                dirs[:] = []
+                continue
+            aggs = aggregate_run(root, bp, spread_threshold)
+            dirs[:] = []  # per-run folders are leaves in the search tree
+            if aggs is None:
+                continue
+            runs.append(Run(folder=root, params=bp, aggregates=aggs))
     return runs
 
 
@@ -737,27 +781,75 @@ def _base_experiment_name(name: str) -> str:
     return name
 
 
-def split_runs(runs: List[Run]) -> Tuple[List[Run], Dict[str, Run]]:
+# A "campaign identity" tuple: two runs with the same key are the same
+# physical benchmark (possibly one -mem, one non-mem). Different fleet
+# sizes, regions, or machine types produce different campaigns even if
+# they share the experiment name — this matters as soon as the parser
+# is invoked over multiple sibling campaign folders (e.g. the July
+# archive contains 4p + 10p, LAN + WAN runs with identical
+# experiment_names but different fleet identities).
+CampaignKey = Tuple[str, int, str, str]  # (base_experiment, num_parties, regions, machine_type)
+
+
+def _campaign_key(bp: "BenchParams") -> CampaignKey:
+    return (
+        _base_experiment_name(bp.experiment_name),
+        bp.num_parties,
+        bp.regions,
+        bp.machine_type,
+    )
+
+
+def split_runs(runs: List[Run]) -> Tuple[List[Run], Dict[CampaignKey, Run]]:
     """Partition runs into (row-producing non-mem runs, mem index).
 
-    ``mem_index[base_experiment_name]`` is the matching mem-run aggregate for
-    that experiment, or absent when no mem run was found.
+    ``mem_index[campaign_key]`` is the matching mem-run aggregate for
+    that (experiment, num_parties, regions, machine_type) tuple, or
+    absent when no mem run was found. Keying on the full campaign
+    tuple (rather than just experiment_name) prevents cross-campaign
+    collisions when the parser is invoked over multiple sibling
+    campaign folders that share experiment_names.
     """
     non_mem: List[Run] = []
-    mem: Dict[str, Run] = {}
+    mem: Dict[CampaignKey, Run] = {}
     for r in runs:
         if r.params.measure_memory:
-            base = _base_experiment_name(r.params.experiment_name)
-            if base in mem:
+            key = _campaign_key(r.params)
+            if key in mem:
                 logger.warning(
-                    "Two mem runs share base experiment name %s; keeping the first.",
-                    base,
+                    "Two mem runs share campaign key %s (folders: %s and %s); "
+                    "keeping the first.",
+                    key, mem[key].folder, r.folder,
                 )
                 continue
-            mem[base] = r
+            mem[key] = r
         else:
             non_mem.append(r)
     return non_mem, mem
+
+
+def warn_unpaired_mem_runs(
+        non_mem: List[Run], mem_index: Dict[CampaignKey, Run]) -> None:
+    """Log a warning for every non-mem run without a matching -mem twin
+    (its memory columns will be ``-1`` / empty in the output CSV) and
+    every -mem run whose non-mem twin is missing (its numbers are
+    consumed by ``_peak_mem_kb_for`` but never produce a CSV row on
+    their own — silent otherwise). Purely informational; useful when
+    combining folders where you *expect* every twin to be present.
+    """
+    non_mem_keys = {_campaign_key(r.params) for r in non_mem}
+    for r in non_mem:
+        if _campaign_key(r.params) not in mem_index:
+            logger.warning(
+                "Non-mem run %s has no matching -mem twin; peak_mem columns "
+                "will be empty.", r.folder,
+            )
+    for key, r in mem_index.items():
+        if key not in non_mem_keys:
+            logger.warning(
+                "-mem run %s has no non-mem twin; its measurements won't "
+                "appear in any CSV row.", r.folder,
+            )
 
 
 def _find_operation(aggs: List[AggregatedOperation], label: str) -> Optional[AggregatedOperation]:
@@ -812,6 +904,12 @@ META_HEADERS = [
     "num_sessions",
     "percentage_offline",
     "num_ctxts_per_batch",
+    # Fleet identity — appended (not inserted mid-column) so downstream
+    # spreadsheets built against the old column order still align on
+    # the first six columns. Empty on runs from older archives whose
+    # BENCH_PARAMS.txt didn't record REGIONS / MACHINE_TYPE.
+    "regions",
+    "machine_type",
 ]
 
 
@@ -823,6 +921,8 @@ def _meta_cells(bp: BenchParams) -> List[object]:
         bp.num_sessions,
         bp.percentage_offline,
         bp.num_ctxts,
+        bp.regions,
+        bp.machine_type,
     ]
 
 
@@ -838,6 +938,8 @@ def _meta_cells_with_params(bp: BenchParams, override_params: str) -> List[objec
         bp.num_sessions,
         bp.percentage_offline,
         bp.num_ctxts,
+        bp.regions,
+        bp.machine_type,
     ]
 
 
@@ -1098,7 +1200,7 @@ def _write_csv(path: str, headers: List[str], rows: List[List[object]]) -> None:
 
 def _emit_rows(
     runs: List[Run],
-    mem_index: Dict[str, Run],
+    mem_index: Dict[CampaignKey, Run],
 ) -> Tuple[
     List[List[object]],  # crs
     List[List[object]],  # keygen (tfhe)
@@ -1128,7 +1230,7 @@ def _emit_rows(
 
     for r in sorted_runs:
         bp = r.params
-        mem_run = mem_index.get(_base_experiment_name(bp.experiment_name))
+        mem_run = mem_index.get(_campaign_key(bp))
 
         if bp.protocol == "tfhe":
             # CRS — one row per entry in bp.crs_params (every CRS-producing
@@ -1247,7 +1349,7 @@ def write_campaign_csvs(
     output_dir: str,
     suffix: str,
     runs: List[Run],
-    mem_index: Dict[str, Run],
+    mem_index: Dict[CampaignKey, Run],
 ) -> None:
     """Emit the seven CSVs for one campaign into ``output_dir``."""
     os.makedirs(output_dir, exist_ok=True)
@@ -1273,8 +1375,21 @@ def main() -> None:
         )
     )
     parser.add_argument(
-        "input_dir",
-        help="Campaign folder containing per-run subfolders (each with BENCH_PARAMS.txt + session_stats_<i>.txt).",
+        "input_dirs",
+        nargs="+",
+        metavar="input_dir",
+        help=(
+            "One or more campaign folders to scan (recursively) for "
+            "per-run subfolders. Each subfolder must contain a "
+            "BENCH_PARAMS.txt + session_stats_<i>.txt files. Multiple "
+            "inputs are unioned before aggregation, so you can point at "
+            "a single campaign, at a parent that contains many, or at "
+            "several sibling folders explicitly. -mem runs are paired "
+            "with their non-mem twins by (experiment_name, num_parties, "
+            "regions, machine_type) — so combining campaigns with the "
+            "same experiment name but different fleet sizes/regions "
+            "keeps their memory data correctly associated."
+        ),
     )
     parser.add_argument(
         "output_suffix",
@@ -1313,18 +1428,29 @@ def main() -> None:
         level=logging.WARNING if args.warn else logging.ERROR,
     )
 
-    if not os.path.isdir(args.input_dir):
-        logger.error("input_dir %s is not a directory", args.input_dir)
+    bad = [d for d in args.input_dirs if not os.path.isdir(d)]
+    if bad:
+        for d in bad:
+            logger.error("input_dir %s is not a directory", d)
         sys.exit(1)
 
-    output_dir = args.output_dir if args.output_dir is not None else args.input_dir
+    # Default output goes next to the first input (matches historical
+    # single-input behaviour). Pass --output-dir explicitly when
+    # unioning multiple campaigns so the CSVs don't land inside one
+    # of them.
+    output_dir = args.output_dir if args.output_dir is not None else args.input_dirs[0]
 
-    all_runs = discover_runs(args.input_dir, args.spread_warning_threshold)
+    all_runs: List[Run] = []
+    for d in args.input_dirs:
+        all_runs.extend(discover_runs(d, args.spread_warning_threshold))
     if not all_runs:
-        logger.error("No usable per-run folders found under %s", args.input_dir)
+        logger.error(
+            "No usable per-run folders found under %s", ", ".join(args.input_dirs),
+        )
         sys.exit(1)
 
     non_mem_runs, mem_index = split_runs(all_runs)
+    warn_unpaired_mem_runs(non_mem_runs, mem_index)
     write_campaign_csvs(output_dir, args.output_suffix, non_mem_runs, mem_index)
     print(
         f"Wrote CSVs to {output_dir} from {len(non_mem_runs)} row-producing runs "

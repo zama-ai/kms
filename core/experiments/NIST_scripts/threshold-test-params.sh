@@ -30,6 +30,18 @@
 
 set -e
 
+# Fleet identity tags recorded in every BENCH_PARAMS.txt this campaign
+# produces. These populate the REGIONS / MACHINE_TYPE columns in the
+# CSVs so a "TestParams" campaign is visibly distinguishable from a
+# real EC2 campaign (whose bench_nist wrappers set REGIONS to the AWS
+# region summary and MACHINE_TYPE to the instance class). The
+# reproducible test_scripts default these to the same values via
+# ``${REGIONS:-local}`` / ``${MACHINE_TYPE:-Baseline}`` for standalone
+# invocations; exporting them here just makes the choice explicit for
+# anyone reading this campaign driver.
+export REGIONS=local
+export MACHINE_TYPE=Baseline
+
 # --- CLI -------------------------------------------------------------------
 MODE="all"
 if [ "${1:-}" = "--kat-only" ]; then
