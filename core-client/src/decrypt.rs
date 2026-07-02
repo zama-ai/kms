@@ -373,14 +373,6 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 );
             }
 
-            tracing::info!(
-                "{:?} ###! Sent {}/{} user decrypt requests successfully. Since start {:?}",
-                req_id.as_str(),
-                req_response_vec.len(),
-                num_parties,
-                start.elapsed()
-            );
-
             // get all responses
             let mut resp_tasks = JoinSet::new();
             for ce in core_endpoints_resp.values() {
@@ -450,9 +442,9 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
             let time_to_get_responses = request_start.elapsed();
 
             tracing::info!(
-                "{:?} ###! Received {} user decrypt responses. Since request start {:?}",
-                req_id.as_str(),
+                "udec resp: got={} needed={} elapsed={:?}",
                 resp_response_vec.len(),
+                num_expected_responses,
                 time_to_get_responses
             );
 
@@ -610,7 +602,6 @@ async fn send_and_collect_user_decrypt(
     num_parties: usize,
     max_iter: usize,
     num_expected_responses: usize,
-    run_start: tokio::time::Instant,
 ) -> anyhow::Result<CollectedUserDecrypt> {
     let request_start = tokio::time::Instant::now();
 
@@ -645,14 +636,6 @@ async fn send_and_collect_user_decrypt(
             num_expected_responses
         );
     }
-
-    tracing::info!(
-        "{:?} ###! Sent {}/{} user decrypt requests successfully. Since sustained start {:?}",
-        req_id.as_str(),
-        req_response_vec.len(),
-        num_parties,
-        run_start.elapsed()
-    );
 
     let mut resp_tasks = JoinSet::new();
     for ce in core_endpoints_resp.values() {
@@ -719,9 +702,9 @@ async fn send_and_collect_user_decrypt(
 
     let collect_duration = request_start.elapsed();
     tracing::info!(
-        "{:?} ###! Received {} sustained user decrypt responses. Since request start {:?}",
-        req_id.as_str(),
+        "udec resp: got={} needed={} elapsed={:?}",
         resp_response_vec.len(),
+        num_expected_responses,
         collect_duration
     );
 
@@ -852,7 +835,6 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                 num_parties,
                 max_iter,
                 num_expected_responses,
-                run_start,
             ));
         }
     }
