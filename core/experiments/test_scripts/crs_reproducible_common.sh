@@ -122,6 +122,8 @@ HAS_PRSS_INIT=0
 HAS_DKG=0
 HAS_CRS=1
 HAS_RESHARE=0
+REGIONS=${REGIONS:-local}
+MACHINE_TYPE=${MACHINE_TYPE:-Baseline}
 EOF
 
 cargo build --bin mobygo
