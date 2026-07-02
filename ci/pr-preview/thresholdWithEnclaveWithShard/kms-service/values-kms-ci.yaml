@@ -20,7 +20,12 @@ kmsCore:
       cpu: 4
     limits:
       memory: 24Gi
-      ephemeralStorage: 10Gi
+      # Applied to BOTH the primary and secondary enclave containers, so the pod
+      # requests 2x this value of ephemeral-storage. The enclave nodes' default
+      # ~20Gi root disk only exposes ~17Gi allocatable, so 2x10Gi (=20Gi) does not
+      # fit. 6Gi each (=12Gi) fits with headroom; enclave containers use little
+      # ephemeral storage (the EIF lives in the image layer, not on the writable fs).
+      ephemeralStorage: 6Gi
       grpcTimeout: 360
       grpcMaxMessageSize: 104857600
   publicVault:
