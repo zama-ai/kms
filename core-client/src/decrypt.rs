@@ -593,6 +593,7 @@ impl SustainedRateMetrics {
 
 #[expect(clippy::too_many_arguments)]
 async fn send_and_collect_user_decrypt(
+    rate: u64,
     req_id: RequestId,
     user_decrypt_req: UserDecryptionRequest,
     enc_pk: UnifiedPublicEncKey,
@@ -702,10 +703,11 @@ async fn send_and_collect_user_decrypt(
 
     let collect_duration = request_start.elapsed();
     tracing::info!(
-        "udec resp: got={} needed={} elapsed={:?}",
-        resp_response_vec.len(),
-        num_expected_responses,
-        collect_duration
+        rate,
+        got = resp_response_vec.len(),
+        needed = num_expected_responses,
+        elapsed = ?collect_duration,
+        "udec resp"
     );
 
     Ok(CollectedUserDecrypt {
@@ -826,6 +828,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
             let core_endpoints_req = core_endpoints_req.clone();
             let core_endpoints_resp = core_endpoints_resp.clone();
             join_set.spawn(send_and_collect_user_decrypt(
+                rate,
                 req_id,
                 user_decrypt_req,
                 enc_pk,
