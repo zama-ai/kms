@@ -612,6 +612,12 @@ spec:
             shed=$(jq -r '.performance_metrics.sustained_rate.shed // empty' "$result")
             achieved_rate=$(jq -r '.performance_metrics.sustained_rate.achieved_rate // empty' "$result")
             saturated=$(jq -r '.performance_metrics.sustained_rate | if has("saturated") then .saturated else "" end' "$result")
+            request_payload_bytes=$(jq -r '.performance_metrics.sustained_rate.request_payload_bytes // empty' "$result")
+            request_payload_mib_per_sec=$(jq -r '.performance_metrics.sustained_rate.request_payload_mib_per_sec // empty' "$result")
+            request_payload_avg_bytes=$(jq -r '.performance_metrics.sustained_rate.request_payload_avg_bytes // empty' "$result")
+            response_payload_bytes=$(jq -r '.performance_metrics.sustained_rate.response_payload_bytes // empty' "$result")
+            response_payload_mib_per_sec=$(jq -r '.performance_metrics.sustained_rate.response_payload_mib_per_sec // empty' "$result")
+            response_payload_avg_bytes=$(jq -r '.performance_metrics.sustained_rate.response_payload_avg_bytes // empty' "$result")
             p50=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p50 // empty' "$result")
             p95=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p95 // empty' "$result")
             p99=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p99 // empty' "$result")
@@ -625,11 +631,11 @@ spec:
               line="SKIP scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: skipped because a lower sustained udec rate failed"
             elif [ "$status" = "passed" ]; then
               passed=$((passed + 1))
-              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
+              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
               line="PASS scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
             else
               failed=$((failed + 1))
-              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
+              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
               line="FAIL scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
             fi
 

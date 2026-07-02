@@ -16,6 +16,7 @@ use kms_lib::{
     engine::base::compute_public_decryption_message,
     util::key_setup::test_tools::TestingPlaintext,
 };
+use prost::Message as _;
 use rand::{CryptoRng, Rng};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -552,6 +553,14 @@ struct SustainedRateMetrics {
     shed: u64,
     achieved_rate: f64,
     saturated: bool,
+    request_payload_bytes: u64,
+    request_payload_messages: u64,
+    request_payload_mib_per_sec: f64,
+    request_payload_avg_bytes: f64,
+    response_payload_bytes: u64,
+    response_payload_messages: u64,
+    response_payload_mib_per_sec: f64,
+    response_payload_avg_bytes: f64,
     latency_stat: crate::DurationStat,
     reconstruction_stat: crate::DurationStat,
     reconstruction_wall: tokio::time::Duration,
@@ -560,7 +569,7 @@ struct SustainedRateMetrics {
 impl SustainedRateMetrics {
     fn log_json(&self) {
         let metrics = format!(
-            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
+            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"request_payload_bytes\":{},\"request_payload_messages\":{},\"request_payload_mib_per_sec\":{},\"request_payload_avg_bytes\":{},\"response_payload_bytes\":{},\"response_payload_messages\":{},\"response_payload_mib_per_sec\":{},\"response_payload_avg_bytes\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
             self.target_rate,
             self.duration_secs,
             self.max_in_flight,
@@ -570,6 +579,14 @@ impl SustainedRateMetrics {
             self.shed,
             self.achieved_rate,
             self.saturated,
+            self.request_payload_bytes,
+            self.request_payload_messages,
+            self.request_payload_mib_per_sec,
+            self.request_payload_avg_bytes,
+            self.response_payload_bytes,
+            self.response_payload_messages,
+            self.response_payload_mib_per_sec,
+            self.response_payload_avg_bytes,
             self.latency_stat.avg.as_secs_f64() * 1000.0,
             self.latency_stat.std_dev.as_secs_f64() * 1000.0,
             self.latency_stat.p50.as_secs_f64() * 1000.0,
@@ -791,6 +808,8 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     let mut failed = 0_u64;
     let mut shed = 0_u64;
     let mut saturated = false;
+    let mut request_payload_bytes = 0_u64;
+    let mut request_payload_messages = 0_u64;
 
     let run_start = tokio::time::Instant::now();
     let deadline = run_start + tokio::time::Duration::from_secs(duration_secs);
@@ -822,6 +841,9 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
                 saturated = true;
                 continue;
             }
+            request_payload_bytes +=
+                user_decrypt_req.encoded_len() as u64 * core_endpoints_req.len() as u64;
+            request_payload_messages += core_endpoints_req.len() as u64;
             let core_endpoints_req = core_endpoints_req.clone();
             let core_endpoints_resp = core_endpoints_resp.clone();
             join_set.spawn(send_and_collect_user_decrypt(
@@ -874,6 +896,35 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     let collect_elapsed = run_start.elapsed();
     let completed = collected.len() as u64;
     let latency_stat = crate::compute_stat_on_durations(&durations_to_get_responses);
+    let request_payload_mib_per_sec = if collect_elapsed.is_zero() {
+        0.0
+    } else {
+        request_payload_bytes as f64 / 1024.0 / 1024.0 / collect_elapsed.as_secs_f64()
+    };
+    let request_payload_avg_bytes = if request_payload_messages == 0 {
+        0.0
+    } else {
+        request_payload_bytes as f64 / request_payload_messages as f64
+    };
+    let response_payload_bytes = collected
+        .iter()
+        .flat_map(|collected| collected.resp_response_vec.iter())
+        .map(|response| response.encoded_len() as u64)
+        .sum();
+    let response_payload_messages = collected
+        .iter()
+        .map(|collected| collected.resp_response_vec.len() as u64)
+        .sum();
+    let response_payload_mib_per_sec = if collect_elapsed.is_zero() {
+        0.0
+    } else {
+        response_payload_bytes as f64 / 1024.0 / 1024.0 / collect_elapsed.as_secs_f64()
+    };
+    let response_payload_avg_bytes = if response_payload_messages == 0 {
+        0.0
+    } else {
+        response_payload_bytes as f64 / response_payload_messages as f64
+    };
 
     let reconstruct_start = tokio::time::Instant::now();
     let mut recon_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
@@ -943,6 +994,14 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         shed,
         achieved_rate: completed as f64 / collect_elapsed.as_secs_f64(),
         saturated,
+        request_payload_bytes,
+        request_payload_messages,
+        request_payload_mib_per_sec,
+        request_payload_avg_bytes,
+        response_payload_bytes,
+        response_payload_messages,
+        response_payload_mib_per_sec,
+        response_payload_avg_bytes,
         latency_stat,
         reconstruction_stat,
         reconstruction_wall: reconstruct_elapsed,

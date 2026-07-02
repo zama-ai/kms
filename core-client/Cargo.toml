@@ -55,6 +55,7 @@ kms = { workspace = true, features = [
 ] }
 kms-grpc.workspace = true
 observability.workspace = true
+prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 rcgen.workspace = true
