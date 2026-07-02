@@ -71,6 +71,80 @@ centralized
 {{- end -}}
 {{- end -}}
 
+{{/* Secondary co-located enclave helpers */}}
+
+{{- define "kmsCoreSecondaryName" -}}
+{{ include "kmsCoreName" . }}-b
+{{- end -}}
+
+{{- define "kmsSecondaryImageName" -}}
+{{ default .Values.kmsCore.image.name .Values.kmsCore.secondaryEnclave.image.name }}
+{{- end -}}
+
+{{- define "kmsSecondaryImageTag" -}}
+{{ default .Values.kmsCore.image.tag .Values.kmsCore.secondaryEnclave.image.tag }}
+{{- end -}}
+
+{{- define "kmsSecondaryImagePullPolicy" -}}
+{{ default .Values.kmsCore.image.pullPolicy .Values.kmsCore.secondaryEnclave.image.pullPolicy }}
+{{- end -}}
+
+{{/* The CID that maps to the unshifted parent vsock ports (4000/3000/2100).
+     MUST match CID_BASE baked into init_enclave.sh in the EIF, and the primary
+     kmsCore.nitroEnclave.cid must equal it so the primary keeps 4000/3000/2100. */}}
+{{- define "kmsEnclaveCidBase" -}}20{{- end -}}
+
+{{/* Parent-side vsock port offset for the secondary enclave, relative to the
+     CID base. init_enclave.sh applies the same offset (cid - CID_BASE) so a
+     single EIF backs both enclaves without vsock collisions on the host. */}}
+{{- define "kmsSecondaryEnclavePortOffset" -}}
+{{- sub (int .Values.kmsCore.secondaryEnclave.nitroEnclave.cid) (include "kmsEnclaveCidBase" . | int) -}}
+{{- end -}}
+
+{{- define "kmsSecondaryConfigPort" -}}
+{{- add 4000 (include "kmsSecondaryEnclavePortOffset" . | int) -}}
+{{- end -}}
+
+{{- define "kmsSecondaryLoggerPort" -}}
+{{- add 3000 (include "kmsSecondaryEnclavePortOffset" . | int) -}}
+{{- end -}}
+
+{{- define "kmsSecondaryTunnelVsockPort" -}}
+{{- add 2100 (include "kmsSecondaryEnclavePortOffset" . | int) -}}
+{{- end -}}
+
+{{- define "kmsSecondaryNetworkTunnelQueueCount" -}}
+{{- $configured := .Values.kmsCore.secondaryEnclave.nitroEnclave.networkTunnel.queueCount -}}
+{{- if and $configured (gt (int $configured) 0) -}}
+{{- int $configured -}}
+{{- else -}}
+{{- $partyCount := len .Values.kmsCore.secondaryEnclave.thresholdMode.peersList -}}
+{{- $hotFlows := 0 -}}
+{{- if gt $partyCount 1 -}}
+{{- $hotFlows = mul 2 (sub $partyCount 1) -}}
+{{- end -}}
+{{- if le $hotFlows 8 -}}8
+{{- else if le $hotFlows 16 -}}16
+{{- else if le $hotFlows 32 -}}32
+{{- else if le $hotFlows 64 -}}64
+{{- else if le $hotFlows 128 -}}128
+{{- else -}}256
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "kmsSecondaryNetworkTunnelTokioWorkerThreads" -}}
+{{- $configured := .Values.kmsCore.secondaryEnclave.nitroEnclave.networkTunnel.tokioWorkerThreads -}}
+{{- if and $configured (gt (int $configured) 0) -}}
+{{- int $configured -}}
+{{- else -}}
+{{- $queueCount := include "kmsSecondaryNetworkTunnelQueueCount" . | int -}}
+{{- if le $queueCount 16 -}}4
+{{- else -}}8
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
      	     	   "from" string
@@ -108,9 +182,11 @@ args:
         and renders the pod-local parent-side TUN bridge and DNS proxy used for
        enclave egress as a native Kubernetes sidecar. When ingressPorts is not
        empty, TCP ingress is DNATed into the enclave over the TUN. The tunnel
-       VSOCK port is fixed to 2100 and must match init_enclave.sh. */}}
+       VSOCK port defaults to 2100 (primary) and can be overridden via the
+       "vsockPort" key for co-located enclaves; it must match the CID-derived
+       NETWORK_TUNNEL_PORT computed by init_enclave.sh. */}}
 {{- define "enclaveNetworkTunnelContainer" -}}
-name: enclave-network-tunnel
+name: enclave-network-tunnel{{ .nameSuffix }}
 image: {{ .image.name }}:{{ .image.tag }}
 imagePullPolicy: {{ .image.pullPolicy }}
 {{- if gt (len .ingressPorts) 0 }}
@@ -144,7 +220,7 @@ args:
     esac
     ENCLAVE_TUN_IP="${ENCLAVE_TUN_ADDR%/*}"
     TUN_SUBNET={{ .networkTunnel.subnet | quote }}
-    VSOCK_PORT=2100
+    VSOCK_PORT={{ .vsockPort | default 2100 | quote }}
     QUEUE_COUNT={{ .queueCount | quote }}
     TOKIO_WORKER_THREADS={{ .workerThreads | quote }}
     UPSTREAM_DNS=""

@@ -31,4 +31,22 @@ spec:
       sourceLabels:
       - __meta_kubernetes_pod_container_image
       targetLabel: image_tag
+  {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
+  - port: metrics-b
+    {{- if .Values.kmsCore.serviceMonitor.metricNamePrefix }}
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      targetLabel: __name__
+      regex: (.*)
+      replacement: "{{ .Values.kmsCore.serviceMonitor.metricNamePrefix }}$1"
+      action: replace
+    {{- end }}
+    relabelings:
+    - action: replace
+      regex: .*:(.*)
+      replacement: $1
+      sourceLabels:
+      - __meta_kubernetes_pod_container_image
+      targetLabel: image_tag
+  {{- end }}
 {{- end -}}

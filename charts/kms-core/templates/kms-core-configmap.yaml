@@ -233,4 +233,181 @@ data:
   party_cert.pem: ${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}
       {{- end }}
     {{- end }}
+  {{- if and .Values.kmsCore.enabled .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
+  {{- $sec := .Values.kmsCore.secondaryEnclave }}
+  vaults-b.toml: |
+    {{- if .Values.kmsCore.publicVault.s3.enabled }}
+    [public_vault.storage.s3]
+    bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
+      {{- if $sec.publicVault.s3.prefix }}
+    prefix = "{{ $sec.publicVault.s3.prefix }}"
+      {{- else if .Values.kmsCore.publicVault.s3.prefix }}
+    prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- else }}
+    [public_vault.storage.file]
+    path = "/keys"
+    {{- end }}
+
+    {{- if .Values.kmsCore.privateVault.s3.enabled }}
+    [private_vault.storage.s3]
+    bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
+      {{- if $sec.privateVault.s3.prefix }}
+    prefix = "{{ $sec.privateVault.s3.prefix }}"
+      {{- else if .Values.kmsCore.privateVault.s3.prefix }}
+    prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- else }}
+    [private_vault.storage.file]
+    path = "/keys"
+    {{- end }}
+    [private_vault.keychain.aws_kms]
+    root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
+    root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
+    {{- if .Values.kmsCore.backupVault.s3.enabled }}
+    [backup_vault.storage.s3]
+    bucket = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET}"
+      {{- if .Values.kmsCore.backupVault.s3.prefix }}
+    prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- end }}
+    {{- if .Values.kmsCore.backupVault.awskms.enabled }}
+    [backup_vault.keychain.aws_kms]
+    root_key_id = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
+    root_key_spec = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
+    {{- else }}
+      {{- if .Values.kmsCore.custodianBackup }}
+    [backup_vault.keychain.secret_sharing]
+      {{- end }}
+    {{- end }}
+  kms-server-b.toml: |
+    [service]
+    listen_address = "0.0.0.0"
+    listen_port = {{ int $sec.ports.client }}
+    timeout_secs = {{ int .Values.kmsCore.resources.limits.grpcTimeout }}
+    grpc_max_message_size = {{ int .Values.kmsCore.resources.limits.grpcMaxMessageSize }}
+
+    [enclave_bootstrap]
+    web_identity_token_port = {{ int $sec.nitroEnclave.webIdentityTokenPort }}
+
+    [threshold]
+    listen_address = "0.0.0.0"
+    listen_port = {{ int $sec.ports.peer }}
+
+    {{- if $sec.thresholdMode.myId }}
+    my_id = "{{ $sec.thresholdMode.myId }}"
+    {{- else }}
+    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
+    {{- end }}
+
+    threshold = {{ int $sec.thresholdMode.thresholdValue }}
+    dec_capacity = {{ int $sec.thresholdMode.decCapacity }}
+    min_dec_cache = {{ int $sec.thresholdMode.minDecCache }}
+    num_sessions_preproc = {{ int $sec.thresholdMode.numSessionsPreproc }}
+    decryption_mode = {{ $sec.thresholdMode.decryptionMode | quote }}
+
+    [threshold.core_to_core_net]
+    message_limit = 70
+    multiplier = {{ float64 $sec.thresholdMode.multiplier }}
+    max_interval = {{ int $sec.thresholdMode.maxInterval }}
+    max_elapsed_time = {{ int $sec.thresholdMode.maxElapsedTime }}
+    network_timeout = {{ int $sec.thresholdMode.networkTimeout }}
+    network_timeout_bk = 300
+    network_timeout_bk_sns = 1200
+    max_en_decode_message_size = 2147483648
+    initial_interval_ms = {{ int $sec.thresholdMode.initialIntervalMs }}
+    session_update_interval_secs = 60
+    session_cleanup_interval_secs = 86400
+    discard_inactive_sessions_interval = 900
+    max_waiting_time_for_message_queue = 60
+    max_opened_inactive_sessions_per_party = {{ int $sec.thresholdMode.maxOpenedInactiveSessionsPerParty }}
+
+    {{- if .Values.kmsCore.thresholdMode.tls.enabled }}
+    [threshold.tls.auto]
+      {{- if .Values.kmsCore.thresholdMode.tls.ignoreAwsCaChain }}
+    ignore_aws_ca_chain = true
+      {{- else }}
+    ignore_aws_ca_chain = false
+      {{- end }}
+      {{- if .Values.kmsCore.thresholdMode.tls.attestPrivateVaultRootKey }}
+    attest_private_vault_root_key = true
+      {{- else }}
+    attest_private_vault_root_key = false
+      {{- end }}
+      {{- if .Values.kmsCore.thresholdMode.tls.trustedReleases }}
+        {{ range .Values.kmsCore.thresholdMode.tls.trustedReleases }}
+    [[threshold.tls.auto.trusted_releases]]
+    pcr0 = {{ .pcr0 | quote }}
+    pcr1 = {{ .pcr1 | quote }}
+    pcr2 = {{ .pcr2 | quote }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{- range $sec.thresholdMode.peersList }}
+    [[threshold.peers]]
+    party_id = {{ int .id }}
+    mpc_identity = {{ .host | quote }}
+    address = {{ .host | quote }}
+    port = {{ int .port }}
+    {{- end }}
+
+    {{- if .Values.redis.enabled }}
+    [threshold.preproc_redis]
+    host = {{ .Values.redis.host | quote }}
+    {{- end }}
+
+    [telemetry]
+    tracing_service_name = {{ include "kmsCoreSecondaryName" . | quote }}
+    {{- if .Values.tracing.enabled }}
+    tracing_endpoint = {{ .Values.tracing.endpoint | quote }}
+    {{- end }}
+    tracing_otlp_timeout_ms = 10000
+    metrics_bind_address = "0.0.0.0:{{ $sec.ports.metrics }}"
+    enable_sys_metrics = {{ $sec.thresholdMode.enableSysMetrics }}
+    refresh_interval_ms = {{ $sec.thresholdMode.refreshIntervalMs }}
+
+    [telemetry.batch]
+    max_queue_size = 8192
+    max_export_batch_size = 2048
+    max_concurrent_exports = 4
+    scheduled_delay_ms = 500
+    export_timeout_ms = 5000
+
+    [rate_limiter_conf]
+    bucket_size = {{ .Values.kmsCore.rateLimiter.bucketSize }}
+    pub_decrypt = 1
+    user_decrypt = 1
+    crsgen = 100
+    preproc = 50000
+    keygen = 1000
+    new_epoch = 25
+
+    [internal_config]
+    num_rayon_threads = {{ $sec.thresholdMode.rayonNumThreads }}
+    num_tokio_threads = {{ $sec.thresholdMode.tokioWorkerThreads }}
+  enclave-b.json: |
+    {
+      "cpu_count": {{ int $sec.nitroEnclave.cpuCount }},
+      "memory_mib": {{ mulf 1024 (int $sec.nitroEnclave.memoryGiB) }},
+      "enclave_cid": {{ int $sec.nitroEnclave.cid }},
+      "eif_path": {{ $sec.nitroEnclave.eifPath | quote }}
+    }
+  kms-gen-keys-b.toml: |
+    [keygen]
+    enabled = true
+    [threshold]
+    {{- if $sec.thresholdMode.myId }}
+    my_id = "{{ $sec.thresholdMode.myId }}"
+    {{- else }}
+    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
+    {{- end }}
+    {{- if .Values.kmsCore.addressOverride }}
+    tls_subject = "{{ .Values.kmsCore.addressOverride }}-b-{{ default .Values.kmsPeers.id $sec.thresholdMode.myId }}"
+    {{- else }}
+    tls_subject = "{{ include "kmsCoreSecondaryName" . }}-{{ default .Values.kmsPeers.id $sec.thresholdMode.myId }}"
+    {{- end }}
+    [enclave_bootstrap]
+    web_identity_token_port = {{ int $sec.nitroEnclave.webIdentityTokenPort }}
+  {{- end }}
 {{- end -}}

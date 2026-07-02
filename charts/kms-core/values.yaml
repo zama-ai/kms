@@ -155,6 +155,98 @@ kmsCore:
     eifSignKey: 00000000-0000-0000-0000-000000000000
     userId: 10003
     groupId: 10002
+  #########################################################
+  # SECONDARY CO-LOCATED ENCLAVE
+  #########################################################
+  # Runs a SECOND, independent kms-core instance in the SAME pod, inside its own
+  # Nitro enclave, joined to a DIFFERENT MPC network (its own peersList) and
+  # listening on a different peer port (default 50002). Enclave mode only.
+  #
+  # Requirements / caveats:
+  # - Requires an enclave image whose init_enclave.sh derives its parent vsock
+  #   ports (config/log/tunnel) from the enclave CID, so a single EIF can back
+  #   both enclaves without vsock port collisions on the shared host (CID 3).
+  #   The derivation base is the primary CID (kmsCore.nitroEnclave.cid, default
+  #   20): parent_port = base_port + (cid - primaryCid). Keep the primary CID at
+  #   20 so existing single-enclave deployments keep ports 4000/3000/2100.
+  # - The pod net namespace is shared, so the secondary client/peer/metrics ports
+  #   MUST differ from the primary ones.
+  # - Both enclaves share the node's /dev/nitro_enclaves and the Nitro allocator
+  #   pool: the instance must provide enough vCPUs, hugepages, and the Nitro k8s
+  #   device plugin must advertise capacity for two enclaves.
+  secondaryEnclave:
+    enabled: false
+    # Defaults to kmsCore.image when name/tag/pullPolicy are left unset.
+    image:
+      name:
+      tag:
+      pullPolicy:
+    # Ports for the secondary instance. Must NOT collide with kmsCore.ports.
+    ports:
+      client: 50101
+      peer: 50002
+      metrics: 9647
+    thresholdMode:
+      # Party id of this node inside the SECONDARY network. If unset, the primary
+      # my_id (KMS_CORE__THRESHOLD__MY_ID) is reused.
+      myId:
+      thresholdValue: 4
+      decryptionMode: "NoiseFloodSmall"
+      decCapacity: 10000
+      minDecCache: 6000
+      numSessionsPreproc: 100
+      multiplier: 2.0
+      maxInterval: 60
+      maxElapsedTime: 300
+      networkTimeout: 300
+      initialIntervalMs: 100
+      maxOpenedInactiveSessionsPerParty: 1000
+      enableSysMetrics: true
+      refreshIntervalMs: 5000
+      tokioWorkerThreads: 10
+      rayonNumThreads: 40
+      # Peers of the SECONDARY network. Leave empty to disable auto peer wiring.
+      peersList: []
+      #  - id: 1
+      #    host: kms-core-b-1
+      #    port: 50002
+    # Optional distinct S3 prefixes so the two networks do not clash in storage.
+    # If unset, the primary vault prefixes are reused (safe only when the
+    # secondary my_id differs from the primary my_id).
+    publicVault:
+      s3:
+        prefix:
+    privateVault:
+      s3:
+        prefix:
+    nitroEnclave:
+      # Must differ from kmsCore.nitroEnclave.cid. Parent vsock ports are derived
+      # as base_port + (cid - kmsCore.nitroEnclave.cid), matched by init_enclave.sh.
+      cid: 21
+      signed: false
+      eifPath: /app/kms/core/service/enclave.eif
+      eifSignKey: 00000000-0000-0000-0000-000000000000
+      # Distinct from the primary (4100) since the enclave dials the parent on it.
+      webIdentityTokenPort: 4101
+      cpuCount: 48
+      memoryGiB: 96
+      networkTunnel:
+        enabled: true
+        queueCount:
+        tokioWorkerThreads:
+        # Must differ from the primary tunnel: separate parent-side TUN interface,
+        # subnet, and addresses (the vsock port is derived from the CID offset).
+        interfaceName: vsocktun2
+        subnet: 10.119.0.0/24
+        parentAddress: 10.119.0.1/24
+        enclaveAddress: 10.119.0.2/24
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 8
+          limits:
+            memory: 1024Mi
+            cpu: 16
   publicVault:
     s3:
       enabled: true

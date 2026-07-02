@@ -1,0 +1,212 @@
+{{- if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled -}}
+{{- $sec := .Values.kmsCore.secondaryEnclave }}
+{{- $kmsGenCertAndKeysName := printf "%s-b" (include "kmsGenCertAndKeysJobName" .) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kms-core
+    app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": hook-succeeded
+  name: {{ $kmsGenCertAndKeysName }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: kms-core-gen-cert-and-keys
+        app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
+    spec:
+      serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
+      restartPolicy: Never
+      initContainers:
+        - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
+          name: kms-core-init-load-env-b
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              {{ include "kmsCoreInitEnvVars" . | indent 14 | trim }}
+              envsubst < /var/lib/kms-core/config/kms-gen-keys-b.toml > kms-gen-keys-b.toml
+              envsubst < /var/lib/kms-core/config/aws.toml >> kms-gen-keys-b.toml
+              envsubst < /var/lib/kms-core/config/vaults-b.toml >> kms-gen-keys-b.toml
+              echo "### BEGIN - kms-gen-keys-b.toml ###"
+              cat kms-gen-keys-b.toml
+              echo "### END - kms-gen-keys-b.toml ###"
+          env:
+            {{- if .Values.kmsPeers.id }}
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              value: "{{ .Values.kmsPeers.id }}"
+            {{- else }}
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
+            - name: NO_COLOR
+              value: "true"
+            - name: RUN_MODE
+              value: {{ .Values.runMode }}
+            - name: RUST_LOG
+              value: {{ .Values.rustLog }}
+            - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+            - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: /var/lib/kms-core/config
+              name: config-files
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+        {{- /* Secondary enclave config socket. init_enclave.sh dials a CID-derived port. */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-config-b"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" (include "kmsSecondaryConfigPort" . | int)
+                     "to" (printf "OPEN:kms-gen-keys-b.toml,rdonly")
+                ) | indent 10 | trim }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+        {{- /* Secondary enclave logger socket. */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "kms-core-enclave-logger-b"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" (include "kmsSecondaryLoggerPort" . | int)
+                     "to" "STDOUT"
+               ) | indent 10 | trim }}
+        {{- /* Secondary enclave web identity token socket. */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-web-identity-token-b"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" (int $sec.nitroEnclave.webIdentityTokenPort)
+            "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+            ) | indent 10 | trim }}
+        {{- if $sec.nitroEnclave.networkTunnel.enabled }}
+        {{- $queueCountB := include "kmsSecondaryNetworkTunnelQueueCount" . | int }}
+        {{- $workerThreadsB := include "kmsSecondaryNetworkTunnelTokioWorkerThreads" . | int }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "nameSuffix" "-b" "image" .Values.kmsCore.image "networkTunnel" $sec.nitroEnclave.networkTunnel "ingressPorts" (list) "queueCount" $queueCountB "workerThreads" $workerThreadsB "vsockPort" (include "kmsSecondaryTunnelVsockPort" . | int)) | indent 10 | trim }}
+          volumeMounts:
+            - name: tun-device
+              mountPath: /dev/net/tun
+          {{- with $sec.nitroEnclave.networkTunnel.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      containers:
+        - image: {{ include "kmsSecondaryImageName" . }}:{{ include "kmsSecondaryImageTag" . }}
+          imagePullPolicy: {{ include "kmsSecondaryImagePullPolicy" . }}
+          name: kms-core-enclave-gen-cert-and-keys-b
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              echo "### BEGIN - enclave-b.json ###"
+              cat /var/lib/kms-core/config/enclave-b.json
+              echo "### END - enclave-b.json ###"
+              echo "### BEGIN - describe-eif ###"
+              nitro-cli describe-eif --eif-path {{ $sec.nitroEnclave.eifPath }}
+              echo "### END - describe-eif ###"
+              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave-b.json
+              sleep 60
+          env:
+            - name: "NO_COLOR"
+              value: "true"
+            - name: RUN_MODE
+              value: {{ .Values.runMode }}
+            - name: RUST_LOG
+              value: {{ .Values.rustLog }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.kmsCore.envFrom.configmap.name }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+            - mountPath: /var/lib/kms-core/config
+              name: config-files
+            - mountPath: /hugepages
+              name: hugepage
+            - name: nitro-device
+              mountPath: /dev/nitro_enclaves
+          ports:
+            - containerPort: {{ $sec.ports.client }}
+              protocol: TCP
+            - containerPort: {{ $sec.ports.peer }}
+              protocol: TCP
+            - containerPort: {{ $sec.ports.metrics }}
+              protocol: TCP
+          resources:
+            requests:
+              memory: 2Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ $sec.nitroEnclave.memoryGiB }}Gi
+            limits:
+              ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
+              memory: 4Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ $sec.nitroEnclave.memoryGiB }}Gi
+      imagePullSecrets:
+        - name: registry-credentials
+      {{- if .Values.kmsCore.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kmsCore.affinity }}
+      affinity:
+        {{- toYaml .Values.kmsCore.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kmsCore.tolerations }}
+      tolerations:
+        {{- toYaml .Values.kmsCore.tolerations | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: keygen
+          emptyDir: {}
+        - name: workdir
+          emptyDir: {}
+        - name: config-files
+          configMap:
+            name: {{ include "kmsCoreName" . }}-config
+            defaultMode: 0664
+        - name: hugepage
+          emptyDir:
+            medium: HugePages
+        - name: nitro-device
+          hostPath:
+            path: /dev/nitro_enclaves
+            type: CharDevice
+        {{- if $sec.nitroEnclave.networkTunnel.enabled }}
+        - name: tun-device
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        {{- end }}
+{{- end -}}

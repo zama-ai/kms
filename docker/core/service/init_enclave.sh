@@ -5,11 +5,24 @@ set -o pipefail
 PARENT_CID=3
 TUN_IF=vsocktun
 
+# The parent serves each co-located enclave's bootstrap sockets on distinct
+# vsock ports (the host CID 3 port space is shared by all enclaves on the node).
+# To let a single EIF back multiple enclaves without collisions, derive the
+# parent vsock ports from this enclave's own CID: parent_port = base_port +
+# (LOCAL_CID - CID_BASE). CID_BASE MUST match the primary kmsCore.nitroEnclave.cid
+# in the Helm chart (default 20) so the primary enclave keeps 3000/4000/2100.
+CID_BASE=20
+LOCAL_CID="$(vsock-cid 2>/dev/null || echo "$CID_BASE")"
+case "$LOCAL_CID" in
+    ''|*[!0-9]*) LOCAL_CID="$CID_BASE" ;;
+esac
+PORT_OFFSET=$((LOCAL_CID - CID_BASE))
+
 # Don't bind to port 9000 as it is reserved by the AWS Nitro hypervisor for
 # communicating with the enclave.
-LOG_PORT=3000
-CONFIG_PORT=4000
-NETWORK_TUNNEL_PORT=2100
+LOG_PORT=$((3000 + PORT_OFFSET))
+CONFIG_PORT=$((4000 + PORT_OFFSET))
+NETWORK_TUNNEL_PORT=$((2100 + PORT_OFFSET))
 TUN_TOKIO_WORKER_THREADS=4
 
 KMS_SERVER_CONFIG_FILE="config.toml"

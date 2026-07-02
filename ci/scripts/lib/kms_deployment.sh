@@ -124,6 +124,12 @@ deploy_kms() {
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         generate_peers_config "${PEERS_VALUES}"
+        # Shard deployments run a co-located secondary enclave network in each pod:
+        # build its peersList (same pods, secondary peer port) so the parties and the
+        # secondary init job can wire up the second MPC network.
+        if [[ "${DEPLOYMENT_TYPE}" == *"Shard"* ]]; then
+            generate_secondary_peers_config "/tmp/kms-secondary-peers-values-${NAMESPACE}.yaml"
+        fi
         # Generate and upload TLS certificates for Kind deployments with TLS enabled
         # For AWS deployments, the kms-gen-cert-and-keys Helm job handles this automatically
         if [[ "${ENABLE_TLS}" == "true" && "${TARGET}" == *"kind"* ]]; then
@@ -201,6 +207,20 @@ deploy_threshold_mode() {
             --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
         )
+
+        # Shard deployment: overrides for the co-located secondary enclave of this
+        # party. Reuses the same pod as its primary sibling but joins the secondary
+        # MPC network and uses distinct S3 prefixes to avoid clashing with network A.
+        if [[ "${DEPLOYMENT_TYPE}" == *"Shard"* ]]; then
+            HELM_ARGS+=(
+                --values "/tmp/kms-secondary-peers-values-${NAMESPACE}.yaml"
+                --set kmsCore.secondaryEnclave.enabled=true
+                --set kmsCore.secondaryEnclave.thresholdMode.myId="${i}"
+                --set kmsCore.secondaryEnclave.thresholdMode.thresholdValue="${threshold_value}"
+                --set kmsCore.secondaryEnclave.publicVault.s3.prefix="PUB-b-p${i}"
+                --set kmsCore.secondaryEnclave.privateVault.s3.prefix="PRIV-b-p${i}"
+            )
+        fi
 
         # Enable TLS Helm flag for non-enclave deployments when TLS is enabled
         # Enclave deployments handle TLS separately (see performance testing overrides below)
@@ -628,6 +648,40 @@ EOF
 }
 
 #=============================================================================
+# Generate Secondary (Shard) Peers Configuration
+# For thresholdWithEnclaveWithShard deployments: builds the peersList for the
+# co-located secondary enclave network. It reuses the same pods as the primary
+# network (via the Helm release pod names) but connects on the secondary peer
+# port (default 50002, overridable via SECONDARY_PEER_PORT).
+#=============================================================================
+generate_secondary_peers_config() {
+    local output_file="$1"
+    local secondary_port="${SECONDARY_PEER_PORT:-50002}"
+    log_info "Generating secondary (shard) peers config for ${NUM_PARTIES} parties to ${output_file}"
+
+    cat <<EOF > "${output_file}"
+kmsCore:
+  secondaryEnclave:
+    enabled: true
+    thresholdMode:
+      peersList:
+EOF
+
+    # Generate a secondary-network peer entry for each party (same pod, port 50002)
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local pod_name="$(get_party_pod_name "${i}")"
+
+        cat <<EOF >> "${output_file}"
+        - id: ${i}
+          host: ${pod_name}
+          port: ${secondary_port}
+EOF
+    done
+
+    log_info "Generated secondary peers configuration for ${NUM_PARTIES} parties"
+}
+
+#=============================================================================
 # Deploy Initialization Job
 # This job performs initial key generation and configuration
 #=============================================================================
@@ -679,6 +733,12 @@ deploy_init_job() {
         --wait-for-jobs
         --timeout=1200s
     )
+
+    # Shard deployment: pass the secondary network peers so the secondary (B) init
+    # job can health-check and initialize the co-located second MPC network.
+    if [[ "${DEPLOYMENT_TYPE}" == *"Shard"* ]]; then
+        HELM_ARGS+=(--values "/tmp/kms-secondary-peers-values-${NAMESPACE}.yaml")
+    fi
 
     # Local development: Apply resource optimizations
     if [[ "${TARGET}" == "kind-local" ]]; then
