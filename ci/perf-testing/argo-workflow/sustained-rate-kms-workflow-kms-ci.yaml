@@ -352,10 +352,10 @@ spec:
           rate_timeout=$(({{workflow.parameters.duration}} + 300))
           start_time=$(date +%s)
           if command -v timeout >/dev/null 2>&1; then
-            timeout --signal=TERM "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+            timeout "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           else
             echo "WARNING: timeout command not found; running without per-rate wall timeout"
-            ./bin/kms-core-client ${client_logs_arg} -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+            ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           fi
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)

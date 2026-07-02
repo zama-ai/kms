@@ -451,6 +451,12 @@ jobs:
           echo "Streaming workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
 
+          workflow_phase=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '.status.phase')
+          echo "Argo workflow phase: ${workflow_phase}"
+          if [[ "${workflow_phase}" != "Succeeded" ]]; then
+            exit 1
+          fi
+
           echo "Workflow completed."
 
       # ======================================================================
