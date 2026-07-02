@@ -54,20 +54,8 @@ spec:
           - name: udec-setup
             template: prepare-udec-key
 
-          - name: sustained-rate-udec-500
-            dependencies: ["udec-setup"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "500"
-              - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "true"
-
           - name: sustained-rate-udec-1000
-            dependencies: ["udec-setup", "sustained-rate-udec-500"]
+            dependencies: ["udec-setup"]
             template: run-udec-rate
             arguments:
               parameters:
@@ -76,79 +64,151 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-500.outputs.parameters.capacity-ok}}"
+                value: "true"
 
-          - name: sustained-rate-udec-2000
+          - name: sustained-rate-udec-1100
             dependencies: ["udec-setup", "sustained-rate-udec-1000"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
-                value: "2000"
+                value: "1100"
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
                 value: "{{tasks.sustained-rate-udec-1000.outputs.parameters.capacity-ok}}"
 
-          - name: sustained-rate-udec-3000
-            dependencies: ["udec-setup", "sustained-rate-udec-2000"]
+          - name: sustained-rate-udec-1200
+            dependencies: ["udec-setup", "sustained-rate-udec-1100"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
-                value: "3000"
+                value: "1200"
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2000.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.sustained-rate-udec-1100.outputs.parameters.capacity-ok}}"
 
-          - name: sustained-rate-udec-4000
-            dependencies: ["udec-setup", "sustained-rate-udec-3000"]
+          - name: sustained-rate-udec-1300
+            dependencies: ["udec-setup", "sustained-rate-udec-1200"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
-                value: "4000"
+                value: "1300"
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-3000.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.sustained-rate-udec-1200.outputs.parameters.capacity-ok}}"
 
-          - name: sustained-rate-udec-5000
-            dependencies: ["udec-setup", "sustained-rate-udec-4000"]
+          - name: sustained-rate-udec-1400
+            dependencies: ["udec-setup", "sustained-rate-udec-1300"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
-                value: "5000"
+                value: "1400"
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-4000.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.sustained-rate-udec-1300.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-1500
+            dependencies: ["udec-setup", "sustained-rate-udec-1400"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "1500"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-1400.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-1600
+            dependencies: ["udec-setup", "sustained-rate-udec-1500"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "1600"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-1500.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-1700
+            dependencies: ["udec-setup", "sustained-rate-udec-1600"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "1700"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-1600.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-1800
+            dependencies: ["udec-setup", "sustained-rate-udec-1700"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "1800"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-1700.outputs.parameters.capacity-ok}}"
+
+          - name: sustained-rate-udec-1900
+            dependencies: ["udec-setup", "sustained-rate-udec-1800"]
+            template: run-udec-rate
+            arguments:
+              parameters:
+              - name: rate
+                value: "1900"
+              - name: key_id
+                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+              - name: previous-ok
+                value: "{{tasks.sustained-rate-udec-1800.outputs.parameters.capacity-ok}}"
 
           - name: summary
             dependencies:
-              - "sustained-rate-udec-500"
               - "sustained-rate-udec-1000"
-              - "sustained-rate-udec-2000"
-              - "sustained-rate-udec-3000"
-              - "sustained-rate-udec-4000"
-              - "sustained-rate-udec-5000"
+              - "sustained-rate-udec-1100"
+              - "sustained-rate-udec-1200"
+              - "sustained-rate-udec-1300"
+              - "sustained-rate-udec-1400"
+              - "sustained-rate-udec-1500"
+              - "sustained-rate-udec-1600"
+              - "sustained-rate-udec-1700"
+              - "sustained-rate-udec-1800"
+              - "sustained-rate-udec-1900"
             template: summary-report
             arguments:
               parameters:
-              - name: test-result-500
-                value: "{{tasks.sustained-rate-udec-500.outputs.parameters.test-result}}"
               - name: test-result-1000
                 value: "{{tasks.sustained-rate-udec-1000.outputs.parameters.test-result}}"
-              - name: test-result-2000
-                value: "{{tasks.sustained-rate-udec-2000.outputs.parameters.test-result}}"
-              - name: test-result-3000
-                value: "{{tasks.sustained-rate-udec-3000.outputs.parameters.test-result}}"
-              - name: test-result-4000
-                value: "{{tasks.sustained-rate-udec-4000.outputs.parameters.test-result}}"
-              - name: test-result-5000
-                value: "{{tasks.sustained-rate-udec-5000.outputs.parameters.test-result}}"
+              - name: test-result-1100
+                value: "{{tasks.sustained-rate-udec-1100.outputs.parameters.test-result}}"
+              - name: test-result-1200
+                value: "{{tasks.sustained-rate-udec-1200.outputs.parameters.test-result}}"
+              - name: test-result-1300
+                value: "{{tasks.sustained-rate-udec-1300.outputs.parameters.test-result}}"
+              - name: test-result-1400
+                value: "{{tasks.sustained-rate-udec-1400.outputs.parameters.test-result}}"
+              - name: test-result-1500
+                value: "{{tasks.sustained-rate-udec-1500.outputs.parameters.test-result}}"
+              - name: test-result-1600
+                value: "{{tasks.sustained-rate-udec-1600.outputs.parameters.test-result}}"
+              - name: test-result-1700
+                value: "{{tasks.sustained-rate-udec-1700.outputs.parameters.test-result}}"
+              - name: test-result-1800
+                value: "{{tasks.sustained-rate-udec-1800.outputs.parameters.test-result}}"
+              - name: test-result-1900
+                value: "{{tasks.sustained-rate-udec-1900.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -437,16 +497,24 @@ spec:
           end_time=$(date +%s)
           duration=$((end_time - start_time))
 
-          sustained_rate_metrics="{\"target_rate\":{{inputs.parameters.rate}}}"
-          if grep -q "SUSTAINED_RATE_METRICS" /tmp/test_logs.txt; then
-            sustained_rate_metrics=$(grep "SUSTAINED_RATE_METRICS" /tmp/test_logs.txt | tail -1 | sed 's/.*SUSTAINED_RATE_METRICS //')
+          sustained_rate_metrics=""
+          if grep -q "^SUSTAINED_RATE_METRICS " /tmp/test_logs.txt; then
+            sustained_rate_metrics=$(grep "^SUSTAINED_RATE_METRICS " /tmp/test_logs.txt | tail -1 | sed 's/^SUSTAINED_RATE_METRICS //')
           fi
 
-          metrics_failed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.failed // 0' 2>/dev/null || echo 0)
-          metrics_shed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.shed // 0' 2>/dev/null || echo 0)
-          metrics_saturated=$(printf '%s' "$sustained_rate_metrics" | jq -r '.saturated // false' 2>/dev/null || echo false)
+          if [ -n "$sustained_rate_metrics" ] && printf '%s' "$sustained_rate_metrics" | jq -e 'has("failed") and has("shed") and has("saturated")' >/dev/null 2>&1; then
+            metrics_failed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.failed')
+            metrics_shed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.shed')
+            metrics_saturated=$(printf '%s' "$sustained_rate_metrics" | jq -r '.saturated')
+          else
+            metrics_failed=1
+            metrics_shed=0
+            metrics_saturated=true
+            sustained_rate_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
+            echo "ERROR: no valid raw SUSTAINED_RATE_METRICS line with failed/shed/saturated found"
+          fi
 
-          if [ "$test_exit" -eq 0 ] && [ "$metrics_failed" = "0" ] && [ "$metrics_shed" = "0" ] && [ "$metrics_saturated" != "true" ]; then
+          if [ "$test_exit" -eq 0 ] && [ "$metrics_failed" -eq 0 ] && [ "$metrics_shed" -eq 0 ] && [ "$metrics_saturated" != "true" ]; then
             status="passed"
             capacity_ok="true"
           else
@@ -472,12 +540,16 @@ spec:
     - name: summary-report
       inputs:
         parameters:
-        - name: test-result-500
         - name: test-result-1000
-        - name: test-result-2000
-        - name: test-result-3000
-        - name: test-result-4000
-        - name: test-result-5000
+        - name: test-result-1100
+        - name: test-result-1200
+        - name: test-result-1300
+        - name: test-result-1400
+        - name: test-result-1500
+        - name: test-result-1600
+        - name: test-result-1700
+        - name: test-result-1800
+        - name: test-result-1900
         - name: tls
         - name: run_url
         - name: duration
@@ -496,12 +568,16 @@ spec:
         source: |
           apk add --no-cache jq curl
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-500}}' > /mnt/results/sustained-rate-udec-500.json
           echo '{{inputs.parameters.test-result-1000}}' > /mnt/results/sustained-rate-udec-1000.json
-          echo '{{inputs.parameters.test-result-2000}}' > /mnt/results/sustained-rate-udec-2000.json
-          echo '{{inputs.parameters.test-result-3000}}' > /mnt/results/sustained-rate-udec-3000.json
-          echo '{{inputs.parameters.test-result-4000}}' > /mnt/results/sustained-rate-udec-4000.json
-          echo '{{inputs.parameters.test-result-5000}}' > /mnt/results/sustained-rate-udec-5000.json
+          echo '{{inputs.parameters.test-result-1100}}' > /mnt/results/sustained-rate-udec-1100.json
+          echo '{{inputs.parameters.test-result-1200}}' > /mnt/results/sustained-rate-udec-1200.json
+          echo '{{inputs.parameters.test-result-1300}}' > /mnt/results/sustained-rate-udec-1300.json
+          echo '{{inputs.parameters.test-result-1400}}' > /mnt/results/sustained-rate-udec-1400.json
+          echo '{{inputs.parameters.test-result-1500}}' > /mnt/results/sustained-rate-udec-1500.json
+          echo '{{inputs.parameters.test-result-1600}}' > /mnt/results/sustained-rate-udec-1600.json
+          echo '{{inputs.parameters.test-result-1700}}' > /mnt/results/sustained-rate-udec-1700.json
+          echo '{{inputs.parameters.test-result-1800}}' > /mnt/results/sustained-rate-udec-1800.json
+          echo '{{inputs.parameters.test-result-1900}}' > /mnt/results/sustained-rate-udec-1900.json
 
           echo "=========================================="
           echo "KMS SUSTAINED UDEC RATE SUMMARY"
@@ -518,7 +594,7 @@ spec:
           skipped=0
           summary_lines=""
 
-          for rate in 500 1000 2000 3000 4000 5000; do
+          for rate in 1000 1100 1200 1300 1400 1500 1600 1700 1800 1900; do
             result="/mnt/results/sustained-rate-udec-${rate}.json"
             if ! jq empty "$result" 2>/dev/null; then
               echo "Skipping invalid JSON file: $result"
