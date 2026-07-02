@@ -540,3 +540,7 @@ spec:
           if [ $failed -gt 0 ]; then
             exit 1
           fi
+
+  # Credentials for pulling private registry images.
+  imagePullSecrets:
+  - name: registry-credentials
