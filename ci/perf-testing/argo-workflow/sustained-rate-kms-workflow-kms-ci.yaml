@@ -500,15 +500,23 @@ spec:
           sustained_rate_metrics=""
           while IFS= read -r metrics_line; do
             candidate="${metrics_line#*SUSTAINED_RATE_METRICS }"
-            if printf '%s' "$candidate" | jq -e 'has("failed") and has("shed") and has("saturated")' >/dev/null 2>&1; then
+            if [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
               sustained_rate_metrics="$candidate"
             fi
           done < <(grep "SUSTAINED_RATE_METRICS " /tmp/test_logs.txt || true)
 
-          if [ -n "$sustained_rate_metrics" ] && printf '%s' "$sustained_rate_metrics" | jq -e 'has("failed") and has("shed") and has("saturated")' >/dev/null 2>&1; then
-            metrics_failed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.failed')
-            metrics_shed=$(printf '%s' "$sustained_rate_metrics" | jq -r '.shed')
-            metrics_saturated=$(printf '%s' "$sustained_rate_metrics" | jq -r '.saturated')
+          if [[ -n "$sustained_rate_metrics" && "$sustained_rate_metrics" =~ \"failed\":([0-9]+) ]]; then
+            metrics_failed="${BASH_REMATCH[1]}"
+            if [[ "$sustained_rate_metrics" =~ \"shed\":([0-9]+) ]]; then
+              metrics_shed="${BASH_REMATCH[1]}"
+            else
+              metrics_shed=0
+            fi
+            if [[ "$sustained_rate_metrics" =~ \"saturated\":(true|false) ]]; then
+              metrics_saturated="${BASH_REMATCH[1]}"
+            else
+              metrics_saturated=true
+            fi
           else
             metrics_failed=1
             metrics_shed=0
