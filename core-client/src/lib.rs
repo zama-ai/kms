@@ -389,11 +389,6 @@ fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
         }
         (None, None) => {}
     }
-    if cf.get_perf_noop_user_decrypt() && cf.get_rate().is_none() {
-        return Err(anyhow::anyhow!(
-            "--perf-noop-user-decrypt is only supported with sustained --rate mode."
-        ));
-    }
 
     Ok(())
 }
@@ -668,15 +663,6 @@ impl CipherArguments {
             CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.max_in_flight,
         }
     }
-
-    pub fn get_perf_noop_user_decrypt(&self) -> bool {
-        match self {
-            CipherArguments::FromFile(cipher_file) => cipher_file.perf_noop_user_decrypt,
-            CipherArguments::FromArgs(cipher_parameters) => {
-                cipher_parameters.perf_noop_user_decrypt
-            }
-        }
-    }
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -743,10 +729,6 @@ pub struct CipherParameters {
     #[serde(skip)]
     #[clap(long)]
     pub max_in_flight: Option<usize>,
-    /// One-off perf mode: KMS returns static user-decrypt responses and the client skips reconstruction.
-    #[serde(skip)]
-    #[clap(long)]
-    pub perf_noop_user_decrypt: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -776,9 +758,6 @@ pub struct CipherFile {
     /// Maximum number of in-flight requests allowed during sustained mode.
     #[clap(long)]
     pub max_in_flight: Option<usize>,
-    /// One-off perf mode: KMS returns static user-decrypt responses and the client skips reconstruction.
-    #[clap(long)]
-    pub perf_noop_user_decrypt: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2139,7 +2118,6 @@ pub async fn execute_cmd(
                     max_iter,
                     num_expected_responses,
                     cc_conf.default_domain()?,
-                    cipher_args.get_perf_noop_user_decrypt(),
                 )
                 .await?
             } else {
@@ -2983,7 +2961,6 @@ mod tests {
             rate: None,
             duration: None,
             max_in_flight: None,
-            perf_noop_user_decrypt: false,
         }
     }
 

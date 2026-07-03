@@ -3,10 +3,7 @@ use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, Ke
 use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
 use aws_smithy_types::base64;
 use hashing::hash_element;
-use kms_grpc::kms::v1::{
-    KeyMaterialAvailabilityResponse, TypedSigncryptedCiphertext, UserDecryptionResponse,
-    UserDecryptionResponsePayload,
-};
+use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::{ContextId, EpochId, RequestId};
@@ -28,32 +25,6 @@ pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
 pub(crate) const ERR_CRS_DIGEST_MISMATCH: &str = "CRS digest mismatch";
 const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
 const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
-
-/// Build a temporary static user-decryption response for one-off networking experiments.
-pub(crate) fn perf_noop_user_decryption_response() -> UserDecryptionResponse {
-    UserDecryptionResponse {
-        signature: vec![0; 65],
-        external_signature: vec![0; 65],
-        payload: Some(UserDecryptionResponsePayload {
-            verification_key: vec![0; 33],
-            digest: vec![0; 32],
-            signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                fhe_type: 3,
-                signcrypted_ciphertext: vec![0; 1_300],
-                external_handle: vec![0; 32],
-                packing_factor: 1,
-            }],
-            party_id: 1,
-            degree: 4,
-        }),
-        extra_data: Vec::new(),
-    }
-}
-
-/// Whether this one-off build should short-circuit user decryption on the KMS side.
-pub(crate) fn perf_noop_user_decrypt_enabled() -> bool {
-    std::env::var_os("KMS_DISABLE_PERF_NOOP_USER_DECRYPT").is_none()
-}
 
 #[derive(Clone, Copy)]
 enum CurrentPublicMaterialLayout {
