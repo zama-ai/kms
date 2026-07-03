@@ -51,12 +51,9 @@ If a run used `Build new Docker images=true`, the `performance-testing` job
 prints a `KMS PERF IMAGE TAGS` block and adds a `KMS perf image tags` section to
 the GitHub job summary.
 
-Early in the Docker build, `performance-testing/docker-build /
-docker-build/golden-image-tag` has a first step named
-`READ FIRST - KMS Docker image tag`. It prints a `READ FIRST: KMS DOCKER IMAGE TAG`
-block, emits a GitHub notice, and adds a `READ FIRST: KMS Docker image tag`
-summary section. This is the earliest place to read the tag while the build is
-still running.
+Early in the Docker build, `performance-testing/docker-build / docker-build/golden-image-tag` has a first step named
+`KMS Docker image tag`. It prints a `KMS DOCKER IMAGE TAG` block, emits a GitHub notice, and adds a `KMS Docker image
+tag` summary section. This is the earliest place to read the tag while the build is still running.
 
 To rerun without rebuilding:
 

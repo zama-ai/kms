@@ -117,7 +117,7 @@ jobs:
           echo "::notice title=KMS Docker image tag::core=${TAG}, core-client=${TAG}"
           echo ""
           echo "============================================================"
-          echo "READ FIRST: KMS DOCKER IMAGE TAG"
+          echo "KMS DOCKER IMAGE TAG"
           echo "============================================================"
           echo "KMS Core image tag:        ${TAG}"
           echo "KMS Core client image tag: ${TAG}"
@@ -129,7 +129,7 @@ jobs:
           echo "============================================================"
 
           {
-            echo "## READ FIRST: KMS Docker image tag"
+            echo "## KMS Docker image tag"
             echo ""
             echo "| Field | Value |"
             echo "| --- | --- |"
