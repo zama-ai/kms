@@ -103,7 +103,7 @@ struct KmsGenKeysConfig {
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KeygenConfig {
-    #[cfg(feature = "insecure")]
+    #[cfg(any(test, feature = "testing", feature = "insecure"))]
     /// Generate deterministic test keys instead of fresh random keys. Defaults to false.
     #[serde(default)]
     deterministic: bool,
@@ -136,7 +136,7 @@ struct KeygenThresholdConfig {
 struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     pub_storage: &'a mut PubS,
     priv_storage: &'a mut PrivS,
-    #[cfg(feature = "insecure")]
+    #[cfg(any(test, feature = "testing", feature = "insecure"))]
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -145,7 +145,7 @@ struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
 struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     pub_storage: &'a mut PubS,
     priv_storage: &'a mut PrivS,
-    #[cfg(feature = "insecure")]
+    #[cfg(any(test, feature = "testing", feature = "insecure"))]
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -367,7 +367,7 @@ async fn main() -> anyhow::Result<()> {
             let mut cmdargs = CentralCmdArgs {
                 pub_storage: &mut pub_storage,
                 priv_storage: &mut priv_vault,
-                #[cfg(feature = "insecure")]
+                #[cfg(any(test, feature = "testing", feature = "insecure"))]
                 deterministic: config.keygen.deterministic,
                 overwrite: config.keygen.overwrite,
                 show_existing: config.keygen.show_existing,
@@ -382,7 +382,7 @@ async fn main() -> anyhow::Result<()> {
             let mut cmdargs = ThresholdCmdArgs {
                 pub_storage: &mut pub_storage,
                 priv_storage: &mut priv_vault,
-                #[cfg(feature = "insecure")]
+                #[cfg(any(test, feature = "testing", feature = "insecure"))]
                 deterministic: config.keygen.deterministic,
                 overwrite: config.keygen.overwrite,
                 show_existing: config.keygen.show_existing,
@@ -412,7 +412,7 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
         args.pub_storage,
         args.priv_storage,
         &SIGNING_KEY_ID,
-        #[cfg(feature = "insecure")]
+        #[cfg(any(test, feature = "testing", feature = "insecure"))]
         args.deterministic,
     )
     .await
@@ -436,7 +436,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.pub_storage,
         args.priv_storage,
         &SIGNING_KEY_ID,
-        #[cfg(feature = "insecure")]
+        #[cfg(any(test, feature = "testing", feature = "insecure"))]
         args.deterministic,
         args.signing_key_party_id,
         args.tls_subject.clone(),
@@ -523,7 +523,7 @@ mod tests {
     fn base_config() -> KmsGenKeysConfig {
         KmsGenKeysConfig {
             keygen: KeygenConfig {
-                #[cfg(feature = "insecure")]
+                #[cfg(any(test, feature = "testing", feature = "insecure"))]
                 deterministic: false,
                 overwrite: false,
                 show_existing: false,
@@ -580,7 +580,7 @@ mod tests {
         assert!(config.private_vault.is_none());
         assert!(!config.keygen.overwrite);
         assert!(!config.keygen.show_existing);
-        #[cfg(feature = "insecure")]
+        #[cfg(any(test, feature = "testing", feature = "insecure"))]
         assert!(!config.keygen.deterministic);
         #[cfg(feature = "insecure")]
         assert!(!config.mock_enclave);
@@ -590,13 +590,13 @@ mod tests {
     fn keygen_flags_are_read_from_config() {
         let mut config = base_config();
         config.keygen = KeygenConfig {
-            #[cfg(feature = "insecure")]
+            #[cfg(any(test, feature = "testing", feature = "insecure"))]
             deterministic: true,
             overwrite: true,
             show_existing: true,
         };
 
-        #[cfg(feature = "insecure")]
+        #[cfg(any(test, feature = "testing", feature = "insecure"))]
         assert!(config.keygen.deterministic);
         assert!(config.keygen.overwrite);
         assert!(config.keygen.show_existing);
@@ -764,9 +764,9 @@ mock_enclave = true
     fn keygen_toml_deserializes_and_resolves() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("kms-gen-keys.toml");
-        #[cfg(feature = "insecure")]
+        #[cfg(any(test, feature = "testing", feature = "insecure"))]
         let deterministic_config = "deterministic = true";
-        #[cfg(not(feature = "insecure"))]
+        #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
         let deterministic_config = "";
         std::fs::write(
             &config_path,
@@ -806,7 +806,7 @@ root_key_spec = "symm"
         let mode = resolve_mode_for_test(&config).unwrap();
 
         assert_eq!(resolved_tls_subject(mode), "kms-core-2");
-        #[cfg(feature = "insecure")]
+        #[cfg(any(test, feature = "testing", feature = "insecure"))]
         assert!(config.keygen.deterministic);
         assert!(config.keygen.overwrite);
         assert_eq!(
