@@ -389,23 +389,14 @@ opentelemetry json file in `temp/telemetry`.
 
 To profile various protocols, see the `benches/` folder.
 
-Following instructions are for Linux based systems. For individual benches one can run the following:
-
-```sh
-cargo bench --bench prep --features="testing extension_degree_8" -- --profile-time 60 triple_generation_z128/n=5_t=1_batch=1000
-```
-
-To see the flamegraph produced, fire up a terminal and open it with your favorite browser:
-
-```sh
-firefox target/criterion/triple_generation_z128/n=5_t=1_batch=1000/profile/flamegraph.svg
-```
-
-For MacOS-based users run the following:
+Flamegraphs are produced with [`cargo flamegraph`](https://github.com/flamegraph-rs/flamegraph)
+(`cargo install flamegraph`), which works on both Linux (via `perf`) and macOS (via `dtrace`):
 
 ```sh
 cargo flamegraph --root --bench prep --features="testing extension_degree_8" -- triple_generation_z128/n=5_t=1_batch=1000
 ```
+
+This writes a `flamegraph.svg` to the current directory; open it with your favorite browser.
 
 ## Testing
 
