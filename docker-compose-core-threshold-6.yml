@@ -29,16 +29,32 @@ services:
         AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
         export AWS_SECRET_ACCESS_KEY &&
         echo 'Starting signing key and CA certificates generation for all cores' &&
-        for i in 1 2 3 4 5 6; do \
-          kms-gen-keys --mock-enclave --aws-region us-east-1 \
-            --public-storage s3 --public-s3-bucket kms --public-s3-prefix PUB-p$$i \
-            --aws-s3-endpoint http://dev-s3-mock:9000 \
-            --private-storage s3 --private-s3-bucket kms --private-s3-prefix PRIV-p$$i \
-            threshold \
-            --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com \
-            --tls-wildcard && \
-            wget -O ./certs/cert_dev-kms-core-$$i.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p$$i/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee && \
-            cat ./certs/cert_dev-kms-core-$$i.com.pem; \
+        for i in 1 2 3 4 5 6; do
+          cat > /tmp/kms-gen-keys-$${i}.toml <<EOF
+        mock_enclave = true
+
+        [keygen]
+
+        [threshold]
+        my_id = $${i}
+        tls_subject = "dev-kms-core-$${i}.com"
+        tls_wildcard = true
+
+        [aws]
+        region = "us-east-1"
+        s3_endpoint = "http://dev-s3-mock:9000"
+
+        [public_vault.storage.s3]
+        bucket = "kms"
+        prefix = "PUB-p$${i}"
+
+        [private_vault.storage.s3]
+        bucket = "kms"
+        prefix = "PRIV-p$${i}"
+        EOF
+          kms-gen-keys --config-file /tmp/kms-gen-keys-$${i}.toml &&
+            wget -O ./certs/cert_dev-kms-core-$${i}.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p$${i}/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee &&
+            cat ./certs/cert_dev-kms-core-$${i}.com.pem
         done &&
         exit 0
     volumes:
