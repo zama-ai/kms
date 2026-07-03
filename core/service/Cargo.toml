@@ -147,7 +147,7 @@ walkdir = { workspace = true }
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile"]
+testing = ["dep:tempfile", "threshold-execution/testing"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",

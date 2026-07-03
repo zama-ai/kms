@@ -239,7 +239,7 @@ pub trait SecurityModule {
     }
 }
 
-#[expect(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),

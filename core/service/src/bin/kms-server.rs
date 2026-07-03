@@ -2,7 +2,7 @@ use algebra::{
     galois_fields::lagrange::init_lagrange_stores, galois_rings::degree_4::ResiduePolyF4Z128,
     structure_traits::Ring,
 };
-use anyhow::ensure;
+use anyhow::{Context, ensure};
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use kms_grpc::rpc_types::{KMSType, PubDataType};
@@ -328,7 +328,12 @@ fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     // NOTE: this config is only needed to set up the tokio runtime
     // we read it again in [main_exec] to set up the rest of the server
-    let core_config = init_conf::<CoreConfig>(&args.config_file)?;
+    let core_config = init_conf::<CoreConfig>(&args.config_file).with_context(|| {
+        format!(
+            "failed to load kms-server config file {}; expected a [service] section",
+            args.config_file
+        )
+    })?;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
