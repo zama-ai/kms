@@ -19,8 +19,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
- "cipher",
+ "cipher 0.4.4",
  "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "aes"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1fc76eaeac4c9164506c466d4ffdd8ec9d0c5bf57ee97177c4d8eceb3a0e138"
+dependencies = [
+ "cipher 0.5.2",
+ "cpubits",
+ "cpufeatures 0.3.0",
 ]
 
 [[package]]
@@ -30,8 +41,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "831010a0f742e1209b3bcea8fab6a8e149051ba6099432c8cb2cc117dec3ead1"
 dependencies = [
  "aead",
- "aes",
- "cipher",
+ "aes 0.8.4",
+ "cipher 0.4.4",
  "ctr",
  "ghash",
  "subtle",
@@ -44,8 +55,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae0784134ba9375416d469ec31e7c5f9fa94405049cf08c5ce5b4698be673e0d"
 dependencies = [
  "aead",
- "aes",
- "cipher",
+ "aes 0.8.4",
+ "cipher 0.4.4",
  "ctr",
  "polyval",
  "subtle",
@@ -58,7 +69,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49cccd49cb7034d6ee7db9ac3549bb3fb38ff17179d93b726efb974cc9ddafa9"
 dependencies = [
- "aes",
+ "aes 0.8.4",
  "byteorder",
  "rand 0.8.6",
 ]
@@ -948,15 +959,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async_cell"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "447ab28afbb345f5408b120702a44e5529ebf90b1796ec76e9528df8e288e6c2"
-dependencies = [
- "loom",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -967,7 +969,7 @@ name = "attestation-doc-validation"
 version = "0.10.0"
 source = "git+https://github.com/mkmks/attestation-doc-validation.git?branch=timestamps#764b6814e6536eb8fa5c9cfa60c27b0e84176214"
 dependencies = [
- "aes",
+ "aes 0.8.4",
  "aes-gcm",
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api 0.4.0",
@@ -1381,23 +1383,17 @@ dependencies = [
  "aws-smithy-async",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "h2 0.3.27",
- "h2 0.4.14",
- "http 0.2.12",
+ "h2",
  "http 1.3.1",
- "http-body 0.4.6",
- "hyper 0.14.32",
- "hyper 1.9.0",
- "hyper-rustls 0.24.2",
- "hyper-rustls 0.27.7",
+ "hyper",
+ "hyper-rustls",
  "hyper-util",
  "pin-project-lite",
- "rustls 0.21.12",
- "rustls 0.23.37",
- "rustls-native-certs 0.8.3",
+ "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "tower",
  "tracing",
 ]
@@ -1561,7 +1557,7 @@ dependencies = [
  "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
- "hyper 1.9.0",
+ "hyper",
  "hyper-util",
  "itoa",
  "matchit",
@@ -1649,7 +1645,7 @@ dependencies = [
  "threshold-networking",
  "threshold-types",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -1695,7 +1691,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -1953,7 +1949,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
 dependencies = [
- "cipher",
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -2039,7 +2035,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common 0.1.7",
- "inout",
+ "inout 0.1.4",
+]
+
+[[package]]
+name = "cipher"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
+dependencies = [
+ "crypto-common 0.2.2",
+ "inout 0.2.2",
 ]
 
 [[package]]
@@ -2225,16 +2231,6 @@ dependencies = [
 
 [[package]]
 name = "core-foundation"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
-dependencies = [
- "core-foundation-sys",
- "libc",
-]
-
-[[package]]
-name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
@@ -2248,6 +2244,12 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "cpubits"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae"
 
 [[package]]
 name = "cpufeatures"
@@ -2381,7 +2383,7 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0369ee1ad671834580515889b80f2ea915f23b8be8d0daa4bbaf2ac5c7590835"
 dependencies = [
- "cipher",
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -2798,7 +2800,7 @@ dependencies = [
 [[package]]
 name = "error-utils"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "tracing",
@@ -3037,21 +3039,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
 
 [[package]]
-name = "generator"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f04ae4152da20c76fe800fa48659201d5cf627c5149ca0b707b69d7eef6cf9"
-dependencies = [
- "cc",
- "cfg-if",
- "libc",
- "log",
- "rustversion",
- "windows-link",
- "windows-result",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3124,25 +3111,6 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "h2"
-version = "0.3.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0beca50380b1fc32983fc1cb4587bfa4bb9e78fc259aad4a0032d2080309222d"
-dependencies = [
- "bytes",
- "fnv",
- "futures-core",
- "futures-sink",
- "futures-util",
- "http 0.2.12",
- "indexmap 2.14.0",
- "slab",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -3379,30 +3347,6 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "0.14.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41dfc780fdec9373c01bae43289ea34c972e40ee3c9f6b3c8801a35f35586ce7"
-dependencies = [
- "bytes",
- "futures-channel",
- "futures-core",
- "futures-util",
- "h2 0.3.27",
- "http 0.2.12",
- "http-body 0.4.6",
- "httparse",
- "httpdate",
- "itoa",
- "pin-project-lite",
- "socket2 0.5.10",
- "tokio",
- "tower-service",
- "tracing",
- "want",
-]
-
-[[package]]
-name = "hyper"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
@@ -3411,7 +3355,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2 0.4.14",
+ "h2",
  "http 1.3.1",
  "http-body 1.0.1",
  "httparse",
@@ -3425,34 +3369,18 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.24.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
-dependencies = [
- "futures-util",
- "http 0.2.12",
- "hyper 0.14.32",
- "log",
- "rustls 0.21.12",
- "rustls-native-certs 0.6.3",
- "tokio",
- "tokio-rustls 0.24.1",
-]
-
-[[package]]
-name = "hyper-rustls"
 version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
 dependencies = [
  "http 1.3.1",
- "hyper 1.9.0",
+ "hyper",
  "hyper-util",
- "rustls 0.23.37",
- "rustls-native-certs 0.8.3",
+ "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "tower-service",
 ]
 
@@ -3462,7 +3390,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
 dependencies = [
- "hyper 1.9.0",
+ "hyper",
  "hyper-util",
  "pin-project-lite",
  "tokio",
@@ -3481,7 +3409,7 @@ dependencies = [
  "futures-util",
  "http 1.3.1",
  "http-body 1.0.1",
- "hyper 1.9.0",
+ "hyper",
  "ipnet",
  "libc",
  "percent-encoding",
@@ -3692,6 +3620,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7"
+dependencies = [
+ "hybrid-array 0.4.12",
+]
+
+[[package]]
 name = "instant"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3844,9 +3781,9 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
- "aes",
+ "aes 0.8.4",
  "aes-gcm",
  "aes-gcm-siv",
  "aes-prng",
@@ -3856,14 +3793,11 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "anyhow",
- "async_cell",
  "attestation-doc-validation",
  "aws-config",
  "aws-nitro-enclaves-nsm-api 0.5.1",
  "aws-sdk-kms",
  "aws-sdk-s3",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bc2wrap",
  "bincode 2.0.1",
@@ -3876,8 +3810,6 @@ dependencies = [
  "enum_dispatch",
  "futures-util",
  "hex",
- "http 0.2.12",
- "hyper-rustls 0.24.2",
  "iam-rs",
  "itertools 0.14.0",
  "k256",
@@ -3892,7 +3824,7 @@ dependencies = [
  "rayon",
  "rcgen",
  "rsa",
- "rustls-webpki 0.103.9",
+ "rustls-webpki",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -3912,7 +3844,7 @@ dependencies = [
  "threshold-networking",
  "threshold-types",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "tokio-util",
  "tonic",
  "tonic-health",
@@ -3931,7 +3863,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4025,19 +3957,6 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
-
-[[package]]
-name = "loom"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
-dependencies = [
- "cfg-if",
- "generator",
- "scoped-tls",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "lru"
@@ -4365,7 +4284,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "axum",
@@ -4422,12 +4341,6 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
-
-[[package]]
-name = "openssl-probe"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "openssl-probe"
@@ -5425,7 +5338,7 @@ dependencies = [
  "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
- "hyper 1.9.0",
+ "hyper",
  "hyper-util",
  "js-sys",
  "log",
@@ -5639,18 +5552,6 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.21.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
-dependencies = [
- "log",
- "ring",
- "rustls-webpki 0.101.7",
- "sct",
-]
-
-[[package]]
-name = "rustls"
 version = "0.23.37"
 source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23#49aa4091eae6a73f575bebeae28d370acd74f8b6"
 dependencies = [
@@ -5659,21 +5560,9 @@ dependencies = [
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.9",
+ "rustls-webpki",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "rustls-native-certs"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9aace74cb666635c918e9c12bc0d348266037aa8eb599b5cba565709a8dff00"
-dependencies = [
- "openssl-probe 0.1.6",
- "rustls-pemfile",
- "schannel",
- "security-framework 2.11.1",
 ]
 
 [[package]]
@@ -5682,19 +5571,10 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
 dependencies = [
- "openssl-probe 0.2.1",
+ "openssl-probe",
  "rustls-pki-types",
  "schannel",
- "security-framework 3.7.0",
-]
-
-[[package]]
-name = "rustls-pemfile"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c74cae0a4cf6ccbbf5f359f08efdf8ee7e1dc532573bf0db71968cb56b1448c"
-dependencies = [
- "base64 0.21.7",
+ "security-framework",
 ]
 
 [[package]]
@@ -5704,16 +5584,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30a7197ae7eb376e574fe940d068c30fe0462554a3ddbe4eca7838e049c937a9"
 dependencies = [
  "zeroize",
-]
-
-[[package]]
-name = "rustls-webpki"
-version = "0.101.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
-dependencies = [
- "ring",
- "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -5794,26 +5664,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "scoped-tls"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
-
-[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "sct"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
-dependencies = [
- "ring",
- "untrusted 0.9.0",
-]
 
 [[package]]
 name = "sec1"
@@ -5873,25 +5727,12 @@ dependencies = [
 
 [[package]]
 name = "security-framework"
-version = "2.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
-dependencies = [
- "bitflags",
- "core-foundation 0.9.4",
- "core-foundation-sys",
- "libc",
- "security-framework-sys",
-]
-
-[[package]]
-name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
 dependencies = [
  "bitflags",
- "core-foundation 0.10.1",
+ "core-foundation",
  "core-foundation-sys",
  "libc",
  "security-framework-sys",
@@ -6539,7 +6380,7 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 [[package]]
 name = "test-utils"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -6581,7 +6422,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "995c7a17e55a75f380fb1706a988a142a01ad942a0b175fc6f79ac5ec8403570"
 dependencies = [
- "aes",
+ "aes 0.8.4",
  "getrandom 0.2.17",
  "libc",
  "rayon",
@@ -6714,7 +6555,7 @@ dependencies = [
 [[package]]
 name = "thread-handles"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "error-utils",
@@ -6745,7 +6586,7 @@ dependencies = [
 [[package]]
 name = "threshold-algebra"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "error-utils",
@@ -6766,9 +6607,9 @@ dependencies = [
 [[package]]
 name = "threshold-execution"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
- "aes",
+ "aes 0.9.1",
  "aes-prng",
  "anyhow",
  "async-trait",
@@ -6810,7 +6651,7 @@ dependencies = [
 [[package]]
 name = "threshold-hashing"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -6823,7 +6664,7 @@ dependencies = [
 [[package]]
 name = "threshold-networking"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6835,7 +6676,7 @@ dependencies = [
  "error-utils",
  "futures-util",
  "hex",
- "hyper-rustls 0.27.7",
+ "hyper-rustls",
  "observability",
  "oid-registry",
  "prost",
@@ -6846,7 +6687,7 @@ dependencies = [
  "tfhe-versionable",
  "threshold-types",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -6859,7 +6700,7 @@ dependencies = [
 [[package]]
 name = "threshold-types"
 version = "0.14.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=28826c3e31cb2a2aac15221c466146d2de570bab#28826c3e31cb2a2aac15221c466146d2de570bab"
+source = "git+https://github.com/zama-ai/kms.git?rev=1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6#1eea0a7c5c1e54485cbdec2b0680cdcde13ae5f6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6965,21 +6806,11 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
-dependencies = [
- "rustls 0.21.12",
- "tokio",
-]
-
-[[package]]
-name = "tokio-rustls"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.37",
+ "rustls",
  "tokio",
 ]
 
@@ -7062,11 +6893,11 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "h2 0.4.14",
+ "h2",
  "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
- "hyper 1.9.0",
+ "hyper",
  "hyper-timeout",
  "hyper-util",
  "percent-encoding",
@@ -7074,7 +6905,7 @@ dependencies = [
  "socket2 0.6.3",
  "sync_wrapper",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "tokio-stream",
  "tower",
  "tower-layer",
@@ -7142,11 +6973,11 @@ checksum = "6cf5cb6ddbfdc22fd0cb2ce16072d210a0240d8ad94f8695ac5d917465da479d"
 dependencies = [
  "async-stream",
  "futures",
- "hyper 1.9.0",
+ "hyper",
  "hyper-util",
  "socket2 0.6.3",
  "tokio",
- "tokio-rustls 0.26.4",
+ "tokio-rustls",
  "tonic",
  "tower",
  "tracing",
