@@ -54,32 +54,8 @@ spec:
           - name: udec-setup
             template: prepare-udec-key
 
-          - name: sustained-rate-udec-2000
-            dependencies: ["udec-setup"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "2000"
-              - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "true"
-
-          - name: sustained-rate-udec-2200
-            dependencies: ["udec-setup", "sustained-rate-udec-2000"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "2200"
-              - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2000.outputs.parameters.capacity-ok}}"
-
           - name: sustained-rate-udec-2400
-            dependencies: ["udec-setup", "sustained-rate-udec-2200"]
+            dependencies: ["udec-setup"]
             template: run-udec-rate
             arguments:
               parameters:
@@ -88,22 +64,22 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2200.outputs.parameters.capacity-ok}}"
+                value: "true"
 
-          - name: sustained-rate-udec-2600
+          - name: sustained-rate-udec-2700
             dependencies: ["udec-setup", "sustained-rate-udec-2400"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
-                value: "2600"
+                value: "2700"
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
                 value: "{{tasks.sustained-rate-udec-2400.outputs.parameters.capacity-ok}}"
 
           - name: sustained-rate-udec-2800
-            dependencies: ["udec-setup", "sustained-rate-udec-2600"]
+            dependencies: ["udec-setup", "sustained-rate-udec-2700"]
             template: run-udec-rate
             arguments:
               parameters:
@@ -112,43 +88,22 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2600.outputs.parameters.capacity-ok}}"
-
-          - name: sustained-rate-udec-3000
-            dependencies: ["udec-setup", "sustained-rate-udec-2800"]
-            template: run-udec-rate
-            arguments:
-              parameters:
-              - name: rate
-                value: "3000"
-              - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
-              - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2800.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.sustained-rate-udec-2700.outputs.parameters.capacity-ok}}"
 
           - name: summary
             dependencies:
-              - "sustained-rate-udec-2000"
-              - "sustained-rate-udec-2200"
               - "sustained-rate-udec-2400"
-              - "sustained-rate-udec-2600"
+              - "sustained-rate-udec-2700"
               - "sustained-rate-udec-2800"
-              - "sustained-rate-udec-3000"
             template: summary-report
             arguments:
               parameters:
-              - name: test-result-2000
-                value: "{{tasks.sustained-rate-udec-2000.outputs.parameters.test-result}}"
-              - name: test-result-2200
-                value: "{{tasks.sustained-rate-udec-2200.outputs.parameters.test-result}}"
               - name: test-result-2400
                 value: "{{tasks.sustained-rate-udec-2400.outputs.parameters.test-result}}"
-              - name: test-result-2600
-                value: "{{tasks.sustained-rate-udec-2600.outputs.parameters.test-result}}"
+              - name: test-result-2700
+                value: "{{tasks.sustained-rate-udec-2700.outputs.parameters.test-result}}"
               - name: test-result-2800
                 value: "{{tasks.sustained-rate-udec-2800.outputs.parameters.test-result}}"
-              - name: test-result-3000
-                value: "{{tasks.sustained-rate-udec-3000.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -416,7 +371,7 @@ spec:
               "{{inputs.parameters.rate}}" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Skipping $test_name because a lower sustained udec rate failed"
+            echo "Skipping $test_name because a lower sustained udec rate did not produce valid metrics"
             exit 0
           fi
 
@@ -440,6 +395,7 @@ spec:
           end_time=$(date +%s)
           duration=$((end_time - start_time))
 
+          # Keep the last valid metrics line; normal logs may contain many JSON records.
           sustained_rate_metrics=""
           while IFS= read -r metrics_line; do
             candidate="${metrics_line#*SUSTAINED_RATE_METRICS }"
@@ -449,6 +405,7 @@ spec:
           done < <(grep "SUSTAINED_RATE_METRICS " /tmp/test_logs.txt || true)
 
           if [[ -n "$sustained_rate_metrics" && "$sustained_rate_metrics" =~ \"failed\":([0-9]+) ]]; then
+            metrics_valid=true
             metrics_failed="${BASH_REMATCH[1]}"
             if [[ "$sustained_rate_metrics" =~ \"shed\":([0-9]+) ]]; then
               metrics_shed="${BASH_REMATCH[1]}"
@@ -461,6 +418,7 @@ spec:
               metrics_saturated=true
             fi
           else
+            metrics_valid=false
             metrics_failed=1
             metrics_shed=0
             metrics_saturated=true
@@ -468,7 +426,8 @@ spec:
             echo "ERROR: no valid SUSTAINED_RATE_METRICS JSON with failed/shed/saturated found"
           fi
 
-          if [ "$test_exit" -eq 0 ] && [ "$metrics_failed" -eq 0 ] && [ "$metrics_shed" -eq 0 ] && [ "$metrics_saturated" != "true" ]; then
+          # Task success means "measurement exists"; the summary applies perf limits.
+          if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
             status="passed"
             capacity_ok="true"
           else
@@ -494,12 +453,9 @@ spec:
     - name: summary-report
       inputs:
         parameters:
-        - name: test-result-2000
-        - name: test-result-2200
         - name: test-result-2400
-        - name: test-result-2600
+        - name: test-result-2700
         - name: test-result-2800
-        - name: test-result-3000
         - name: tls
         - name: run_url
         - name: duration
@@ -518,12 +474,9 @@ spec:
         source: |
           apk add --no-cache jq curl
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-2000}}' > /mnt/results/sustained-rate-udec-2000.json
-          echo '{{inputs.parameters.test-result-2200}}' > /mnt/results/sustained-rate-udec-2200.json
           echo '{{inputs.parameters.test-result-2400}}' > /mnt/results/sustained-rate-udec-2400.json
-          echo '{{inputs.parameters.test-result-2600}}' > /mnt/results/sustained-rate-udec-2600.json
+          echo '{{inputs.parameters.test-result-2700}}' > /mnt/results/sustained-rate-udec-2700.json
           echo '{{inputs.parameters.test-result-2800}}' > /mnt/results/sustained-rate-udec-2800.json
-          echo '{{inputs.parameters.test-result-3000}}' > /mnt/results/sustained-rate-udec-3000.json
 
           echo "=========================================="
           echo "KMS SUSTAINED UDEC RATE SUMMARY"
@@ -536,11 +489,36 @@ spec:
 
           total=0
           passed=0
+          warned=0
           failed=0
           skipped=0
           summary_lines=""
 
-          for rate in 2000 2200 2400 2600 2800 3000; do
+          scenario_name_for_rate() {
+            case "$1" in
+              2400) echo "stable" ;;
+              2700) echo "near-limit" ;;
+              2800) echo "over-limit" ;;
+              *) echo "unknown" ;;
+            esac
+          }
+
+          parameter_set_for_rate() {
+            case "$1" in
+              # maxfail/maxshed are percentages of offered requests, not counts.
+              # pct is the minimum achieved_rate/target_rate percentage.
+              2400) echo "maxfail=0,maxshed=0,pct=98" ;;
+              2700) echo "maxfail=1,maxshed=1,pct=95" ;;
+              2800) echo "maxfail=5,maxshed=5,pct=90" ;;
+              *) echo "maxfail=0,maxshed=0,pct=100" ;;
+            esac
+          }
+
+          parameter_value() {
+            echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
+          }
+
+          for rate in 2400 2700 2800; do
             result="/mnt/results/sustained-rate-udec-${rate}.json"
             if ! jq empty "$result" 2>/dev/null; then
               echo "Skipping invalid JSON file: $result"
@@ -572,17 +550,58 @@ spec:
             recon_p99=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.p99 // empty' "$result")
             recon_wall=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.wall // empty' "$result")
 
+            [ -n "$target_rate" ] || target_rate="$rate"
+            [ -n "$offered" ] || offered=0
+            [ -n "$completed" ] || completed=0
+            [ -n "$failed_requests" ] || failed_requests=0
+            [ -n "$shed" ] || shed=0
+            [ -n "$achieved_rate" ] || achieved_rate=0
+            [ -n "$saturated" ] || saturated=false
+
+            # Parameter sets are per-rate because the 2.8k probe is intentionally near capacity.
+            scenario_name=$(scenario_name_for_rate "$rate")
+            parameter_set=$(parameter_set_for_rate "$rate")
+            maxfail=$(parameter_value "$parameter_set" maxfail)
+            maxshed=$(parameter_value "$parameter_set" maxshed)
+            pct=$(parameter_value "$parameter_set" pct)
+
+            # Any single limit outside the parameter set fails the scenario.
+            within_parameter_set=$(jq -n \
+              --argjson offered "$offered" \
+              --argjson failed_requests "$failed_requests" \
+              --argjson shed "$shed" \
+              --argjson achieved_rate "$achieved_rate" \
+              --argjson target_rate "$target_rate" \
+              --argjson maxfail "$maxfail" \
+              --argjson maxshed "$maxshed" \
+              --argjson pct "$pct" '
+                def pct_of($num; $den): if $den == 0 then 1000000 else ($num * 100 / $den) end;
+                ($offered > 0)
+                and (pct_of($failed_requests; $offered) <= $maxfail)
+                and (pct_of($shed; $offered) <= $maxshed)
+                and (($target_rate > 0) and (($achieved_rate * 100 / $target_rate) >= $pct))
+              ')
+
+            perf_info="params=${parameter_set}, achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
+
+            # WARN is accepted-but-degraded; FAIL exits the workflow nonzero below.
             if [ "$status" = "skipped" ]; then
               skipped=$((skipped + 1))
-              line="SKIP scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: skipped because a lower sustained udec rate failed"
-            elif [ "$status" = "passed" ]; then
-              passed=$((passed + 1))
-              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
-              line="PASS scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
+              line="SKIP scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: skipped because a lower sustained udec rate did not produce valid metrics"
+            elif [ "$status" != "passed" ]; then
+              failed=$((failed + 1))
+              line="FAIL scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: measurement failed, ${perf_info}"
+            elif [ "$within_parameter_set" = "true" ]; then
+              if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+                warned=$((warned + 1))
+                line="WARN scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: within parameter set, ${perf_info}"
+              else
+                passed=$((passed + 1))
+                line="PASS scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
+              fi
             else
               failed=$((failed + 1))
-              perf_info="achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
-              line="FAIL scenario rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
+              line="FAIL scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: outside parameter set, ${perf_info}"
             fi
 
             echo "$line"
@@ -590,22 +609,28 @@ spec:
           done
 
           if [ $total -gt 0 ]; then
-            success_rate=$(( (passed * 100) / total ))
+            accepted=$((passed + warned))
+            success_rate=$(( (accepted * 100) / total ))
           else
+            accepted=0
             success_rate=0
           fi
 
           echo "----------------------------------------"
           echo "Rate scenarios evaluated: $total"
           echo "Rate scenarios passed: $passed"
+          echo "Rate scenarios warned: $warned"
           echo "Rate scenarios failed: $failed"
           echo "Rate scenarios skipped: $skipped"
-          echo "Success rate: $success_rate%"
+          echo "Accepted rate: $success_rate%"
           echo "=========================================="
 
           if [ $failed -gt 0 ]; then
             color="danger"
             title="KMS sustained udec rate test failed"
+          elif [ $warned -gt 0 ]; then
+            color="good"
+            title="KMS sustained udec rate test passed with warnings"
           else
             color="good"
             title="KMS sustained udec rate test passed"
@@ -627,7 +652,7 @@ spec:
                   },
                   {
                     "title": "Status",
-                    "value": "$passed rate scenarios passed, $failed failed, $skipped skipped ($success_rate% success)",
+                    "value": "$passed passed, $warned warned, $failed failed, $skipped skipped ($success_rate% accepted)",
                     "short": true
                   },
                   {

@@ -22,9 +22,20 @@ Use these values when iterating on the sustained-rate user-decrypt test:
 | KMS Core image tag | Empty when build is checked |
 | KMS Core client image tag | Empty when build is checked |
 
-The current sustained-rate workflow runs six `user-decrypt` rate scenarios:
-`2700`, `2800`, `2900`, `3000`, `4000`, and `5000 req/s`, for `60s` each,
-payload `1 x euint64`.
+The current sustained-rate workflow runs three `user-decrypt` rate scenarios,
+for `60s` each, payload `1 x euint64`:
+
+| Scenario | Rate | Parameter set percentage limits |
+| --- | ---: | --- |
+| `stable` | `2400 req/s` | `maxfail=0,maxshed=0,pct=98` |
+| `near-limit` | `2700 req/s` | `maxfail=1,maxshed=1,pct=95` |
+| `over-limit` | `2800 req/s` | `maxfail=5,maxshed=5,pct=90` |
+
+`maxfail` and `maxshed` are percentages of `offered`, not request counts. For
+example, `maxshed=5` means `shed / offered <= 5%`. `pct` is the minimum accepted
+`achieved_rate / target_rate`, also as a percentage. A scenario outside its
+parameter set fails the workflow. A `WARN` line means the scenario stayed inside
+its parameter set but still saw failed, shed, or saturated traffic.
 
 ## Sustained UDEC Metrics
 
