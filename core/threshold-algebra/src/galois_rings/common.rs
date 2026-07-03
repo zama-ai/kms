@@ -605,6 +605,7 @@ where
             let sliced_syndrome_coefs: Vec<_> = syndrome_poly
                 .coefs()
                 .iter()
+                // TODO(dp): bit_compode looks slow, should be very quick.
                 .map(|c| c.bit_compose(bit_idx))
                 .collect();
 
