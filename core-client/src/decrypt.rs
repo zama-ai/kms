@@ -562,6 +562,7 @@ struct SustainedRateMetrics {
     response_payload_mib_per_sec: f64,
     response_payload_avg_bytes: f64,
     latency_stat: crate::DurationStat,
+    perf_noop_user_decrypt: bool,
     reconstruction_stat: crate::DurationStat,
     reconstruction_wall: tokio::time::Duration,
 }
@@ -569,7 +570,7 @@ struct SustainedRateMetrics {
 impl SustainedRateMetrics {
     fn log_json(&self) {
         let metrics = format!(
-            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"request_payload_bytes\":{},\"request_payload_messages\":{},\"request_payload_mib_per_sec\":{},\"request_payload_avg_bytes\":{},\"response_payload_bytes\":{},\"response_payload_messages\":{},\"response_payload_mib_per_sec\":{},\"response_payload_avg_bytes\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
+            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"request_payload_bytes\":{},\"request_payload_messages\":{},\"request_payload_mib_per_sec\":{},\"request_payload_avg_bytes\":{},\"response_payload_bytes\":{},\"response_payload_messages\":{},\"response_payload_mib_per_sec\":{},\"response_payload_avg_bytes\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"perf_noop_user_decrypt\":{},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
             self.target_rate,
             self.duration_secs,
             self.max_in_flight,
@@ -594,6 +595,7 @@ impl SustainedRateMetrics {
             self.latency_stat.p99.as_secs_f64() * 1000.0,
             self.latency_stat.min.as_secs_f64() * 1000.0,
             self.latency_stat.max.as_secs_f64() * 1000.0,
+            self.perf_noop_user_decrypt,
             self.reconstruction_stat.avg.as_secs_f64() * 1000.0,
             self.reconstruction_stat.std_dev.as_secs_f64() * 1000.0,
             self.reconstruction_stat.p50.as_secs_f64() * 1000.0,
@@ -799,6 +801,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     domain: Eip712Domain,
+    perf_noop_user_decrypt: bool,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
@@ -950,61 +953,64 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     };
 
     let reconstruct_start = tokio::time::Instant::now();
-    let mut recon_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
-    for CollectedUserDecrypt {
-        user_decrypt_req,
-        enc_pk,
-        enc_sk,
-        resp_response_vec,
-        collect_duration: _,
-    } in collected
-    {
-        let internal_client = internal_client.clone();
-        recon_tasks.spawn(async move {
-            let reconstruct_one_start = tokio::time::Instant::now();
-            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req)
-                .map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
-            let eip712_domain = protobuf_to_alloy_domain(
-                user_decrypt_req
-                    .domain
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?,
-            )?;
-            let plaintexts = internal_client.read().await.process_user_decryption_resp(
-                &client_request,
-                &eip712_domain,
-                &enc_pk,
-                &enc_sk,
-                None,
-                &resp_response_vec,
-            )?;
-
-            let mut decoded = plaintexts.into_iter().map(TestingPlaintext::try_from);
-            let first = decoded
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("no plaintexts in user decryption response"))??;
-            anyhow::ensure!(
-                first == expected,
-                "user decryption result mismatch: expected {expected:?}, got {first:?}"
-            );
-            for pt in decoded {
-                let pt = pt?;
-                anyhow::ensure!(
-                    pt == expected,
-                    "user decryption result mismatch: expected {expected:?}, got {pt:?}"
-                );
-            }
-
-            Ok(reconstruct_one_start.elapsed())
-        });
-    }
-
     let mut reconstruction_durations = Vec::with_capacity(durations_to_get_responses.len());
-    while let Some(res) = recon_tasks.join_next().await {
-        let reconstruct_duration = res??;
-        reconstruction_durations.push(reconstruct_duration);
-    }
-    let reconstruct_elapsed = reconstruct_start.elapsed();
+    let reconstruct_elapsed = if perf_noop_user_decrypt {
+        tracing::info!("Skipping user decrypt reconstruction in perf no-op mode");
+        tokio::time::Duration::ZERO
+    } else {
+        let mut recon_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
+        for CollectedUserDecrypt {
+            user_decrypt_req,
+            enc_pk,
+            enc_sk,
+            resp_response_vec,
+            collect_duration: _,
+        } in collected
+        {
+            let internal_client = internal_client.clone();
+            recon_tasks.spawn(async move {
+                let reconstruct_one_start = tokio::time::Instant::now();
+                let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req)
+                    .map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
+                let eip712_domain =
+                    protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().ok_or_else(
+                        || anyhow::anyhow!("domain not set in user decrypt request"),
+                    )?)?;
+                let plaintexts = internal_client.read().await.process_user_decryption_resp(
+                    &client_request,
+                    &eip712_domain,
+                    &enc_pk,
+                    &enc_sk,
+                    None,
+                    &resp_response_vec,
+                )?;
+
+                let mut decoded = plaintexts.into_iter().map(TestingPlaintext::try_from);
+                let first = decoded.next().ok_or_else(|| {
+                    anyhow::anyhow!("no plaintexts in user decryption response")
+                })??;
+                anyhow::ensure!(
+                    first == expected,
+                    "user decryption result mismatch: expected {expected:?}, got {first:?}"
+                );
+                for pt in decoded {
+                    let pt = pt?;
+                    anyhow::ensure!(
+                        pt == expected,
+                        "user decryption result mismatch: expected {expected:?}, got {pt:?}"
+                    );
+                }
+
+                Ok(reconstruct_one_start.elapsed())
+            });
+        }
+
+        while let Some(res) = recon_tasks.join_next().await {
+            let reconstruct_duration = res??;
+            reconstruction_durations.push(reconstruct_duration);
+        }
+        reconstruct_start.elapsed()
+    };
     let reconstruction_stat = crate::compute_stat_on_durations(&reconstruction_durations);
 
     let metrics = SustainedRateMetrics {
@@ -1026,6 +1032,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         response_payload_mib_per_sec,
         response_payload_avg_bytes,
         latency_stat,
+        perf_noop_user_decrypt,
         reconstruction_stat,
         reconstruction_wall: reconstruct_elapsed,
     };

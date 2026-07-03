@@ -1016,6 +1016,7 @@ fn cipher_params(
         rate: None,
         duration: None,
         max_in_flight: None,
+        perf_noop_user_decrypt: false,
     }
 }
 
@@ -1193,6 +1194,7 @@ async fn integration_test_commands(
             rate: None,
             duration: None,
             max_in_flight: None,
+            perf_noop_user_decrypt: false,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1203,6 +1205,7 @@ async fn integration_test_commands(
             rate: None,
             duration: None,
             max_in_flight: None,
+            perf_noop_user_decrypt: false,
         })),
     ];
 
@@ -1268,6 +1271,7 @@ async fn integration_test_commands(
             rate: None,
             duration: None,
             max_in_flight: None,
+            perf_noop_user_decrypt: false,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1278,6 +1282,7 @@ async fn integration_test_commands(
             rate: None,
             duration: None,
             max_in_flight: None,
+            perf_noop_user_decrypt: false,
         })),
     ];
 
@@ -3216,6 +3221,7 @@ async fn test_threshold_reshare() -> Result<()> {
             rate: None,
             duration: None,
             max_in_flight: None,
+            perf_noop_user_decrypt: false,
         })),
         200,
     );

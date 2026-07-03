@@ -65,7 +65,7 @@ use crate::{
             traits::UserDecryptor,
         },
         traits::BaseKms,
-        utils::MetricedError,
+        utils::{MetricedError, perf_noop_user_decryption_response},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             validate_user_decrypt_req,
@@ -447,6 +447,11 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        if crate::engine::utils::perf_noop_user_decrypt_enabled() {
+            let _ = request.into_inner();
+            return Ok(Response::new(Empty {}));
+        }
+
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
@@ -588,6 +593,10 @@ impl<
                         tonic::Code::InvalidArgument,
                     )
                 })?;
+        if crate::engine::utils::perf_noop_user_decrypt_enabled() {
+            let _ = request_id;
+            return Ok(Response::new(perf_noop_user_decryption_response()));
+        }
 
         // Retrieve the UserDecryptMetaStore object
         let arc = retrieve_from_meta_store_with_timeout(
