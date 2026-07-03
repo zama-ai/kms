@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 # Second stage: build raw IP proxies for enclave
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
 
-ARG DNSPROXY_VERSION=v0.81.1
+ARG DNSPROXY_VERSION=v0.82.1
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 WORKDIR /tmp
