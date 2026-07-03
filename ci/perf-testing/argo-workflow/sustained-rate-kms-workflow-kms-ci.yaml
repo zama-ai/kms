@@ -861,6 +861,7 @@ spec:
             response_payload_bytes=$(jq -r '.performance_metrics.sustained_rate.response_payload_bytes // empty' "$result")
             response_payload_mib_per_sec=$(jq -r '.performance_metrics.sustained_rate.response_payload_mib_per_sec // empty' "$result")
             response_payload_avg_bytes=$(jq -r '.performance_metrics.sustained_rate.response_payload_avg_bytes // empty' "$result")
+            reconstruction_failed=$(jq -r '.performance_metrics.sustained_rate.reconstruction_failed // 0' "$result")
             p50=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p50 // empty' "$result")
             p95=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p95 // empty' "$result")
             p99=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p99 // empty' "$result")
@@ -902,6 +903,9 @@ spec:
               ')
 
             perf_info="params=${parameter_set}, achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
+            if [ "$reconstruction_failed" != "0" ]; then
+              perf_info="${perf_info}, recon_failed=${reconstruction_failed}"
+            fi
 
             # WARN is accepted-but-degraded; FAIL exits the workflow nonzero below.
             if [ "$status" = "skipped" ]; then

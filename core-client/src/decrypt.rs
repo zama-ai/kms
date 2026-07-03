@@ -561,6 +561,7 @@ struct SustainedRateMetrics {
     response_payload_messages: u64,
     response_payload_mib_per_sec: f64,
     response_payload_avg_bytes: f64,
+    reconstruction_failed: u64,
     latency_stat: crate::DurationStat,
     reconstruction_stat: crate::DurationStat,
     reconstruction_wall: tokio::time::Duration,
@@ -568,8 +569,13 @@ struct SustainedRateMetrics {
 
 impl SustainedRateMetrics {
     fn log_json(&self) {
+        let reconstruction_failed_json = if self.reconstruction_failed > 0 {
+            format!(",\"reconstruction_failed\":{}", self.reconstruction_failed)
+        } else {
+            String::new()
+        };
         let metrics = format!(
-            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"request_payload_bytes\":{},\"request_payload_messages\":{},\"request_payload_mib_per_sec\":{},\"request_payload_avg_bytes\":{},\"response_payload_bytes\":{},\"response_payload_messages\":{},\"response_payload_mib_per_sec\":{},\"response_payload_avg_bytes\":{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
+            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"request_payload_bytes\":{},\"request_payload_messages\":{},\"request_payload_mib_per_sec\":{},\"request_payload_avg_bytes\":{},\"response_payload_bytes\":{},\"response_payload_messages\":{},\"response_payload_mib_per_sec\":{},\"response_payload_avg_bytes\":{}{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
             self.target_rate,
             self.duration_secs,
             self.max_in_flight,
@@ -587,6 +593,7 @@ impl SustainedRateMetrics {
             self.response_payload_messages,
             self.response_payload_mib_per_sec,
             self.response_payload_avg_bytes,
+            reconstruction_failed_json,
             self.latency_stat.avg.as_secs_f64() * 1000.0,
             self.latency_stat.std_dev.as_secs_f64() * 1000.0,
             self.latency_stat.p50.as_secs_f64() * 1000.0,
@@ -1000,9 +1007,21 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     }
 
     let mut reconstruction_durations = Vec::with_capacity(durations_to_get_responses.len());
+    let mut reconstruction_failed = 0_u64;
     while let Some(res) = recon_tasks.join_next().await {
-        let reconstruct_duration = res??;
-        reconstruction_durations.push(reconstruct_duration);
+        match res {
+            Ok(Ok(reconstruct_duration)) => {
+                reconstruction_durations.push(reconstruct_duration);
+            }
+            Ok(Err(e)) => {
+                reconstruction_failed += 1;
+                tracing::debug!("Sustained user decrypt reconstruction failed: {e}");
+            }
+            Err(e) => {
+                reconstruction_failed += 1;
+                tracing::warn!("Sustained user decrypt reconstruction task panicked: {e}");
+            }
+        }
     }
     let reconstruct_elapsed = reconstruct_start.elapsed();
     let reconstruction_stat = crate::compute_stat_on_durations(&reconstruction_durations);
@@ -1015,6 +1034,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         completed,
         failed,
         shed,
+        // TODO: consider also reporting completed / duration_secs; this includes drain time.
         achieved_rate: completed as f64 / collect_elapsed.as_secs_f64(),
         saturated,
         request_payload_bytes,
@@ -1025,11 +1045,18 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         response_payload_messages,
         response_payload_mib_per_sec,
         response_payload_avg_bytes,
+        reconstruction_failed,
         latency_stat,
         reconstruction_stat,
         reconstruction_wall: reconstruct_elapsed,
     };
     metrics.log_json();
+    if reconstruction_failed > 0 {
+        tracing::warn!(
+            reconstruction_failed,
+            "sustained user decrypt reconstruction failures"
+        );
+    }
 
     print_phased_timings(
         "sustained user decrypt",
@@ -1037,6 +1064,10 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         &durations_to_get_responses,
         reconstruct_elapsed,
     );
+
+    if reconstruction_failed > 0 {
+        anyhow::bail!("{reconstruction_failed} sustained user decrypt reconstructions failed");
+    }
 
     Ok(Vec::new())
 }
