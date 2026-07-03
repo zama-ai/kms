@@ -1,6 +1,6 @@
 {{- if and .Values.kmsGenCertAndKeys.enabled .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled -}}
 {{- $sec := .Values.kmsCore.secondaryEnclave }}
-{{- $kmsGenCertAndKeysName := printf "%s-b" (include "kmsGenCertAndKeysJobName" .) }}
+{{- $kmsGenCertAndKeysName := printf "%s-dkg" (include "kmsGenCertAndKeysJobName" .) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -33,12 +33,12 @@ spec:
             - -c
             - |
               {{ include "kmsCoreInitEnvVars" . | indent 14 | trim }}
-              envsubst < /var/lib/kms-core/config/kms-gen-keys-b.toml > kms-gen-keys-b.toml
-              envsubst < /var/lib/kms-core/config/aws.toml >> kms-gen-keys-b.toml
-              envsubst < /var/lib/kms-core/config/vaults-b.toml >> kms-gen-keys-b.toml
-              echo "### BEGIN - kms-gen-keys-b.toml ###"
-              cat kms-gen-keys-b.toml
-              echo "### END - kms-gen-keys-b.toml ###"
+              envsubst < /var/lib/kms-core/config/kms-gen-keys-dkg.toml > kms-gen-keys-dkg.toml
+              envsubst < /var/lib/kms-core/config/aws.toml >> kms-gen-keys-dkg.toml
+              envsubst < /var/lib/kms-core/config/vaults-dkg.toml >> kms-gen-keys-dkg.toml
+              echo "### BEGIN - kms-gen-keys-dkg.toml ###"
+              cat kms-gen-keys-dkg.toml
+              echo "### END - kms-gen-keys-dkg.toml ###"
           env:
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
@@ -84,10 +84,10 @@ spec:
               name: workdir
         {{- /* Secondary enclave config socket. init_enclave.sh dials a CID-derived port. */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "enclave-config-b"
+               (dict "name" "enclave-config-dkg"
                      "image" .Values.kubeUtils.image
                      "vsockPort" (include "kmsSecondaryConfigPort" . | int)
-                     "to" (printf "OPEN:kms-gen-keys-b.toml,rdonly")
+                     "to" (printf "OPEN:kms-gen-keys-dkg.toml,rdonly")
                 ) | indent 10 | trim }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -95,14 +95,14 @@ spec:
               name: workdir
         {{- /* Secondary enclave logger socket. */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "kms-core-enclave-logger-b"
+               (dict "name" "kms-core-enclave-logger-dkg"
                      "image" .Values.kubeUtils.image
                      "vsockPort" (include "kmsSecondaryLoggerPort" . | int)
                      "to" "STDOUT"
                ) | indent 10 | trim }}
         {{- /* Secondary enclave web identity token socket. */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "enclave-web-identity-token-b"
+               (dict "name" "enclave-web-identity-token-dkg"
                      "image" .Values.kubeUtils.image
                      "vsockPort" (int $sec.nitroEnclave.webIdentityTokenPort)
             "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
@@ -110,7 +110,7 @@ spec:
         {{- if $sec.nitroEnclave.networkTunnel.enabled }}
         {{- $queueCountB := include "kmsSecondaryNetworkTunnelQueueCount" . | int }}
         {{- $workerThreadsB := include "kmsSecondaryNetworkTunnelTokioWorkerThreads" . | int }}
-        - {{ include "enclaveNetworkTunnelContainer" (dict "nameSuffix" "-b" "image" .Values.kmsCore.image "networkTunnel" $sec.nitroEnclave.networkTunnel "ingressPorts" (list) "queueCount" $queueCountB "workerThreads" $workerThreadsB "vsockPort" (include "kmsSecondaryTunnelVsockPort" . | int)) | indent 10 | trim }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "nameSuffix" "-dkg" "image" .Values.kmsCore.image "networkTunnel" $sec.nitroEnclave.networkTunnel "ingressPorts" (list) "queueCount" $queueCountB "workerThreads" $workerThreadsB "vsockPort" (include "kmsSecondaryTunnelVsockPort" . | int)) | indent 10 | trim }}
           volumeMounts:
             - name: tun-device
               mountPath: /dev/net/tun
@@ -128,13 +128,13 @@ spec:
           args:
             - -c
             - |
-              echo "### BEGIN - enclave-b.json ###"
-              cat /var/lib/kms-core/config/enclave-b.json
-              echo "### END - enclave-b.json ###"
+              echo "### BEGIN - enclave-dkg.json ###"
+              cat /var/lib/kms-core/config/enclave-dkg.json
+              echo "### END - enclave-dkg.json ###"
               echo "### BEGIN - describe-eif ###"
               nitro-cli describe-eif --eif-path {{ $sec.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
-              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave-b.json
+              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave-dkg.json
               sleep 60
           env:
             - name: "NO_COLOR"

@@ -208,7 +208,7 @@ kmsCore:
       # Peers of the SECONDARY network. Leave empty to disable auto peer wiring.
       peersList: []
       #  - id: 1
-      #    host: kms-core-b-1
+      #    host: kms-core-dkg-1
       #    port: 50002
     # Optional distinct S3 prefixes so the two networks do not clash in storage.
     # If unset, the primary vault prefixes are reused (safe only when the

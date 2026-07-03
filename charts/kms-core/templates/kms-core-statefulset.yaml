@@ -61,12 +61,12 @@ spec:
               echo "### END - kms-server.toml ###"
               {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
               {{- include "kmsCoreSecondaryCaCerts" . | nindent 14 }}
-              envsubst < /var/lib/kms-core/config/kms-server-b.toml > kms-server-b.toml
-              envsubst < /var/lib/kms-core/config/aws.toml >> kms-server-b.toml
-              envsubst < /var/lib/kms-core/config/vaults-b.toml >> kms-server-b.toml
-              echo "### BEGIN - kms-server-b.toml ###"
-              cat kms-server-b.toml
-              echo "### END - kms-server-b.toml ###"
+              envsubst < /var/lib/kms-core/config/kms-server-dkg.toml > kms-server-dkg.toml
+              envsubst < /var/lib/kms-core/config/aws.toml >> kms-server-dkg.toml
+              envsubst < /var/lib/kms-core/config/vaults-dkg.toml >> kms-server-dkg.toml
+              echo "### BEGIN - kms-server-dkg.toml ###"
+              cat kms-server-dkg.toml
+              echo "### END - kms-server-dkg.toml ###"
               {{- end }}
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
@@ -229,10 +229,10 @@ spec:
         {{- $sec := .Values.kmsCore.secondaryEnclave }}
         {{- /* Secondary enclave config socket. init_enclave.sh dials a CID-derived port. */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "enclave-config-b"
+               (dict "name" "enclave-config-dkg"
                      "image" .Values.kubeUtils.image
                      "vsockPort" (include "kmsSecondaryConfigPort" . | int)
-                     "to" (printf "OPEN:kms-server-b.toml,rdonly")
+                     "to" (printf "OPEN:kms-server-dkg.toml,rdonly")
                 ) | indent 10 | trim }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -240,14 +240,14 @@ spec:
               name: workdir
         {{- /* Secondary enclave logger socket. */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "kms-core-enclave-logger-b"
+               (dict "name" "kms-core-enclave-logger-dkg"
                      "image" .Values.kubeUtils.image
                      "vsockPort" (include "kmsSecondaryLoggerPort" . | int)
                      "to" "STDOUT"
                ) | indent 10 | trim }}
         {{- /* Secondary enclave web identity token socket. */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "enclave-web-identity-token-b"
+               (dict "name" "enclave-web-identity-token-dkg"
                      "image" .Values.kubeUtils.image
                      "vsockPort" (int $sec.nitroEnclave.webIdentityTokenPort)
             "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
@@ -256,7 +256,7 @@ spec:
         {{- $ingressPortsB := list $sec.ports.metrics $sec.ports.client $sec.ports.peer }}
         {{- $queueCountB := include "kmsSecondaryNetworkTunnelQueueCount" . | int }}
         {{- $workerThreadsB := include "kmsSecondaryNetworkTunnelTokioWorkerThreads" . | int }}
-        - {{ include "enclaveNetworkTunnelContainer" (dict "nameSuffix" "-b" "image" .Values.kmsCore.image "networkTunnel" $sec.nitroEnclave.networkTunnel "ingressPorts" $ingressPortsB "queueCount" $queueCountB "workerThreads" $workerThreadsB "vsockPort" (include "kmsSecondaryTunnelVsockPort" . | int)) | indent 10 | trim }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "nameSuffix" "-dkg" "image" .Values.kmsCore.image "networkTunnel" $sec.nitroEnclave.networkTunnel "ingressPorts" $ingressPortsB "queueCount" $queueCountB "workerThreads" $workerThreadsB "vsockPort" (include "kmsSecondaryTunnelVsockPort" . | int)) | indent 10 | trim }}
           volumeMounts:
             - name: tun-device
               mountPath: /dev/net/tun
@@ -676,7 +676,7 @@ spec:
         {{- $sec := .Values.kmsCore.secondaryEnclave }}
         - image: {{ include "kmsSecondaryImageName" . }}:{{ include "kmsSecondaryImageTag" . }}
           imagePullPolicy: {{ include "kmsSecondaryImagePullPolicy" . }}
-          name: kms-core-enclave-b
+          name: kms-core-enclave-dkg
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command:
@@ -684,16 +684,16 @@ spec:
           args:
             - -c
             - |
-              echo "### BEGIN - enclave-b.json ###"
-              cat /var/lib/kms-core/config/enclave-b.json
-              echo "### END - enclave-b.json ###"
+              echo "### BEGIN - enclave-dkg.json ###"
+              cat /var/lib/kms-core/config/enclave-dkg.json
+              echo "### END - enclave-dkg.json ###"
               echo "### BEGIN - describe-eif ###"
               nitro-cli describe-eif --eif-path {{ $sec.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
             {{- if $sec.nitroEnclave.signed }}
               nitro-cli sign-eif --eif-path {{ $sec.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ $sec.nitroEnclave.eifSignKey }}
             {{- end }}
-              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave-b.json
+              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave-dkg.json
               while true; do
                 nitro-cli describe-enclaves > /var/log/nitro_enclaves/status-b
                 sleep 60

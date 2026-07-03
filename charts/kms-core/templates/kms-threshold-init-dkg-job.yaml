@@ -1,6 +1,6 @@
 {{- if and .Values.kmsInit.enabled .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled -}}
 {{- $sec := .Values.kmsCore.secondaryEnclave }}
-{{- $kmsInitName := printf "%s-b" (include "kmsInitJobName" .) }}
+{{- $kmsInitName := printf "%s-dkg" (include "kmsInitJobName" .) }}
 apiVersion: batch/v1
 kind: Job
 metadata:

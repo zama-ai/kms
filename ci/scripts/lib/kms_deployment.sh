@@ -217,8 +217,8 @@ deploy_threshold_mode() {
                 --set kmsCore.secondaryEnclave.enabled=true
                 --set kmsCore.secondaryEnclave.thresholdMode.myId="${i}"
                 --set kmsCore.secondaryEnclave.thresholdMode.thresholdValue="${threshold_value}"
-                --set kmsCore.secondaryEnclave.publicVault.s3.prefix="PUB-b-p${i}"
-                --set kmsCore.secondaryEnclave.privateVault.s3.prefix="PRIV-b-p${i}"
+                --set kmsCore.secondaryEnclave.publicVault.s3.prefix="PUB-dkg-p${i}"
+                --set kmsCore.secondaryEnclave.privateVault.s3.prefix="PRIV-dkg-p${i}"
             )
         fi
 
