@@ -165,8 +165,7 @@ pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     req_id: &RequestId,
-    #[cfg(feature = "insecure")]
-    deterministic: bool,
+    #[cfg(feature = "insecure")] deterministic: bool,
 ) -> bool
 where
     PubS: Storage,
@@ -670,8 +669,7 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     request_id: &RequestId,
-    #[cfg(feature = "insecure")]
-    deterministic: bool,
+    #[cfg(feature = "insecure")] deterministic: bool,
     config: ThresholdSigningKeyConfig,
     tls_wildcard: bool,
 ) -> anyhow::Result<()>
@@ -735,8 +733,7 @@ pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     request_id: &RequestId,
-    #[cfg(feature = "insecure")]
-    deterministic: bool,
+    #[cfg(feature = "insecure")] deterministic: bool,
     party_id: std::num::NonZeroUsize,
     subject: String,
     tls_wildcard: bool,
@@ -749,7 +746,7 @@ where
     let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
     #[cfg(not(feature = "insecure"))]
     let mut rng = get_rng(false, Some(party_id.get() as u64));
-    
+
     // Check if keys already exist with error handling
     let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
         read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
