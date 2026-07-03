@@ -52,11 +52,8 @@ on:
       kms_chart_version:
         description: 'KMS chart version (use repository if you want to use a branch)'
         required: true
-        type: choice
-        options:
-          - '1.4.17'
-          - 'repository'
-        default: '1.4.17'
+        type: string
+        default: 'repository'
       tkms_infra_chart_version:
         description: 'TKMS Infra chart version'
         required: true
