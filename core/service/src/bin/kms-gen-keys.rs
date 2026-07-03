@@ -59,6 +59,7 @@ struct KmsGenKeysRunConfig {
     public_storage: Option<StorageConfig>,
     private_storage: Option<StorageConfig>,
     private_keychain: Option<Keychain>,
+    #[cfg(feature = "insecure")]
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -90,6 +91,7 @@ struct KmsGenKeysOnlyConfig {
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KeygenConfig {
+    #[cfg(feature = "insecure")]
     deterministic: Option<bool>,
     overwrite: Option<bool>,
     show_existing: Option<bool>,
@@ -112,6 +114,7 @@ struct KeygenThresholdConfig {
 struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     pub_storage: &'a mut PubS,
     priv_storage: &'a mut PrivS,
+    #[cfg(feature = "insecure")]
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -120,6 +123,7 @@ struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
 struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     pub_storage: &'a mut PubS,
     priv_storage: &'a mut PrivS,
+    #[cfg(feature = "insecure")]
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -156,6 +160,7 @@ fn resolve_keygen_config_file(config: KmsGenKeysOnlyConfig) -> anyhow::Result<Km
         public_storage,
         private_storage,
         private_keychain,
+        #[cfg(feature = "insecure")]
         deterministic: keygen.deterministic.unwrap_or(false),
         overwrite: keygen.overwrite.unwrap_or(false),
         show_existing: keygen.show_existing.unwrap_or(false),
@@ -346,6 +351,7 @@ async fn main() -> anyhow::Result<()> {
             let mut cmdargs = CentralCmdArgs {
                 pub_storage: &mut pub_storage,
                 priv_storage: &mut priv_vault,
+                #[cfg(feature = "insecure")]
                 deterministic: resolved.deterministic,
                 overwrite: resolved.overwrite,
                 show_existing: resolved.show_existing,
@@ -360,6 +366,7 @@ async fn main() -> anyhow::Result<()> {
             let mut cmdargs = ThresholdCmdArgs {
                 pub_storage: &mut pub_storage,
                 priv_storage: &mut priv_vault,
+                #[cfg(feature = "insecure")]
                 deterministic: resolved.deterministic,
                 overwrite: resolved.overwrite,
                 show_existing: resolved.show_existing,
@@ -389,6 +396,7 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
         args.pub_storage,
         args.priv_storage,
         &SIGNING_KEY_ID,
+        #[cfg(feature = "insecure")]
         args.deterministic,
     )
     .await
@@ -412,6 +420,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.pub_storage,
         args.priv_storage,
         &SIGNING_KEY_ID,
+        #[cfg(feature = "insecure")]
         args.deterministic,
         args.signing_key_party_id,
         args.tls_subject.clone(),

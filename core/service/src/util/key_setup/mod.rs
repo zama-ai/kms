@@ -165,6 +165,7 @@ pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     req_id: &RequestId,
+    #[cfg(feature = "insecure")]
     deterministic: bool,
 ) -> bool
 where
@@ -259,8 +260,10 @@ where
 
         return false;
     }
-
+    #[cfg(feature = "insecure")]
     let mut rng = get_rng(deterministic, Some(0));
+    #[cfg(not(feature = "insecure"))]
+    let mut rng = get_rng(false, Some(0));
     let (pk, sk) = gen_sig_keys(&mut rng);
 
     // Store public verification key
@@ -667,6 +670,7 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     request_id: &RequestId,
+    #[cfg(feature = "insecure")]
     deterministic: bool,
     config: ThresholdSigningKeyConfig,
     tls_wildcard: bool,
@@ -706,6 +710,7 @@ where
             &mut pub_storages[storage_index],
             &mut priv_storages[storage_index],
             request_id,
+            #[cfg(feature = "insecure")]
             deterministic,
             // 1-based party id; NonZeroUsize by construction (saturates on overflow).
             // computes storage_index + 1
@@ -730,6 +735,7 @@ pub async fn ensure_threshold_server_signing_key_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     request_id: &RequestId,
+    #[cfg(feature = "insecure")]
     deterministic: bool,
     party_id: std::num::NonZeroUsize,
     subject: String,
@@ -739,8 +745,11 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
+    #[cfg(feature = "insecure")]
     let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
-
+    #[cfg(not(feature = "insecure"))]
+    let mut rng = get_rng(false, Some(party_id.get() as u64));
+    
     // Check if keys already exist with error handling
     let signing_keys_map: HashMap<RequestId, PrivateSigKey> =
         read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
