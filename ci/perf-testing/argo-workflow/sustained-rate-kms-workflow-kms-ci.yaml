@@ -7,7 +7,7 @@ metadata:
     app: sustained-rate-kms
 spec:
   serviceAccountName: workflow-runner
-  activeDeadlineSeconds: 1800  # 30 minutes while iterating on the sustained-rate workflow
+  activeDeadlineSeconds: 28800  # 8h cap for full perf runs.
   # Delete the completed Workflow object and pod metadata after 24h. Test output
   # remains in pod logs, Slack, and any external log/artifact sinks.
   ttlStrategy:
@@ -51,59 +51,239 @@ spec:
     - name: sustained-rate-kms
       dag:
         tasks:
-          - name: udec-setup
-            template: prepare-udec-key
+          - name: preproc-key-gen
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "preproc-key-gen"
+              - name: test-command
+                value: "preproc-key-gen"
+              - name: fhe-params
+                value: "Test"
+
+          - name: key-gen
+            dependencies: ["preproc-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "key-gen"
+              - name: test-command
+                value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
+              - name: fhe-params
+                value: "Test"
+
+          - name: udec-preproc-key-gen
+            dependencies: ["key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "udec-preproc-key-gen"
+              - name: test-command
+                value: "insecure-preproc-key-gen"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: udec-key-gen
+            dependencies: ["udec-preproc-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "udec-key-gen"
+              - name: test-command
+                value: "insecure-key-gen -i {{tasks.udec-preproc-key-gen.outputs.parameters.request-id}}"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: crs-gen
+            dependencies: ["udec-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "crs-gen"
+              - name: test-command
+                value: "crs-gen --max-num-bits 2048"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: warmup-public-decrypt-euint64-req1
+            dependencies: ["crs-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "warmup-public-decrypt-euint64-req1"
+              - name: test-command
+                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: public-decrypt-euint64-req1
+            dependencies: ["warmup-public-decrypt-euint64-req1"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "public-decrypt-euint64-req1"
+              - name: test-command
+                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: public-decrypt-euint64-req10
+            dependencies: ["public-decrypt-euint64-req1"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "public-decrypt-euint64-req10"
+              - name: test-command
+                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: public-decrypt-euint64-req100
+            dependencies: ["public-decrypt-euint64-req10"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "public-decrypt-euint64-req100"
+              - name: test-command
+                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: public-decrypt-euint64-req500
+            dependencies: ["public-decrypt-euint64-req100"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "public-decrypt-euint64-req500"
+              - name: test-command
+                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: public-decrypt-euint64-req1000
+            dependencies: ["public-decrypt-euint64-req500"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "public-decrypt-euint64-req1000"
+              - name: test-command
+                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
 
           - name: sustained-rate-udec-2400
-            dependencies: ["udec-setup"]
+            dependencies: ["udec-key-gen", "public-decrypt-euint64-req1000"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
                 value: "2400"
               - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "true"
 
           - name: sustained-rate-udec-2700
-            dependencies: ["udec-setup", "sustained-rate-udec-2400"]
+            dependencies: ["sustained-rate-udec-2400"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
                 value: "2700"
               - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "{{tasks.sustained-rate-udec-2400.outputs.parameters.capacity-ok}}"
 
-          - name: sustained-rate-udec-2800
-            dependencies: ["udec-setup", "sustained-rate-udec-2700"]
+          - name: sustained-rate-udec-2750
+            dependencies: ["sustained-rate-udec-2700"]
             template: run-udec-rate
             arguments:
               parameters:
               - name: rate
-                value: "2800"
+                value: "2750"
               - name: key_id
-                value: "{{tasks.udec-setup.outputs.parameters.key-id}}"
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "{{tasks.sustained-rate-udec-2700.outputs.parameters.capacity-ok}}"
 
           - name: summary
             dependencies:
+              - "preproc-key-gen"
+              - "key-gen"
+              - "udec-preproc-key-gen"
+              - "udec-key-gen"
+              - "crs-gen"
+              - "public-decrypt-euint64-req1"
+              - "public-decrypt-euint64-req10"
+              - "public-decrypt-euint64-req100"
+              - "public-decrypt-euint64-req500"
+              - "public-decrypt-euint64-req1000"
               - "sustained-rate-udec-2400"
               - "sustained-rate-udec-2700"
-              - "sustained-rate-udec-2800"
+              - "sustained-rate-udec-2750"
             template: summary-report
             arguments:
               parameters:
+              - name: test-result-preproc-key-gen
+                value: "{{tasks.preproc-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-key-gen
+                value: "{{tasks.key-gen.outputs.parameters.test-result}}"
+              - name: test-result-udec-preproc-key-gen
+                value: "{{tasks.udec-preproc-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-udec-key-gen
+                value: "{{tasks.udec-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-crs-gen
+                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
+              - name: test-result-public-decrypt-req1
+                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
+              - name: test-result-public-decrypt-req10
+                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+              - name: test-result-public-decrypt-req100
+                value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
+              - name: test-result-public-decrypt-req500
+                value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
+              - name: test-result-public-decrypt-req1000
+                value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: test-result-2400
                 value: "{{tasks.sustained-rate-udec-2400.outputs.parameters.test-result}}"
               - name: test-result-2700
                 value: "{{tasks.sustained-rate-udec-2700.outputs.parameters.test-result}}"
-              - name: test-result-2800
-                value: "{{tasks.sustained-rate-udec-2800.outputs.parameters.test-result}}"
+              - name: test-result-2750
+                value: "{{tasks.sustained-rate-udec-2750.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -113,28 +293,37 @@ spec:
               - name: max-in-flight
                 value: "{{workflow.parameters.max-in-flight}}"
 
-    - name: prepare-udec-key
+    - name: run-test
+      inputs:
+        parameters:
+        - name: test-name
+        - name: test-command
+        - name: fhe-params
       outputs:
         parameters:
-        - name: key-id
+        - name: test-result
           valueFrom:
-            path: /tmp/artifacts/key_id.txt
+            path: /tmp/artifacts/{{inputs.parameters.test-name}}.json
+        - name: request-id
+          valueFrom:
+            path: /tmp/artifacts/request_id.txt
       metadata:
         labels:
-          test: udec-setup
+          test: "{{inputs.parameters.test-name}}"
           app: sustained-rate-kms
+      nodeSelector:
+        karpenter.sh/nodepool: kms-pool
+        karpenter.k8s.aws/instance-family: m5n
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
-          set -euo pipefail
-          write_config() {
-            cat <<EOF > config.toml
+          cat <<EOF > config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
             num_reconstruct=${NUM_RECONSTRUCT}
             decryption_mode="${DECRYPTION_MODE}"
-            fhe_params="${FHE_PARAMETER:=Default}"
+            fhe_params="${FHE_PARAMETER:=Test}"
             [[cores]]
             party_id=1
             address="kms-core-1-core-1:50100"
@@ -201,31 +390,81 @@ spec:
             s3_endpoint="${S3_ENDPOINT}"
             object_folder="PUB-p13"
           EOF
-          }
 
-          mkdir -p /tmp/artifacts
-          write_config
+          echo "=========================================="
+          echo "Starting test: {{inputs.parameters.test-command}}"
+          echo "=========================================="
+
           client_logs_arg=""
           if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
             client_logs_arg="--logs"
           fi
 
-          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml insecure-preproc-key-gen 2>&1 | tee /tmp/preproc_logs.txt
-          preproc_id=$(awk -F'"' '/"request_id":/ { id=$4 } END { print id }' /tmp/preproc_logs.txt)
-          if [ -z "$preproc_id" ]; then
-            echo "Failed to extract udec preprocessing request id"
-            exit 1
+          start_time=$(date +%s)
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          test_exit=${PIPESTATUS[0]}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+
+          avg_latency=""
+          std_dev_latency=""
+          p50_latency=""
+          p95_latency=""
+          p99_latency=""
+          min_latency=""
+          max_latency=""
+          throughput=""
+
+          if grep -q "Latency for" /tmp/test_logs.txt; then
+            latency_line=$(grep "Latency for" /tmp/test_logs.txt | tail -1)
+            avg_latency=$(echo "$latency_line" | sed -n 's/.*Avg: \([^,]*\).*/\1/p')
+            std_dev_latency=$(echo "$latency_line" | sed -n 's/.*StdDev: \([^,]*\).*/\1/p')
+            p50_latency=$(echo "$latency_line" | sed -n 's/.*P50: \([^,]*\).*/\1/p')
+            p95_latency=$(echo "$latency_line" | sed -n 's/.*P95: \([^,]*\).*/\1/p')
+            p99_latency=$(echo "$latency_line" | sed -n 's/.*P99: \([^,]*\).*/\1/p')
+            min_latency=$(echo "$latency_line" | sed -n 's/.*Min: \([^,]*\).*/\1/p')
+            max_latency=$(echo "$latency_line" | sed -n 's/.*Max: \([^,}"]*\).*/\1/p')
           fi
 
-          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml insecure-key-gen -i "$preproc_id" 2>&1 | tee /tmp/keygen_logs.txt
-          key_id=$(awk -F'"' '/"request_id":/ { id=$4 } END { print id }' /tmp/keygen_logs.txt)
-          if [ -z "$key_id" ]; then
-            echo "Failed to extract udec key id"
-            exit 1
+          if grep -q "Throughput:" /tmp/test_logs.txt; then
+            throughput_line=$(grep "Throughput:" /tmp/test_logs.txt | tail -1)
+            throughput=$(echo "$throughput_line" | sed -n 's/.*Throughput: \([0-9.]*\) requests\/s.*/\1/p')
           fi
 
-          echo "$key_id" > /tmp/artifacts/key_id.txt
-          echo "Prepared udec key $key_id"
+          mkdir -p /tmp/artifacts
+          request_id=""
+          if grep -q '"request_id"' /tmp/test_logs.txt; then
+            request_id=$(grep -o '"request_id": "[^"]*"' /tmp/test_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+          fi
+          echo "$request_id" > /tmp/artifacts/request_id.txt
+
+          echo ""
+          echo "=========================================="
+          if [ "$test_exit" -eq 0 ]; then
+            echo "PASS test '{{inputs.parameters.test-name}}' (${duration}s)"
+          else
+            echo "FAIL test '{{inputs.parameters.test-name}}' exit=${test_exit} (${duration}s)"
+          fi
+          echo "=========================================="
+
+          escaped_command=$(printf '%s' "{{inputs.parameters.test-command}}" | sed 's/"/\\"/g')
+          printf '{\n  "test_name": "{{inputs.parameters.test-name}}",\n  "test_command": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "request_id": "%s",\n  "fhe_params": "{{inputs.parameters.fhe-params}}",\n  "performance_metrics": {\n    "latency": {\n      "avg": "%s",\n      "std_dev": "%s",\n      "p50": "%s",\n      "p95": "%s",\n      "p99": "%s",\n      "min": "%s",\n      "max": "%s"\n    },\n    "throughput": "%s"\n  }\n}\n' \
+            "$escaped_command" \
+            "$test_exit" \
+            "$duration" \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            "$request_id" \
+            "$avg_latency" \
+            "$std_dev_latency" \
+            "$p50_latency" \
+            "$p95_latency" \
+            "$p99_latency" \
+            "$min_latency" \
+            "$max_latency" \
+            "$throughput" \
+            > /tmp/artifacts/{{inputs.parameters.test-name}}.json
+
+          exit "$test_exit"
         env: &core-client-env
           - name: S3_ENDPOINT
             valueFrom:
@@ -359,7 +598,7 @@ spec:
               "{{inputs.parameters.rate}}" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Missing key_id from udec-setup; refusing to run sustained-rate udec"
+            echo "Missing key_id from udec-key-gen; refusing to run sustained-rate udec"
             exit 0
           fi
 
@@ -453,9 +692,19 @@ spec:
     - name: summary-report
       inputs:
         parameters:
+        - name: test-result-preproc-key-gen
+        - name: test-result-key-gen
+        - name: test-result-udec-preproc-key-gen
+        - name: test-result-udec-key-gen
+        - name: test-result-crs-gen
+        - name: test-result-public-decrypt-req1
+        - name: test-result-public-decrypt-req10
+        - name: test-result-public-decrypt-req100
+        - name: test-result-public-decrypt-req500
+        - name: test-result-public-decrypt-req1000
         - name: test-result-2400
         - name: test-result-2700
-        - name: test-result-2800
+        - name: test-result-2750
         - name: tls
         - name: run_url
         - name: duration
@@ -474,18 +723,33 @@ spec:
         source: |
           apk add --no-cache jq curl
           mkdir -p /mnt/results
+          echo '{{inputs.parameters.test-result-preproc-key-gen}}' > /mnt/results/preproc-key-gen.json
+          echo '{{inputs.parameters.test-result-key-gen}}' > /mnt/results/key-gen.json
+          echo '{{inputs.parameters.test-result-udec-preproc-key-gen}}' > /mnt/results/udec-preproc-key-gen.json
+          echo '{{inputs.parameters.test-result-udec-key-gen}}' > /mnt/results/udec-key-gen.json
+          echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
+          echo '{{inputs.parameters.test-result-public-decrypt-req1}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-public-decrypt-req10}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-public-decrypt-req100}}' > /mnt/results/public-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-public-decrypt-req500}}' > /mnt/results/public-decrypt-euint64-req500.json
+          echo '{{inputs.parameters.test-result-public-decrypt-req1000}}' > /mnt/results/public-decrypt-euint64-req1000.json
           echo '{{inputs.parameters.test-result-2400}}' > /mnt/results/sustained-rate-udec-2400.json
           echo '{{inputs.parameters.test-result-2700}}' > /mnt/results/sustained-rate-udec-2700.json
-          echo '{{inputs.parameters.test-result-2800}}' > /mnt/results/sustained-rate-udec-2800.json
+          echo '{{inputs.parameters.test-result-2750}}' > /mnt/results/sustained-rate-udec-2750.json
 
           echo "=========================================="
-          echo "KMS SUSTAINED UDEC RATE SUMMARY"
+          echo "KMS PERFORMANCE SUMMARY"
           echo "=========================================="
           echo "Report generated: $(date -u)"
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
           echo "FHE params: {{workflow.parameters.fhe-params}}"
           echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
+
+          baseline_total=0
+          baseline_passed=0
+          baseline_failed=0
+          baseline_lines=""
 
           total=0
           passed=0
@@ -498,7 +762,7 @@ spec:
             case "$1" in
               2400) echo "stable" ;;
               2700) echo "near-limit" ;;
-              2800) echo "over-limit" ;;
+              2750) echo "over-limit" ;;
               *) echo "unknown" ;;
             esac
           }
@@ -509,7 +773,8 @@ spec:
               # pct is the minimum achieved_rate/target_rate percentage.
               2400) echo "maxfail=0,maxshed=0,pct=98" ;;
               2700) echo "maxfail=1,maxshed=1,pct=95" ;;
-              2800) echo "maxfail=5,maxshed=5,pct=90" ;;
+              # 2.75k probes just above the clean 2.7k run; fail on a hard collapse.
+              2750) echo "maxfail=10,maxshed=25,pct=70" ;;
               *) echo "maxfail=0,maxshed=0,pct=100" ;;
             esac
           }
@@ -518,14 +783,68 @@ spec:
             echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
           }
 
-          for rate in 2400 2700 2800; do
-            result="/mnt/results/sustained-rate-udec-${rate}.json"
+          echo "Baseline tests:"
+          for result in \
+            /mnt/results/preproc-key-gen.json \
+            /mnt/results/key-gen.json \
+            /mnt/results/udec-preproc-key-gen.json \
+            /mnt/results/udec-key-gen.json \
+            /mnt/results/crs-gen.json \
+            /mnt/results/public-decrypt-euint64-req1.json \
+            /mnt/results/public-decrypt-euint64-req10.json \
+            /mnt/results/public-decrypt-euint64-req100.json \
+            /mnt/results/public-decrypt-euint64-req500.json \
+            /mnt/results/public-decrypt-euint64-req1000.json; do
+            baseline_total=$((baseline_total + 1))
             if ! jq empty "$result" 2>/dev/null; then
-              echo "Skipping invalid JSON file: $result"
+              baseline_failed=$((baseline_failed + 1))
+              line="FAIL baseline $(basename "$result" .json): invalid result JSON"
+              echo "$line"
+              baseline_lines="${baseline_lines}${line}\n"
               continue
             fi
 
+            test_name=$(jq -r '.test_name // "unknown"' "$result")
+            fhe_params=$(jq -r '.fhe_params // "unknown"' "$result")
+            exit_code=$(jq -r '.exit_code // "1"' "$result")
+            duration=$(jq -r '.duration // "0"' "$result")
+            p50_latency=$(jq -r '.performance_metrics.latency.p50 // empty' "$result")
+            p95_latency=$(jq -r '.performance_metrics.latency.p95 // empty' "$result")
+            p99_latency=$(jq -r '.performance_metrics.latency.p99 // empty' "$result")
+            throughput=$(jq -r '.performance_metrics.throughput // empty' "$result")
+
+            perf_info="duration=${duration}s, fhe_params=${fhe_params}"
+            if [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
+              perf_info="${perf_info}, throughput=${throughput} req/s"
+            fi
+            if [ -n "$p50_latency" ] && [ "$p50_latency" != "null" ]; then
+              perf_info="${perf_info}, p50=${p50_latency}, p95=${p95_latency}, p99=${p99_latency}"
+            fi
+
+            if [ "$exit_code" = "0" ]; then
+              baseline_passed=$((baseline_passed + 1))
+              line="PASS baseline ${test_name}: ${perf_info}"
+            else
+              baseline_failed=$((baseline_failed + 1))
+              line="FAIL baseline ${test_name}: exit=${exit_code}, ${perf_info}"
+            fi
+            echo "$line"
+            baseline_lines="${baseline_lines}${line}\n"
+          done
+
+          echo ""
+          echo "Sustained UDEC rate scenarios:"
+          for rate in 2400 2700 2750; do
+            result="/mnt/results/sustained-rate-udec-${rate}.json"
             total=$((total + 1))
+            if ! jq empty "$result" 2>/dev/null; then
+              failed=$((failed + 1))
+              line="FAIL scenario rate=${rate} req/s duration={{inputs.parameters.duration}}s: invalid result JSON"
+              echo "$line"
+              summary_lines="${summary_lines}${line}\n"
+              continue
+            fi
+
             test_name=$(jq -r '.test_name // "unknown"' "$result")
             status=$(jq -r '.status // empty' "$result")
             exit_code=$(jq -r '.exit_code // "1"' "$result")
@@ -558,7 +877,7 @@ spec:
             [ -n "$achieved_rate" ] || achieved_rate=0
             [ -n "$saturated" ] || saturated=false
 
-            # Parameter sets are per-rate because the 2.8k probe is intentionally near capacity.
+            # Parameter sets are per-rate because the top probe is intentionally near capacity.
             scenario_name=$(scenario_name_for_rate "$rate")
             parameter_set=$(parameter_set_for_rate "$rate")
             maxfail=$(parameter_value "$parameter_set" maxfail)
@@ -623,21 +942,24 @@ spec:
           echo "Rate scenarios failed: $failed"
           echo "Rate scenarios skipped: $skipped"
           echo "Accepted rate: $success_rate%"
+          echo "Baseline tests evaluated: $baseline_total"
+          echo "Baseline tests passed: $baseline_passed"
+          echo "Baseline tests failed: $baseline_failed"
           echo "=========================================="
 
-          if [ $failed -gt 0 ]; then
+          if [ $baseline_failed -gt 0 ] || [ $failed -gt 0 ]; then
             color="danger"
-            title="KMS sustained udec rate test failed"
+            title="KMS perf test failed"
           elif [ $warned -gt 0 ]; then
             color="good"
-            title="KMS sustained udec rate test passed with warnings"
+            title="KMS perf test passed with warnings"
           else
             color="good"
-            title="KMS sustained udec rate test passed"
+            title="KMS perf test passed"
           fi
 
           slack_webhook_url=$(cat /etc/slack/url)
-          slack_text=$(printf "%b" "$summary_lines" | sed 's/"/\\"/g')
+          slack_text_json=$(printf '```\n%b\n%b\n```' "$baseline_lines" "$summary_lines" | jq -Rs .)
           slack_message=$(cat <<EOF
           {
             "attachments": [
@@ -652,7 +974,7 @@ spec:
                   },
                   {
                     "title": "Status",
-                    "value": "$passed passed, $warned warned, $failed failed, $skipped skipped ($success_rate% accepted)",
+                    "value": "baseline $baseline_passed/$baseline_total passed; rates $passed passed, $warned warned, $failed failed, $skipped skipped ($success_rate% accepted)",
                     "short": true
                   },
                   {
@@ -671,7 +993,7 @@ spec:
                     "short": false
                   }
                 ],
-                "text": "\`\`\`\n$slack_text\n\`\`\`"
+                "text": $slack_text_json
               }
             ]
           }
@@ -680,7 +1002,7 @@ spec:
 
           curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
 
-          if [ $failed -gt 0 ]; then
+          if [ $baseline_failed -gt 0 ] || [ $failed -gt 0 ]; then
             exit 1
           fi
 

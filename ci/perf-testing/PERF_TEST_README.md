@@ -12,7 +12,6 @@ Use these values when iterating on the sustained-rate user-decrypt test:
 | Use workflow from | This branch |
 | Build new Docker images | Checked |
 | Deployment type | `threshold` |
-| Performance test suite | `sustained-rate-udec` |
 | Enable core-client tracing logs | Prefer unchecked while measuring perf |
 | FHE parameters for preprocessing and keygen | `Test` for faster iteration |
 | TLS enabled | Unchecked for `threshold` |
@@ -22,14 +21,15 @@ Use these values when iterating on the sustained-rate user-decrypt test:
 | KMS Core image tag | Empty when build is checked |
 | KMS Core client image tag | Empty when build is checked |
 
-The current sustained-rate workflow runs three `user-decrypt` rate scenarios,
-for `60s` each, payload `1 x euint64`:
+The current workflow first runs baseline setup/CRS/public-decrypt checks, then
+runs three sustained `user-decrypt` rate scenarios for `60s` each, payload
+`1 x euint64`:
 
 | Scenario | Rate | Parameter set percentage limits |
 | --- | ---: | --- |
 | `stable` | `2400 req/s` | `maxfail=0,maxshed=0,pct=98` |
 | `near-limit` | `2700 req/s` | `maxfail=1,maxshed=1,pct=95` |
-| `over-limit` | `2800 req/s` | `maxfail=5,maxshed=5,pct=90` |
+| `over-limit` | `2750 req/s` | `maxfail=10,maxshed=25,pct=70` |
 
 `maxfail` and `maxshed` are percentages of `offered`, not request counts. For
 example, `maxshed=5` means `shed / offered <= 5%`. `pct` is the minimum accepted
@@ -95,7 +95,6 @@ available.
 | Use workflow from | GitHub ref selector | `github.ref` | Selects which branch/tag provides the workflow file. If `kms_chart_version=repository` and `kms_branch` is empty, the KMS chart is also checked out from this ref. |
 | Build new Docker images | `inputs.build` | `needs.docker-build.outputs.image_tag` -> `KMS_CORE_IMAGE_TAG`, `KMS_CORE_CLIENT_IMAGE_TAG` | When checked, CI builds images from the selected ref and ignores the manual image-tag fields. The reusable Docker workflow also builds the enclave image by default. |
 | Deployment type | `inputs.deployment_type` | `DEPLOYMENT_TYPE`; also selects `PATH_SUFFIX` | Chooses the KMS deployment layout. `threshold` uses non-enclave `core-service` and `PATH_SUFFIX=kms-ci`; `thresholdWithEnclave` uses `core-service-enclave` and `PATH_SUFFIX=kms-enclave-ci`. |
-| Performance test suite | `inputs.test_suite` | `TEST_SUITE`; selects Argo workflow template | `sustained-rate-udec` uses `ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml` and only supports threshold deployments. `burst` is temporarily disabled on this branch while iterating on sustained UDEC. |
 | Enable core-client tracing logs | `inputs.client_logs` | `CLIENT_LOGS`; Argo parameter `client-logs` | Adds `--logs` to `kms-core-client` in perf tasks when enabled. Logging can materially affect local perf and should usually be off for measurements. |
 | FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Passed into Argo. `Test` is faster and useful for iteration; `Default` is closer to production sizing. |
 | TLS enabled | `inputs.tls` | `TLS`; Argo parameter `tls`; deploy script `ENABLE_TLS` | Only valid with `deployment_type=thresholdWithEnclave` in this workflow. Non-enclave deployments must use `tls=false`; the workflow fails fast otherwise. |
@@ -109,15 +108,14 @@ available.
 
 1. Optionally build Docker images.
 2. Resolve `KMS_CORE_IMAGE_TAG` and `KMS_CORE_CLIENT_IMAGE_TAG`.
-3. Validate deployment/test-suite/TLS combinations.
+3. Validate deployment/TLS combinations.
 4. Verify required image tags exist in the registry.
 5. Deploy KMS to the `kms-ci` namespace through `ci/scripts/deploy.sh`.
-6. Submit the selected Argo workflow.
+6. Submit `ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml`.
 7. Stream Argo logs and send the Slack report.
 
 ## Common Pitfalls
 
-- Leaving `test_suite=burst` fails fast on this branch. Select `sustained-rate-udec`.
 - Leaving `tls=true` with `deployment_type=threshold` fails fast. Use `tls=false`, or choose `thresholdWithEnclave`.
 - `kms_chart_version=repository` means the chart comes from the selected/ref branch, not from an OCI release.
 - `build=true` means the image-tag fields are ignored. Use `build=false` only when you know the exact core and client image tags already exist.

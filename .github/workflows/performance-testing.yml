@@ -30,16 +30,6 @@ on:
         options:
           - 'threshold'
           - 'thresholdWithEnclave'
-          - 'centralized'
-          - 'centralizedWithEnclave'
-      test_suite:
-        description: 'Performance test suite'
-        required: true
-        default: 'burst'
-        type: choice
-        options:
-          - 'burst'
-          - 'sustained-rate-udec'
       client_logs:
         description: 'Enable core-client tracing logs during perf tests'
         required: true
@@ -54,9 +44,9 @@ on:
           - 'Default'
           - 'Test'
       tls:
-        description: 'TLS enabled by default. Only available for thresholdWithEnclave'
+        description: 'TLS enabled. Only available for thresholdWithEnclave'
         required: true
-        default: true
+        default: false
         type: boolean
       kms_branch:
         description: 'KMS branch (empty if you want to use a chart version)'
@@ -210,9 +200,8 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
           TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
-          TEST_SUITE: ${{ inputs.test_suite || 'burst' }}
           CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'true' }}
-          FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
+          FHE_PARAMS: ${{ inputs.fhe_params || 'Default' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
@@ -221,7 +210,6 @@ jobs:
           {
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
             echo "TLS=${TLS}"
-            echo "TEST_SUITE=${TEST_SUITE}"
             echo "CLIENT_LOGS=${CLIENT_LOGS}"
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
@@ -242,7 +230,7 @@ jobs:
           ###################################################################
           # Set up path suffix based on deployment type
           ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Using enclave-enabled configuration..."
             echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
           else
@@ -250,10 +238,10 @@ jobs:
             echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
 
-      - name: Validate perf test suite selection
+      - name: Validate perf deployment selection
         run: |
           ###################################################################
-          # Validate test-suite/deployment/TLS combinations before deploying.
+          # Validate deployment/TLS combinations before deploying.
           ###################################################################
           if [[ "${TLS}" == "true" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
             echo "ERROR: TLS is only supported for deployment_type=thresholdWithEnclave in performance-testing."
@@ -262,25 +250,12 @@ jobs:
             exit 1
           fi
 
-          case "${TEST_SUITE}" in
-            burst)
-              echo "ERROR: burst perf suite is temporarily disabled on this branch."
-              echo "Select test_suite=sustained-rate-udec while iterating on sustained udec."
-              exit 1
-              ;;
-            sustained-rate-udec)
-              if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
-                echo "ERROR: sustained-rate-udec supports only threshold deployment types."
-                echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
-                exit 1
-              fi
-              echo "Using sustained-rate udec perf suite."
-              ;;
-            *)
-              echo "ERROR: Unknown test_suite=${TEST_SUITE}."
-              exit 1
-              ;;
-          esac
+          if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+            echo "ERROR: performance-testing supports only threshold deployment types."
+            echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
+            exit 1
+          fi
+          echo "Using sustained-rate KMS perf suite."
 
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
@@ -456,21 +431,16 @@ jobs:
             CLIENT_LOGS_STATUS="disabled"
           fi
 
-          if [[ "${TEST_SUITE}" == "sustained-rate-udec" ]]; then
-            WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml"
-            if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-              S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
-            else
-              S3_CONFIG_MAP_NAME="kms-ci-1"
-            fi
-            EXTRA_SUBMIT_ARGS=(
-              -p "fhe-params=${FHE_PARAMS}"
-              -p "s3-config-map-name=${S3_CONFIG_MAP_NAME}"
-            )
+          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml"
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
           else
-            WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/${DEPLOYMENT_TYPE}-test-suite-workflow-${PATH_SUFFIX}.yaml"
-            EXTRA_SUBMIT_ARGS=(-p "fhe-params=${FHE_PARAMS}")
+            S3_CONFIG_MAP_NAME="kms-ci-1"
           fi
+          EXTRA_SUBMIT_ARGS=(
+            -p "fhe-params=${FHE_PARAMS}"
+            -p "s3-config-map-name=${S3_CONFIG_MAP_NAME}"
+          )
 
           # Update the workflow template with the current image tag
           echo "Using image tags: core=${KMS_CORE_IMAGE_TAG}, client=${KMS_CORE_CLIENT_IMAGE_TAG}"
@@ -527,7 +497,7 @@ jobs:
 
             # Get pod logs and save to file
             if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" &> /dev/null; then
-              if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+              if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
                 kubectl logs "${POD_NAME}" -c kms-core-enclave-logger -n "${NAMESPACE}" > "${LOG_FILE}"
               else
                 kubectl logs "${POD_NAME}" -c kms-core -n "${NAMESPACE}" > "${LOG_FILE}"
