@@ -34,7 +34,23 @@ use validator::Validate;
     In centralized mode it produces a single signing key plus its verification material. \
     In threshold mode it produces the signing key and self-signed CA certificate for one party; \
     run it once per party in a multi-party deployment. \
-    Pass --config-file to provide the key-generation settings."
+    Pass --config-file to provide the key-generation settings.",
+    after_long_help = r#"Config file example:
+
+[keygen]
+overwrite = false
+show_existing = false
+
+[public_vault.storage.file]
+path = "./keys"
+
+[private_vault.storage.file]
+path = "./keys"
+
+# Add this section to generate threshold signing material for one party.
+[threshold]
+my_id = 1
+tls_subject = "kms-core-1""#
 )]
 struct Args {
     /// Read key-generation settings from a TOML config file.
@@ -52,49 +68,67 @@ enum KeygenMode {
     },
 }
 
+/// Full TOML configuration accepted by the kms-gen-keys binary.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KmsGenKeysConfig {
+    /// Required key-generation controls such as overwrite and listing behavior.
     #[validate(nested)]
     keygen: KeygenConfig,
+    /// AWS settings used when any configured storage or keychain depends on AWS services.
     #[validate(nested)]
     aws: Option<AWSConfig>,
+    /// Public vault where verification keys, verification addresses, and CA certificates are stored.
     #[validate(nested)]
     public_vault: Option<VaultConfig>,
+    /// Private vault where server signing keys are stored.
     #[validate(nested)]
     private_vault: Option<VaultConfig>,
+    /// Backup vault settings accepted for consistency with server configs but unused by key generation.
     #[validate(nested)]
     backup_vault: Option<VaultConfig>,
+    /// Threshold-party settings; when absent, centralized signing material is generated.
     #[validate(nested)]
     threshold: Option<KeygenThresholdConfig>,
+    /// Enclave bootstrap settings accepted for consistency with server configs but unused by key generation.
     #[validate(nested)]
     enclave_bootstrap: Option<EnclaveBootstrapConfig>,
     #[cfg(feature = "insecure")]
+    /// Use the software-emulated enclave security module for local testing. Defaults to false.
     #[serde(default)]
     mock_enclave: bool,
 }
 
+/// Options under the required `[keygen]` section.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KeygenConfig {
     #[cfg(feature = "insecure")]
+    /// Generate deterministic test keys instead of fresh random keys. Defaults to false.
     #[serde(default)]
     deterministic: bool,
+    /// Delete existing signing material at the fixed signing-key request ID before generation. Defaults to false.
     #[serde(default)]
     overwrite: bool,
+    /// Print existing signing-material handles instead of generating or deleting keys. Defaults to false.
     #[serde(default)]
     show_existing: bool,
 }
 
+/// Optional `[threshold]` section used when generating one threshold party's signing material.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KeygenThresholdConfig {
+    /// One-indexed party id whose threshold signing material should be generated.
     #[validate(range(min = 1))]
     my_id: Option<usize>,
+    /// TLS certificate subject for the generated self-signed CA certificate.
     #[validate(length(min = 1))]
     tls_subject: Option<String>,
+    /// Generate a wildcard TLS certificate subject for the party. Defaults to false.
     #[serde(default)]
     tls_wildcard: bool,
+    /// Peer list used to derive the TLS subject when `tls_subject` is not set.
     #[validate(nested)]
     peers: Option<Vec<PeerConf>>,
 }
@@ -202,6 +236,24 @@ fn resolve_threshold_tls_subject(
 /// cargo run --bin kms-gen-keys -- --config-file /path/to/kms-gen-keys.toml
 /// cargo run --bin kms-gen-keys -- --help
 /// ```
+///
+/// Minimal config file:
+/// ```toml
+/// [keygen]
+/// overwrite = false
+/// show_existing = false
+///
+/// [public_vault.storage.file]
+/// path = "./keys"
+///
+/// [private_vault.storage.file]
+/// path = "./keys"
+///
+/// # Add this section to generate threshold signing material for one party.
+/// [threshold]
+/// my_id = 1
+/// tls_subject = "kms-core-1"
+/// ```
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -219,6 +271,12 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .map(|vault| vault.storage.clone());
     let private_vault = config.private_vault.as_ref();
+    if private_vault.is_none() {
+        tracing::warn!(
+            "No [private_vault] section configured; kms-gen-keys will store private signing keys \
+            in unencrypted filesystem storage using the default private storage path"
+        );
+    }
     let private_storage = private_vault.map(|vault| vault.storage.clone());
     let private_keychain_config = private_vault.and_then(|vault| vault.keychain.clone());
 
