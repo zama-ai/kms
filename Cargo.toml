@@ -163,7 +163,6 @@ opentelemetry_sdk = { version = "=0.31.0", features = ["rt-tokio", "logs"] }  # 
 p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
-pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }  # CPU profiler - LOW RISK: tikv team, useful for performance analysis
 proc-macro2 = "=1.0.101"  # Proc macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 740M downloads
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
 proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintainers (AltSysrq, Centril), test-only dependency

@@ -4,7 +4,6 @@ use algebra::{
     structure_traits::Ring,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use test_utils::read_element;
@@ -280,7 +279,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
 
 criterion_group! {
     name = ddec;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default();
     targets = ddec_nsmall, ddec_bitdec_nsmall, ddec_nlarge, ddec_bitdec_nlarge,
 }
 

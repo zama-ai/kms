@@ -11,8 +11,6 @@ use algebra::{
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
-use pprof::criterion::Output;
-use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
@@ -186,7 +184,7 @@ fn bench_decode_large_field(c: &mut Criterion) {
 
 criterion_group! {
     name = decode;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default();
     targets = bench_decode_z2, bench_decode_z128, bench_decode_z64,
     bench_decode_large_field, bench_decode_par_z64
 }
