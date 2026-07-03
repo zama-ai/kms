@@ -691,6 +691,7 @@ async fn send_and_collect_user_decrypt(
     }
 
     let mut resp_response_vec = Vec::new();
+    let mut collect_duration = None;
     while let Some(resp) = resp_tasks.join_next().await {
         match resp {
             Ok(Ok((_req_id, inner))) => {
@@ -704,6 +705,7 @@ async fn send_and_collect_user_decrypt(
             }
         }
         if resp_response_vec.len() >= num_expected_responses {
+            collect_duration = Some(request_start.elapsed());
             break;
         }
     }
@@ -715,8 +717,29 @@ async fn send_and_collect_user_decrypt(
             num_expected_responses
         );
     }
+    let pending_response_tasks = resp_tasks.len();
+    if pending_response_tasks > 0 {
+        tokio::spawn(async move {
+            while let Some(resp) = resp_tasks.join_next().await {
+                match resp {
+                    Ok(Ok((_req_id, _inner))) => {}
+                    Ok(Err(e)) => {
+                        tracing::debug!("Outstanding user decryption response failed: {e}");
+                    }
+                    Err(e) => {
+                        tracing::debug!("Outstanding user decryption response task panicked: {e}");
+                    }
+                }
+            }
+            tracing::debug!(
+                rate,
+                drained = pending_response_tasks,
+                "drained outstanding udec resp tasks"
+            );
+        });
+    }
 
-    let collect_duration = request_start.elapsed();
+    let collect_duration = collect_duration.unwrap_or_else(|| request_start.elapsed());
     tracing::debug!(
         rate,
         got = resp_response_vec.len(),
