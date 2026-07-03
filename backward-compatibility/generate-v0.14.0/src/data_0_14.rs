@@ -29,7 +29,7 @@ use kms_0_14_0::cryptography::{
 };
 use kms_0_14_0::engine::base::{CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles};
 use kms_0_14_0::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_14_0::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use kms_0_14_0::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
 use kms_0_14_0::engine::threshold::service::session::PRSSSetupCombined;
 use kms_0_14_0::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
 use kms_0_14_0::util::key_setup::FhePublicKey;
@@ -960,12 +960,12 @@ impl KmsV0_14_0 {
         let node_info = NodeInfo {
             mpc_identity: "Staoshi Nakamoto".to_string(),
             party_id: 42,
-            verification_key: None,
+            signer_address: None,
             external_url: "https://node42.example.com".to_string(),
             ca_cert: None,
             public_storage_url: "https://storage.example.com/node42".to_string(),
             public_storage_prefix: Some("PUB".to_string()),
-            extra_verification_keys: vec![],
+            extra_signer_addresses: vec![],
         };
         let software_version = SoftwareVersion {
             major: 2,
@@ -999,12 +999,12 @@ impl KmsV0_14_0 {
         let node_info = NodeInfo {
             mpc_identity: node_info_test.mpc_identity.to_string(),
             party_id: node_info_test.party_id,
-            verification_key: Some(verf_key),
+            signer_address: Some(SignerAddress(verf_key.address())),
             external_url: node_info_test.external_url.to_string(),
             ca_cert: node_info_test.ca_cert.clone(), // We currently don't have simple code for generating certificates
             public_storage_url: node_info_test.public_storage_url.to_string(),
             public_storage_prefix: Some(node_info_test.public_storage_prefix.to_string()),
-            extra_verification_keys: vec![verf_key2],
+            extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
         };
 
         store_versioned_test!(&node_info, dir, &node_info_test.test_filename);
