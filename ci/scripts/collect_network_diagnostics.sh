@@ -40,6 +40,98 @@ kubectl_exec() {
     fi
 }
 
+epoch_from_iso() {
+    date -d "$1" +%s 2>/dev/null \
+        || date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
+
+write_network_summary() {
+    local delta_file="${BASE_DIR}/pod-interface-counter-delta.tsv"
+    local summary_file="${BASE_DIR}/network-summary.txt"
+    local before_ts=""
+    local after_ts=""
+    local window_secs=0
+
+    [[ -f "${delta_file}" ]] || return 0
+
+    if [[ -f "${BASE_DIR}/before-perf/summary.txt" ]]; then
+        before_ts="$(sed -n 's/^captured_at=//p' "${BASE_DIR}/before-perf/summary.txt" | head -n 1)"
+    fi
+    if [[ -f "${BASE_DIR}/after-perf/summary.txt" ]]; then
+        after_ts="$(sed -n 's/^captured_at=//p' "${BASE_DIR}/after-perf/summary.txt" | head -n 1)"
+    fi
+    if [[ -n "${before_ts}" && -n "${after_ts}" ]]; then
+        if before_epoch="$(epoch_from_iso "${before_ts}")" \
+            && after_epoch="$(epoch_from_iso "${after_ts}")"; then
+            window_secs=$((after_epoch - before_epoch))
+        fi
+    fi
+
+    {
+        echo "Network Diagnostics Summary"
+        echo "==========================="
+        echo "before=${before_ts:-unknown}"
+        echo "after=${after_ts:-unknown}"
+        echo "window_secs=${window_secs}"
+        echo
+        echo "Counters are pod-level deltas between before-perf and after-perf."
+        echo "Only pods still Running at capture time are included; completed Argo test pods are not."
+        echo "Host ENA allowance counters require a privileged node-level probe."
+        echo
+        awk -F '\t' -v window_secs="${window_secs}" '
+            function gib(bytes) { return bytes / 1024 / 1024 / 1024 }
+            function gbps(bytes) {
+                if (window_secs <= 0) {
+                    return 0
+                }
+                return bytes * 8 / window_secs / 1000000000
+            }
+            NR > 1 {
+                iface = $3
+                rx[iface] += $4
+                tx[iface] += $5
+                rx_packets[iface] += $6
+                tx_packets[iface] += $7
+                rx_errors[iface] += $8
+                tx_errors[iface] += $9
+                rx_dropped[iface] += $10
+                tx_dropped[iface] += $11
+                if ($1 ~ /^kms-core-[0-9]+-core-[0-9]+$/ && iface == "eth0") {
+                    kms_rx += $4
+                    kms_tx += $5
+                    kms_rx_packets += $6
+                    kms_tx_packets += $7
+                    kms_rx_errors += $8
+                    kms_tx_errors += $9
+                    kms_rx_dropped += $10
+                    kms_tx_dropped += $11
+                    kms_parties[$1] = 1
+                }
+            }
+            END {
+                print "Interface totals:"
+                for (iface in rx) {
+                    printf "- %s: rx=%.2f GiB, tx=%.2f GiB", iface, gib(rx[iface]), gib(tx[iface])
+                    if (window_secs > 0) {
+                        printf ", avg_rx=%.2f Gbps, avg_tx=%.2f Gbps", gbps(rx[iface]), gbps(tx[iface])
+                    }
+                    printf ", rx_packets=%.0f, tx_packets=%.0f, errors=%.0f/%.0f, dropped=%.0f/%.0f\n", rx_packets[iface], tx_packets[iface], rx_errors[iface], tx_errors[iface], rx_dropped[iface], tx_dropped[iface]
+                }
+                print ""
+                parties = 0
+                for (party in kms_parties) {
+                    parties++
+                }
+                printf "KMS party eth0 total: parties=%d, rx=%.2f GiB, tx=%.2f GiB", parties, gib(kms_rx), gib(kms_tx)
+                if (window_secs > 0) {
+                    printf ", avg_rx=%.2f Gbps, avg_tx=%.2f Gbps", gbps(kms_rx), gbps(kms_tx)
+                }
+                printf ", rx_packets=%.0f, tx_packets=%.0f, errors=%.0f/%.0f, dropped=%.0f/%.0f\n", kms_rx_packets, kms_tx_packets, kms_rx_errors, kms_tx_errors, kms_rx_dropped, kms_tx_dropped
+            }
+        ' "${delta_file}"
+    } > "${summary_file}"
+}
+
 {
     echo "phase=${PHASE}"
     echo "namespace=${NAMESPACE}"
@@ -189,6 +281,7 @@ if [[ "${PHASE}" == "after-perf" && -f "${BASE_DIR}/before-perf/pod-interface-co
     ' "${BASE_DIR}/before-perf/pod-interface-counters.tsv" \
       "${OUT_DIR}/pod-interface-counters.tsv" \
       > "${BASE_DIR}/pod-interface-counter-delta.tsv" 2>/dev/null || true
+    write_network_summary
 fi
 
 echo "Network diagnostics written to ${OUT_DIR}"

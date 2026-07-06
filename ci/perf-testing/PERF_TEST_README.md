@@ -122,7 +122,13 @@ The `network-diagnostics` artifact contains `before-perf` and `after-perf`
 snapshots. These include pod placement, node labels, recent events, pod MTU,
 pod network counters, readable TCP sysctls, and opportunistic `ip`, `ss`, and
 `ethtool` output from running containers. The artifact also includes
-`pod-interface-counter-delta.tsv` when both snapshots are available.
+`pod-interface-counter-delta.tsv` and `network-summary.txt` when both snapshots
+are available.
+
+Sustained UDEC scenarios also capture their own `eth0` rx/tx counters inside the
+Argo test pod. Those per-scenario `net_rx` and `net_tx` values are included in
+the Slack report because the outer before/after artifact only includes pods
+that are still running when the snapshot is taken.
 
 Pod-level `ethtool` usually cannot see AWS ENA allowance counters. Those require
 a privileged node-level probe.
