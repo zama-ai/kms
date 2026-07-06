@@ -49,11 +49,11 @@ on:
         default: false
         type: boolean
       kms_branch:
-        description: 'KMS branch (empty if you want to use a chart version)'
+        description: 'KMS chart source ref (optional; empty = Use workflow from ref)'
         required: false
         type: string
       kms_chart_version:
-        description: 'KMS chart version (use repository if you want to use a branch)'
+        description: 'KMS chart version (repository = use chart source ref)'
         required: true
         type: string
         default: 'repository'
