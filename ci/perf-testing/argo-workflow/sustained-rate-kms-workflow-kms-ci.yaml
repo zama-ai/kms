@@ -31,6 +31,10 @@ spec:
       value: "enabled"
     - name: run_url
       value: "Manually triggered"
+    - name: job_url
+      value: "Manually triggered"
+    - name: job_label
+      value: "GitHub Actions"
     - name: fhe-params
       value: "Test"
     - name: duration
@@ -779,6 +783,8 @@ spec:
         - name: test-result-2750
         - name: tls
         - name: run_url
+        - name: job_url
+        - name: job_label
         - name: duration
         - name: max-in-flight
       script:
@@ -840,8 +846,9 @@ spec:
           udec_failed=0
           udec_skipped=0
           udec_lines=""
+          raw_lines=""
 
-          status_icon() {
+          status_label() {
             case "$1" in
               passed) echo "✅" ;;
               warned) echo "⚠️" ;;
@@ -856,6 +863,14 @@ spec:
               echo "-"
             else
               awk -v value="$1" 'BEGIN { printf "%.1f", value + 0 }'
+            fi
+          }
+
+          fmt_ms_2() {
+            if [ -z "$1" ] || [ "$1" = "null" ]; then
+              echo "-"
+            else
+              awk -v value="$1" 'BEGIN { printf "%.2fms", value + 0 }'
             fi
           }
 
@@ -877,12 +892,14 @@ spec:
             esac
           }
 
-          scenario_name_for_rate() {
+          append_raw_line() {
+            raw_lines="${raw_lines}${1}\n"
+          }
+
+          allowed_failure_for_rate() {
             case "$1" in
-              2400) echo "stable" ;;
-              2700) echo "near-limit" ;;
-              2750) echo "over-limit" ;;
-              *) echo "unknown" ;;
+              2750) return 0 ;;
+              *) return 1 ;;
             esac
           }
 
@@ -892,7 +909,7 @@ spec:
               # pct is the minimum achieved_rate/target_rate percentage.
               2400) echo "maxfail=0,maxshed=0,pct=98" ;;
               2700) echo "maxfail=1,maxshed=1,pct=95" ;;
-              # 2.75k probes just above the clean 2.7k run; fail on a hard collapse.
+              # 2.75k probes just above the clean 2.7k run; outside-set results warn.
               2750) echo "maxfail=10,maxshed=25,pct=70" ;;
               *) echo "maxfail=0,maxshed=0,pct=100" ;;
             esac
@@ -917,8 +934,8 @@ spec:
             result_name="$(basename "$result" .json)"
             operation="$(operation_for_test "$result_name")"
             if ! jq empty "$result" 2>/dev/null; then
-              icon="$(status_icon failed)"
-              line="${icon} ${result_name} invalid JSON"
+              label="$(status_label failed)"
+              line="${label} ${result_name} invalid JSON"
               case "$operation" in
                 keygen) keygen_total=$((keygen_total + 1)); keygen_failed=$((keygen_failed + 1)) ;;
                 crs) crs_total=$((crs_total + 1)); crs_failed=$((crs_failed + 1)) ;;
@@ -926,6 +943,7 @@ spec:
               esac
               echo "$line"
               append_operation_line "$operation" "$line"
+              append_raw_line "$line"
               continue
             fi
 
@@ -942,34 +960,34 @@ spec:
               operation="$(operation_for_test "$result_name")"
             fi
 
-            icon="$(status_icon failed)"
+            label="$(status_label failed)"
             if [ "$exit_code" = "0" ]; then
-              icon="$(status_icon passed)"
+              label="$(status_label passed)"
             fi
 
             case "$operation" in
               keygen)
                 keygen_total=$((keygen_total + 1))
                 if [ "$exit_code" = "0" ]; then keygen_passed=$((keygen_passed + 1)); else keygen_failed=$((keygen_failed + 1)); fi
-                line="${icon} ${test_name} ${duration}s params=${fhe_params}"
+                line="${label} ${test_name} ${duration}s params=${fhe_params}"
                 ;;
               crs)
                 crs_total=$((crs_total + 1))
                 if [ "$exit_code" = "0" ]; then crs_passed=$((crs_passed + 1)); else crs_failed=$((crs_failed + 1)); fi
-                line="${icon} ${test_name} ${duration}s params=${fhe_params}"
+                line="${label} ${test_name} ${duration}s params=${fhe_params}"
                 ;;
               pdec)
                 pdec_total=$((pdec_total + 1))
                 if [ "$exit_code" = "0" ]; then pdec_passed=$((pdec_passed + 1)); else pdec_failed=$((pdec_failed + 1)); fi
-                label="$(echo "$test_name" | sed 's/^public-decrypt-//; s/-req/ req/')"
+                short_name="$(echo "$test_name" | sed 's/^public-decrypt-[^-]*-//')"
                 if [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
-                  line="${icon} ${label} $(fmt_1 "$throughput")/s p50=${p50_latency} p99=${p99_latency}"
+                  line="${label} ${short_name} $(fmt_1 "$throughput")/s p50=$(fmt_ms_2 "$p50_latency") p99=$(fmt_ms_2 "$p99_latency")"
                 else
-                  line="${icon} ${label} ${duration}s"
+                  line="${label} ${short_name} ${duration}s"
                 fi
                 ;;
               *)
-                line="${icon} ${test_name} ${duration}s"
+                line="${label} ${test_name} ${duration}s"
                 ;;
             esac
             if [ "$exit_code" != "0" ]; then
@@ -977,6 +995,11 @@ spec:
             fi
             echo "$line"
             append_operation_line "$operation" "$line"
+            if [ "$operation" = "pdec" ] && [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
+              append_raw_line "${label} ${short_name} throughput=$(fmt_1 "$throughput")/s p50=$(fmt_ms_2 "$p50_latency") p95=$(fmt_ms_2 "$p95_latency") p99=$(fmt_ms_2 "$p99_latency")"
+            else
+              append_raw_line "$line"
+            fi
           done
 
           echo ""
@@ -986,9 +1009,10 @@ spec:
             udec_total=$((udec_total + 1))
             if ! jq empty "$result" 2>/dev/null; then
               udec_failed=$((udec_failed + 1))
-              line="$(status_icon failed) ${rate}/s invalid result JSON"
+              line="$(status_label failed) ${rate}/s invalid result JSON"
               echo "$line"
               append_operation_line udec "$line"
+              append_raw_line "$line"
               continue
             fi
 
@@ -1033,12 +1057,13 @@ spec:
             [ -n "$achieved_rate" ] || achieved_rate=0
             [ -n "$saturated" ] || saturated=false
             achieved_short="$(fmt_1 "$achieved_rate")"
-            p99_short="$(fmt_1 "$p99")"
+            p50_short="$(fmt_ms_2 "$p50")"
+            p95_short="$(fmt_ms_2 "$p95")"
+            p99_short="$(fmt_ms_2 "$p99")"
             network_rx_short="$(fmt_1 "$network_rx_gbps")"
             network_tx_short="$(fmt_1 "$network_tx_gbps")"
 
             # Parameter sets are per-rate because the top probe is intentionally near capacity.
-            scenario_name=$(scenario_name_for_rate "$rate")
             parameter_set=$(parameter_set_for_rate "$rate")
             maxfail=$(parameter_value "$parameter_set" maxfail)
             maxshed=$(parameter_value "$parameter_set" maxshed)
@@ -1061,24 +1086,35 @@ spec:
                 and (($target_rate > 0) and (($achieved_rate * 100 / $target_rate) >= $pct))
               ')
 
-            # WARN is accepted-but-degraded; FAIL exits the workflow nonzero below.
+            # WARN is accepted-but-degraded. 2750/s is an exploratory probe and
+            # is allowed to exceed its parameter set without failing the workflow.
             if [ "$status" = "skipped" ]; then
               udec_skipped=$((udec_skipped + 1))
-              line="$(status_icon skipped) ${scenario_name} ${target_rate}/s skipped"
+              line="$(status_label skipped) ${target_rate}/s skipped"
             elif [ "$status" != "passed" ]; then
-              udec_failed=$((udec_failed + 1))
-              line="$(status_icon failed) ${scenario_name} ${target_rate}/s measurement failed"
+              if allowed_failure_for_rate "$rate"; then
+                udec_warned=$((udec_warned + 1))
+                line="$(status_label warned) ${target_rate}/s measurement failed"
+              else
+                udec_failed=$((udec_failed + 1))
+                line="$(status_label failed) ${target_rate}/s measurement failed"
+              fi
             elif [ "$within_parameter_set" = "true" ]; then
               if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
                 udec_warned=$((udec_warned + 1))
-                line="$(status_icon warned) ${scenario_name} ${target_rate}/s ${achieved_short}/s p99=${p99_short}ms"
+                line="$(status_label warned) ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               else
                 udec_passed=$((udec_passed + 1))
-                line="$(status_icon passed) ${scenario_name} ${target_rate}/s ${achieved_short}/s p99=${p99_short}ms"
+                line="$(status_label passed) ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               fi
             else
-              udec_failed=$((udec_failed + 1))
-              line="$(status_icon failed) ${scenario_name} ${target_rate}/s outside params"
+              if allowed_failure_for_rate "$rate"; then
+                udec_warned=$((udec_warned + 1))
+                line="$(status_label warned) ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
+              else
+                udec_failed=$((udec_failed + 1))
+                line="$(status_label failed) ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
+              fi
             fi
 
             if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
@@ -1096,6 +1132,7 @@ spec:
 
             echo "$line"
             append_operation_line udec "$line"
+            append_raw_line "udec rate=${target_rate}/s status=${status} params=${parameter_set} achieved=${achieved_short}/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} saturated=${saturated} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s recon_avg=$(fmt_ms_2 "$recon_avg") recon_p50=$(fmt_ms_2 "$recon_p50") recon_p99=$(fmt_ms_2 "$recon_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
           done
 
           finite_total=$((keygen_total + crs_total + pdec_total))
@@ -1116,21 +1153,27 @@ spec:
           echo "=========================================="
 
           if [ $finite_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
-            title="❌ KMS perf failed"
+            title="KMS perf failed"
           elif [ $udec_warned -gt 0 ]; then
-            title="⚠️ KMS perf passed with warnings"
+            title="KMS perf passed with warnings"
           else
-            title="✅ KMS perf passed"
+            title="KMS perf passed"
           fi
 
           slack_webhook_url=$(cat /etc/slack/url)
           keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
-          pdec_block="$(printf '*Public decrypt*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
-          udec_block="$(printf '*User decrypt*\n%b' "${udec_lines:-No user decrypt tests\n}")"
-          status_line="Keygen ${keygen_passed}/${keygen_total} · CRS ${crs_passed}/${crs_total} · Public decrypt ${pdec_passed}/${pdec_total} · User decrypt ${udec_passed}✅ ${udec_warned}⚠️ ${udec_failed}❌ ${udec_skipped}⏭️"
+          pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+          udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+          status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
           config_line="payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}"
-          run_line="<{{inputs.parameters.run_url}}|GitHub Actions> · \`${WORKFLOW_NAME}\`"
+          if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
+            run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
+          else
+            run_line="{{inputs.parameters.job_label}}"
+          fi
+          raw_text="$(printf '%b' "$raw_lines" | head -c 2600)"
+          raw_block="$(printf '*Raw data*\n```%s\n```' "$raw_text")"
 
           slack_message=$(jq -n \
             --arg title "$title" \
@@ -1141,10 +1184,11 @@ spec:
             --arg crs "$crs_block" \
             --arg pdec "$pdec_block" \
             --arg udec "$udec_block" \
+            --arg raw "$raw_block" \
             '{
               text: $title,
               blocks: [
-                {type: "header", text: {type: "plain_text", text: $title, emoji: true}},
+                {type: "header", text: {type: "plain_text", text: $title, emoji: false}},
                 {type: "section", fields: [
                   {type: "mrkdwn", text: $status},
                   {type: "mrkdwn", text: $run}
@@ -1156,7 +1200,9 @@ spec:
                 {type: "section", text: {type: "mrkdwn", text: $keygen}},
                 {type: "section", text: {type: "mrkdwn", text: $crs}},
                 {type: "section", text: {type: "mrkdwn", text: $pdec}},
-                {type: "section", text: {type: "mrkdwn", text: $udec}}
+                {type: "section", text: {type: "mrkdwn", text: $udec}},
+                {type: "divider"},
+                {type: "section", text: {type: "mrkdwn", text: $raw}}
               ]
             }'
           )

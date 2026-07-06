@@ -429,6 +429,7 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
         run: |
           ###################################################################
           # Prepare and execute Argo workflow for performance testing
@@ -466,13 +467,27 @@ jobs:
             -e "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
             "${WORKFLOW_TEMPLATE}"
 
+          JOB_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+          JOB_LABEL="run ${RUN_ID}"
+          if command -v gh >/dev/null 2>&1; then
+            JOB_LINE="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs" --jq '.jobs[] | select(.name == "performance-testing") | "\(.id) \(.html_url)"' | head -n 1 || true)"
+            if [[ -n "${JOB_LINE}" ]]; then
+              JOB_ID="${JOB_LINE%% *}"
+              JOB_URL="${JOB_LINE#* }"
+              JOB_LABEL="job ${JOB_ID}"
+            fi
+          fi
+          echo "Slack report link: ${JOB_LABEL} (${JOB_URL})"
+
           echo "Submitting Argo workflow..."
           argo submit -n argo \
             "${WORKFLOW_TEMPLATE}" \
             -p tls="${TLS_STATUS}" \
             -p client-logs="${CLIENT_LOGS_STATUS}" \
             "${EXTRA_SUBMIT_ARGS[@]}" \
-            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p job_url="${JOB_URL}" \
+            -p job_label="${JOB_LABEL}"
 
           echo "Streaming workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
