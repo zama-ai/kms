@@ -14,7 +14,7 @@ Use these values when iterating on the sustained-rate user-decrypt test:
 | Deployment type | `threshold` |
 | Enable core-client tracing logs | Prefer unchecked while measuring perf |
 | FHE parameters for preprocessing and keygen | `Test` for faster iteration |
-| TLS enabled | Unchecked for `threshold` |
+| TLS enabled | Unchecked unless measuring TLS overhead |
 | KMS branch | Empty |
 | KMS chart version | `repository` |
 | TKMS Infra chart version | `0.3.2` |
@@ -97,7 +97,7 @@ available.
 | Deployment type | `inputs.deployment_type` | `DEPLOYMENT_TYPE`; also selects `PATH_SUFFIX` | Chooses the KMS deployment layout. `threshold` uses non-enclave `core-service` and `PATH_SUFFIX=kms-ci`; `thresholdWithEnclave` uses `core-service-enclave` and `PATH_SUFFIX=kms-enclave-ci`. |
 | Enable core-client tracing logs | `inputs.client_logs` | `CLIENT_LOGS`; Argo parameter `client-logs` | Adds `--logs` to `kms-core-client` in perf tasks when enabled. Logging can materially affect local perf and should usually be off for measurements. |
 | FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Controls the baseline `preproc-key-gen` and `key-gen` tasks. The UDEC setup and sustained decrypt scenarios are fixed to `Default` so decrypt perf uses real parameters. |
-| TLS enabled | `inputs.tls` | `TLS`; Argo parameter `tls`; deploy script `ENABLE_TLS` | Only valid with `deployment_type=thresholdWithEnclave` in this workflow. Non-enclave deployments must use `tls=false`; the workflow fails fast otherwise. |
+| TLS enabled | `inputs.tls` | `TLS`; Argo parameter `tls`; deploy script `ENABLE_TLS` | Enables threshold core-to-core TLS. Supported for both `threshold` and `thresholdWithEnclave`; enclave runs additionally use attested TLS settings. |
 | KMS branch | `inputs.kms_branch` | `KMS_BRANCH` | Used only when `kms_chart_version=repository`. If empty, defaults to `github.ref` from "Use workflow from". |
 | KMS chart version | `inputs.kms_chart_version` | `KMS_CHART_VERSION`; deploy script `--kms-chart-version` | `repository` deploys the chart from the checked-out repo. A version such as `1.4.17` deploys the OCI chart version. |
 | TKMS Infra chart version | `inputs.tkms_infra_chart_version` | `TKMS_INFRA_CHART_VERSION`; deploy script `--tkms-infra-version` | Selects the TKMS infra chart version used to create S3/IAM/KMS party resources. |
@@ -116,7 +116,7 @@ available.
 
 ## Common Pitfalls
 
-- Leaving `tls=true` with `deployment_type=threshold` fails fast. Use `tls=false`, or choose `thresholdWithEnclave`.
+- `tls=true` is valid for both `threshold` and `thresholdWithEnclave`; use `tls=false` only when you want a no-TLS comparison run.
 - `kms_chart_version=repository` means the chart comes from the selected/ref branch, not from an OCI release.
 - `build=true` means the image-tag fields are ignored. Use `build=false` only when you know the exact core and client image tags already exist.
 - Leave `FHE parameters for preprocessing and keygen` at `Test` unless you specifically want the baseline preproc/keygen tasks to use production-size parameters. Sustained UDEC decrypts still use `Default`.

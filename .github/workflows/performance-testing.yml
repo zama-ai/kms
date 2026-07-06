@@ -44,7 +44,7 @@ on:
           - 'Default'
           - 'Test'
       tls:
-        description: 'TLS enabled. Only available for thresholdWithEnclave'
+        description: 'TLS enabled for threshold core-to-core traffic'
         required: true
         default: false
         type: boolean
@@ -240,16 +240,6 @@ jobs:
 
       - name: Validate perf deployment selection
         run: |
-          ###################################################################
-          # Validate deployment/TLS combinations before deploying.
-          ###################################################################
-          if [[ "${TLS}" == "true" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
-            echo "ERROR: TLS is only supported for deployment_type=thresholdWithEnclave in performance-testing."
-            echo "Selected deployment_type=${DEPLOYMENT_TYPE}, tls=${TLS}."
-            echo "Set tls=false for non-enclave deployments, or choose thresholdWithEnclave."
-            exit 1
-          fi
-
           if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
             echo "ERROR: performance-testing supports only threshold deployment types."
             echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
