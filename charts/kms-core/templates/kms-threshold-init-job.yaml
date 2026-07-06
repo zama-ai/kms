@@ -23,7 +23,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       initContainers:
         - name: check-kms-cores
-          image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          image: {{ .Values.grpcHeathProbe.image.name }}:{{ .Values.grpcHeathProbe.image.tag }}
           command: ["/bin/bash", "-c"]
           args:
             - |
