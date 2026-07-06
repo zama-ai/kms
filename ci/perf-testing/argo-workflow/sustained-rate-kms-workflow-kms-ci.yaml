@@ -292,6 +292,10 @@ spec:
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
                 value: "{{workflow.parameters.run_url}}"
+              - name: job_url
+                value: "{{workflow.parameters.job_url}}"
+              - name: job_label
+                value: "{{workflow.parameters.job_label}}"
               - name: duration
                 value: "{{workflow.parameters.duration}}"
               - name: max-in-flight
