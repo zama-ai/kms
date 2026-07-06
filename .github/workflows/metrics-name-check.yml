@@ -1,0 +1,133 @@
+# Non-blocking reminder that a PR changed the KMS metric names — the metric
+# family names and label-value constants (operation/tag/error strings) that
+# Prometheus rules and Grafana dashboards, living OUTSIDE this repo, match
+# literally. A rename here can silently break those dashboards, so this workflow
+# posts a sticky PR comment listing exactly what changed. It never fails the
+# build; family-name changes are additionally hard-gated by the
+# `metric_families_match_allowlist` test (test-workspace-crates job in main.yml).
+name: metrics-name-check
+
+on:
+  pull_request:
+    paths:
+      - 'observability/src/metrics.rs'
+      - 'observability/src/metrics_names.rs'
+      - 'ci/scripts/extract_metric_names.sh'
+      - '.github/workflows/metrics-name-check.yml'
+
+concurrency:
+  group: metrics-name-check-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read # Required to checkout repository code and read the base commit
+
+jobs:
+  metrics-name-check:
+    name: metrics-name-check/diff
+    permissions:
+      contents: read # Required to checkout repository code
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          # Full history so we can add a worktree at the PR base SHA below; a
+          # shallow clone might not contain that commit.
+          fetch-depth: 0
+
+      - name: Extract metric names (base and head)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          # Head = the PR checkout we are standing in.
+          ci/scripts/extract_metric_names.sh "${GITHUB_WORKSPACE}" > head.txt
+
+          # Base = a detached worktree at the PR base SHA.
+          base_worktree="$(mktemp -d)/base"
+          git worktree add --detach "${base_worktree}" "${BASE_SHA}"
+          ci/scripts/extract_metric_names.sh "${base_worktree}" > base.txt
+          git worktree remove --force "${base_worktree}" || true
+
+          echo "=== base metric names ==="; cat base.txt
+          echo "=== head metric names ==="; cat head.txt
+
+      - name: Render comment body
+        id: render
+        run: |
+          set -euo pipefail
+
+          # Lines present only in head = added; only in base = removed.
+          # `comm` needs globally-sorted inputs; the extractor groups metrics
+          # before constants, so sort here before comparing.
+          added="$(comm -13 <(sort base.txt) <(sort head.txt) || true)"
+          removed="$(comm -23 <(sort base.txt) <(sort head.txt) || true)"
+
+          {
+            echo '<!-- metrics-name-check -->'
+            echo '## Metric name change detected'
+            echo
+            if [[ -z "${added}" && -z "${removed}" ]]; then
+              echo 'The metrics source files changed, but no metric **names** or **label constants** were added or removed. No action needed for dashboards.'
+              echo
+              echo 'METRIC_NAMES_CHANGED=false' > change_state.env
+            else
+              echo 'This PR changes metric names and/or label-value constants that Grafana dashboards and Prometheus rules (in other repos) query **literally**. Please make sure those consumers are updated in lockstep, otherwise panels/alerts may silently break.'
+              echo
+              if [[ -n "${removed}" ]]; then
+                echo '### Removed / renamed (old value)'
+                echo '```'
+                echo "${removed}"
+                echo '```'
+                echo
+              fi
+              if [[ -n "${added}" ]]; then
+                echo '### Added / renamed (new value)'
+                echo '```'
+                echo "${added}"
+                echo '```'
+                echo
+              fi
+              echo '> If a **metric family name** (`metric: kms_*`) changed, also update the `metric_families_match_allowlist` allowlist in `observability/src/metrics.rs`, or the `test-workspace-crates` CI job will fail.'
+              echo
+              echo 'METRIC_NAMES_CHANGED=true' > change_state.env
+            fi
+            echo '<details><summary>Full current metric names</summary>'
+            echo
+            echo '```'
+            cat head.txt
+            echo '```'
+            echo '</details>'
+          } > metrics-comment.md
+
+          cat change_state.env >> "$GITHUB_OUTPUT"
+          echo '----- rendered comment -----'
+          cat metrics-comment.md
+
+      # Best-effort comment. Fork PRs cannot access the token or write to the PR,
+      # so this is allowed to fail without turning the check red (soft warn).
+      - name: Comment PR with metric name diff
+        if: ${{ steps.render.outputs.METRIC_NAMES_CHANGED == 'true' }}
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+        with:
+          header: metrics-name-check
+          path: metrics-comment.md
+
+      # No metric name change: remove any stale comment from a previous push.
+      - name: Remove stale comment when metric names are unchanged
+        if: ${{ steps.render.outputs.METRIC_NAMES_CHANGED != 'true' }}
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+        with:
+          header: metrics-name-check
+          delete: true
