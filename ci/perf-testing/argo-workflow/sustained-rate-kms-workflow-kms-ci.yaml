@@ -850,7 +850,7 @@ spec:
           udec_failed=0
           udec_skipped=0
           udec_lines=""
-          raw_lines=""
+          udec_raw_lines=""
 
           status_label() {
             case "$1" in
@@ -896,8 +896,8 @@ spec:
             esac
           }
 
-          append_raw_line() {
-            raw_lines="${raw_lines}${1}\n"
+          append_udec_raw_line() {
+            udec_raw_lines="${udec_raw_lines}${1}\n"
           }
 
           allowed_failure_for_rate() {
@@ -947,7 +947,6 @@ spec:
               esac
               echo "$line"
               append_operation_line "$operation" "$line"
-              append_raw_line "$line"
               continue
             fi
 
@@ -999,11 +998,6 @@ spec:
             fi
             echo "$line"
             append_operation_line "$operation" "$line"
-            if [ "$operation" = "pdec" ] && [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
-              append_raw_line "${label} ${short_name} throughput=$(fmt_1 "$throughput")/s p50=$(fmt_ms_2 "$p50_latency") p95=$(fmt_ms_2 "$p95_latency") p99=$(fmt_ms_2 "$p99_latency")"
-            else
-              append_raw_line "$line"
-            fi
           done
 
           echo ""
@@ -1016,7 +1010,7 @@ spec:
               line="$(status_label failed) ${rate}/s invalid result JSON"
               echo "$line"
               append_operation_line udec "$line"
-              append_raw_line "$line"
+              append_udec_raw_line "$line"
               continue
             fi
 
@@ -1136,7 +1130,7 @@ spec:
 
             echo "$line"
             append_operation_line udec "$line"
-            append_raw_line "udec rate=${target_rate}/s status=${status} params=${parameter_set} achieved=${achieved_short}/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} saturated=${saturated} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s recon_avg=$(fmt_ms_2 "$recon_avg") recon_p50=$(fmt_ms_2 "$recon_p50") recon_p99=$(fmt_ms_2 "$recon_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
+            append_udec_raw_line "rate=${target_rate}/s status=${status} params=${parameter_set} achieved=${achieved_short}/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} saturated=${saturated} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s recon_avg=$(fmt_ms_2 "$recon_avg") recon_p50=$(fmt_ms_2 "$recon_p50") recon_p99=$(fmt_ms_2 "$recon_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
           done
 
           finite_total=$((keygen_total + crs_total + pdec_total))
@@ -1168,7 +1162,12 @@ spec:
           keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
           pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
-          udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+          udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
+          if [ -n "$udec_raw_text" ]; then
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b\n*Raw data*\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
+          else
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+          fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
           config_line="payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}"
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
@@ -1176,8 +1175,6 @@ spec:
           else
             run_line="{{inputs.parameters.job_label}}"
           fi
-          raw_text="$(printf '%b' "$raw_lines" | head -c 2600)"
-          raw_block="$(printf '*Raw data*\n```%s\n```' "$raw_text")"
 
           slack_message=$(jq -n \
             --arg title "$title" \
@@ -1188,7 +1185,6 @@ spec:
             --arg crs "$crs_block" \
             --arg pdec "$pdec_block" \
             --arg udec "$udec_block" \
-            --arg raw "$raw_block" \
             '{
               text: $title,
               blocks: [
@@ -1204,9 +1200,7 @@ spec:
                 {type: "section", text: {type: "mrkdwn", text: $keygen}},
                 {type: "section", text: {type: "mrkdwn", text: $crs}},
                 {type: "section", text: {type: "mrkdwn", text: $pdec}},
-                {type: "section", text: {type: "mrkdwn", text: $udec}},
-                {type: "divider"},
-                {type: "section", text: {type: "mrkdwn", text: $raw}}
+                {type: "section", text: {type: "mrkdwn", text: $udec}}
               ]
             }'
           )
