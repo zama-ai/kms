@@ -2,11 +2,7 @@ use threshold_types::party::MpcIdentity;
 use threshold_types::session_id::SessionId;
 
 use anyhow::{anyhow, bail, ensure};
-use attestation_doc_validation::{
-    attestation_doc::{decode_attestation_document, validate_cose_signature},
-    cert::validate_cert_trust_chain,
-    nsm::{CryptoClient as NsmCryptoClient, PublicKey as NsmPublicKey},
-};
+use attestation_doc_validation::validate_and_parse_attestation_doc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
 use std::{
@@ -104,7 +100,6 @@ pub struct AttestedVerifier {
     pcr8_expected: bool,
     #[cfg(feature = "testing")]
     mock_enclave: bool,
-    ignore_aws_ca_chain: bool,
 }
 
 /// We have to manually implement Debug for `AttestedVerifier` because Debug
@@ -119,8 +114,7 @@ impl std::fmt::Debug for AttestedVerifier {
                 "user_data_verifier_present",
                 &self.user_data_verifier.is_some(),
             )
-            .field("pcr8_expected", &self.pcr8_expected)
-            .field("ignore_aws_ca_chain", &self.ignore_aws_ca_chain);
+            .field("pcr8_expected", &self.pcr8_expected);
         #[cfg(feature = "testing")]
         let f = f.field("mock_enclave", &self.mock_enclave);
         f.finish()
@@ -132,7 +126,6 @@ impl AttestedVerifier {
         user_data_verifier: Option<Arc<UserDataVerifier>>,
         pcr8_expected: bool,
         #[cfg(feature = "testing")] mock_enclave: bool,
-        ignore_aws_ca_chain: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
@@ -150,7 +143,6 @@ Crypto provider should exist at this point"
             pcr8_expected,
             #[cfg(feature = "testing")]
             mock_enclave,
-            ignore_aws_ca_chain,
         })
     }
 
@@ -324,7 +316,6 @@ impl ServerCertVerifier for AttestedVerifier {
                 CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
                 intermediates,
                 now,
-                self.ignore_aws_ca_chain,
             )
             .map_err(|e| {
                 tracing::error!(
@@ -424,7 +415,6 @@ impl ClientCertVerifier for AttestedVerifier {
                 CertVerifier::Client(client_verifier.clone()),
                 intermediates,
                 now,
-                self.ignore_aws_ca_chain,
             )
             .map_err(|e| {
                 tracing::error!(
@@ -480,7 +470,6 @@ pub enum CertVerified {
     Server(ServerCertVerified),
 }
 
-#[expect(clippy::too_many_arguments)]
 fn validate_wrapped_cert(
     cert: &X509Certificate,
     trusted_releases: HashSet<ReleasePCRValues>,
@@ -489,7 +478,6 @@ fn validate_wrapped_cert(
     verifier: CertVerifier,
     intermediates: &[CertificateDer<'_>],
     now: UnixTime,
-    ignore_aws_ca_chain: bool,
 ) -> anyhow::Result<()> {
     // Self-signed certificates do not actually include AWS Nitro
     // attestation documents as a PKCS7 structure. We only reused
@@ -502,61 +490,8 @@ fn validate_wrapped_cert(
         bail!("Bad certificate: attestation document not present")
     };
 
-    // Parse attestation doc from cose signature and validate structure
-    let (cose_sign_1_decoded, attestation_doc) = decode_attestation_document(attestation_doc.value)
-        .map_err(|e| anyhow!("Could not decode attestation document: {e}"))?;
-    let (_, attestation_doc_signing_cert) =
-        x509_parser::parse_x509_certificate(&attestation_doc.certificate).map_err(|e| {
-            anyhow!("Could not parse attestation document signing certificate: {e}")
-        })?;
-    // Validate Cose signature over attestation doc
-    let pub_key =
-        NsmPublicKey::try_from(attestation_doc_signing_cert.public_key()).map_err(|e| {
-            anyhow!("Could not parse attestation document signing certificate public key: {e}")
-        })?;
-    validate_cose_signature::<NsmCryptoClient>(&pub_key, &cose_sign_1_decoded)
-        .map_err(|e| anyhow!("Could not verify attestation document signature: {e}"))?;
-    // Validate that the attestation doc's signature can be tied back to the AWS Nitro CA
-    let intermediate_certs: Vec<&[u8]> = attestation_doc
-        .cabundle
-        .iter()
-        .map(|cert| cert.as_slice())
-        .collect();
-    let aws_cert_chain_valid_res = validate_cert_trust_chain(
-        &attestation_doc.certificate,
-        &intermediate_certs,
-        Some(now.as_secs()),
-    );
-    if let Err(e) = aws_cert_chain_valid_res {
-        if ignore_aws_ca_chain {
-            let subject = extract_subject_from_cert(cert)?;
-            tracing::warn!(
-                "Cannot validate CA chain for party {subject} attestation document at timestamp {}: {}",
-                now.as_secs(),
-                e
-            );
-            tracing::warn!(
-                "Party {} attestation document signing certificate: {:#?}",
-                subject,
-                attestation_doc_signing_cert
-            );
-            for cert in attestation_doc.cabundle {
-                let (_, intermediate_cert) =
-                    x509_parser::parse_x509_certificate(&cert).map_err(|e| {
-                        anyhow!(
-                            "Could not parse attestation document intermediate certificate: {e}"
-                        )
-                    })?;
-                tracing::warn!(
-                    "Party {} attestation document intermediate certificate: {:#?}",
-                    subject,
-                    intermediate_cert
-                );
-            }
-        } else {
-            bail!("{e}")
-        }
-    }
+    let attestation_doc = validate_and_parse_attestation_doc(attestation_doc.value)
+        .map_err(|e| anyhow!("Could not validate attestation document: {e}"))?;
 
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")

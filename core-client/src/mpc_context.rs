@@ -62,7 +62,6 @@ pub async fn create_test_context_info_from_core_config(
             kms_lib::conf::threshold::TlsConf::Auto {
                 eif_signing_cert: _,
                 trusted_releases,
-                ignore_aws_ca_chain: _,
                 attest_private_vault_root_key: _,
                 renew_slack_after_expiration: _,
                 renew_fail_retry_timeout: _,
