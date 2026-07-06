@@ -124,11 +124,6 @@ data:
       {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
     [threshold.tls.auto]
-           {{- if .Values.kmsCore.thresholdMode.tls.ignoreAwsCaChain }}
-    ignore_aws_ca_chain = true
-           {{- else }}
-    ignore_aws_ca_chain = false
-           {{- end }}
            {{- if .Values.kmsCore.thresholdMode.tls.attestPrivateVaultRootKey }}
     attest_private_vault_root_key = true
            {{- else }}
