@@ -1,7 +1,6 @@
 use super::{
     matrix::compute_powers_list,
     poly::Poly,
-    sharing::shamir::ShamirFieldPoly,
     structure_traits::{Field, Ring},
 };
 use std::ops::Neg;
@@ -117,66 +116,81 @@ fn sanity_check_decoding<F: Field>(
     tracing::info!("e {e:?}");
 }
 
+/// Precompute the committee-invariant inputs to [`decode_syndrome`] from the evaluation points.
+///
+/// Returns `(x_alpha_inv, mag_factor)` where `x_alpha_inv[i] = α_i⁻¹` and
+/// `mag_factor[i] = -α_i · L_i(α_i)` (`L_i` being the Lagrange numerator for point `i`).
+/// These depend only on the point set, so callers that decode many syndromes over the same points
+/// should compute them once and reuse them.
+pub fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
+    let lagrange = lagrange_numerators(x_alpha);
+    let x_alpha_inv = x_alpha.iter().map(|x| x.invert()).collect();
+    let mag_factor = x_alpha
+        .iter()
+        .zip(&lagrange)
+        .map(|(a, l)| -*a * l.eval(a))
+        .collect();
+    (x_alpha_inv, mag_factor)
+}
+
 //NIST: Level Zero Operation
-/// decode a given syndrome poly in the field for a given set of points and a RS value r = n - v.
-pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) -> Vec<F> {
+/// decode a given syndrome poly in the field, given precomputed [`field_decode_hints`] and RS value
+/// r = n - v.
+pub fn decode_syndrome<F: Field>(
+    syndrome: Poly<F>,
+    r: usize,
+    x_alpha_inv: &[F],
+    mag_factor: &[F],
+) -> Vec<F> {
     // nothing to decode if syndrome is zero, return all-zero error vector
-    if syndrome == &Poly::zero() {
-        return vec![F::ZERO; x_alpha.len()];
+    if syndrome.is_zero() {
+        return vec![F::ZERO; x_alpha_inv.len()];
     }
 
     let (mut t0, mut t1) = (Poly::zero(), Poly::one());
     let mut r0 = Poly::zero();
     r0.set_coef(r, F::ONE); // R = Z^r
-    let mut r1 = syndrome.clone();
+    let mut r1 = syndrome;
 
     while r0.deg() >= r / 2 {
-        let (q, _) = &r0 / &r1;
-        (t0, t1) = (t1.clone(), t0 - (&q * t1));
-        (r0, r1) = (r1.clone(), r0 - (&q * r1));
+        let (q, r2) = &r0 / &r1;
+        let t2 = t0 - (&q * &t1);
+
+        r0 = r1;
+        r1 = r2;
+        t0 = t1;
+        t1 = t2;
     }
 
-    let sigma = &t0 / &t0.eval(&F::ZERO);
-    let omega = &r0 / &t0.eval(&F::ZERO);
-
-    // party indices (0-indexed) with errors
-    let mut bs = Vec::new();
-    for (idx, x) in x_alpha.iter().enumerate() {
-        if sigma.eval(&x.invert()) == F::ZERO {
-            bs.push(idx);
-        }
-    }
+    let denom_at_0 = t0.eval(&F::ZERO);
+    let sigma = &t0 / &denom_at_0;
+    let sigma_deriv = sigma.formal_derivative();
+    let omega = &r0 / &denom_at_0;
 
     // initialize error magnitudes to 0 for all indices
-    let mut e = vec![F::ZERO; x_alpha.len()];
-    let lagrange_polys = lagrange_numerators(x_alpha);
-
-    // compute error magnitudes at indices b
-    for b in bs.clone() {
-        let alpha_b = x_alpha[b];
-        let alpha_b_inv = alpha_b.invert();
-
-        let numerator = -alpha_b * lagrange_polys[b].eval(&alpha_b) * omega.eval(&alpha_b_inv);
-        let eb = numerator / sigma.formal_derivative().eval(&alpha_b_inv);
-        e[b] = eb;
+    let mut e = vec![F::ZERO; x_alpha_inv.len()];
+    for (i, xi) in x_alpha_inv.iter().enumerate() {
+        if sigma.eval(xi) == F::ZERO {
+            e[i] = mag_factor[i] * omega.eval(xi) / sigma_deriv.eval(xi);
+        }
     }
 
     // sanity checks for debugging, only in debug builds
     #[cfg(debug_assertions)]
-    sanity_check_decoding(sigma, omega, r, &bs, &e, &lagrange_polys, x_alpha);
+    {
+        let x_alpha: Vec<_> = x_alpha_inv.iter().map(|x| x.invert()).collect();
+        let lagrange_polys = lagrange_numerators(&x_alpha);
+        let mut bs = Vec::new();
+        for (idx, x) in x_alpha.iter().enumerate() {
+            if sigma.eval(&x.invert()) == F::ZERO {
+                bs.push(idx);
+            }
+        }
+
+        sanity_check_decoding(sigma, omega, r, &bs, &e, &lagrange_polys, &x_alpha);
+    }
 
     e
-}
-
-/// Decodes a syndrome over a binary extension field using party indices as evaluation points.
-pub fn syndrome_decoding_z2<F: Field + From<u8>>(
-    parties: &[usize],
-    syndrome: &ShamirFieldPoly<F>,
-    threshold: usize,
-) -> Vec<F> {
-    let xs: Vec<F> = parties.iter().map(|s| F::from(*s as u8)).collect();
-    let r = parties.len() - (threshold + 1);
-    decode_syndrome(syndrome, &xs, r)
 }
 
 #[cfg(test)]
@@ -314,7 +328,8 @@ mod tests {
 
         // syndrome should be zero without error
         let syndrome = compute_syndrome(&xs, &ys, v);
-        let e = decode_syndrome(&syndrome, &xs, r);
+        let (x_alpha_inv, mag_factor) = field_decode_hints(&xs);
+        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &mag_factor);
         tracing::info!("e (ok): {:?}", e);
         assert_eq!(e, vec![BaseField::ZERO; n as usize]); // test that e is all-zero
 
@@ -327,7 +342,8 @@ mod tests {
         ys[err_idxs[0]] += BaseField::from_u128(err_vals[0]);
 
         let syndrome = compute_syndrome(&xs, &ys, v);
-        let e = decode_syndrome(&syndrome, &xs, r);
+        let (x_alpha_inv, mag_factor) = field_decode_hints(&xs);
+        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &mag_factor);
         tracing::info!("e (1x): {:?}", e);
         let mut reference = vec![BaseField::ZERO; n as usize];
         reference[err_idxs[0]] += BaseField::from_u128(err_vals[0]);
@@ -338,7 +354,8 @@ mod tests {
         ys[err_idxs[1]] += BaseField::from_u128(err_vals[1]);
 
         let syndrome = compute_syndrome(&xs, &ys, v);
-        let e = decode_syndrome(&syndrome, &xs, r);
+        let (x_alpha_inv, mag_factor) = field_decode_hints(&xs);
+        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &mag_factor);
         tracing::info!("e (2x): {:?}", e);
         reference[err_idxs[1]] += BaseField::from_u128(err_vals[1]);
         assert_eq!(e, reference);

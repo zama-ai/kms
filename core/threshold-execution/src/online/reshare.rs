@@ -13,13 +13,10 @@ use crate::{
     },
 };
 use algebra::{
-    galois_rings::common::ResiduePoly,
+    galois_rings::common::{ResiduePoly, SyndromeContext},
     poly::Poly,
     sharing::{shamir::ShamirSharings, share::Share},
-    structure_traits::{
-        BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome, Zero,
-    },
-    syndrome::lagrange_numerators,
+    structure_traits::{BaseRing, ErrorCorrect, Invert, QuotientMaximalIdeal, Zero},
 };
 use error_utils::anyhow_error_and_log;
 use itertools::{Itertools, izip};
@@ -109,7 +106,7 @@ pub trait Reshare: ProtocolDescription + Send + Sync + Clone {
         expected_input_len: usize,
     ) -> anyhow::Result<Self::MaybeExpectedOutput<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal;
 }
 
 pub type SecureSameSetReshare<Ses> =
@@ -191,7 +188,7 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
         expected_input_len: usize,
     ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         Ok(Expected(
             reshare_same_sets(
@@ -293,7 +290,7 @@ impl<
         expected_input_len: usize,
     ) -> anyhow::Result<NotExpected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         assert!(sessions.my_role().is_set1() && !sessions.my_role().is_set2());
         if reshare_two_sets::<_, BaseSession, _, _, Prep, _, _>(
@@ -416,7 +413,7 @@ impl<
         expected_input_len: usize,
     ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         let (two_set_session, my_set_session) = sessions;
         assert!(two_set_session.my_role().is_set2() && !two_set_session.my_role().is_set1());
@@ -538,7 +535,7 @@ impl<
         expected_input_len: usize,
     ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         let (two_set_session, my_set_session) = sessions;
         assert!(two_set_session.my_role().is_set1() && two_set_session.my_role().is_set2());
@@ -583,7 +580,7 @@ pub async fn reshare_two_sets<
     broadcast_protocol: &BroadcastProtocol,
 ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
 {
     // If I belong to set 2, fetch the masks to send to set 1
     let masks_to_resharers = if two_sets_session.my_role().is_set2() {
@@ -839,7 +836,7 @@ pub async fn reshare_same_sets<
     broadcast_protocol: &BroadcastProtocol,
 ) -> anyhow::Result<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
 {
     // we need share_count shares for every party in the initial set of size n1
     let n1 = session.num_parties();
@@ -960,7 +957,7 @@ fn unmask_reshared_shares<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     expected_input_len: usize,
 ) -> anyhow::Result<Vec<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
 {
     let mut s_share_vec = vec![vec![]; expected_input_len];
     for (resharer_role, vs) in agreed_contributions_from_resharers.into_iter() {
@@ -1099,10 +1096,13 @@ async fn open_syndromes_and_correct_errors<
     open_protocol: &OpenProtocol,
 ) -> anyhow::Result<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
 {
+    // TODO(dp): this looks inefficient
     let resharing_set_sorted = resharing_set.iter().cloned().sorted().collect_vec();
     let num_parties_resharing_set = resharing_set_sorted.len();
+    let syn_ctx: SyndromeContext<Z, EXTENSION_DEGREE> =
+        SyndromeContext::new(&resharing_set_sorted, threshold_resharers)?;
     // To avoid calling robust open many times sequentially,
     // we first compute the syndrome shares and then put
     // all the syndrome shares into a n1*share_count vector and call robust open once
@@ -1112,10 +1112,7 @@ where
         Vec::with_capacity(expected_input_len * num_parties_resharing_set);
     for shares in unmasked_reshared_shares {
         let shamir_sharing = ShamirSharings::create(shares);
-        let syndrome_share = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_compute(
-            &shamir_sharing,
-            threshold_resharers,
-        )?;
+        let syndrome_share = syn_ctx.compute(&shamir_sharing)?;
         all_shamir_shares.push(shamir_sharing);
         all_syndrome_poly_shares.append(&mut syndrome_share.into_container());
     }
@@ -1137,8 +1134,7 @@ where
     // now we create chunks from the received syndrome polynomials
     // and create the secret key share
     let mut new_sk_share = Vec::with_capacity(expected_input_len);
-    let syndrome_length = num_parties_resharing_set - (threshold_resharers + 1);
-    let chunks = all_syndrome_polys.chunks_exact(syndrome_length);
+    let chunks = all_syndrome_polys.chunks_exact(syn_ctx.r);
     if chunks.len() != all_shamir_shares.len() {
         return Err(anyhow_error_and_log(format!(
             "Expected the amount of syndrome chunks; {}, and shamir shares; {}, to be equal",
@@ -1147,64 +1143,17 @@ where
         )));
     }
 
-    let lagrange_numerators = make_lagrange_numerators(&resharing_set_sorted)?;
-    let deltas = resharing_set_sorted
-        .iter()
-        .map(|role| delta0i(&lagrange_numerators, role))
-        .collect::<Result<Vec<_>, _>>()?;
-
     for (s, shamir_sharing) in chunks.zip_eq(all_shamir_shares) {
         let syndrome_poly = Poly::from_coefs(s.iter().copied().collect_vec());
-        let opened_syndrome = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_decode(
-            syndrome_poly,
-            &resharing_set_sorted,
-            threshold_resharers,
-        )?;
-
+        let opened_syndrome = syn_ctx.decode(syndrome_poly)?;
         let res: ResiduePoly<Z, EXTENSION_DEGREE> =
-            izip!(shamir_sharing.shares, &deltas, opened_syndrome)
+            izip!(shamir_sharing.shares, syn_ctx.deltas(), opened_syndrome)
                 .map(|(s, d, e)| *d * (s.value() - e))
                 .sum();
         new_sk_share.push(Share::new(session.my_role(), res));
     }
 
     Ok(new_sk_share)
-}
-
-// this is the L_i in the spec
-fn make_lagrange_numerators<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    sorted_roles: &[Role],
-) -> anyhow::Result<Vec<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-{
-    // embed party IDs into the ring
-    let parties: Vec<_> = sorted_roles
-        .iter()
-        .map(ResiduePoly::<Z, EXTENSION_DEGREE>::embed_role_to_exceptional_sequence)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // lagrange numerators from Eq.15
-    let out = lagrange_numerators(&parties);
-    Ok(out)
-}
-
-// Define delta_i(Z) = L_i(Z) / L_i(\alpha_i)
-// where L_i(Z) = \Pi_{i \ne j} (Z - \alpha_i)
-// This function evaluates delta_i(0)
-fn delta0i<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    lagrange_numerators: &[Poly<ResiduePoly<Z, EXTENSION_DEGREE>>],
-    party_role: &Role,
-) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring + Invert,
-{
-    let zero = ResiduePoly::<Z, EXTENSION_DEGREE>::get_from_exceptional_sequence(0)?;
-    let alphai =
-        ResiduePoly::<Z, EXTENSION_DEGREE>::embed_role_to_exceptional_sequence(party_role)?;
-    let denom = lagrange_numerators[party_role].eval(&alphai);
-    let inv_denom = denom.invert()?;
-    Ok(inv_denom * lagrange_numerators[party_role].eval(&zero))
 }
 
 #[cfg(test)]
@@ -1400,7 +1349,7 @@ mod tests {
         malicious_reshare_set_1: R1,
         malicious_reshare_set_2: R2,
         malicious_reshare_both_sets: R3,
-    ) where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome{
+    ) where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal{
         let num_secrets = 10;
 
         let mut task_honest = |two_sets_session: TwoSetsBaseSession,
@@ -1507,7 +1456,7 @@ mod tests {
         malicious_resahre_both_sets: R3,
         num_secrets: usize,
     ) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>>
-    where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome
+    where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal
     {
         let (my_shares, inner_secrets) = if let Some(set_1_session) = set_1_session {
             let (inner_secrets, shares) =

@@ -37,15 +37,14 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use rand::SeedableRng;
 use std::hint::black_box;
 use threshold_algebra::{
+    base_ring::Z128,
     galois_fields::{gf16::GF16, gf256::GF256},
-    galois_rings::degree_4::ResiduePolyF4Z128,
+    galois_rings::{common::SyndromeContext, degree_4::ResiduePolyF4Z128},
     matrix::compute_powers_list,
     poly::Poly,
     sharing::shamir::{InputOp, ShamirSharings},
-    structure_traits::{
-        Field, FromU128, Invert, One, RingWithExceptionalSequence, Sample, Syndrome,
-    },
-    syndrome::{compute_syndrome, decode_syndrome, lagrange_numerators},
+    structure_traits::{Field, FromU128, Invert, One, RingWithExceptionalSequence, Sample},
+    syndrome::{compute_syndrome, decode_syndrome, field_decode_hints, lagrange_numerators},
 };
 use threshold_types::role::Role;
 
@@ -124,12 +123,16 @@ fn bench_field_for<F: Field + std::fmt::Debug>(c: &mut Criterion, field: &str) {
             for e in error_counts(t) {
                 let (xs, ys, v, r) = field_inputs::<F>(n, t, e);
                 let syndrome = compute_syndrome(&xs, &ys, v);
+                // Committee-invariant hints built once, out of the timed section (as production does).
+                let (x_inv, mag_factor) = field_decode_hints(&xs);
                 g.bench_function(
                     BenchmarkId::from_parameter(format!("{field}/n{n}_t{t}_e{e}")),
                     |b| {
-                        b.iter(|| {
-                            black_box(decode_syndrome(black_box(&syndrome), black_box(&xs), r))
-                        })
+                        b.iter_batched(
+                            || syndrome.clone(),
+                            |syndrome| black_box(decode_syndrome(syndrome, r, &x_inv, &mag_factor)),
+                            BatchSize::SmallInput,
+                        )
                     },
                 );
             }
@@ -171,20 +174,28 @@ fn bench_ring(c: &mut Criterion) {
 
     // syndrome_compute: work is independent of the number of errors.
     {
-        let (sharing, _parties) = ring_sharing(N, T, 1);
+        let (sharing, parties) = ring_sharing(N, T, 1);
+        let syn_ctx = SyndromeContext::new(&parties, T).unwrap();
         g.bench_function(
             BenchmarkId::new("syndrome_compute", format!("n{N}_t{T}")),
             |b| {
-                b.iter(|| {
-                    black_box(ResiduePolyF4Z128::syndrome_compute(black_box(&sharing), T).unwrap())
-                });
+                b.iter(|| black_box(syn_ctx.compute(black_box(&sharing)).unwrap()));
             },
         );
+
+        // Pre-computation.
+        g.bench_function(BenchmarkId::new("pre-compute", format!("n{N}_t{T}")), |b| {
+            b.iter(|| {
+                let syn_ctx = SyndromeContext::<Z128, 4>::new(&parties, T).unwrap();
+                black_box(syn_ctx)
+            });
+        });
     }
 
     for e in [0usize, 1, 2, 4] {
         let (sharing, parties) = ring_sharing(N, T, e);
-        let syndrome = ResiduePolyF4Z128::syndrome_compute(&sharing, T).unwrap();
+        let syn_ctx = SyndromeContext::new(&parties, T).unwrap();
+        let syndrome = syn_ctx.compute(&sharing).unwrap();
 
         // syndrome_decode alone (the 128-bit Hensel-lift loop). The syndrome is
         // consumed, so clone it in untimed setup via iter_batched.
@@ -193,7 +204,7 @@ fn bench_ring(c: &mut Criterion) {
             |b| {
                 b.iter_batched(
                     || syndrome.clone(),
-                    |s| black_box(ResiduePolyF4Z128::syndrome_decode(s, &parties, T).unwrap()),
+                    |s| black_box(syn_ctx.decode(s).unwrap()),
                     BatchSize::SmallInput,
                 );
             },
@@ -204,8 +215,8 @@ fn bench_ring(c: &mut Criterion) {
             BenchmarkId::new("compute_then_decode", format!("n{N}_t{T}_e{e}")),
             |b| {
                 b.iter(|| {
-                    let s = ResiduePolyF4Z128::syndrome_compute(black_box(&sharing), T).unwrap();
-                    black_box(ResiduePolyF4Z128::syndrome_decode(s, &parties, T).unwrap())
+                    let s = syn_ctx.compute(black_box(&sharing)).unwrap();
+                    black_box(syn_ctx.decode(s).unwrap())
                 });
             },
         );
@@ -276,5 +287,82 @@ fn bench_primitives(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(syndrome, bench_field, bench_ring, bench_primitives);
+// ---------------------------------------------------------------------------
+// Higher-level: the syndrome CPU work of resharing one key COMPONENT of `k` elements.
+//
+// Mirrors the local work of a single `open_syndromes_and_correct_errors` call: build the
+// `SyndromeContext` once per committee, then compute + decode a syndrome per element. The real
+// protocol interleaves ONE network robust-open between compute and decode — this isolates the CPU
+// cost the optimization targets, not the networking. Per-element work is identical, so we reuse one
+// representative element rather than materialize `k` sharings.
+//
+// `k` values are the production per-component element counts for `BC_PARAMS_SNS` (one
+// `open_syndromes_and_correct_errors` call each): LWE 918, compression 1024, GLWE/PKE 2048,
+// SNS-GLWE 4096, SNS-compression 6144. `e` = errors per element (0 = all-honest common case, 4 =
+// worst correctable — slow and rare).
+// ---------------------------------------------------------------------------
+fn bench_reshare_batch(c: &mut Criterion) {
+    const N: usize = 13;
+    const T: usize = 4;
+    const COMPONENT_SIZES: [usize; 5] = [918, 1024, 2048, 4096, 6144];
+
+    let mut g = c.benchmark_group("syndrome_reshare_batch");
+    g.sample_size(10); // large loops; keep the worst-case (e=4, large k) runs bounded
+    for k in COMPONENT_SIZES {
+        for e in [0usize, 4] {
+            let (sharing, parties) = ring_sharing(N, T, e);
+            g.bench_function(BenchmarkId::from_parameter(format!("k{k}_e{e}")), |b| {
+                b.iter(|| {
+                    // One SyndromeContext per reshared component (amortized over all k elements).
+                    let ctx = SyndromeContext::<Z128, 4>::new(&parties, T).unwrap();
+                    for _ in 0..k {
+                        let syn = ctx.compute(&sharing).unwrap();
+                        black_box(ctx.decode(syn).unwrap());
+                    }
+                });
+            });
+        }
+    }
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// One full BC_PARAMS_SNS key reshare's syndrome CPU work. `reshare_sk` reshares each secret-key
+// component separately (its own `SyndromeContext` + `open_syndromes_and_correct_errors` call), so
+// this runs all of them. Sizes (no dedicated OPRF key): SNS-compression 6144, SNS-GLWE 4096, GLWE
+// 2048, PKE 2048, compression 1024, LWE 918 — total 16,278 ring elements. Networking excluded.
+// ---------------------------------------------------------------------------
+fn bench_full_reshare(c: &mut Criterion) {
+    const N: usize = 13;
+    const T: usize = 4;
+    const COMPONENTS: [usize; 6] = [6144, 4096, 2048, 2048, 1024, 918];
+
+    let mut g = c.benchmark_group("syndrome_full_reshare");
+    g.sample_size(10);
+    for e in [0usize, 4] {
+        let (sharing, parties) = ring_sharing(N, T, e);
+        g.bench_function(BenchmarkId::from_parameter(format!("e{e}")), |b| {
+            b.iter(|| {
+                for &k in &COMPONENTS {
+                    // reshare_sk builds a fresh context per component (same committee each time).
+                    let ctx = SyndromeContext::<Z128, 4>::new(&parties, T).unwrap();
+                    for _ in 0..k {
+                        let syn = ctx.compute(&sharing).unwrap();
+                        black_box(ctx.decode(syn).unwrap());
+                    }
+                }
+            });
+        });
+    }
+    g.finish();
+}
+
+criterion_group!(
+    syndrome,
+    bench_field,
+    bench_ring,
+    bench_primitives,
+    bench_reshare_batch,
+    bench_full_reshare
+);
 criterion_main!(syndrome);
