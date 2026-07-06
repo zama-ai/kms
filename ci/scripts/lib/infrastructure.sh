@@ -479,10 +479,12 @@ deploy_registry_credentials() {
             return 0
         fi
 
-        # kind-ci: build a dockerconfigjson secret for hub.zama.org
-        if [[ -z "${HARBOR_READ_TOKEN:-}" ]]; then
-            log_warn "HARBOR_READ_TOKEN not set, skipping registry credentials setup"
-            log_warn "Set HARBOR_READ_TOKEN to enable private image pulls"
+        # kind-ci: build a dockerconfigjson secret for hub.zama.org.
+        # Both vars are needed; guarding only the token would let an unset
+        # HARBOR_READ_LOGIN abort the script under `set -u` a few lines down.
+        if [[ -z "${HARBOR_READ_LOGIN:-}" || -z "${HARBOR_READ_TOKEN:-}" ]]; then
+            log_warn "HARBOR_READ_LOGIN/HARBOR_READ_TOKEN not both set, skipping registry credentials setup"
+            log_warn "Set HARBOR_READ_LOGIN and HARBOR_READ_TOKEN to enable private image pulls"
             return 0
         fi
 

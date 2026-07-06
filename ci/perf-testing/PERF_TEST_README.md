@@ -1,141 +1,210 @@
-# KMS Performance Testing Workflow
+# KMS Performance Testing
 
-This documents the GitHub Actions manual dispatch form for
-`.github/workflows/performance-testing.yml`.
+This is a guide to the **Performance testing** GitHub Actions workflow
+(`.github/workflows/performance-testing.yml`), which you trigger manually from
+the Actions tab ("Run workflow").
 
-## Recommended Sustained UDEC Iteration Run
+The workflow spins up a real KMS deployment in Kubernetes, runs a suite of perf
+tests against it (keygen, CRS generation, public decrypt, and user decrypt),
+and posts a summary to Slack. This document focuses on the **sustained-rate
+user-decrypt** test, which is the part most people come here to run.
 
-Use these values when iterating on the sustained-rate user-decrypt test:
+## Burst vs. sustained rate
 
-| GitHub field | Value |
+There are two ways to measure decrypt performance, and they answer different
+questions:
+
+- **Burst mode** (the older test) fires a fixed number of requests all at once
+  and measures how quickly the KMS drains them. This tells you *peak capacity* —
+  the best-case throughput when the system is handed a full queue.
+
+- **Sustained-rate mode** (this test) offers a *steady* stream of requests — say
+  2,400 per second for 60 seconds — and checks whether the KMS keeps up. This
+  tells you the rate the system can actually *hold* in a steady state without
+  falling behind, which is closer to real production load.
+
+The sustained test is the honest measure of "how many decrypts per second can
+we serve." Burst numbers look higher but don't reflect what a continuously
+loaded system can sustain.
+
+## Quick start
+
+To iterate on the sustained user-decrypt test, trigger the workflow with these
+values:
+
+| Field | Value |
 | --- | --- |
 | Use workflow from | This branch |
-| Build new Docker images | Checked |
+| Build new Docker images | ✅ Checked |
 | Deployment type | `threshold` |
-| Enable core-client tracing logs | Prefer unchecked while measuring perf |
-| FHE parameters for preprocessing and keygen | `Test` for faster iteration |
-| TLS enabled | Unchecked for `threshold` |
-| KMS chart source ref | Empty |
+| Enable core-client tracing logs | Unchecked (logging skews perf numbers) |
+| FHE parameters for preprocessing and keygen | `Test` (faster setup) |
+| TLS enabled | Unchecked (required for `threshold`) |
+| KMS chart source ref | Leave empty |
 | KMS chart version | `repository` |
 | TKMS Infra chart version | `0.3.2` |
-| KMS Core image tag | Empty when build is checked |
-| KMS Core client image tag | Empty when build is checked |
+| KMS Core image tag | Leave empty (build fills it in) |
+| KMS Core client image tag | Leave empty (build fills it in) |
 
-The current workflow runs keygen, CRS, public-decrypt, and user-decrypt perf
-tests. User-decrypt currently has three rate scenarios for `60s` each, payload
-`1 x euint64`:
+Note that `FHE parameters` only affects preprocessing and keygen. The decrypt
+scenarios always run with production-size `Default` parameters, so the numbers
+they produce are real regardless of this setting.
 
-| Scenario | Rate | Parameter set percentage limits |
+## Reading the results
+
+The user-decrypt test runs three scenarios, each sending `1 × euint64` for 60
+seconds:
+
+| Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
-| `stable` | `2400 req/s` | `maxfail=0,maxshed=0,pct=98` |
-| `near-limit` | `2700 req/s` | `maxfail=1,maxshed=1,pct=95` |
-| `over-limit` | `2750 req/s` | `maxfail=10,maxshed=25,pct=70` |
+| stable | 2,400 req/s | no failures, no shedding, ≥98% of target rate |
+| near-limit | 2,700 req/s | ≤1% failures, ≤1% shed, ≥95% of target rate |
+| over-limit | 2,750 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
-`maxfail` and `maxshed` are percentages of `offered`, not request counts. For
-example, `maxshed=5` means `shed / offered <= 5%`. `pct` is the minimum accepted
-`achieved_rate / target_rate`, also as a percentage. A scenario outside its
-parameter set fails the workflow. A `WARN` line means the scenario stayed inside
-its parameter set but still saw failed, shed, or saturated traffic.
+The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
+not raw counts — `maxshed=25` means "no more than 25% of offered requests were
+shed." The rate percentage (`pct`) is the minimum acceptable ratio of achieved
+rate to target rate.
 
-## Sustained UDEC Metrics
+Each scenario lands on one of these outcomes:
+
+- **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
+  traffic.
+- **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
+  traffic, **or** it's the `2,750` probe, which is expected to run hot and is
+  never allowed to fail the workflow.
+- **❌ fail** — a `2,400` or `2,700` scenario went outside its budget. This
+  fails the whole workflow.
+- **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
+  run in ascending order and stop climbing once one falls over).
+
+The `2,750` scenario is deliberately just above the clean `2,700` run: it probes
+where capacity starts to break down, so it warns instead of failing.
+
+### Metric glossary
+
+The Slack report and JSON artifacts use these fields.
+
+**Outcome:**
 
 | Metric | Meaning |
 | --- | --- |
-| `offered` | Requests scheduled by the rate generator. |
+| `offered` | Requests the rate generator scheduled. |
 | `completed` | Requests that collected enough KMS responses. |
-| `failed` | Sent/launched requests that did not collect enough KMS responses in time. |
-| `shed` | Scheduled requests not sent because `max_in_flight` was already reached. |
-| `saturated` | `true` if any request was shed, or if the post-run drain timed out with requests still in flight. |
+| `failed` | Requests that were sent but didn't collect enough responses in time. |
+| `shed` | Requests dropped before sending because `max_in_flight` was already reached. |
+| `saturated` | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
 | `achieved_rate` | `completed / collection_elapsed_seconds`. |
-| `request_payload_bytes` | Sum of protobuf-encoded user-decrypt request payloads submitted to KMS cores. This counts one payload per core target and excludes gRPC/TLS/header overhead. |
-| `request_payload_messages` | Number of submitted core-target request payloads counted in `request_payload_bytes`. |
-| `request_payload_mib_per_sec` | `request_payload_bytes / collection_elapsed_seconds`, in MiB/s. |
-| `request_payload_avg_bytes` | Average protobuf-encoded size of one submitted user-decrypt request payload. |
-| `response_payload_bytes` | Sum of protobuf-encoded user-decrypt response payloads accepted for quorum reconstruction. This excludes gRPC/TLS/header overhead and abandoned late responses. |
-| `response_payload_messages` | Number of accepted response payloads counted in `response_payload_bytes`. |
-| `response_payload_mib_per_sec` | `response_payload_bytes / collection_elapsed_seconds`, in MiB/s. |
-| `response_payload_avg_bytes` | Average protobuf-encoded size of one accepted user-decrypt response payload. |
 
-## Reusing Docker Image Tags
+**Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
+overhead):
 
-If a run used `Build new Docker images=true`, the `performance-testing` job
-prints a `KMS PERF IMAGE TAGS` block and adds a `KMS perf image tags` section to
-the GitHub job summary.
-
-Early in the Docker build, `performance-testing/docker-build / docker-build/golden-image-tag` has a first step named
-`KMS Docker image tag`. It prints a `KMS DOCKER IMAGE TAG` block, emits a GitHub notice, and adds a `KMS Docker image
-tag` summary section. This is the earliest place to read the tag while the build is still running.
-
-To rerun without rebuilding:
-
-| GitHub field | Value |
+| Metric | Meaning |
 | --- | --- |
-| Build new Docker images | Unchecked |
-| KMS Core image tag | The `KMS Core image tag` from the previous run summary |
-| KMS Core client image tag | The `KMS Core client image tag` from the previous run summary |
+| `request_payload_bytes` | Total request bytes submitted, counted once per core target. |
+| `request_payload_mib_per_sec` | Request bytes per second, in MiB/s. |
+| `request_payload_avg_bytes` | Average encoded size of one request. |
+| `response_payload_bytes` | Total response bytes accepted for reconstruction (excludes late/abandoned responses). |
+| `response_payload_mib_per_sec` | Response bytes per second, in MiB/s. |
+| `response_payload_avg_bytes` | Average encoded size of one accepted response. |
 
-The same tags are also visible in the `Determine image tags` step logs. After
-registry verification, the summary lists the exact image names that were checked.
+The `request_payload_messages` / `response_payload_messages` counters record how
+many payloads went into the corresponding `_bytes` totals.
 
-With `gh`, after the run completes:
+## Reusing Docker image tags
+
+Building images is the slow part of a run. If you just want to re-run the tests
+against images you already built, you can skip the rebuild.
+
+**Find the tags from a previous run** — a run with `Build new Docker images`
+checked prints them in three places:
+
+- A `KMS PERF IMAGE TAGS` block in the `performance-testing` job log, plus a
+  matching section in the GitHub job summary.
+- Earliest of all, a `KMS DOCKER IMAGE TAG` block from the `docker-build` job's
+  first step, `KMS Docker image tag` — readable while the build is still
+  running.
+- The `Determine image tags` step logs.
+
+Or pull them with `gh` once the run finishes:
 
 ```bash
 gh run view <run-id> --repo zama-ai/kms --log \
   | rg "KMS DOCKER IMAGE TAG|KMS PERF IMAGE TAGS|KMS Core image tag|KMS Core client image tag"
 ```
 
-If logs are not available yet, the non-scheduled perf image tag is usually the
-first seven characters of the run head SHA. Prefer the summary/log value when
-available.
+If the logs aren't up yet, the tag is usually the first seven characters of the
+run's head commit SHA — but prefer the logged value when you can get it.
 
-## Field Mapping
+**Then re-run without building:**
 
-| GitHub field | Workflow input | Internal env/config | Effect |
-| --- | --- | --- | --- |
-| Use workflow from | GitHub ref selector | `github.ref` | Selects which branch/tag provides the workflow file. If `kms_chart_version=repository` and `kms_branch` is empty, the KMS chart is also checked out from this ref. |
-| Build new Docker images | `inputs.build` | `needs.docker-build.outputs.image_tag` -> `KMS_CORE_IMAGE_TAG`, `KMS_CORE_CLIENT_IMAGE_TAG` | When checked, CI builds images from the selected ref and ignores the manual image-tag fields. The reusable Docker workflow also builds the enclave image by default. |
-| Deployment type | `inputs.deployment_type` | `DEPLOYMENT_TYPE`; also selects `PATH_SUFFIX` | Chooses the KMS deployment layout. `threshold` uses non-enclave `core-service` and `PATH_SUFFIX=kms-ci`; `thresholdWithEnclave` uses `core-service-enclave` and `PATH_SUFFIX=kms-enclave-ci`. |
-| Enable core-client tracing logs | `inputs.client_logs` | `CLIENT_LOGS`; Argo parameter `client-logs` | Adds `--logs` to `kms-core-client` in perf tasks when enabled. Logging can materially affect local perf and should usually be off for measurements. |
-| FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Controls the `preproc-key-gen` and `key-gen` tasks. UDEC setup and decrypt scenarios are fixed to `Default` so decrypt perf uses real parameters. |
-| TLS enabled | `inputs.tls` | `TLS`; Argo parameter `tls`; deploy script `ENABLE_TLS` | Only supported with `deployment_type=thresholdWithEnclave` in this workflow. Non-enclave threshold TLS currently times out during deploy and fails fast. |
-| KMS chart source ref | `inputs.kms_branch` | `KMS_BRANCH` | Optional override used only when `kms_chart_version=repository`. Leave empty for normal branch runs; it defaults to the ref selected in "Use workflow from". |
-| KMS chart version | `inputs.kms_chart_version` | `KMS_CHART_VERSION`; deploy script `--kms-chart-version` | `repository` deploys the chart from `KMS_BRANCH`. A version such as `1.4.17` deploys the OCI chart version instead. |
-| TKMS Infra chart version | `inputs.tkms_infra_chart_version` | `TKMS_INFRA_CHART_VERSION`; deploy script `--tkms-infra-version` | Selects the TKMS infra chart version used to create S3/IAM/KMS party resources. |
-| KMS Core image tag | `inputs.kms_core_image_tag` | `KMS_CORE_IMAGE_TAG` | Used only when build is unchecked. Must refer to an existing `core-service` or `core-service-enclave` tag, depending on deployment type. |
-| KMS Core client image tag | `inputs.kms_core_client_image_tag` | `KMS_CORE_CLIENT_IMAGE_TAG` | Used only when build is unchecked. Must refer to an existing `core-client` tag. |
+| Field | Value |
+| --- | --- |
+| Build new Docker images | ⬜ Unchecked |
+| KMS Core image tag | The `KMS Core image tag` from the previous run's summary |
+| KMS Core client image tag | The `KMS Core client image tag` from the previous run's summary |
 
-## Run Flow
+## Common pitfalls
 
-1. Optionally build Docker images.
-2. Resolve `KMS_CORE_IMAGE_TAG` and `KMS_CORE_CLIENT_IMAGE_TAG`.
-3. Validate the deployment type and supported TLS combination.
-4. Verify required image tags exist in the registry.
-5. Deploy KMS to the `kms-ci` namespace through `ci/scripts/deploy.sh`.
-6. Capture `before-perf` Kubernetes and pod-level network diagnostics.
-7. Submit `ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml`.
-8. Stream Argo logs and send the Slack report.
-9. Capture `after-perf` network diagnostics and upload the `network-diagnostics` artifact.
+- **TLS + `threshold` fails fast.** Non-enclave threshold TLS times out during
+  deploy, so the workflow rejects it up front. Use `tls=false`, or switch to
+  `thresholdWithEnclave`.
+- **`kms_chart_version=repository` pulls the chart from a branch.** It uses
+  `KMS chart source ref`, falling back to the "Use workflow from" ref when that's
+  empty.
+- **`build=true` ignores the image-tag fields.** Only fill those in when build is
+  unchecked *and* you know the tags already exist in the registry.
+- **Leave FHE params at `Test`** unless you specifically want production-size
+  preproc/keygen. It doesn't touch the decrypt scenarios either way.
 
-## Network Diagnostics
+## Run flow
 
-The `network-diagnostics` artifact contains `before-perf` and `after-perf`
-snapshots. These include pod placement, node labels, recent events, pod MTU,
-pod network counters, readable TCP sysctls, and opportunistic `ip`, `ss`, and
-`ethtool` output from running containers. The artifact also includes
-`pod-interface-counter-delta.tsv` and `network-summary.txt` when both snapshots
-are available.
+What the workflow does, end to end:
 
-Sustained UDEC scenarios also capture their own `eth0` rx/tx counters inside the
-Argo test pod. Those per-scenario `net_rx` and `net_tx` values are included in
-the Slack report because the outer before/after artifact only includes pods
-that are still running when the snapshot is taken.
+1. Optionally build the Docker images.
+2. Resolve the core and core-client image tags.
+3. Validate the deployment type and the TLS combination.
+4. Verify the required image tags exist in the registry.
+5. Deploy KMS to the `kms-ci` namespace via `ci/scripts/deploy.sh`.
+6. Capture a `before-perf` network diagnostics snapshot.
+7. Submit the Argo workflow
+   (`ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml`).
+8. Stream the Argo logs and send the Slack report.
+9. Capture an `after-perf` snapshot and upload the `network-diagnostics`
+   artifact.
 
-Pod-level `ethtool` usually cannot see AWS ENA allowance counters. Those require
-a privileged node-level probe.
+## Network diagnostics
 
-## Common Pitfalls
+The `network-diagnostics` artifact holds `before-perf` and `after-perf`
+snapshots: pod placement, node labels, recent events, pod MTU, network counters,
+readable TCP sysctls, and best-effort `ip`/`ss`/`ethtool` output from running
+containers. When both snapshots exist it also includes
+`pod-interface-counter-delta.tsv` and `network-summary.txt`.
 
-- Leaving `tls=true` with `deployment_type=threshold` fails fast. Use `tls=false`, or choose `thresholdWithEnclave`.
-- `kms_chart_version=repository` means the chart comes from `KMS chart source ref`, or from "Use workflow from" when that field is empty.
-- `build=true` means the image-tag fields are ignored. Use `build=false` only when you know the exact core and client image tags already exist.
-- Leave `FHE parameters for preprocessing and keygen` at `Test` unless you specifically want preproc/keygen to use production-size parameters. UDEC decrypts still use `Default`.
+Each sustained scenario also captures its own `eth0` rx/tx counters *inside* the
+Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
+snapshot only sees pods that are still running when it's taken, so short-lived
+test pods would otherwise be missed.
+
+Pod-level `ethtool` can't see AWS ENA allowance counters; those need a
+privileged node-level probe.
+
+## Reference: workflow form fields
+
+The full mapping from each form field to its internal effect. Most runs only
+need the [Quick start](#quick-start) values above; this table is for when you
+need to understand or override something specific.
+
+| Field | Effect |
+| --- | --- |
+| **Use workflow from** | Selects which branch/tag provides the workflow file. When `kms_chart_version=repository` and `KMS chart source ref` is empty, the KMS chart is also taken from this ref. |
+| **Build new Docker images** | When checked, builds images from the selected ref and ignores the manual image-tag fields. Also builds the enclave image by default. Feeds `KMS_CORE_IMAGE_TAG` / `KMS_CORE_CLIENT_IMAGE_TAG`. |
+| **Deployment type** | `threshold` → non-enclave `core-service`, path suffix `kms-ci`. `thresholdWithEnclave` → `core-service-enclave`, path suffix `kms-enclave-ci`. |
+| **Enable core-client tracing logs** | Adds `--logs` to `kms-core-client`. Keep off for measurements — logging materially affects perf. |
+| **FHE parameters for preprocessing and keygen** | Controls only `preproc-key-gen` and `key-gen`. Decrypt scenarios are pinned to `Default`. |
+| **TLS enabled** | Only valid with `thresholdWithEnclave` here; non-enclave threshold TLS fails fast during deploy. |
+| **KMS chart source ref** | Override used only when `kms_chart_version=repository`. Defaults to the "Use workflow from" ref when empty. |
+| **KMS chart version** | `repository` deploys the chart from the source ref; a version like `1.4.17` deploys that OCI chart instead. |
+| **TKMS Infra chart version** | Version of the TKMS infra chart that provisions S3/IAM/KMS-party resources. |
+| **KMS Core image tag** | Used only when build is unchecked. Must be an existing `core-service` (or `core-service-enclave`) tag matching the deployment type. |
+| **KMS Core client image tag** | Used only when build is unchecked. Must be an existing `core-client` tag. |

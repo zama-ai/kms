@@ -66,12 +66,10 @@ setup_port_forwarding() {
 
     # Determine output destination based on DEBUG flag
     local log_dir=""
-    local output_redirect="/dev/null 2>&1"
     if [[ "${DEBUG:-false}" == "true" ]]; then
         log_dir="logs/port-forward"
         mkdir -p "${log_dir}"
         log_debug "Port-forward logs will be saved to ${log_dir}/"
-        output_redirect=""
     fi
 
     #-------------------------------------------------------------------------

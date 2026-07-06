@@ -116,7 +116,7 @@ deploy_kms() {
         export ENABLE_TLS="${ENABLE_TLS:-false}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: disabled)"
     fi
-    log_info "DEBUG: Final ENABLE_TLS='${ENABLE_TLS}' (checking if == 'true': $([[ '${ENABLE_TLS}' == 'true' ]] && echo YES || echo NO))"
+    log_info "DEBUG: Final ENABLE_TLS='${ENABLE_TLS}'"
 
     #=========================================================================
     # STEP 4: Generate Peers Configuration
