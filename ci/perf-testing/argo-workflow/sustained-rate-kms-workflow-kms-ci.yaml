@@ -693,7 +693,8 @@ spec:
           sustained_rate_metrics=""
           while IFS= read -r metrics_line; do
             candidate="${metrics_line#*SUSTAINED_RATE_METRICS }"
-            if [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
+            # Accept only the raw println! JSON, not an escaped copy inside tracing JSON logs.
+            if [[ "$candidate" == \{\"* ]] && [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
               sustained_rate_metrics="$candidate"
             fi
           done < <(grep "SUSTAINED_RATE_METRICS " /tmp/test_logs.txt || true)
@@ -720,7 +721,8 @@ spec:
             echo "ERROR: no valid SUSTAINED_RATE_METRICS JSON with failed/shed/saturated found"
           fi
           network_metrics="$(network_metrics_suffix "$duration")"
-          sustained_rate_metrics="${sustained_rate_metrics%}}${network_metrics}}"
+          # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
+          sustained_rate_metrics="${sustained_rate_metrics%\}}${network_metrics}}"
 
           # Task success means "measurement exists"; the summary applies perf limits.
           if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
@@ -812,22 +814,68 @@ spec:
           echo "=========================================="
           echo "Report generated: $(date -u)"
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
-          echo "Baseline preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
+          echo "Preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
           echo "UDEC decrypt FHE params: Default"
           echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
 
-          baseline_total=0
-          baseline_passed=0
-          baseline_failed=0
-          baseline_lines=""
+          keygen_total=0
+          keygen_passed=0
+          keygen_failed=0
+          keygen_lines=""
 
-          total=0
-          passed=0
-          warned=0
-          failed=0
-          skipped=0
-          summary_lines=""
+          crs_total=0
+          crs_passed=0
+          crs_failed=0
+          crs_lines=""
+
+          pdec_total=0
+          pdec_passed=0
+          pdec_failed=0
+          pdec_lines=""
+
+          udec_total=0
+          udec_passed=0
+          udec_warned=0
+          udec_failed=0
+          udec_skipped=0
+          udec_lines=""
+
+          status_icon() {
+            case "$1" in
+              passed) echo "✅" ;;
+              warned) echo "⚠️" ;;
+              failed) echo "❌" ;;
+              skipped) echo "⏭️" ;;
+              *) echo "❔" ;;
+            esac
+          }
+
+          fmt_1() {
+            if [ -z "$1" ] || [ "$1" = "null" ]; then
+              echo "-"
+            else
+              awk -v value="$1" 'BEGIN { printf "%.1f", value + 0 }'
+            fi
+          }
+
+          operation_for_test() {
+            case "$1" in
+              preproc-key-gen|key-gen|udec-preproc-key-gen|udec-key-gen) echo "keygen" ;;
+              crs-gen) echo "crs" ;;
+              public-decrypt-*) echo "pdec" ;;
+              *) echo "unknown" ;;
+            esac
+          }
+
+          append_operation_line() {
+            case "$1" in
+              keygen) keygen_lines="${keygen_lines}${2}\n" ;;
+              crs) crs_lines="${crs_lines}${2}\n" ;;
+              pdec) pdec_lines="${pdec_lines}${2}\n" ;;
+              udec) udec_lines="${udec_lines}${2}\n" ;;
+            esac
+          }
 
           scenario_name_for_rate() {
             case "$1" in
@@ -854,7 +902,7 @@ spec:
             echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
           }
 
-          echo "Baseline tests:"
+          echo "Keygen, CRS, and public decrypt perf tests:"
           for result in \
             /mnt/results/preproc-key-gen.json \
             /mnt/results/key-gen.json \
@@ -866,12 +914,18 @@ spec:
             /mnt/results/public-decrypt-euint64-req100.json \
             /mnt/results/public-decrypt-euint64-req500.json \
             /mnt/results/public-decrypt-euint64-req1000.json; do
-            baseline_total=$((baseline_total + 1))
+            result_name="$(basename "$result" .json)"
+            operation="$(operation_for_test "$result_name")"
             if ! jq empty "$result" 2>/dev/null; then
-              baseline_failed=$((baseline_failed + 1))
-              line="FAIL baseline $(basename "$result" .json): invalid result JSON"
+              icon="$(status_icon failed)"
+              line="${icon} ${result_name} invalid JSON"
+              case "$operation" in
+                keygen) keygen_total=$((keygen_total + 1)); keygen_failed=$((keygen_failed + 1)) ;;
+                crs) crs_total=$((crs_total + 1)); crs_failed=$((crs_failed + 1)) ;;
+                pdec) pdec_total=$((pdec_total + 1)); pdec_failed=$((pdec_failed + 1)) ;;
+              esac
               echo "$line"
-              baseline_lines="${baseline_lines}${line}\n"
+              append_operation_line "$operation" "$line"
               continue
             fi
 
@@ -883,36 +937,58 @@ spec:
             p95_latency=$(jq -r '.performance_metrics.latency.p95 // empty' "$result")
             p99_latency=$(jq -r '.performance_metrics.latency.p99 // empty' "$result")
             throughput=$(jq -r '.performance_metrics.throughput // empty' "$result")
-
-            perf_info="duration=${duration}s, fhe_params=${fhe_params}"
-            if [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
-              perf_info="${perf_info}, throughput=${throughput} req/s"
-            fi
-            if [ -n "$p50_latency" ] && [ "$p50_latency" != "null" ]; then
-              perf_info="${perf_info}, p50=${p50_latency}, p95=${p95_latency}, p99=${p99_latency}"
+            operation="$(operation_for_test "$test_name")"
+            if [ "$operation" = "unknown" ]; then
+              operation="$(operation_for_test "$result_name")"
             fi
 
+            icon="$(status_icon failed)"
             if [ "$exit_code" = "0" ]; then
-              baseline_passed=$((baseline_passed + 1))
-              line="PASS baseline ${test_name}: ${perf_info}"
-            else
-              baseline_failed=$((baseline_failed + 1))
-              line="FAIL baseline ${test_name}: exit=${exit_code}, ${perf_info}"
+              icon="$(status_icon passed)"
+            fi
+
+            case "$operation" in
+              keygen)
+                keygen_total=$((keygen_total + 1))
+                if [ "$exit_code" = "0" ]; then keygen_passed=$((keygen_passed + 1)); else keygen_failed=$((keygen_failed + 1)); fi
+                line="${icon} ${test_name} ${duration}s params=${fhe_params}"
+                ;;
+              crs)
+                crs_total=$((crs_total + 1))
+                if [ "$exit_code" = "0" ]; then crs_passed=$((crs_passed + 1)); else crs_failed=$((crs_failed + 1)); fi
+                line="${icon} ${test_name} ${duration}s params=${fhe_params}"
+                ;;
+              pdec)
+                pdec_total=$((pdec_total + 1))
+                if [ "$exit_code" = "0" ]; then pdec_passed=$((pdec_passed + 1)); else pdec_failed=$((pdec_failed + 1)); fi
+                label="$(echo "$test_name" | sed 's/^public-decrypt-//; s/-req/ req/')"
+                if [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
+                  line="${icon} ${label} $(fmt_1 "$throughput")/s p50=${p50_latency} p99=${p99_latency}"
+                else
+                  line="${icon} ${label} ${duration}s"
+                fi
+                ;;
+              *)
+                line="${icon} ${test_name} ${duration}s"
+                ;;
+            esac
+            if [ "$exit_code" != "0" ]; then
+              line="${line} exit=${exit_code}"
             fi
             echo "$line"
-            baseline_lines="${baseline_lines}${line}\n"
+            append_operation_line "$operation" "$line"
           done
 
           echo ""
-          echo "Sustained UDEC rate scenarios:"
+          echo "User decrypt perf tests:"
           for rate in 2400 2700 2750; do
             result="/mnt/results/sustained-rate-udec-${rate}.json"
-            total=$((total + 1))
+            udec_total=$((udec_total + 1))
             if ! jq empty "$result" 2>/dev/null; then
-              failed=$((failed + 1))
-              line="FAIL scenario rate=${rate} req/s duration={{inputs.parameters.duration}}s: invalid result JSON"
+              udec_failed=$((udec_failed + 1))
+              line="$(status_icon failed) ${rate}/s invalid result JSON"
               echo "$line"
-              summary_lines="${summary_lines}${line}\n"
+              append_operation_line udec "$line"
               continue
             fi
 
@@ -956,6 +1032,10 @@ spec:
             [ -n "$shed" ] || shed=0
             [ -n "$achieved_rate" ] || achieved_rate=0
             [ -n "$saturated" ] || saturated=false
+            achieved_short="$(fmt_1 "$achieved_rate")"
+            p99_short="$(fmt_1 "$p99")"
+            network_rx_short="$(fmt_1 "$network_rx_gbps")"
+            network_tx_short="$(fmt_1 "$network_tx_gbps")"
 
             # Parameter sets are per-rate because the top probe is intentionally near capacity.
             scenario_name=$(scenario_name_for_rate "$rate")
@@ -981,117 +1061,109 @@ spec:
                 and (($target_rate > 0) and (($achieved_rate * 100 / $target_rate) >= $pct))
               ')
 
-            perf_info="params=${parameter_set}, achieved=${achieved_rate} req/s, offered=${offered}, completed=${completed}, failed=${failed_requests}, shed=${shed}, saturated=${saturated}, app_req_payload=${request_payload_mib_per_sec}MiB/s, app_req_avg=${request_payload_avg_bytes}B, app_req_total=${request_payload_bytes}B, app_resp_payload=${response_payload_mib_per_sec}MiB/s, app_resp_avg=${response_payload_avg_bytes}B, app_resp_total=${response_payload_bytes}B, p50=${p50}ms, p95=${p95}ms, p99=${p99}ms, recon_avg=${recon_avg}ms, recon_p50=${recon_p50}ms, recon_p99=${recon_p99}ms, recon_wall=${recon_wall}ms"
-            if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
-              perf_info="${perf_info}, net_rx=${network_rx_gbps}Gbps, net_tx=${network_tx_gbps}Gbps, net_rx_total=${network_rx_bytes}B, net_tx_total=${network_tx_bytes}B"
-            fi
-            if [ "$network_rx_errors" != "0" ] || [ "$network_tx_errors" != "0" ] || [ "$network_rx_dropped" != "0" ] || [ "$network_tx_dropped" != "0" ]; then
-              perf_info="${perf_info}, net_errors=${network_rx_errors}/${network_tx_errors}, net_dropped=${network_rx_dropped}/${network_tx_dropped}"
-            fi
-            if [ "$reconstruction_failed" != "0" ]; then
-              perf_info="${perf_info}, recon_failed=${reconstruction_failed}"
-            fi
-
             # WARN is accepted-but-degraded; FAIL exits the workflow nonzero below.
             if [ "$status" = "skipped" ]; then
-              skipped=$((skipped + 1))
-              line="SKIP scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: skipped because a lower sustained udec rate did not produce valid metrics"
+              udec_skipped=$((udec_skipped + 1))
+              line="$(status_icon skipped) ${scenario_name} ${target_rate}/s skipped"
             elif [ "$status" != "passed" ]; then
-              failed=$((failed + 1))
-              line="FAIL scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: measurement failed, ${perf_info}"
+              udec_failed=$((udec_failed + 1))
+              line="$(status_icon failed) ${scenario_name} ${target_rate}/s measurement failed"
             elif [ "$within_parameter_set" = "true" ]; then
               if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
-                warned=$((warned + 1))
-                line="WARN scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: within parameter set, ${perf_info}"
+                udec_warned=$((udec_warned + 1))
+                line="$(status_icon warned) ${scenario_name} ${target_rate}/s ${achieved_short}/s p99=${p99_short}ms"
               else
-                passed=$((passed + 1))
-                line="PASS scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: ${perf_info}"
+                udec_passed=$((udec_passed + 1))
+                line="$(status_icon passed) ${scenario_name} ${target_rate}/s ${achieved_short}/s p99=${p99_short}ms"
               fi
             else
-              failed=$((failed + 1))
-              line="FAIL scenario ${scenario_name} rate=${target_rate} req/s duration={{inputs.parameters.duration}}s: outside parameter set, ${perf_info}"
+              udec_failed=$((udec_failed + 1))
+              line="$(status_icon failed) ${scenario_name} ${target_rate}/s outside params"
+            fi
+
+            if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
+              line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
+            fi
+            if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+              line="${line} fail=${failed_requests} shed=${shed} sat=${saturated}"
+            fi
+            if [ "$network_rx_errors" != "0" ] || [ "$network_tx_errors" != "0" ] || [ "$network_rx_dropped" != "0" ] || [ "$network_tx_dropped" != "0" ]; then
+              line="${line} net_err=${network_rx_errors}/${network_tx_errors} net_drop=${network_rx_dropped}/${network_tx_dropped}"
+            fi
+            if [ "$reconstruction_failed" != "0" ]; then
+              line="${line} recon_failed=${reconstruction_failed}"
             fi
 
             echo "$line"
-            summary_lines="${summary_lines}${line}\n"
+            append_operation_line udec "$line"
           done
 
-          if [ $total -gt 0 ]; then
-            accepted=$((passed + warned))
-            success_rate=$(( (accepted * 100) / total ))
+          finite_total=$((keygen_total + crs_total + pdec_total))
+          finite_passed=$((keygen_passed + crs_passed + pdec_passed))
+          finite_failed=$((keygen_failed + crs_failed + pdec_failed))
+          udec_accepted=$((udec_passed + udec_warned))
+          if [ $udec_total -gt 0 ]; then
+            udec_success_rate=$(( (udec_accepted * 100) / udec_total ))
           else
-            accepted=0
-            success_rate=0
+            udec_success_rate=0
           fi
 
           echo "----------------------------------------"
-          echo "Rate scenarios evaluated: $total"
-          echo "Rate scenarios passed: $passed"
-          echo "Rate scenarios warned: $warned"
-          echo "Rate scenarios failed: $failed"
-          echo "Rate scenarios skipped: $skipped"
-          echo "Accepted rate: $success_rate%"
-          echo "Baseline tests evaluated: $baseline_total"
-          echo "Baseline tests passed: $baseline_passed"
-          echo "Baseline tests failed: $baseline_failed"
+          echo "Keygen: ${keygen_passed}/${keygen_total} passed"
+          echo "CRS: ${crs_passed}/${crs_total} passed"
+          echo "Public decrypt: ${pdec_passed}/${pdec_total} passed"
+          echo "User decrypt: ${udec_passed} passed, ${udec_warned} warned, ${udec_failed} failed, ${udec_skipped} skipped (${udec_success_rate}% accepted)"
           echo "=========================================="
 
-          if [ $baseline_failed -gt 0 ] || [ $failed -gt 0 ]; then
-            color="danger"
-            title="KMS perf test failed"
-          elif [ $warned -gt 0 ]; then
-            color="good"
-            title="KMS perf test passed with warnings"
+          if [ $finite_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
+            title="❌ KMS perf failed"
+          elif [ $udec_warned -gt 0 ]; then
+            title="⚠️ KMS perf passed with warnings"
           else
-            color="good"
-            title="KMS perf test passed"
+            title="✅ KMS perf passed"
           fi
 
           slack_webhook_url=$(cat /etc/slack/url)
-          slack_text_json=$(printf '```\n%b\n%b\n```' "$baseline_lines" "$summary_lines" | jq -Rs .)
-          slack_message=$(cat <<EOF
-          {
-            "attachments": [
-              {
-                "color": "$color",
-                "title": "$title",
-                "fields": [
-                  {
-                    "title": "Environment",
-                    "value": "kms-ci",
-                    "short": true
-                  },
-                  {
-                    "title": "Status",
-                    "value": "baseline $baseline_passed/$baseline_total passed; rates $passed passed, $warned warned, $failed failed, $skipped skipped ($success_rate% accepted)",
-                    "short": true
-                  },
-                  {
-                    "title": "Config",
-                    "value": "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request, baseline-fhe-params={{workflow.parameters.fhe-params}}, udec-fhe-params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}",
-                    "short": false
-                  },
-                  {
-                    "title": "Run ID",
-                    "value": "$WORKFLOW_NAME",
-                    "short": true
-                  },
-                  {
-                    "title": "GH Run URL",
-                    "value": "{{inputs.parameters.run_url}}",
-                    "short": false
-                  }
-                ],
-                "text": $slack_text_json
-              }
-            ]
-          }
-          EOF
+          keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
+          crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
+          pdec_block="$(printf '*Public decrypt*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+          udec_block="$(printf '*User decrypt*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+          status_line="Keygen ${keygen_passed}/${keygen_total} · CRS ${crs_passed}/${crs_total} · Public decrypt ${pdec_passed}/${pdec_total} · User decrypt ${udec_passed}✅ ${udec_warned}⚠️ ${udec_failed}❌ ${udec_skipped}⏭️"
+          config_line="payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}"
+          run_line="<{{inputs.parameters.run_url}}|GitHub Actions> · \`${WORKFLOW_NAME}\`"
+
+          slack_message=$(jq -n \
+            --arg title "$title" \
+            --arg status "$status_line" \
+            --arg config "$config_line" \
+            --arg run "$run_line" \
+            --arg keygen "$keygen_block" \
+            --arg crs "$crs_block" \
+            --arg pdec "$pdec_block" \
+            --arg udec "$udec_block" \
+            '{
+              text: $title,
+              blocks: [
+                {type: "header", text: {type: "plain_text", text: $title, emoji: true}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: $status},
+                  {type: "mrkdwn", text: $run}
+                ]},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: $config}
+                ]},
+                {type: "divider"},
+                {type: "section", text: {type: "mrkdwn", text: $keygen}},
+                {type: "section", text: {type: "mrkdwn", text: $crs}},
+                {type: "section", text: {type: "mrkdwn", text: $pdec}},
+                {type: "section", text: {type: "mrkdwn", text: $udec}}
+              ]
+            }'
           )
 
           curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
 
-          if [ $baseline_failed -gt 0 ] || [ $failed -gt 0 ]; then
+          if [ $finite_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
             exit 1
           fi
 

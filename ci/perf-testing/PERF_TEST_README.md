@@ -21,8 +21,8 @@ Use these values when iterating on the sustained-rate user-decrypt test:
 | KMS Core image tag | Empty when build is checked |
 | KMS Core client image tag | Empty when build is checked |
 
-The current workflow first runs baseline setup/CRS/public-decrypt checks, then
-runs three sustained `user-decrypt` rate scenarios for `60s` each, payload
+The current workflow runs keygen, CRS, public-decrypt, and user-decrypt perf
+tests. User-decrypt currently has three rate scenarios for `60s` each, payload
 `1 x euint64`:
 
 | Scenario | Rate | Parameter set percentage limits |
@@ -96,7 +96,7 @@ available.
 | Build new Docker images | `inputs.build` | `needs.docker-build.outputs.image_tag` -> `KMS_CORE_IMAGE_TAG`, `KMS_CORE_CLIENT_IMAGE_TAG` | When checked, CI builds images from the selected ref and ignores the manual image-tag fields. The reusable Docker workflow also builds the enclave image by default. |
 | Deployment type | `inputs.deployment_type` | `DEPLOYMENT_TYPE`; also selects `PATH_SUFFIX` | Chooses the KMS deployment layout. `threshold` uses non-enclave `core-service` and `PATH_SUFFIX=kms-ci`; `thresholdWithEnclave` uses `core-service-enclave` and `PATH_SUFFIX=kms-enclave-ci`. |
 | Enable core-client tracing logs | `inputs.client_logs` | `CLIENT_LOGS`; Argo parameter `client-logs` | Adds `--logs` to `kms-core-client` in perf tasks when enabled. Logging can materially affect local perf and should usually be off for measurements. |
-| FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Controls the baseline `preproc-key-gen` and `key-gen` tasks. The UDEC setup and sustained decrypt scenarios are fixed to `Default` so decrypt perf uses real parameters. |
+| FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Controls the `preproc-key-gen` and `key-gen` tasks. UDEC setup and decrypt scenarios are fixed to `Default` so decrypt perf uses real parameters. |
 | TLS enabled | `inputs.tls` | `TLS`; Argo parameter `tls`; deploy script `ENABLE_TLS` | Only supported with `deployment_type=thresholdWithEnclave` in this workflow. Non-enclave threshold TLS currently times out during deploy and fails fast. |
 | KMS chart source ref | `inputs.kms_branch` | `KMS_BRANCH` | Optional override used only when `kms_chart_version=repository`. Leave empty for normal branch runs; it defaults to the ref selected in "Use workflow from". |
 | KMS chart version | `inputs.kms_chart_version` | `KMS_CHART_VERSION`; deploy script `--kms-chart-version` | `repository` deploys the chart from `KMS_BRANCH`. A version such as `1.4.17` deploys the OCI chart version instead. |
@@ -138,4 +138,4 @@ a privileged node-level probe.
 - Leaving `tls=true` with `deployment_type=threshold` fails fast. Use `tls=false`, or choose `thresholdWithEnclave`.
 - `kms_chart_version=repository` means the chart comes from `KMS chart source ref`, or from "Use workflow from" when that field is empty.
 - `build=true` means the image-tag fields are ignored. Use `build=false` only when you know the exact core and client image tags already exist.
-- Leave `FHE parameters for preprocessing and keygen` at `Test` unless you specifically want the baseline preproc/keygen tasks to use production-size parameters. Sustained UDEC decrypts still use `Default`.
+- Leave `FHE parameters for preprocessing and keygen` at `Test` unless you specifically want preproc/keygen to use production-size parameters. UDEC decrypts still use `Default`.
