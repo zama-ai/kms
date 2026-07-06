@@ -38,7 +38,7 @@ on:
       fhe_params:
         description: 'FHE parameters for preprocessing and keygen'
         required: true
-        default: 'Default'
+        default: 'Test'
         type: choice
         options:
           - 'Default'
@@ -201,7 +201,7 @@ jobs:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
           TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
           CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'true' }}
-          FHE_PARAMS: ${{ inputs.fhe_params || 'Default' }}
+          FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}

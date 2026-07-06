@@ -96,7 +96,7 @@ available.
 | Build new Docker images | `inputs.build` | `needs.docker-build.outputs.image_tag` -> `KMS_CORE_IMAGE_TAG`, `KMS_CORE_CLIENT_IMAGE_TAG` | When checked, CI builds images from the selected ref and ignores the manual image-tag fields. The reusable Docker workflow also builds the enclave image by default. |
 | Deployment type | `inputs.deployment_type` | `DEPLOYMENT_TYPE`; also selects `PATH_SUFFIX` | Chooses the KMS deployment layout. `threshold` uses non-enclave `core-service` and `PATH_SUFFIX=kms-ci`; `thresholdWithEnclave` uses `core-service-enclave` and `PATH_SUFFIX=kms-enclave-ci`. |
 | Enable core-client tracing logs | `inputs.client_logs` | `CLIENT_LOGS`; Argo parameter `client-logs` | Adds `--logs` to `kms-core-client` in perf tasks when enabled. Logging can materially affect local perf and should usually be off for measurements. |
-| FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Passed into Argo. `Test` is faster and useful for iteration; `Default` is closer to production sizing. |
+| FHE parameters for preprocessing and keygen | `inputs.fhe_params` | `FHE_PARAMS`; Argo parameter `fhe-params` | Controls the baseline `preproc-key-gen` and `key-gen` tasks. The UDEC setup and sustained decrypt scenarios are fixed to `Default` so decrypt perf uses real parameters. |
 | TLS enabled | `inputs.tls` | `TLS`; Argo parameter `tls`; deploy script `ENABLE_TLS` | Only valid with `deployment_type=thresholdWithEnclave` in this workflow. Non-enclave deployments must use `tls=false`; the workflow fails fast otherwise. |
 | KMS branch | `inputs.kms_branch` | `KMS_BRANCH` | Used only when `kms_chart_version=repository`. If empty, defaults to `github.ref` from "Use workflow from". |
 | KMS chart version | `inputs.kms_chart_version` | `KMS_CHART_VERSION`; deploy script `--kms-chart-version` | `repository` deploys the chart from the checked-out repo. A version such as `1.4.17` deploys the OCI chart version. |
@@ -119,4 +119,4 @@ available.
 - Leaving `tls=true` with `deployment_type=threshold` fails fast. Use `tls=false`, or choose `thresholdWithEnclave`.
 - `kms_chart_version=repository` means the chart comes from the selected/ref branch, not from an OCI release.
 - `build=true` means the image-tag fields are ignored. Use `build=false` only when you know the exact core and client image tags already exist.
-- `Default` FHE parameters are slower than `Test`. Use `Test` for iteration unless the goal is production-size perf.
+- Leave `FHE parameters for preprocessing and keygen` at `Test` unless you specifically want the baseline preproc/keygen tasks to use production-size parameters. Sustained UDEC decrypts still use `Default`.

@@ -32,7 +32,7 @@ spec:
     - name: run_url
       value: "Manually triggered"
     - name: fhe-params
-      value: "Default"
+      value: "Test"
     - name: duration
       value: "60"
     - name: max-in-flight
@@ -62,7 +62,7 @@ spec:
               - name: test-command
                 value: "preproc-key-gen"
               - name: fhe-params
-                value: "Test"
+                value: "{{workflow.parameters.fhe-params}}"
 
           - name: key-gen
             dependencies: ["preproc-key-gen"]
@@ -76,7 +76,7 @@ spec:
               - name: test-command
                 value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
               - name: fhe-params
-                value: "Test"
+                value: "{{workflow.parameters.fhe-params}}"
 
           - name: udec-preproc-key-gen
             dependencies: ["key-gen"]
@@ -90,7 +90,7 @@ spec:
               - name: test-command
                 value: "insecure-preproc-key-gen"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: udec-key-gen
             dependencies: ["udec-preproc-key-gen"]
@@ -104,7 +104,7 @@ spec:
               - name: test-command
                 value: "insecure-key-gen -i {{tasks.udec-preproc-key-gen.outputs.parameters.request-id}}"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: crs-gen
             dependencies: ["udec-key-gen"]
@@ -118,7 +118,7 @@ spec:
               - name: test-command
                 value: "crs-gen --max-num-bits 2048"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: warmup-public-decrypt-euint64-req1
             dependencies: ["crs-gen"]
@@ -132,7 +132,7 @@ spec:
               - name: test-command
                 value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: public-decrypt-euint64-req1
             dependencies: ["warmup-public-decrypt-euint64-req1"]
@@ -146,7 +146,7 @@ spec:
               - name: test-command
                 value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: public-decrypt-euint64-req10
             dependencies: ["public-decrypt-euint64-req1"]
@@ -160,7 +160,7 @@ spec:
               - name: test-command
                 value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: public-decrypt-euint64-req100
             dependencies: ["public-decrypt-euint64-req10"]
@@ -174,7 +174,7 @@ spec:
               - name: test-command
                 value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: public-decrypt-euint64-req500
             dependencies: ["public-decrypt-euint64-req100"]
@@ -188,7 +188,7 @@ spec:
               - name: test-command
                 value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: public-decrypt-euint64-req1000
             dependencies: ["public-decrypt-euint64-req500"]
@@ -202,7 +202,7 @@ spec:
               - name: test-command
                 value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
               - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
+                value: "Default"
 
           - name: sustained-rate-udec-2400
             dependencies: ["udec-key-gen", "public-decrypt-euint64-req1000"]
@@ -465,7 +465,7 @@ spec:
             > /tmp/artifacts/{{inputs.parameters.test-name}}.json
 
           exit "$test_exit"
-        env: &core-client-env
+        env:
           - name: S3_ENDPOINT
             valueFrom:
               configMapKeyRef:
@@ -478,7 +478,7 @@ spec:
           - name: DECRYPTION_MODE
             value: 'NoiseFloodSmall'
           - name: FHE_PARAMETER
-            value: '{{workflow.parameters.fhe-params}}'
+            value: '{{inputs.parameters.fhe-params}}'
         resources: &core-client-resources
           requests:
             memory: "96Gi"
@@ -591,7 +591,7 @@ spec:
           mkdir -p /tmp/artifacts
 
           if [ -z "$key_id" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
@@ -603,7 +603,7 @@ spec:
           fi
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
@@ -674,7 +674,7 @@ spec:
             capacity_ok="false"
           fi
 
-          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "{{workflow.parameters.fhe-params}}",\n  "performance_metrics": {\n    "sustained_rate": %s\n  }\n}\n' \
+          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": %s\n  }\n}\n' \
             "$test_name" \
             "$test_command" \
             "$status" \
@@ -686,7 +686,20 @@ spec:
           echo "$capacity_ok" > /tmp/artifacts/${test_name}.ok
 
           exit 0
-        env: *core-client-env
+        env:
+          - name: S3_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: '{{workflow.parameters.s3-config-map-name}}'
+                key: CORE_CLIENT__S3_ENDPOINT
+          - name: NUM_MAJORITY
+            value: '5'
+          - name: NUM_RECONSTRUCT
+            value: '9'
+          - name: DECRYPTION_MODE
+            value: 'NoiseFloodSmall'
+          - name: FHE_PARAMETER
+            value: 'Default'
         resources: *core-client-resources
 
     - name: summary-report
@@ -742,7 +755,8 @@ spec:
           echo "=========================================="
           echo "Report generated: $(date -u)"
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
-          echo "FHE params: {{workflow.parameters.fhe-params}}"
+          echo "Baseline preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
+          echo "UDEC decrypt FHE params: Default"
           echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
 
@@ -983,7 +997,7 @@ spec:
                   },
                   {
                     "title": "Config",
-                    "value": "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request, fhe-params={{workflow.parameters.fhe-params}}, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}",
+                    "value": "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request, baseline-fhe-params={{workflow.parameters.fhe-params}}, udec-fhe-params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}",
                     "short": false
                   },
                   {
