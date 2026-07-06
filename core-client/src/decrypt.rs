@@ -23,6 +23,9 @@ use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+type CoreEndpointClient = CoreServiceEndpointClient<Channel>;
+type CoreEndpointClients = Arc<[CoreEndpointClient]>;
+
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
     external_sig: &[u8],
@@ -620,8 +623,8 @@ async fn send_and_collect_user_decrypt(
     user_decrypt_req: UserDecryptionRequest,
     enc_pk: UnifiedPublicEncKey,
     enc_sk: UnifiedPrivateEncKey,
-    core_endpoints_req: HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: CoreEndpointClients,
+    core_endpoints_resp: CoreEndpointClients,
     num_parties: usize,
     max_iter: usize,
     num_expected_responses: usize,
@@ -629,7 +632,7 @@ async fn send_and_collect_user_decrypt(
     let request_start = tokio::time::Instant::now();
 
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints_req.values() {
+    for ce in core_endpoints_req.iter() {
         let req_cloned = user_decrypt_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -661,7 +664,7 @@ async fn send_and_collect_user_decrypt(
     }
 
     let mut resp_tasks = JoinSet::new();
-    for ce in core_endpoints_resp.values() {
+    for ce in core_endpoints_resp.iter() {
         let mut cur_client = ce.clone();
         let req_id_clone = user_decrypt_req
             .request_id
@@ -810,6 +813,11 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
+    let core_endpoints_req =
+        Arc::<[CoreEndpointClient]>::from(core_endpoints_req.values().cloned().collect::<Vec<_>>());
+    let core_endpoints_resp = Arc::<[CoreEndpointClient]>::from(
+        core_endpoints_resp.values().cloned().collect::<Vec<_>>(),
+    );
 
     tracing::info!(
         "Prebuilding {total_requests} user decrypt requests for sustained run: rate={rate}/s, duration={duration_secs}s, max_in_flight={max_in_flight}"
@@ -874,8 +882,8 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
             request_payload_bytes +=
                 user_decrypt_req.encoded_len() as u64 * core_endpoints_req.len() as u64;
             request_payload_messages += core_endpoints_req.len() as u64;
-            let core_endpoints_req = core_endpoints_req.clone();
-            let core_endpoints_resp = core_endpoints_resp.clone();
+            let core_endpoints_req = Arc::clone(&core_endpoints_req);
+            let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
             join_set.spawn(send_and_collect_user_decrypt(
                 rate,
                 user_decrypt_req,
