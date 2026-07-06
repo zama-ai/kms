@@ -2,7 +2,7 @@ use algebra::{
     galois_fields::lagrange::init_lagrange_stores, galois_rings::degree_4::ResiduePolyF4Z128,
     structure_traits::Ring,
 };
-use anyhow::ensure;
+use anyhow::{Context, ensure};
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use kms_grpc::rpc_types::{KMSType, PubDataType};
@@ -21,7 +21,7 @@ use kms_lib::{
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
-        migration::migrate_to_0_13_10, run_server, threshold::service::new_real_threshold_kms,
+        migration::migrate_to_0_13_20, run_server, threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -328,7 +328,12 @@ fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     // NOTE: this config is only needed to set up the tokio runtime
     // we read it again in [main_exec] to set up the rest of the server
-    let core_config = init_conf::<CoreConfig>(&args.config_file)?;
+    let core_config = init_conf::<CoreConfig>(&args.config_file).with_context(|| {
+        format!(
+            "failed to load kms-server config file {}; expected a [service] section",
+            args.config_file
+        )
+    })?;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -548,7 +553,7 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_to_0_13_10(&mut private_vault, kms_type)
+    migrate_to_0_13_20(&mut private_vault, kms_type)
         .await
         .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
