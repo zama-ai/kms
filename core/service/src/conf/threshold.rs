@@ -111,7 +111,6 @@ pub enum TlsConf {
         #[serde(skip_serializing, default)]
         eif_signing_cert: Option<TlsCert>,
         trusted_releases: Vec<ReleasePCRValues>,
-        ignore_aws_ca_chain: Option<bool>,
         attest_private_vault_root_key: Option<bool>,
         renew_slack_after_expiration: Option<u64>,
         renew_fail_retry_timeout: Option<u64>,

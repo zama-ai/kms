@@ -171,130 +171,123 @@ async fn build_tls_config(
         None => None,
     };
 
-    let (cert_resolver, pcr8_expected, ignore_aws_ca_chain, attest_private_vault_root_key) =
-        match tls_config {
-            TlsConf::Manual { cert, key } => {
-                tracing::info!(
-                    "Using third-party TLS certificate without Nitro remote attestation"
-                );
-                let cert = match my_peer {
-                    Some(peer) => cert.into_pem(peer)?,
-                    None => {
-                        tracing::info!(
-                            "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
-                        );
-                        cert.unchecked_pem()?
-                    }
-                };
-                let key = key.into_pem()?;
-                let cert_resolver = Arc::new(CertResolver::Single(SingleCertAndKey::from(
-                    CertifiedKey::from_der(
-                        vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()],
-                        PrivateKeyDer::try_from(key.contents.as_slice())
-                            .map_err(|e| anyhow::anyhow!("{e}"))?
-                            .clone_key(),
-                        crypto_provider,
-                    )?,
-                )));
-                (cert_resolver, false, false, false)
-            }
+    let (cert_resolver, pcr8_expected, attest_private_vault_root_key) = match tls_config {
+        TlsConf::Manual { cert, key } => {
+            tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
+            let cert = match my_peer {
+                Some(peer) => cert.into_pem(peer)?,
+                None => {
+                    tracing::info!(
+                        "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
+                    );
+                    cert.unchecked_pem()?
+                }
+            };
+            let key = key.into_pem()?;
+            let cert_resolver = Arc::new(CertResolver::Single(SingleCertAndKey::from(
+                CertifiedKey::from_der(
+                    vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()],
+                    PrivateKeyDer::try_from(key.contents.as_slice())
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                        .clone_key(),
+                    crypto_provider,
+                )?,
+            )));
+            (cert_resolver, false, false)
+        }
 
-            // When remote attestation is used, the enclave generates a
-            // self-signed TLS certificate for a private key that never
-            // leaves its memory. This certificate includes the AWS
-            // Nitro attestation document and the certificate used
-            // by the MPC party to sign the enclave image it is
-            // running. The private key is not supplied, since it needs
-            // to be generated inside an AWS Nitro enclave.
-            TlsConf::Auto {
-                eif_signing_cert,
-                trusted_releases: _,
-                ignore_aws_ca_chain,
-                attest_private_vault_root_key,
-                renew_slack_after_expiration,
-                renew_fail_retry_timeout,
-            } => {
-                let security_module = security_module
-                    .as_ref()
-                    .unwrap_or_else(|| panic!("TLS identity and security module not present"));
-                let (sk, ca_cert) = match eif_signing_cert {
-                    Some(eif_signing_cert) => {
-                        tracing::info!(
-                            "Using wrapped TLS certificate with Nitro remote attestation"
-                        );
-                        (
-                            None,
-                            match my_peer {
-                                Some(peer) => eif_signing_cert.into_pem(peer)?,
-                                None => {
-                                    tracing::info!(
-                                        "No peerlist present, skipping TLS certificate validation against peerlist"
-                                    );
-                                    eif_signing_cert.unchecked_pem()?
-                                }
-                            },
-                        )
-                    }
-                    None => {
-                        tracing::info!(
-                            "Using TLS certificate with Nitro remote attestation signed by onboard CA"
-                        );
-                        let ca_cert_bytes = read_text_at_request_id(
-                            public_vault,
-                            &SIGNING_KEY_ID,
-                            &PubDataType::CACert.to_string(),
-                        )
-                        .await?;
-                        let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
-
-                        // check if the CA certificate matches the KMS signing key
-                        let ca_cert_x509 = ca_cert.parse_x509()?;
-                        if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
-                            ca_cert_x509.public_key().parsed()?
-                        {
-                            let ca_pk = Box::new(pk_sec1.data());
-                            #[allow(deprecated)]
-                            let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
-                            ensure!(
-                                **ca_pk == *sk_vk,
-                                "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
-                                hex::encode(*ca_pk),
-                                hex::encode(sk_vk)
-                            );
-                        } else {
-                            panic!("CA certificate public key isn't ECDSA");
-                        };
-                        (Some(sk), ca_cert)
-                    }
-                };
-
-                let attest_private_vault_root_key_flag =
-                    attest_private_vault_root_key.is_some_and(|m| m);
-
-                let cert_resolver = Arc::new(CertResolver::AutoRefresh(
-                    AutoRefreshCertResolver::new(
-                        sk,
-                        ca_cert,
-                        security_module.clone(),
-                        if attest_private_vault_root_key_flag {
-                            private_vault_root_key_measurements
-                        } else {
-                            None
+        // When remote attestation is used, the enclave generates a
+        // self-signed TLS certificate for a private key that never
+        // leaves its memory. This certificate includes the AWS
+        // Nitro attestation document and the certificate used
+        // by the MPC party to sign the enclave image it is
+        // running. The private key is not supplied, since it needs
+        // to be generated inside an AWS Nitro enclave.
+        TlsConf::Auto {
+            eif_signing_cert,
+            trusted_releases: _,
+            attest_private_vault_root_key,
+            renew_slack_after_expiration,
+            renew_fail_retry_timeout,
+        } => {
+            let security_module = security_module
+                .as_ref()
+                .unwrap_or_else(|| panic!("TLS identity and security module not present"));
+            let (sk, ca_cert) = match eif_signing_cert {
+                Some(eif_signing_cert) => {
+                    tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
+                    (
+                        None,
+                        match my_peer {
+                            Some(peer) => eif_signing_cert.into_pem(peer)?,
+                            None => {
+                                tracing::info!(
+                                    "No peerlist present, skipping TLS certificate validation against peerlist"
+                                );
+                                eif_signing_cert.unchecked_pem()?
+                            }
                         },
-                        renew_slack_after_expiration.unwrap_or(5),
-                        renew_fail_retry_timeout.unwrap_or(60),
                     )
-                    .await?,
-                ));
+                }
+                None => {
+                    tracing::info!(
+                        "Using TLS certificate with Nitro remote attestation signed by onboard CA"
+                    );
+                    let ca_cert_bytes = read_text_at_request_id(
+                        public_vault,
+                        &SIGNING_KEY_ID,
+                        &PubDataType::CACert.to_string(),
+                    )
+                    .await?;
+                    let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
-                (
-                    cert_resolver,
-                    eif_signing_cert.is_some(),
-                    ignore_aws_ca_chain.is_some_and(|m| m),
-                    attest_private_vault_root_key_flag,
+                    // check if the CA certificate matches the KMS signing key
+                    let ca_cert_x509 = ca_cert.parse_x509()?;
+                    if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
+                        ca_cert_x509.public_key().parsed()?
+                    {
+                        let ca_pk = Box::new(pk_sec1.data());
+                        #[allow(deprecated)]
+                        let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
+                        ensure!(
+                            **ca_pk == *sk_vk,
+                            "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
+                            hex::encode(*ca_pk),
+                            hex::encode(sk_vk)
+                        );
+                    } else {
+                        panic!("CA certificate public key isn't ECDSA");
+                    };
+                    (Some(sk), ca_cert)
+                }
+            };
+
+            let attest_private_vault_root_key_flag =
+                attest_private_vault_root_key.is_some_and(|m| m);
+
+            let cert_resolver = Arc::new(CertResolver::AutoRefresh(
+                AutoRefreshCertResolver::new(
+                    sk,
+                    ca_cert,
+                    security_module.clone(),
+                    if attest_private_vault_root_key_flag {
+                        private_vault_root_key_measurements
+                    } else {
+                        None
+                    },
+                    renew_slack_after_expiration.unwrap_or(5),
+                    renew_fail_retry_timeout.unwrap_or(60),
                 )
-            }
-        };
+                .await?,
+            ));
+
+            (
+                cert_resolver,
+                eif_signing_cert.is_some(),
+                attest_private_vault_root_key_flag,
+            )
+        }
+    };
 
     let verifier = Arc::new(AttestedVerifier::new(
         if attest_private_vault_root_key {
@@ -307,7 +300,6 @@ async fn build_tls_config(
         pcr8_expected,
         #[cfg(feature = "insecure")]
         mock_enclave,
-        ignore_aws_ca_chain,
     )?);
 
     // We do not need to add context to verifier here
