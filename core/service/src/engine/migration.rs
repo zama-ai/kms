@@ -78,7 +78,6 @@ where
 }
 
 /// Migrate from 0.12.x or 0.13.x to 0.13.10
-/// This is disabled for now and should only be enabled in the next version
 ///
 /// This involves removing already migrated FHE key material in the legacy storage location.
 pub async fn migrate_to_0_13_10<PrivS>(
@@ -108,8 +107,6 @@ where
 }
 
 /// Migrate to 0.13.20
-/// This should only be activated after 0.13.10 has been released
-#[allow(dead_code)]
 pub async fn migrate_to_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,

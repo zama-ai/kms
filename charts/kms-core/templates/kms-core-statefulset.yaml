@@ -56,9 +56,15 @@ spec:
               envsubst < /var/lib/kms-core/config/kms-server.toml > kms-server.toml
               envsubst < /var/lib/kms-core/config/aws.toml >> kms-server.toml
               envsubst < /var/lib/kms-core/config/vaults.toml >> kms-server.toml
+              envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
+              envsubst < /var/lib/kms-core/config/aws.toml >> kms-gen-keys.toml
+              envsubst < /var/lib/kms-core/config/vaults.toml >> kms-gen-keys.toml
               echo "### BEGIN - kms-server.toml ###"
               cat kms-server.toml
               echo "### END - kms-server.toml ###"
+              echo "### BEGIN - kms-gen-keys.toml ###"
+              cat kms-gen-keys.toml
+              echo "### END - kms-gen-keys.toml ###"
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
@@ -230,44 +236,7 @@ spec:
             - |
               env
               echo "generating keys"
-              kms-gen-keys \
-            {{- if .Values.minio.enabled }}
-              --aws-s3-endpoint {{ .Values.minio.endpoint }} \
-            {{- end }}
-              --aws-region {{ .Values.kmsCore.aws.region }} \
-            {{- if .Values.kmsCore.publicVault.s3.enabled }}
-              --public-storage s3 \
-              --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
-              {{- if .Values.kmsCore.publicVault.s3.prefix }}
-              --public-s3-prefix "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}" \
-              {{- end }}
-            {{- else }}
-              --public-storage file \
-              --public-file-path "/keys" \
-            {{- end }}
-            {{- if .Values.kmsCore.privateVault.s3.enabled }}
-              --private-storage s3 \
-              --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
-              {{- if .Values.kmsCore.privateVault.s3.prefix }}
-              --private-s3-prefix "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.prefix }}}" \
-              {{- end }}
-            {{- else }}
-              --private-storage file \
-              --private-file-path "/keys" \
-            {{- end }}
-            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
-              --root-key-id "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}" \
-              --root-key-spec "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.rootKeySpec }}}" \
-            {{- end }}
-              {{ include "kmsCoreMode" . }} \
-            {{- if .Values.kmsCore.thresholdMode.enabled }}
-              --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-            {{- if .Values.kmsCore.addressOverride }}
-              --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
-            {{- else }}
-              --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
-            {{- end }}
-            {{- end }}
+              kms-gen-keys --config-file kms-gen-keys.toml
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
@@ -372,8 +341,11 @@ spec:
               value: {{ .Values.kmsCore.privateVault.awskms.rootKeyId | quote }}
             {{- end }}
             {{- end }}
-          {{- if not .Values.kmsCore.privateVault.s3.enabled }}
+          workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+          {{- if not .Values.kmsCore.privateVault.s3.enabled }}
             - mountPath: /keys
               name: keys
           {{- end }}
