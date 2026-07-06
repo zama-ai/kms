@@ -1747,9 +1747,16 @@ pub mod tests {
         let keyset2 = gen_uncompressed_key_set(params, tag, &mut rng);
 
         let eck1 = ClientKeyView::new(&keyset1.client_key);
-        let compression_key_1_poly_size =
-            eck1.raw_compression_client_key().unwrap().polynomial_size();
-        let compression_key_1 = eck1.raw_compression_client_key().unwrap().into_container();
+        let compression_key_1_poly_size = eck1
+            .raw_compression_client_key_and_params()
+            .unwrap()
+            .0
+            .polynomial_size();
+        let compression_key_1 = eck1
+            .raw_compression_client_key_and_params()
+            .unwrap()
+            .0
+            .into_container();
         let glwe_key_2 = ClientKeyView::new(&keyset2.client_key).raw_glwe_client_key();
         let glwe_key_2_poly_size = glwe_key_2.polynomial_size();
         let glwe_key_2 = glwe_key_2.into_container();

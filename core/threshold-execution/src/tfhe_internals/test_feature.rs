@@ -126,14 +126,14 @@ impl<'a> ClientKeyView<'a> {
         }
     }
 
-    pub fn raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
+    pub fn raw_compression_client_key_and_params(
+        &self,
+    ) -> Option<(GlweSecretKey<Vec<u64>>, CompressionParameters)> {
         let (_, _, compression_sk, _, _, _, _, _) = self.ck.clone().into_raw_parts();
-        if let Some(inner) = compression_sk {
+        compression_sk.map(|inner| {
             let raw_parts = inner.into_raw_parts();
-            Some(raw_parts.post_packing_ks_key)
-        } else {
-            None
-        }
+            (raw_parts.post_packing_ks_key, raw_parts.params)
+        })
     }
 
     pub fn raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
@@ -405,7 +405,7 @@ fn extract_key_containers(
 
     // Check compression key consistency
     if let Some(ck) = &client_key
-        && ck.raw_compression_client_key().is_none()
+        && ck.raw_compression_client_key_and_params().is_none()
         && params.compression_decompression_params().is_some()
     {
         anyhow::bail!("Compression client key is missing when parameter is available")
@@ -416,7 +416,8 @@ fn extract_key_containers(
             if params.compression_decompression_params().is_none() {
                 None
             } else {
-                ck.raw_compression_client_key().map(|x| x.into_container())
+                ck.raw_compression_client_key_and_params()
+                    .map(|x| x.0.into_container())
             }
         }
         None => {
@@ -1332,7 +1333,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        params.rerand_params().map(Into::into),
+        params.meta.rerandomization_parameters(),
         oprf_private_key,
         tag,
     ))
@@ -1372,10 +1373,6 @@ where
 }
 
 /// Keygen that generates secret key shares for many parties.
-///
-/// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
-/// passed as input.
-// TODO(dp): is this slow?
 pub fn keygen_all_party_shares_from_client_key<R, const EXTENSION_DEGREE: usize>(
     client_key: &tfhe::ClientKey,
     parameters: ClassicPBSParameters,
@@ -1393,6 +1390,7 @@ where
 
     let lwe_encryption_secret_key = client_key.raw_lwe_encryption_client_key();
     let glwe_secret_key = client_key.raw_glwe_client_key();
+    let compression_secret_key = client_key.raw_compression_client_key_and_params();
     let glwe_secret_key_sns_as_lwe = client_key.raw_glwe_client_sns_key_as_lwe().unwrap();
     let glwe_secret_key_sns_compression_as_lwe = client_key.raw_sns_compression_client_key_as_lwe();
     let oprf_secret_key = client_key.raw_oprf_client_key();
@@ -1400,6 +1398,7 @@ where
         lwe_secret_key,
         lwe_encryption_secret_key,
         glwe_secret_key,
+        compression_secret_key,
         glwe_secret_key_sns_as_lwe,
         glwe_secret_key_sns_compression_as_lwe,
         oprf_secret_key,
@@ -1415,6 +1414,7 @@ fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
     lwe_secret_key: LweSecretKey<Vec<u64>>,
     lwe_encryption_secret_key: LweSecretKey<Vec<u64>>,
     glwe_secret_key: GlweSecretKey<Vec<u64>>,
+    compression_secret_key: Option<(GlweSecretKey<Vec<u64>>, CompressionParameters)>,
     glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
     glwe_secreet_key_sns_compression_as_lwe: Option<LweSecretKey<Vec<u128>>>,
     oprf_secret_key: Option<LweSecretKey<Vec<u64>>>,
@@ -1481,6 +1481,19 @@ where
         None => None,
     };
 
+    // optionally share the regular compression secret key (when the parameters
+    // carry compression), keeping the polynomial size and parameters needed to
+    // rebuild `CompressionPrivateKeyShares`.
+    let all_glwe_compression_key = match compression_secret_key {
+        Some((key, compression_params)) => {
+            let polynomial_size = key.polynomial_size();
+            let shares: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
+                secret_share_key_shares(key.into_container(), num_parties, threshold, rng)?;
+            Some((shares, polynomial_size, compression_params))
+        }
+        None => None,
+    };
+
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
         .map(|p| PrivateKeySet {
@@ -1501,8 +1514,17 @@ where
                 data: vv128[p].clone(),
             }),
             parameters,
-            // the below is not really used for any computation
-            glwe_secret_key_share_compression: None,
+            glwe_secret_key_share_compression: all_glwe_compression_key.as_ref().map(
+                |(shares, polynomial_size, compression_params)| {
+                    CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data: shares[p].clone(),
+                            polynomial_size: *polynomial_size,
+                        },
+                        params: *compression_params,
+                    })
+                },
+            ),
             glwe_sns_compression_key_as_lwe: all_glwe_sns_compression_key_as_lwe
                 .as_ref()
                 .map(|x| LweSecretKeyShare { data: x[p].clone() }),
