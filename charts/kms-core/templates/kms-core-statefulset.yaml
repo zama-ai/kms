@@ -62,6 +62,15 @@ spec:
               echo "### BEGIN - kms-server.toml ###"
               cat kms-server.toml
               echo "### END - kms-server.toml ###"
+              {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
+              {{- include "kmsCoreSecondaryCaCerts" . | nindent 14 }}
+              envsubst < /var/lib/kms-core/config/kms-server-dkg.toml > kms-server-dkg.toml
+              envsubst < /var/lib/kms-core/config/aws.toml >> kms-server-dkg.toml
+              envsubst < /var/lib/kms-core/config/vaults-dkg.toml >> kms-server-dkg.toml
+              echo "### BEGIN - kms-server-dkg.toml ###"
+              cat kms-server-dkg.toml
+              echo "### END - kms-server-dkg.toml ###"
+              {{- end }}
               echo "### BEGIN - kms-gen-keys.toml ###"
               cat kms-gen-keys.toml
               echo "### END - kms-gen-keys.toml ###"
@@ -221,6 +230,47 @@ spec:
           resources:
           {{- toYaml . | nindent 12 }}
           {{- end }}
+        {{- end }}
+        {{- if .Values.kmsCore.secondaryEnclave.enabled }}
+        {{- $sec := .Values.kmsCore.secondaryEnclave }}
+        {{- /* Secondary enclave config socket. init_enclave.sh dials a CID-derived port. */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-config-dkg"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" (include "kmsSecondaryConfigPort" . | int)
+                     "to" (printf "OPEN:kms-server-dkg.toml,rdonly")
+                ) | indent 10 | trim }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+        {{- /* Secondary enclave logger socket. */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "kms-core-enclave-logger-dkg"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" (include "kmsSecondaryLoggerPort" . | int)
+                     "to" "STDOUT"
+               ) | indent 10 | trim }}
+        {{- /* Secondary enclave web identity token socket. */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-web-identity-token-dkg"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" (int $sec.nitroEnclave.webIdentityTokenPort)
+            "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+            ) | indent 10 | trim }}
+        {{- if $sec.nitroEnclave.networkTunnel.enabled }}
+        {{- $ingressPortsB := list $sec.ports.metrics $sec.ports.client $sec.ports.peer }}
+        {{- $queueCountB := include "kmsSecondaryNetworkTunnelQueueCount" . | int }}
+        {{- $workerThreadsB := include "kmsSecondaryNetworkTunnelTokioWorkerThreads" . | int }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "nameSuffix" "-dkg" "image" .Values.kmsCore.image "networkTunnel" $sec.nitroEnclave.networkTunnel "ingressPorts" $ingressPortsB "queueCount" $queueCountB "workerThreads" $workerThreadsB "vsockPort" (include "kmsSecondaryTunnelVsockPort" . | int)) | indent 10 | trim }}
+          volumeMounts:
+            - name: tun-device
+              mountPath: /dev/net/tun
+          {{- with $sec.nitroEnclave.networkTunnel.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
         {{- end }}
         {{- else }}
         {{- /* Generate init keys for non-enclave kms-core service */}}
@@ -586,8 +636,99 @@ spec:
           lifecycle:
             preStop:
               exec:
+                {{- if .Values.kmsCore.secondaryEnclave.enabled }}
+                # With a co-located enclave, terminate only our own CID so a
+                # single-container restart does not tear down the sibling enclave.
+                command: [ "/bin/sh", "-c", "EID=$(nitro-cli describe-enclaves | yq -p json -oy '.[] | select(.EnclaveCID == {{ int .Values.kmsCore.nitroEnclave.cid }}) | .EnclaveID'); if [ -n \"$EID\" ]; then nitro-cli terminate-enclave --enclave-id \"$EID\"; else nitro-cli terminate-enclave --all; fi" ]
+                {{- else }}
                 command: [ "nitro-cli", "terminate-enclave", "--all" ]
+                {{- end }}
           {{- end }}
+        {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
+        {{- $sec := .Values.kmsCore.secondaryEnclave }}
+        - image: {{ include "kmsSecondaryImageName" . }}:{{ include "kmsSecondaryImageTag" . }}
+          imagePullPolicy: {{ include "kmsSecondaryImagePullPolicy" . }}
+          name: kms-core-enclave-dkg
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              echo "### BEGIN - enclave-dkg.json ###"
+              cat /var/lib/kms-core/config/enclave-dkg.json
+              echo "### END - enclave-dkg.json ###"
+              echo "### BEGIN - describe-eif ###"
+              nitro-cli describe-eif --eif-path {{ $sec.nitroEnclave.eifPath }}
+              echo "### END - describe-eif ###"
+            {{- if $sec.nitroEnclave.signed }}
+              nitro-cli sign-eif --eif-path {{ $sec.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ $sec.nitroEnclave.eifSignKey }}
+            {{- end }}
+              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave-dkg.json
+              while true; do
+                nitro-cli describe-enclaves > /var/log/nitro_enclaves/status-b
+                sleep 60
+              done
+          env:
+            - name: "NO_COLOR"
+              value: "true"
+            - name: RUN_MODE
+              value: {{ .Values.runMode }}
+            - name: RUST_LOG
+              value: {{ .Values.rustLog }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+            - mountPath: /var/lib/kms-core/config
+              name: config-files
+            - mountPath: /hugepages
+              name: hugepage
+            - name: nitro-device
+              mountPath: /dev/nitro_enclaves
+          ports:
+            - containerPort: {{ $sec.ports.client }}
+              protocol: TCP
+            - containerPort: {{ $sec.ports.peer }}
+              protocol: TCP
+            - containerPort: {{ $sec.ports.metrics }}
+              protocol: TCP
+          resources:
+            requests:
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ $sec.nitroEnclave.cpuCount }}
+              memory: 2Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ $sec.nitroEnclave.memoryGiB }}Gi
+            limits:
+              ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ $sec.nitroEnclave.cpuCount }}
+              memory: 4Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ $sec.nitroEnclave.memoryGiB }}Gi
+          readinessProbe:
+            grpc:
+              port: {{ $sec.ports.client }}
+            failureThreshold: {{ .Values.kmsCore.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kmsCore.readinessProbe.periodSeconds }}
+          startupProbe:
+            grpc:
+              port: {{ $sec.ports.client }}
+            failureThreshold: {{ .Values.kmsCore.startupProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kmsCore.startupProbe.periodSeconds }}
+          livenessProbe:
+            grpc:
+              port: {{ $sec.ports.client }}
+            failureThreshold: {{ .Values.kmsCore.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.livenessProbe.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.kmsCore.livenessProbe.timeoutSeconds }}
+          lifecycle:
+            preStop:
+              exec:
+                command: [ "/bin/sh", "-c", "EID=$(nitro-cli describe-enclaves | yq -p json -oy '.[] | select(.EnclaveCID == {{ int $sec.nitroEnclave.cid }}) | .EnclaveID'); if [ -n \"$EID\" ]; then nitro-cli terminate-enclave --enclave-id \"$EID\"; else nitro-cli terminate-enclave --all; fi" ]
+        {{- end }}
       {{- with .Values.kmsCore.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

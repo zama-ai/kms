@@ -20,6 +20,14 @@ spec:
       port: {{ .Values.kmsCore.ports.peer }}
       targetPort: {{ .Values.kmsCore.ports.peer }}
     {{- end }}
+    {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.secondaryEnclave.enabled }}
+    - name: client-b
+      port: {{ .Values.kmsCore.secondaryEnclave.ports.client }}
+      targetPort: {{ .Values.kmsCore.secondaryEnclave.ports.client }}
+    - name: peer-b
+      port: {{ .Values.kmsCore.secondaryEnclave.ports.peer }}
+      targetPort: {{ .Values.kmsCore.secondaryEnclave.ports.peer }}
+    {{- end }}
   selector:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsCoreName }}
@@ -47,6 +55,17 @@ spec:
     - name: metrics
       port: {{ $.Values.kmsCore.ports.metrics }}
       targetPort: {{ $.Values.kmsCore.ports.metrics }}
+    {{- if and $.Values.kmsCore.nitroEnclave.enabled $.Values.kmsCore.secondaryEnclave.enabled }}
+    - name: client-b
+      port: {{ $.Values.kmsCore.secondaryEnclave.ports.client }}
+      targetPort: {{ $.Values.kmsCore.secondaryEnclave.ports.client }}
+    - name: peer-b
+      port: {{ $.Values.kmsCore.secondaryEnclave.ports.peer }}
+      targetPort: {{ $.Values.kmsCore.secondaryEnclave.ports.peer }}
+    - name: metrics-b
+      port: {{ $.Values.kmsCore.secondaryEnclave.ports.metrics }}
+      targetPort: {{ $.Values.kmsCore.secondaryEnclave.ports.metrics }}
+    {{- end }}
   selector:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsCoreName }}

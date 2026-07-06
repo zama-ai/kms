@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       deployment_type:
-        description: 'Deployment type (threshold, centralized, thresholdWithEnclave, centralizedWithEnclave)'
+        description: 'Deployment type (threshold, centralized, thresholdWithEnclave, thresholdWithEnclaveWithShard, centralizedWithEnclave)'
         required: true
         type: string
       pr_number:
@@ -111,7 +111,7 @@ jobs:
           password: ${{ secrets.HARBOR_READ_TOKEN }}
 
       - name: Handle pre-built images and PCR values
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
+        if: ${{ contains(env.DEPLOYMENT_TYPE, 'Enclave') }}
         env:
           JQ_VERSION: 1.8.1
           INPUT_PCR0: ${{ inputs.enclave_pcr0 }}

@@ -1,0 +1,97 @@
+kmsPeers:
+  # Number of replicas managed by each statefulset
+  count: 1
+
+kmsCore:
+  thresholdMode:
+    enabled: true
+    # peersList is generated dynamically by deploy.sh and should not be set here
+    tls:
+      enabled: true
+  nitroEnclave:
+    enabled: true
+    # Sized down from the single-enclave default (48/96) so the primary enclave and the
+    # co-located secondary shard both fit on one c7a.24xlarge node (96 vCPU / 192 GiB).
+    cpuCount: 32
+    memoryGiB: 64
+  resources:
+    requests:
+      memory: 12Gi
+      cpu: 4
+    limits:
+      memory: 24Gi
+      # Applied to BOTH the primary and secondary enclave containers, so the pod
+      # requests 2x this value of ephemeral-storage. The enclave nodes' default
+      # ~20Gi root disk only exposes ~17Gi allocatable, so 2x10Gi (=20Gi) does not
+      # fit. 6Gi each (=12Gi) fits with headroom; enclave containers use little
+      # ephemeral storage (the EIF lives in the image layer, not on the writable fs).
+      ephemeralStorage: 6Gi
+      grpcTimeout: 360
+      grpcMaxMessageSize: 104857600
+  publicVault:
+    s3:
+      enabled: true
+      prefix:
+  privateVault:
+    awskms:
+      enabled: true
+    s3:
+      enabled: true
+      prefix:
+  # SECONDARY co-located enclave ("shard"): a second, independent kms-core in the SAME
+  # pod, in its own Nitro enclave (CID 21), joined to a distinct MPC network on peer
+  # port 50002. peersList / myId / vault prefixes are injected per-party by deploy.sh.
+  secondaryEnclave:
+    enabled: true
+    ports:
+      client: 50101
+      peer: 50002
+      metrics: 9647
+    thresholdMode:
+      # peersList and myId are generated dynamically by deploy.sh
+      thresholdValue: 4
+    publicVault:
+      s3:
+        prefix:
+    privateVault:
+      s3:
+        prefix:
+    nitroEnclave:
+      cid: 21
+      cpuCount: 32
+      memoryGiB: 64
+      webIdentityTokenPort: 4101
+      networkTunnel:
+        enabled: true
+        interfaceName: vsocktun2
+        subnet: 10.119.0.0/24
+        parentAddress: 10.119.0.1/24
+        enclaveAddress: 10.119.0.2/24
+  storage:
+    storageClassName: gp3
+    capacity: 15Gi
+  serviceMonitor:
+    enabled: false
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: aws-nitro-enclaves-k8s-dp
+                operator: In
+                values:
+                  - enabled
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - kms-core
+          topologyKey: kubernetes.io/hostname
+  tolerations:
+    - key: app
+      effect: NoSchedule
+      operator: Equal
+      value:

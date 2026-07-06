@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 # Second stage: build raw IP proxies for enclave
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
 
-ARG DNSPROXY_VERSION=v0.81.1
+ARG DNSPROXY_VERSION=v0.82.1
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 WORKDIR /tmp
@@ -80,6 +80,11 @@ RUN git clone --depth 1 --branch ${VSOCKTUN_VERSION} https://github.com/zama-ai/
     cd vsocktun && \
     cargo build --locked --release && \
     cp target/release/vsocktun /usr/bin/vsocktun
+
+# Tiny helper that prints the local vsock CID. init_enclave.sh uses it to derive
+# per-enclave parent vsock ports so one EIF can back co-located enclaves.
+COPY ./docker/core/service/vsock_cid.c /tmp/vsock_cid.c
+RUN cc -O2 -static -o /usr/bin/vsock-cid /tmp/vsock_cid.c
 
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
@@ -107,6 +112,7 @@ ENV PATH="/app/kms/core/service/bin:$PATH"
 COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
 COPY --from=enclave-utils /usr/bin/dnsproxy /usr/bin/dnsproxy
 COPY --from=enclave-utils /usr/bin/vsocktun /usr/bin/vsocktun
+COPY --from=enclave-utils /usr/bin/vsock-cid /usr/bin/vsock-cid
 
 # Copy parent-side and enclave-side init scripts
 COPY ./docker/core/service/start_parent_proxies.sh ./bin/
