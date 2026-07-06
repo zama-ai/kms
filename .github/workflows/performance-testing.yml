@@ -44,7 +44,7 @@ on:
           - 'Default'
           - 'Test'
       tls:
-        description: 'TLS enabled for threshold core-to-core traffic'
+        description: 'TLS enabled. Only available for thresholdWithEnclave'
         required: true
         default: false
         type: boolean
@@ -240,6 +240,13 @@ jobs:
 
       - name: Validate perf deployment selection
         run: |
+          if [[ "${TLS}" == "true" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+            echo "ERROR: TLS is only supported for deployment_type=thresholdWithEnclave in performance-testing."
+            echo "Selected deployment_type=${DEPLOYMENT_TYPE}, tls=${TLS}."
+            echo "Set tls=false for non-enclave deployments, or choose thresholdWithEnclave."
+            exit 1
+          fi
+
           if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
             echo "ERROR: performance-testing supports only threshold deployment types."
             echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
@@ -395,6 +402,11 @@ jobs:
             --kms-chart-version "${KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
+      - name: Capture network diagnostics before perf
+        if: always()
+        run: |
+          bash ci/scripts/collect_network_diagnostics.sh before-perf "${NAMESPACE}"
+
       # ======================================================================
       # PERFORMANCE TESTING
       # ======================================================================
@@ -458,6 +470,20 @@ jobs:
           fi
 
           echo "Workflow completed."
+
+      - name: Capture network diagnostics after perf
+        if: always()
+        run: |
+          bash ci/scripts/collect_network_diagnostics.sh after-perf "${NAMESPACE}"
+
+      - name: Upload network diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: network-diagnostics
+          path: network-diagnostics/
+          retention-days: 30
+          if-no-files-found: warn
 
       # ======================================================================
       # SAVE ARGO WORKFLOW LOGS
