@@ -256,7 +256,9 @@ jobs:
 
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
-      # helm pre-install hooks to time out on ImagePullBackOff.
+      # helm pre-install hooks to time out on ImagePullBackOff. Retry briefly
+      # because freshly-pushed GHCR images can take a moment to appear through
+      # the Harbor pull-through path used by the cluster.
       # ======================================================================
       - name: Verify image tags exist in registry
         env:
@@ -276,9 +278,21 @@ jobs:
           missing=0
           for img in "${images[@]}"; do
             echo "Checking ${img}..."
-            if docker manifest inspect "${img}" > /dev/null 2>&1; then
-              echo "  ✅ found"
-            else
+            found=0
+            for attempt in {1..12}; do
+              if docker manifest inspect "${img}" > /dev/null 2>&1; then
+                echo "  ✅ found"
+                found=1
+                break
+              fi
+
+              if [[ "${attempt}" -lt 12 ]]; then
+                echo "  not found yet (${attempt}/12); retrying in 5s..."
+                sleep 5
+              fi
+            done
+
+            if [[ "${found}" -ne 1 ]]; then
               echo "  ❌ not found in registry"
               missing=1
             fi
