@@ -6,31 +6,18 @@ the Actions tab ("Run workflow").
 
 The workflow spins up a real KMS deployment in Kubernetes, runs a suite of perf
 tests against it (keygen, CRS generation, public decrypt, and user decrypt),
-and posts a summary to Slack. This document focuses on the **sustained-rate
-user-decrypt** test, which is the part most people come here to run.
+and posts a summary to Slack. This document focuses on the **user-decrypt**
+test, which is the part most people come here to run.
 
-## Burst vs. sustained rate
+## User-decrypt rate test
 
-There are two ways to measure decrypt performance, and they answer different
-questions:
-
-- **Burst mode** (the older test) fires a fixed number of requests all at once
-  and measures how quickly the KMS drains them. This tells you *peak capacity* —
-  the best-case throughput when the system is handed a full queue.
-
-- **Sustained-rate mode** (this test) offers a *steady* stream of requests — say
-  2,400 per second for 60 seconds — and checks whether the KMS keeps up. This
-  tells you the rate the system can actually *hold* in a steady state without
-  falling behind, which is closer to real production load.
-
-The sustained test is the honest measure of "how many decrypts per second can
-we serve." Burst numbers look higher but don't reflect what a continuously
-loaded system can sustain.
+The user-decrypt test offers a fixed number of requests per second for a fixed
+duration, then reports whether the KMS kept up. The current CI suite uses this
+to measure how many user decryptions per second the deployment can handle.
 
 ## Quick start
 
-To iterate on the sustained user-decrypt test, trigger the workflow with these
-values:
+To iterate on the user-decrypt test, trigger the workflow with these values:
 
 | Field | Value |
 | --- | --- |
@@ -168,7 +155,7 @@ What the workflow does, end to end:
 5. Deploy KMS to the `kms-ci` namespace via `ci/scripts/deploy.sh`.
 6. Print a terse `before-perf` placement and network-counter snapshot.
 7. Submit the Argo workflow
-   (`ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml`).
+   (`ci/perf-testing/argo-workflow/user-decrypt-rate-kms-workflow-kms-ci.yaml`).
 8. Stream the Argo logs and send the Slack report.
 9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
 
@@ -178,7 +165,7 @@ Network diagnostics are printed directly in the GitHub Actions log. The output
 is intentionally terse: node placement, KMS core pod placement, and after-run
 `eth0` rx/tx deltas for each running KMS core pod plus a total.
 
-Each sustained scenario also captures its own `eth0` rx/tx counters *inside* the
+Each user-decrypt scenario also captures its own `eth0` rx/tx counters *inside* the
 Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
 diagnostics only include KMS core pods that are still running when the snapshot
 is taken.

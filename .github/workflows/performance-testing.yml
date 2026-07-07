@@ -254,7 +254,7 @@ jobs:
             echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
             exit 1
           fi
-          echo "Using sustained-rate KMS perf suite."
+          echo "Using user-decrypt rate KMS perf suite."
 
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
@@ -450,7 +450,7 @@ jobs:
             CLIENT_LOGS_STATUS="disabled"
           fi
 
-          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml"
+          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/user-decrypt-rate-kms-workflow-kms-ci.yaml"
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
           else

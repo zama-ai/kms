@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: sustained-rate-kms-<version>-
+  generateName: user-decrypt-rate-kms-<version>-
   namespace: kms-ci
   labels:
-    app: sustained-rate-kms
+    app: user-decrypt-rate-kms
 spec:
   serviceAccountName: workflow-runner
   activeDeadlineSeconds: 28800  # 8h cap for full perf runs.
@@ -22,7 +22,7 @@ spec:
     secret:
       secretName: slack-webhook
 
-  entrypoint: sustained-rate-kms
+  entrypoint: user-decrypt-rate-kms
   arguments:
     parameters:
     - name: tls
@@ -52,7 +52,7 @@ spec:
     # addition to the current 13-party 5/9 setup.
 
   templates:
-    - name: sustained-rate-kms
+    - name: user-decrypt-rate-kms
       dag:
         tasks:
           - name: preproc-key-gen
@@ -208,7 +208,7 @@ spec:
               - name: fhe-params
                 value: "Default"
 
-          - name: sustained-rate-udec-2400
+          - name: udec-rate-2400
             dependencies: ["udec-key-gen", "public-decrypt-euint64-req1000"]
             template: run-udec-rate
             arguments:
@@ -220,8 +220,8 @@ spec:
               - name: previous-ok
                 value: "true"
 
-          - name: sustained-rate-udec-2700
-            dependencies: ["sustained-rate-udec-2400"]
+          - name: udec-rate-2700
+            dependencies: ["udec-rate-2400"]
             template: run-udec-rate
             arguments:
               parameters:
@@ -230,10 +230,10 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2400.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
 
-          - name: sustained-rate-udec-2750
-            dependencies: ["sustained-rate-udec-2700"]
+          - name: udec-rate-2750
+            dependencies: ["udec-rate-2700"]
             template: run-udec-rate
             arguments:
               parameters:
@@ -242,7 +242,7 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.sustained-rate-udec-2700.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.udec-rate-2700.outputs.parameters.capacity-ok}}"
 
           - name: summary
             dependencies:
@@ -256,9 +256,9 @@ spec:
               - "public-decrypt-euint64-req100"
               - "public-decrypt-euint64-req500"
               - "public-decrypt-euint64-req1000"
-              - "sustained-rate-udec-2400"
-              - "sustained-rate-udec-2700"
-              - "sustained-rate-udec-2750"
+              - "udec-rate-2400"
+              - "udec-rate-2700"
+              - "udec-rate-2750"
             template: summary-report
             arguments:
               parameters:
@@ -283,11 +283,11 @@ spec:
               - name: test-result-public-decrypt-req1000
                 value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: test-result-2400
-                value: "{{tasks.sustained-rate-udec-2400.outputs.parameters.test-result}}"
+                value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
               - name: test-result-2700
-                value: "{{tasks.sustained-rate-udec-2700.outputs.parameters.test-result}}"
+                value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
               - name: test-result-2750
-                value: "{{tasks.sustained-rate-udec-2750.outputs.parameters.test-result}}"
+                value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -318,7 +318,7 @@ spec:
       metadata:
         labels:
           test: "{{inputs.parameters.test-name}}"
-          app: sustained-rate-kms
+          app: user-decrypt-rate-kms
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
         karpenter.k8s.aws/instance-family: m5n
@@ -505,14 +505,14 @@ spec:
         parameters:
         - name: test-result
           valueFrom:
-            path: /tmp/artifacts/sustained-rate-udec-{{inputs.parameters.rate}}.json
+            path: /tmp/artifacts/udec-rate-{{inputs.parameters.rate}}.json
         - name: capacity-ok
           valueFrom:
-            path: /tmp/artifacts/sustained-rate-udec-{{inputs.parameters.rate}}.ok
+            path: /tmp/artifacts/udec-rate-{{inputs.parameters.rate}}.ok
       metadata:
         labels:
-          test: sustained-rate-udec-{{inputs.parameters.rate}}
-          app: sustained-rate-kms
+          test: udec-rate-{{inputs.parameters.rate}}
+          app: user-decrypt-rate-kms
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
         karpenter.k8s.aws/instance-family: m5n
@@ -593,7 +593,7 @@ spec:
             object_folder="PUB-p13"
           EOF
 
-          test_name="sustained-rate-udec-{{inputs.parameters.rate}}"
+          test_name="udec-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
           test_command="user-decrypt from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
           mkdir -p /tmp/artifacts
@@ -652,26 +652,26 @@ spec:
           }
 
           if [ -z "$key_id" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "user_decrypt": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
               "{{inputs.parameters.rate}}" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Missing key_id from udec-key-gen; refusing to run sustained-rate udec"
+            echo "Missing key_id from udec-key-gen; refusing to run user decrypt"
             exit 0
           fi
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": {\n      "target_rate": %s\n    }\n  }\n}\n' \
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "user_decrypt": {\n      "target_rate": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
               "{{inputs.parameters.rate}}" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Skipping $test_name because a lower sustained udec rate did not produce valid metrics"
+            echo "Skipping $test_name because a lower user decrypt rate did not produce valid metrics"
             exit 0
           fi
 
@@ -698,24 +698,24 @@ spec:
           capture_net_snapshot /tmp/net-after.tsv
 
           # Keep the last valid metrics line; normal logs may contain many JSON records.
-          sustained_rate_metrics=""
+          user_decrypt_metrics=""
           while IFS= read -r metrics_line; do
-            candidate="${metrics_line#*SUSTAINED_RATE_METRICS }"
+            candidate="${metrics_line#*USER_DECRYPT_METRICS }"
             # Accept only the raw println! JSON, not an escaped copy inside tracing JSON logs.
             if [[ "$candidate" == \{\"* ]] && [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
-              sustained_rate_metrics="$candidate"
+              user_decrypt_metrics="$candidate"
             fi
-          done < <(grep "SUSTAINED_RATE_METRICS " /tmp/test_logs.txt || true)
+          done < <(grep "USER_DECRYPT_METRICS " /tmp/test_logs.txt || true)
 
-          if [[ -n "$sustained_rate_metrics" && "$sustained_rate_metrics" =~ \"failed\":([0-9]+) ]]; then
+          if [[ -n "$user_decrypt_metrics" && "$user_decrypt_metrics" =~ \"failed\":([0-9]+) ]]; then
             metrics_valid=true
             metrics_failed="${BASH_REMATCH[1]}"
-            if [[ "$sustained_rate_metrics" =~ \"shed\":([0-9]+) ]]; then
+            if [[ "$user_decrypt_metrics" =~ \"shed\":([0-9]+) ]]; then
               metrics_shed="${BASH_REMATCH[1]}"
             else
               metrics_shed=0
             fi
-            if [[ "$sustained_rate_metrics" =~ \"saturated\":(true|false) ]]; then
+            if [[ "$user_decrypt_metrics" =~ \"saturated\":(true|false) ]]; then
               metrics_saturated="${BASH_REMATCH[1]}"
             else
               metrics_saturated=true
@@ -725,12 +725,12 @@ spec:
             metrics_failed=1
             metrics_shed=0
             metrics_saturated=true
-            sustained_rate_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
-            echo "ERROR: no valid SUSTAINED_RATE_METRICS JSON with failed/shed/saturated found"
+            user_decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
+            echo "ERROR: no valid USER_DECRYPT_METRICS JSON with failed/shed/saturated found"
           fi
           network_metrics="$(network_metrics_suffix "$duration")"
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
-          sustained_rate_metrics="${sustained_rate_metrics%\}}${network_metrics}}"
+          user_decrypt_metrics="${user_decrypt_metrics%\}}${network_metrics}}"
 
           # Task success means "measurement exists"; the summary applies perf limits.
           if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
@@ -741,14 +741,14 @@ spec:
             capacity_ok="false"
           fi
 
-          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "sustained_rate": %s\n  }\n}\n' \
+          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "user_decrypt": %s\n  }\n}\n' \
             "$test_name" \
             "$test_command" \
             "$status" \
             "$test_exit" \
             "$duration" \
             "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            "$sustained_rate_metrics" \
+            "$user_decrypt_metrics" \
             > /tmp/artifacts/${test_name}.json
           echo "$capacity_ok" > /tmp/artifacts/${test_name}.ok
 
@@ -815,9 +815,9 @@ spec:
           echo '{{inputs.parameters.test-result-public-decrypt-req100}}' > /mnt/results/public-decrypt-euint64-req100.json
           echo '{{inputs.parameters.test-result-public-decrypt-req500}}' > /mnt/results/public-decrypt-euint64-req500.json
           echo '{{inputs.parameters.test-result-public-decrypt-req1000}}' > /mnt/results/public-decrypt-euint64-req1000.json
-          echo '{{inputs.parameters.test-result-2400}}' > /mnt/results/sustained-rate-udec-2400.json
-          echo '{{inputs.parameters.test-result-2700}}' > /mnt/results/sustained-rate-udec-2700.json
-          echo '{{inputs.parameters.test-result-2750}}' > /mnt/results/sustained-rate-udec-2750.json
+          echo '{{inputs.parameters.test-result-2400}}' > /mnt/results/udec-rate-2400.json
+          echo '{{inputs.parameters.test-result-2700}}' > /mnt/results/udec-rate-2700.json
+          echo '{{inputs.parameters.test-result-2750}}' > /mnt/results/udec-rate-2750.json
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -1002,7 +1002,7 @@ spec:
           echo ""
           echo "User decrypt perf tests:"
           for rate in 2400 2700 2750; do
-            result="/mnt/results/sustained-rate-udec-${rate}.json"
+            result="/mnt/results/udec-rate-${rate}.json"
             udec_total=$((udec_total + 1))
             if ! jq empty "$result" 2>/dev/null; then
               udec_failed=$((udec_failed + 1))
@@ -1016,35 +1016,35 @@ spec:
             test_name=$(jq -r '.test_name // "unknown"' "$result")
             status=$(jq -r '.status // empty' "$result")
             exit_code=$(jq -r '.exit_code // "1"' "$result")
-            target_rate=$(jq -r '.performance_metrics.sustained_rate.target_rate // empty' "$result")
-            offered=$(jq -r '.performance_metrics.sustained_rate.offered // empty' "$result")
-            completed=$(jq -r '.performance_metrics.sustained_rate.completed // empty' "$result")
-            failed_requests=$(jq -r '.performance_metrics.sustained_rate.failed // empty' "$result")
-            shed=$(jq -r '.performance_metrics.sustained_rate.shed // empty' "$result")
-            achieved_rate=$(jq -r '.performance_metrics.sustained_rate.achieved_rate // empty' "$result")
-            saturated=$(jq -r '.performance_metrics.sustained_rate | if has("saturated") then .saturated else "" end' "$result")
-            request_payload_bytes=$(jq -r '.performance_metrics.sustained_rate.request_payload_bytes // empty' "$result")
-            request_payload_mib_per_sec=$(jq -r '.performance_metrics.sustained_rate.request_payload_mib_per_sec // empty' "$result")
-            request_payload_avg_bytes=$(jq -r '.performance_metrics.sustained_rate.request_payload_avg_bytes // empty' "$result")
-            response_payload_bytes=$(jq -r '.performance_metrics.sustained_rate.response_payload_bytes // empty' "$result")
-            response_payload_mib_per_sec=$(jq -r '.performance_metrics.sustained_rate.response_payload_mib_per_sec // empty' "$result")
-            response_payload_avg_bytes=$(jq -r '.performance_metrics.sustained_rate.response_payload_avg_bytes // empty' "$result")
-            network_rx_bytes=$(jq -r '.performance_metrics.sustained_rate.network.rx_bytes // empty' "$result")
-            network_tx_bytes=$(jq -r '.performance_metrics.sustained_rate.network.tx_bytes // empty' "$result")
-            network_rx_gbps=$(jq -r '.performance_metrics.sustained_rate.network.rx_gbps // empty' "$result")
-            network_tx_gbps=$(jq -r '.performance_metrics.sustained_rate.network.tx_gbps // empty' "$result")
-            network_rx_dropped=$(jq -r '.performance_metrics.sustained_rate.network.rx_dropped // 0' "$result")
-            network_tx_dropped=$(jq -r '.performance_metrics.sustained_rate.network.tx_dropped // 0' "$result")
-            network_rx_errors=$(jq -r '.performance_metrics.sustained_rate.network.rx_errors // 0' "$result")
-            network_tx_errors=$(jq -r '.performance_metrics.sustained_rate.network.tx_errors // 0' "$result")
-            reconstruction_failed=$(jq -r '.performance_metrics.sustained_rate.reconstruction_failed // 0' "$result")
-            p50=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p50 // empty' "$result")
-            p95=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p95 // empty' "$result")
-            p99=$(jq -r '.performance_metrics.sustained_rate.latency_ms.p99 // empty' "$result")
-            recon_avg=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.avg // empty' "$result")
-            recon_p50=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.p50 // empty' "$result")
-            recon_p99=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.p99 // empty' "$result")
-            recon_wall=$(jq -r '.performance_metrics.sustained_rate.reconstruction_ms.wall // empty' "$result")
+            target_rate=$(jq -r '.performance_metrics.user_decrypt.target_rate // empty' "$result")
+            offered=$(jq -r '.performance_metrics.user_decrypt.offered // empty' "$result")
+            completed=$(jq -r '.performance_metrics.user_decrypt.completed // empty' "$result")
+            failed_requests=$(jq -r '.performance_metrics.user_decrypt.failed // empty' "$result")
+            shed=$(jq -r '.performance_metrics.user_decrypt.shed // empty' "$result")
+            achieved_rate=$(jq -r '.performance_metrics.user_decrypt.achieved_rate // empty' "$result")
+            saturated=$(jq -r '.performance_metrics.user_decrypt | if has("saturated") then .saturated else "" end' "$result")
+            request_payload_bytes=$(jq -r '.performance_metrics.user_decrypt.request_payload_bytes // empty' "$result")
+            request_payload_mib_per_sec=$(jq -r '.performance_metrics.user_decrypt.request_payload_mib_per_sec // empty' "$result")
+            request_payload_avg_bytes=$(jq -r '.performance_metrics.user_decrypt.request_payload_avg_bytes // empty' "$result")
+            response_payload_bytes=$(jq -r '.performance_metrics.user_decrypt.response_payload_bytes // empty' "$result")
+            response_payload_mib_per_sec=$(jq -r '.performance_metrics.user_decrypt.response_payload_mib_per_sec // empty' "$result")
+            response_payload_avg_bytes=$(jq -r '.performance_metrics.user_decrypt.response_payload_avg_bytes // empty' "$result")
+            network_rx_bytes=$(jq -r '.performance_metrics.user_decrypt.network.rx_bytes // empty' "$result")
+            network_tx_bytes=$(jq -r '.performance_metrics.user_decrypt.network.tx_bytes // empty' "$result")
+            network_rx_gbps=$(jq -r '.performance_metrics.user_decrypt.network.rx_gbps // empty' "$result")
+            network_tx_gbps=$(jq -r '.performance_metrics.user_decrypt.network.tx_gbps // empty' "$result")
+            network_rx_dropped=$(jq -r '.performance_metrics.user_decrypt.network.rx_dropped // 0' "$result")
+            network_tx_dropped=$(jq -r '.performance_metrics.user_decrypt.network.tx_dropped // 0' "$result")
+            network_rx_errors=$(jq -r '.performance_metrics.user_decrypt.network.rx_errors // 0' "$result")
+            network_tx_errors=$(jq -r '.performance_metrics.user_decrypt.network.tx_errors // 0' "$result")
+            reconstruction_failed=$(jq -r '.performance_metrics.user_decrypt.reconstruction_failed // 0' "$result")
+            p50=$(jq -r '.performance_metrics.user_decrypt.latency_ms.p50 // empty' "$result")
+            p95=$(jq -r '.performance_metrics.user_decrypt.latency_ms.p95 // empty' "$result")
+            p99=$(jq -r '.performance_metrics.user_decrypt.latency_ms.p99 // empty' "$result")
+            recon_avg=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.avg // empty' "$result")
+            recon_p50=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.p50 // empty' "$result")
+            recon_p99=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.p99 // empty' "$result")
+            recon_wall=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.wall // empty' "$result")
 
             [ -n "$target_rate" ] || target_rate="$rate"
             [ -n "$offered" ] || offered=0
@@ -1177,7 +1177,10 @@ spec:
           # nodepools). They do NOT auto-update — keep them in sync here, and in the sibling
           # *-test-suite report workflows that duplicate them, whenever that config changes.
           # (core-img/client-img ARE live: <version>/<client-version> are sed-substituted at submit.)
-          config_line="payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}, core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>"
+          # Two physical lines: the '\n' renders as a line break in the Slack context element.
+          config_line=$(printf '%s\n%s' \
+            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
+            "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
           else
