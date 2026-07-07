@@ -44,7 +44,6 @@ tracing.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
-criterion = { workspace = true, features = ["async_tokio"] }
 rustls-webpki.workspace = true
 test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
@@ -54,12 +53,3 @@ tonic-prost-build.workspace = true
 
 [features]
 testing = ["threshold-execution/testing"]
-# Exposes `NetworkSession::new_for_bench` so the `concurrent_send` benchmark can
-# build a session without a running gRPC server. Kept separate from `testing` to
-# avoid pulling in the heavier test-only dependency graph.
-bench-internals = []
-
-[[bench]]
-name = "concurrent_send"
-harness = false
-required-features = ["bench-internals"]
