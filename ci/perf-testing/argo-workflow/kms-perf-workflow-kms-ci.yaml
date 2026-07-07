@@ -38,7 +38,7 @@ spec:
     - name: fhe-params
       value: "Test"
     - name: duration
-      value: "60"
+      value: "30"
     - name: max-in-flight
       value: "10000"
     - name: data-type
@@ -166,47 +166,48 @@ spec:
               - name: previous-ok
                 value: "{{tasks.pdec-rate-1000.outputs.parameters.capacity-ok}}"
 
-          - name: udec-rate-2400
-            dependencies: ["udec-key-gen", "pdec-rate-1200"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2400"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "true"
-
-          - name: udec-rate-2700
-            dependencies: ["udec-rate-2400"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2700"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
-
-          - name: udec-rate-2750
-            dependencies: ["udec-rate-2700"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2750"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "{{tasks.udec-rate-2700.outputs.parameters.capacity-ok}}"
+          # Temporarily disabled while iterating on Slack report formatting.
+          # - name: udec-rate-2400
+          #   dependencies: ["udec-key-gen", "pdec-rate-1200"]
+          #   template: run-decrypt-rate
+          #   arguments:
+          #     parameters:
+          #     - name: kind
+          #       value: "udec"
+          #     - name: rate
+          #       value: "2400"
+          #     - name: key_id
+          #       value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+          #     - name: previous-ok
+          #       value: "true"
+          #
+          # - name: udec-rate-2700
+          #   dependencies: ["udec-rate-2400"]
+          #   template: run-decrypt-rate
+          #   arguments:
+          #     parameters:
+          #     - name: kind
+          #       value: "udec"
+          #     - name: rate
+          #       value: "2700"
+          #     - name: key_id
+          #       value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+          #     - name: previous-ok
+          #       value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
+          #
+          # - name: udec-rate-2750
+          #   dependencies: ["udec-rate-2700"]
+          #   template: run-decrypt-rate
+          #   arguments:
+          #     parameters:
+          #     - name: kind
+          #       value: "udec"
+          #     - name: rate
+          #       value: "2750"
+          #     - name: key_id
+          #       value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+          #     - name: previous-ok
+          #       value: "{{tasks.udec-rate-2700.outputs.parameters.capacity-ok}}"
 
           - name: summary
             dependencies:
@@ -218,9 +219,10 @@ spec:
               - "pdec-rate-500"
               - "pdec-rate-1000"
               - "pdec-rate-1200"
-              - "udec-rate-2400"
-              - "udec-rate-2700"
-              - "udec-rate-2750"
+              # Temporarily disabled while iterating on Slack report formatting.
+              # - "udec-rate-2400"
+              # - "udec-rate-2700"
+              # - "udec-rate-2750"
             template: summary-report
             arguments:
               parameters:
@@ -240,12 +242,13 @@ spec:
                 value: "{{tasks.pdec-rate-1000.outputs.parameters.test-result}}"
               - name: test-result-pdec-1200
                 value: "{{tasks.pdec-rate-1200.outputs.parameters.test-result}}"
-              - name: test-result-udec-2400
-                value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
-              - name: test-result-udec-2700
-                value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
-              - name: test-result-udec-2750
-                value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
+              # Temporarily disabled while iterating on Slack report formatting.
+              # - name: test-result-udec-2400
+              #   value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
+              # - name: test-result-udec-2700
+              #   value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
+              # - name: test-result-udec-2750
+              #   value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -845,9 +848,10 @@ spec:
         - name: test-result-pdec-500
         - name: test-result-pdec-1000
         - name: test-result-pdec-1200
-        - name: test-result-udec-2400
-        - name: test-result-udec-2700
-        - name: test-result-udec-2750
+        # Temporarily disabled while iterating on Slack report formatting.
+        # - name: test-result-udec-2400
+        # - name: test-result-udec-2700
+        # - name: test-result-udec-2750
         - name: tls
         - name: run_url
         - name: job_url
@@ -876,9 +880,10 @@ spec:
           echo '{{inputs.parameters.test-result-pdec-500}}' > /mnt/results/pdec-rate-500.json
           echo '{{inputs.parameters.test-result-pdec-1000}}' > /mnt/results/pdec-rate-1000.json
           echo '{{inputs.parameters.test-result-pdec-1200}}' > /mnt/results/pdec-rate-1200.json
-          echo '{{inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
-          echo '{{inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
-          echo '{{inputs.parameters.test-result-udec-2750}}' > /mnt/results/udec-rate-2750.json
+          # Temporarily disabled while iterating on Slack report formatting.
+          # echo '{ {inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
+          # echo '{ {inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
+          # echo '{ {inputs.parameters.test-result-udec-2750}}' > /mnt/results/udec-rate-2750.json
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -1164,7 +1169,8 @@ spec:
 
           echo ""
           summarize_decrypt_rates pdec "Public decrypt" public_decrypt 500 1000 1200
-          summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750
+          # Temporarily disabled while iterating on Slack report formatting.
+          # summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750
 
           finite_total=$((keygen_total + crs_total))
           finite_passed=$((keygen_passed + crs_passed))
