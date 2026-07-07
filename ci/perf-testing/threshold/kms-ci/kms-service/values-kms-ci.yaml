@@ -44,6 +44,9 @@ kmsCore:
     maxInterval: 60
     initialIntervalMs: 100
     cleanupIntervalSecs: 2
+    # NOTE: these thread counts are also printed in the perf Slack report; they are hardcoded
+    # in the report's config line (ci/perf-testing/argo-workflow/*-workflow-*.yaml). Update them
+    # there too when changing these values, or the report will misstate the deployed config.
     tokioWorkerThreads: 10
     rayonNumThreads: 40
     # peersList is generated dynamically by deploy.sh and should not be set here

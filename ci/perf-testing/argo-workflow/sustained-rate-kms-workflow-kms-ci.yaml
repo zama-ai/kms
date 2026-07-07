@@ -951,7 +951,6 @@ spec:
             fi
 
             test_name=$(jq -r '.test_name // "unknown"' "$result")
-            fhe_params=$(jq -r '.fhe_params // "unknown"' "$result")
             exit_code=$(jq -r '.exit_code // "1"' "$result")
             duration=$(jq -r '.duration // "0"' "$result")
             p50_latency=$(jq -r '.performance_metrics.latency.p50 // empty' "$result")
@@ -972,12 +971,12 @@ spec:
               keygen)
                 keygen_total=$((keygen_total + 1))
                 if [ "$exit_code" = "0" ]; then keygen_passed=$((keygen_passed + 1)); else keygen_failed=$((keygen_failed + 1)); fi
-                line="${label} ${test_name} ${duration}s params=${fhe_params}"
+                line="${label} ${test_name} ${duration}s"
                 ;;
               crs)
                 crs_total=$((crs_total + 1))
                 if [ "$exit_code" = "0" ]; then crs_passed=$((crs_passed + 1)); else crs_failed=$((crs_failed + 1)); fi
-                line="${label} ${test_name} ${duration}s params=${fhe_params}"
+                line="${label} ${test_name} ${duration}s"
                 ;;
               pdec)
                 pdec_total=$((pdec_total + 1))
@@ -1087,32 +1086,36 @@ spec:
             # WARN is accepted-but-degraded. 2750/s is an exploratory probe and
             # is allowed to exceed its parameter set without failing the workflow.
             if [ "$status" = "skipped" ]; then
+              outcome=skipped
               udec_skipped=$((udec_skipped + 1))
-              line="$(status_label skipped) ${target_rate}/s skipped"
+              line="$(status_label "$outcome") ${target_rate}/s skipped"
             elif [ "$status" != "passed" ]; then
               if allowed_failure_for_rate "$rate"; then
+                outcome=warned
                 udec_warned=$((udec_warned + 1))
-                line="$(status_label warned) ${target_rate}/s measurement failed"
               else
+                outcome=failed
                 udec_failed=$((udec_failed + 1))
-                line="$(status_label failed) ${target_rate}/s measurement failed"
               fi
+              line="$(status_label "$outcome") ${target_rate}/s measurement failed"
             elif [ "$within_parameter_set" = "true" ]; then
               if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+                outcome=warned
                 udec_warned=$((udec_warned + 1))
-                line="$(status_label warned) ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               else
+                outcome=passed
                 udec_passed=$((udec_passed + 1))
-                line="$(status_label passed) ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               fi
+              line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
             else
               if allowed_failure_for_rate "$rate"; then
+                outcome=warned
                 udec_warned=$((udec_warned + 1))
-                line="$(status_label warned) ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
               else
+                outcome=failed
                 udec_failed=$((udec_failed + 1))
-                line="$(status_label failed) ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
               fi
+              line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
             fi
 
             if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
@@ -1130,7 +1133,7 @@ spec:
 
             echo "$line"
             append_operation_line udec "$line"
-            append_udec_raw_line "rate=${target_rate}/s status=${status} params=${parameter_set} achieved=${achieved_short}/s offered=${offered} completed=${completed} failed=${failed_requests} shed=${shed} saturated=${saturated} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s recon_avg=$(fmt_ms_2 "$recon_avg") recon_p50=$(fmt_ms_2 "$recon_p50") recon_p99=$(fmt_ms_2 "$recon_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
+            append_udec_raw_line "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s recon_avg=$(fmt_ms_2 "$recon_avg") recon_p50=$(fmt_ms_2 "$recon_p50") recon_p99=$(fmt_ms_2 "$recon_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
           done
 
           finite_total=$((keygen_total + crs_total + pdec_total))
@@ -1169,7 +1172,12 @@ spec:
             udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
           fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
-          config_line="payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}"
+          # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
+          # hardcoded mirrors of the deployed config (kms-service values-kms-ci.yaml + the karpenter
+          # nodepools). They do NOT auto-update — keep them in sync here, and in the sibling
+          # *-test-suite report workflows that duplicate them, whenever that config changes.
+          # (core-img/client-img ARE live: <version>/<client-version> are sed-substituted at submit.)
+          config_line="payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}, core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>"
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
           else
