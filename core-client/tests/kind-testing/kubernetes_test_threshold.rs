@@ -214,6 +214,7 @@ impl K8sTestContext {
             rate: None,
             duration: None,
             max_in_flight: None,
+            drain_timeout_secs: None,
         }))
         .await;
 
@@ -254,6 +255,7 @@ impl K8sTestContext {
                     rate: None,
                     duration: None,
                     max_in_flight: None,
+                    drain_timeout_secs: None,
                 },
             )))
             .await;

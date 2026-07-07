@@ -663,6 +663,13 @@ impl CipherArguments {
             CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.max_in_flight,
         }
     }
+
+    pub fn get_drain_timeout_secs(&self) -> Option<u64> {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.drain_timeout_secs,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.drain_timeout_secs,
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -729,6 +736,10 @@ pub struct CipherParameters {
     #[serde(skip)]
     #[clap(long)]
     pub max_in_flight: Option<usize>,
+    /// Seconds to keep draining in-flight requests after the sustained window ends (default 30).
+    #[serde(skip)]
+    #[clap(long)]
+    pub drain_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -758,6 +769,9 @@ pub struct CipherFile {
     /// Maximum number of in-flight requests allowed during sustained mode.
     #[clap(long)]
     pub max_in_flight: Option<usize>,
+    /// Seconds to keep draining in-flight requests after the sustained window ends (default 30).
+    #[clap(long)]
+    pub drain_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2101,11 +2115,13 @@ pub async fn execute_cmd(
                 let max_in_flight = cipher_args
                     .get_max_in_flight()
                     .unwrap_or_else(|| (rate as usize).saturating_mul(10).max(1));
+                let drain_timeout_secs = cipher_args.get_drain_timeout_secs().unwrap_or(30);
                 do_user_decrypt_sustained(
                     &mut rng,
                     rate,
                     duration,
                     max_in_flight,
+                    drain_timeout_secs,
                     internal_client,
                     ct_batch,
                     key_id,
@@ -2961,6 +2977,7 @@ mod tests {
             rate: None,
             duration: None,
             max_in_flight: None,
+            drain_timeout_secs: None,
         }
     }
 

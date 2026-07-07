@@ -570,50 +570,113 @@ struct SustainedRateMetrics {
     reconstruction_wall: tokio::time::Duration,
 }
 
+/// Wire format for the `SUSTAINED_RATE_METRICS` line the CI harness parses.
+/// Serializing a dedicated struct keeps the JSON shape (field names, nesting)
+/// tied to the type instead of a hand-maintained `format!` string.
+#[derive(serde::Serialize)]
+struct SustainedRateMetricsJson {
+    target_rate: u64,
+    #[serde(rename = "duration")]
+    duration_secs: u64,
+    max_in_flight: usize,
+    offered: u64,
+    completed: u64,
+    failed: u64,
+    shed: u64,
+    achieved_rate: f64,
+    saturated: bool,
+    request_payload_bytes: u64,
+    request_payload_messages: u64,
+    request_payload_mib_per_sec: f64,
+    request_payload_avg_bytes: f64,
+    response_payload_bytes: u64,
+    response_payload_messages: u64,
+    response_payload_mib_per_sec: f64,
+    response_payload_avg_bytes: f64,
+    reconstruction_failed: u64,
+    latency_ms: DurationStatMsJson,
+    reconstruction_ms: ReconstructionMsJson,
+}
+
+#[derive(serde::Serialize)]
+struct DurationStatMsJson {
+    avg: f64,
+    std_dev: f64,
+    p50: f64,
+    p95: f64,
+    p99: f64,
+    min: f64,
+    max: f64,
+}
+
+#[derive(serde::Serialize)]
+struct ReconstructionMsJson {
+    avg: f64,
+    std_dev: f64,
+    p50: f64,
+    p95: f64,
+    p99: f64,
+    min: f64,
+    max: f64,
+    wall: f64,
+}
+
+fn duration_stat_ms(stat: &crate::DurationStat) -> DurationStatMsJson {
+    let ms = |d: tokio::time::Duration| d.as_secs_f64() * 1000.0;
+    DurationStatMsJson {
+        avg: ms(stat.avg),
+        std_dev: ms(stat.std_dev),
+        p50: ms(stat.p50),
+        p95: ms(stat.p95),
+        p99: ms(stat.p99),
+        min: ms(stat.min),
+        max: ms(stat.max),
+    }
+}
+
+impl From<&SustainedRateMetrics> for SustainedRateMetricsJson {
+    fn from(m: &SustainedRateMetrics) -> Self {
+        let recon = duration_stat_ms(&m.reconstruction_stat);
+        Self {
+            target_rate: m.target_rate,
+            duration_secs: m.duration_secs,
+            max_in_flight: m.max_in_flight,
+            offered: m.offered,
+            completed: m.completed,
+            failed: m.failed,
+            shed: m.shed,
+            achieved_rate: m.achieved_rate,
+            saturated: m.saturated,
+            request_payload_bytes: m.request_payload_bytes,
+            request_payload_messages: m.request_payload_messages,
+            request_payload_mib_per_sec: m.request_payload_mib_per_sec,
+            request_payload_avg_bytes: m.request_payload_avg_bytes,
+            response_payload_bytes: m.response_payload_bytes,
+            response_payload_messages: m.response_payload_messages,
+            response_payload_mib_per_sec: m.response_payload_mib_per_sec,
+            response_payload_avg_bytes: m.response_payload_avg_bytes,
+            reconstruction_failed: m.reconstruction_failed,
+            latency_ms: duration_stat_ms(&m.latency_stat),
+            reconstruction_ms: ReconstructionMsJson {
+                avg: recon.avg,
+                std_dev: recon.std_dev,
+                p50: recon.p50,
+                p95: recon.p95,
+                p99: recon.p99,
+                min: recon.min,
+                max: recon.max,
+                wall: m.reconstruction_wall.as_secs_f64() * 1000.0,
+            },
+        }
+    }
+}
+
 impl SustainedRateMetrics {
     fn log_json(&self) {
-        let reconstruction_failed_json = if self.reconstruction_failed > 0 {
-            format!(",\"reconstruction_failed\":{}", self.reconstruction_failed)
-        } else {
-            String::new()
-        };
-        let metrics = format!(
-            "{{\"target_rate\":{},\"duration\":{},\"max_in_flight\":{},\"offered\":{},\"completed\":{},\"failed\":{},\"shed\":{},\"achieved_rate\":{},\"saturated\":{},\"request_payload_bytes\":{},\"request_payload_messages\":{},\"request_payload_mib_per_sec\":{},\"request_payload_avg_bytes\":{},\"response_payload_bytes\":{},\"response_payload_messages\":{},\"response_payload_mib_per_sec\":{},\"response_payload_avg_bytes\":{}{},\"latency_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{}}},\"reconstruction_ms\":{{\"avg\":{},\"std_dev\":{},\"p50\":{},\"p95\":{},\"p99\":{},\"min\":{},\"max\":{},\"wall\":{}}}}}",
-            self.target_rate,
-            self.duration_secs,
-            self.max_in_flight,
-            self.offered,
-            self.completed,
-            self.failed,
-            self.shed,
-            self.achieved_rate,
-            self.saturated,
-            self.request_payload_bytes,
-            self.request_payload_messages,
-            self.request_payload_mib_per_sec,
-            self.request_payload_avg_bytes,
-            self.response_payload_bytes,
-            self.response_payload_messages,
-            self.response_payload_mib_per_sec,
-            self.response_payload_avg_bytes,
-            reconstruction_failed_json,
-            self.latency_stat.avg.as_secs_f64() * 1000.0,
-            self.latency_stat.std_dev.as_secs_f64() * 1000.0,
-            self.latency_stat.p50.as_secs_f64() * 1000.0,
-            self.latency_stat.p95.as_secs_f64() * 1000.0,
-            self.latency_stat.p99.as_secs_f64() * 1000.0,
-            self.latency_stat.min.as_secs_f64() * 1000.0,
-            self.latency_stat.max.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.avg.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.std_dev.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.p50.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.p95.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.p99.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.min.as_secs_f64() * 1000.0,
-            self.reconstruction_stat.max.as_secs_f64() * 1000.0,
-            self.reconstruction_wall.as_secs_f64() * 1000.0,
-        );
-        println!("SUSTAINED_RATE_METRICS {metrics}");
+        match serde_json::to_string(&SustainedRateMetricsJson::from(self)) {
+            Ok(metrics) => println!("SUSTAINED_RATE_METRICS {metrics}"),
+            Err(e) => tracing::error!("failed to serialize sustained rate metrics: {e}"),
+        }
     }
 }
 
@@ -797,6 +860,7 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
     rate: u64,
     duration_secs: u64,
     max_in_flight: usize,
+    drain_timeout_secs: u64,
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
@@ -851,12 +915,30 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
 
     let run_start = tokio::time::Instant::now();
     let deadline = run_start + tokio::time::Duration::from_secs(duration_secs);
-    let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(5));
+    let tick_period = tokio::time::Duration::from_millis(5);
+    let mut ticker = tokio::time::interval(tick_period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut launch_accumulator = 0_u64;
+    // The accumulator assumes a steady 200 ticks/s. With MissedTickBehavior::Delay a
+    // stalled iteration pushes ticks late instead of catching up, so the offered rate
+    // can quietly fall below target. Count late ticks so that shortfall is observable.
+    let mut last_tick = tokio::time::Instant::now();
+    let mut late_ticks = 0_u64;
 
     while tokio::time::Instant::now() < deadline {
         ticker.tick().await;
+        let tick_now = tokio::time::Instant::now();
+        if tick_now.duration_since(last_tick) > tick_period * 2 {
+            late_ticks += 1;
+            if late_ticks == 1 {
+                tracing::warn!(
+                    rate,
+                    behind_ms = tick_now.duration_since(last_tick).as_millis() as u64,
+                    "sustained rate ticker fell behind; offered rate may drop below target - underpowered test runner?"
+                );
+            }
+        }
+        last_tick = tick_now;
         drain_finished_user_decrypts(
             &mut join_set,
             &mut collected,
@@ -898,7 +980,18 @@ pub(crate) async fn do_user_decrypt_sustained<R: Rng + CryptoRng>(
         }
     }
 
-    let drain_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
+    if late_ticks > 0 {
+        tracing::warn!(
+            rate,
+            late_ticks,
+            offered,
+            target = total_requests,
+            "sustained rate ticker fell behind; offered rate likely below target - underpowered test runner?"
+        );
+    }
+
+    let drain_deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(drain_timeout_secs);
     while !join_set.is_empty() && tokio::time::Instant::now() < drain_deadline {
         if let Ok(Some(result)) =
             tokio::time::timeout_at(drain_deadline, join_set.join_next()).await
@@ -1293,4 +1386,64 @@ pub(crate) async fn get_public_decrypt_responses(
     }
 
     Ok((resp_response_vec, time_to_get_responses))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_metrics(reconstruction_failed: u64) -> SustainedRateMetrics {
+        let sample = [
+            tokio::time::Duration::from_millis(10),
+            tokio::time::Duration::from_millis(20),
+        ];
+        SustainedRateMetrics {
+            target_rate: 2400,
+            duration_secs: 60,
+            max_in_flight: 10_000,
+            offered: 144_000,
+            completed: 143_900,
+            failed: 100,
+            shed: 0,
+            achieved_rate: 2398.3,
+            saturated: false,
+            request_payload_bytes: 123,
+            request_payload_messages: 4,
+            request_payload_mib_per_sec: 1.5,
+            request_payload_avg_bytes: 30.75,
+            response_payload_bytes: 456,
+            response_payload_messages: 4,
+            response_payload_mib_per_sec: 2.5,
+            response_payload_avg_bytes: 114.0,
+            reconstruction_failed,
+            latency_stat: crate::compute_stat_on_durations(&sample),
+            reconstruction_stat: crate::compute_stat_on_durations(&sample),
+            reconstruction_wall: tokio::time::Duration::from_millis(5),
+        }
+    }
+
+    // The `SUSTAINED_RATE_METRICS` JSON is parsed by
+    // ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml. This locks
+    // the field names/nesting so the serde refactor can't silently drift from that parser.
+    #[test]
+    fn sustained_metrics_json_matches_ci_parser_contract() {
+        let json =
+            serde_json::to_string(&SustainedRateMetricsJson::from(&sample_metrics(0))).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["target_rate"], 2400);
+        assert_eq!(v["duration"], 60); // renamed from `duration_secs`
+        assert_eq!(v["max_in_flight"], 10_000);
+        assert_eq!(v["offered"], 144_000);
+        assert!(v["achieved_rate"].is_number());
+        assert!(v["latency_ms"]["p50"].is_number());
+        assert!(v["latency_ms"]["p99"].is_number());
+        assert!(v["reconstruction_ms"]["wall"].is_number());
+        assert_eq!(v["reconstruction_failed"], 0);
+
+        let v_failed: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&SustainedRateMetricsJson::from(&sample_metrics(3))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v_failed["reconstruction_failed"], 3);
+    }
 }

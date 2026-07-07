@@ -166,25 +166,22 @@ What the workflow does, end to end:
 3. Validate the deployment type and the TLS combination.
 4. Verify the required image tags exist in the registry.
 5. Deploy KMS to the `kms-ci` namespace via `ci/scripts/deploy.sh`.
-6. Capture a `before-perf` network diagnostics snapshot.
+6. Print a terse `before-perf` placement and network-counter snapshot.
 7. Submit the Argo workflow
    (`ci/perf-testing/argo-workflow/sustained-rate-kms-workflow-kms-ci.yaml`).
 8. Stream the Argo logs and send the Slack report.
-9. Capture an `after-perf` snapshot and upload the `network-diagnostics`
-   artifact.
+9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
 
 ## Network diagnostics
 
-The `network-diagnostics` artifact holds `before-perf` and `after-perf`
-snapshots: pod placement, node labels, recent events, pod MTU, network counters,
-readable TCP sysctls, and best-effort `ip`/`ss`/`ethtool` output from running
-containers. When both snapshots exist it also includes
-`pod-interface-counter-delta.tsv` and `network-summary.txt`.
+Network diagnostics are printed directly in the GitHub Actions log. The output
+is intentionally terse: node placement, KMS core pod placement, and after-run
+`eth0` rx/tx deltas for each running KMS core pod plus a total.
 
 Each sustained scenario also captures its own `eth0` rx/tx counters *inside* the
 Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
-snapshot only sees pods that are still running when it's taken, so short-lived
-test pods would otherwise be missed.
+diagnostics only include KMS core pods that are still running when the snapshot
+is taken.
 
 Pod-level `ethtool` can't see AWS ENA allowance counters; those need a
 privileged node-level probe.
