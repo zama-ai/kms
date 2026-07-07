@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc, LazyLock, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -390,6 +390,39 @@ pub(crate) fn now_activity_millis() -> u64 {
     ACTIVITY_EPOCH.elapsed().as_millis() as u64
 }
 
+/// A [`Duration`] stored as whole nanoseconds inside an [`AtomicU64`], so it can
+/// be read and updated without holding a lock.
+///
+/// Network timeouts stay far below the u64 nanosecond ceiling (~584 years), so
+/// the nanosecond encoding never truncates in practice. All operations use
+/// [`Ordering::Relaxed`]: these values are only mutated while the owning
+/// session's `round_counter` lock is held, and are otherwise best-effort timeout
+/// hints that need no cross-variable ordering guarantees.
+#[derive(Debug)]
+pub(crate) struct AtomicDuration(AtomicU64);
+
+impl AtomicDuration {
+    /// Create a new [`AtomicDuration`] holding `d`.
+    pub(crate) fn new(d: Duration) -> Self {
+        Self(AtomicU64::new(d.as_nanos() as u64))
+    }
+
+    /// Read the current [`Duration`].
+    pub(crate) fn load(&self) -> Duration {
+        Duration::from_nanos(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Overwrite the stored value with `d`.
+    pub(crate) fn store(&self, d: Duration) {
+        self.0.store(d.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    /// Add `d` to the stored value.
+    pub(crate) fn fetch_add(&self, d: Duration) {
+        self.0.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
+    }
+}
+
 /// This acts as an interface with the real networking processes.
 /// It communicates with the SendingService via the mpsc Sender channel (sending_channels)
 /// And retrieves messages via the Grpc Server mpsc Receiver channel (receiving_channels)
@@ -411,8 +444,10 @@ pub struct NetworkSession {
     pub(crate) round_counter: tokio::sync::RwLock<usize>,
     // Set keeping track of all servers that have already completed the session (i.e. servers which we are out-of-sync with)
     pub(crate) completed_parties: Arc<DashSet<RoleKind>>,
-    // Measure the number of bytes sent by this session
-    pub(crate) num_byte_sent: RwLock<usize>,
+    /// Number of bytes sent by this session. Stored as an atomic (not a lock)
+    /// since it is a simple accumulator that is never read-modified-written
+    /// across an await point.
+    pub(crate) num_byte_sent: AtomicUsize,
     // Network mode is either async or sync
     pub(crate) network_mode: NetworkMode,
     // If Network mode is sync, we need to keep track of the values below to make sure
@@ -425,9 +460,15 @@ pub struct NetworkSession {
     /// can be read and written without awaiting — in particular from the session
     /// cleanup task while it holds a `DashMap` shard guard.
     pub(crate) last_rec_activity_time: AtomicU64,
-    pub(crate) current_network_timeout: RwLock<Duration>,
-    pub(crate) next_network_timeout: RwLock<Duration>,
-    pub(crate) max_elapsed_time: RwLock<Duration>,
+    /// Current round's network timeout. Backed by an [`AtomicDuration`] rather
+    /// than a lock so the round-transition update in
+    /// [`Networking::increase_round_counter`] only needs to hold the
+    /// `round_counter` lock, instead of acquiring several locks at once.
+    pub(crate) current_network_timeout: AtomicDuration,
+    /// Next round's network timeout; see [`current_network_timeout`](Self::current_network_timeout).
+    pub(crate) next_network_timeout: AtomicDuration,
+    /// Accumulated elapsed-time budget; see [`current_network_timeout`](Self::current_network_timeout).
+    pub(crate) max_elapsed_time: AtomicDuration,
 }
 
 #[async_trait]
@@ -454,10 +495,8 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
 
-        {
-            let mut sent = self.num_byte_sent.write().await;
-            *sent += tag.len() + value.len();
-        }
+        self.num_byte_sent
+            .fetch_add(tag.len() + value.len(), Ordering::Relaxed);
         let request = ArcSendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
@@ -549,17 +588,18 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     /// __NOTE__: We always assume this is called right before sending happens
     async fn increase_round_counter(&self) {
-        let (mut max_elapsed_time, mut current_round_timeout, next_round_timeout, mut net_round) = (
-            self.max_elapsed_time.write().await,
-            self.current_network_timeout.write().await,
-            self.next_network_timeout.read().await,
-            self.round_counter.write().await,
-        );
+        // Hold the round-counter write lock across the whole update. It is the
+        // serialization point for round transitions (readers take it in `send`,
+        // `receive` and `get_current_round`), so the timeout atomics below are
+        // only ever mutated while it is held.
+        let mut net_round = self.round_counter.write().await;
 
-        *max_elapsed_time += *current_round_timeout;
+        let current_round_timeout = self.current_network_timeout.load();
+        self.max_elapsed_time.fetch_add(current_round_timeout);
 
         //Update next round timeout
-        *current_round_timeout = *next_round_timeout;
+        let next_round_timeout = self.next_network_timeout.load();
+        self.current_network_timeout.store(next_round_timeout);
 
         //Update round counter
         *net_round += 1;
@@ -567,19 +607,17 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             "changed network round to: {:?} on party: {:?}, with timeout: {:?}",
             *net_round,
             self.owner,
-            *current_round_timeout
+            next_round_timeout
         )
     }
 
     ///Used to compute the timeout in network functions
     async fn get_timeout_current_round(&self) -> Instant {
         let init_time = self.init_time.get_or_init(Instant::now);
-        let (max_elapsed_time, network_timeout) = (
-            self.max_elapsed_time.read().await,
-            self.current_network_timeout.read().await,
-        );
+        let max_elapsed_time = self.max_elapsed_time.load();
+        let network_timeout = self.current_network_timeout.load();
 
-        *init_time + *network_timeout + *max_elapsed_time
+        *init_time + network_timeout + max_elapsed_time
     }
 
     async fn get_current_round(&self) -> usize {
@@ -616,7 +654,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     }
 
     async fn get_num_byte_sent(&self) -> usize {
-        *self.num_byte_sent.read().await
+        self.num_byte_sent.load(Ordering::Relaxed)
     }
 
     async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
@@ -639,8 +677,7 @@ impl NetworkSession {
     async fn inner_set_timeout_for_next_round(&self, timeout: Duration) {
         match self.inner_get_network_mode() {
             NetworkMode::Sync => {
-                let mut next_network_timeout = self.next_network_timeout.write().await;
-                *next_network_timeout = timeout;
+                self.next_network_timeout.store(timeout);
             }
             NetworkMode::Async => {
                 tracing::warn!(
@@ -654,8 +691,8 @@ impl NetworkSession {
 #[cfg(test)]
 mod tests {
     use dashmap::{DashMap, DashSet};
+    use tokio::sync::Mutex;
     use tokio::sync::mpsc::channel;
-    use tokio::sync::{Mutex, RwLock};
     use tokio::task::JoinSet;
 
     use crate::grpc::GrpcNetworkingManager;
@@ -663,10 +700,10 @@ mod tests {
         CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
         TlsExtensionGetter,
     };
-    use crate::sending_service::{NetworkSession, now_activity_millis};
+    use crate::sending_service::{AtomicDuration, NetworkSession, now_activity_millis};
     use std::collections::HashMap;
     use std::net::IpAddr;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, AtomicUsize};
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
     use test_utils::random_free_port::get_listeners_random_free_ports;
@@ -928,14 +965,14 @@ mod tests {
             receiving_channels: message_store,
             completed_parties: Arc::new(DashSet::new()),
             round_counter: tokio::sync::RwLock::new(0),
-            num_byte_sent: RwLock::new(0),
+            num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },
             init_time: OnceLock::new(),
             last_rec_activity_time: AtomicU64::new(now_activity_millis()),
-            current_network_timeout: RwLock::new(Duration::from_secs(10)),
-            next_network_timeout: RwLock::new(Duration::from_secs(10)),
-            max_elapsed_time: RwLock::new(Duration::from_secs(0)),
+            current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
+            next_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
+            max_elapsed_time: AtomicDuration::new(Duration::ZERO),
         };
 
         // the test is role 2, the session is role 1
@@ -1347,16 +1384,16 @@ mod tests {
             receiving_channels: message_store,
             completed_parties,
             round_counter: tokio::sync::RwLock::new(0),
-            num_byte_sent: RwLock::new(0),
+            num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
             conf: OptionConfigWrapper {
                 conf: Some(test_config(1)),
             },
             init_time: OnceLock::new(),
             last_rec_activity_time: AtomicU64::new(now_activity_millis()),
-            current_network_timeout: RwLock::new(wait),
-            next_network_timeout: RwLock::new(wait),
-            max_elapsed_time: RwLock::new(Duration::from_secs(0)),
+            current_network_timeout: AtomicDuration::new(wait),
+            next_network_timeout: AtomicDuration::new(wait),
+            max_elapsed_time: AtomicDuration::new(Duration::ZERO),
         };
 
         let expected = vec![42u8; 8];

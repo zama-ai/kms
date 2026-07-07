@@ -3,7 +3,7 @@
 use super::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use super::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
 use super::sending_service::{
-    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
+    AtomicDuration, GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
 };
 use super::tls::extract_subject_from_cert;
 use crate::constants::{
@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
@@ -28,7 +28,7 @@ use threshold_types::{
     party::{MpcIdentity, RoleAssignment},
 };
 use tokio::sync::{
-    Mutex, RwLock,
+    Mutex,
     mpsc::{Receiver, Sender, channel},
 };
 use tokio::time::{Duration, Instant};
@@ -482,10 +482,10 @@ impl GrpcNetworkingManager {
                     completed_parties,
                     init_time: OnceLock::new(),
                     last_rec_activity_time: AtomicU64::new(now_activity_millis()),
-                    current_network_timeout: RwLock::new(timeout),
-                    next_network_timeout: RwLock::new(timeout),
-                    max_elapsed_time: RwLock::new(Duration::ZERO),
-                    num_byte_sent: RwLock::new(0),
+                    current_network_timeout: AtomicDuration::new(timeout),
+                    next_network_timeout: AtomicDuration::new(timeout),
+                    max_elapsed_time: AtomicDuration::new(Duration::ZERO),
+                    num_byte_sent: AtomicUsize::new(0),
                 });
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
@@ -510,10 +510,10 @@ impl GrpcNetworkingManager {
                     completed_parties,
                     init_time: OnceLock::new(),
                     last_rec_activity_time: AtomicU64::new(now_activity_millis()),
-                    current_network_timeout: RwLock::new(timeout),
-                    next_network_timeout: RwLock::new(timeout),
-                    max_elapsed_time: RwLock::new(Duration::ZERO),
-                    num_byte_sent: RwLock::new(0),
+                    current_network_timeout: AtomicDuration::new(timeout),
+                    next_network_timeout: AtomicDuration::new(timeout),
+                    max_elapsed_time: AtomicDuration::new(Duration::ZERO),
+                    num_byte_sent: AtomicUsize::new(0),
                 });
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
