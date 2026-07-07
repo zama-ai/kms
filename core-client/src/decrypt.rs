@@ -18,7 +18,7 @@ use kms_lib::{
 };
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, future::Future, sync::Arc};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -104,186 +104,52 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments)]
-pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
-    rng: &mut R,
-    num_requests: usize,
-    internal_client: Arc<RwLock<Client>>,
-    ct_batch: Vec<TypedCiphertext>,
-    key_id: KeyId,
-    context_id: Option<ContextId>,
-    epoch_id: Option<EpochId>,
-    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    ptxt: TypedPlaintext,
-    num_parties: usize,
-    kms_addrs: Vec<alloy_primitives::Address>,
-    max_iter: usize,
-    num_expected_responses: usize,
-    inter_request_delay: tokio::time::Duration,
-    parallel_requests: usize,
-    domain: Eip712Domain,
-) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
-    // `extra_data` is always derived from the (resolved) context/epoch via
-    // `make_extra_data` (RFC-005 v2) — never user-supplied — matching the
-    // keygen/CRS request builders.
-    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
-
-    // PHASE 0: build every request up front.
-    let mut requests = Vec::with_capacity(num_requests);
-    for _ in 0..num_requests {
-        let req_id = RequestId::new_random(rng);
-        let dec_req = internal_client.write().await.public_decryption_request(
-            ct_batch.clone(),
-            &domain,
-            &req_id,
-            context_id.as_ref(),
-            &key_id.into(),
-            epoch_id.as_ref(),
-            &extra_data,
-        )?;
-        requests.push((req_id, dec_req));
-    }
-
-    // PHASE 1: send the prebuilt requests and collect their responses.
-    let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-    let mut durations_to_get_responses = Vec::new();
-    let start = tokio::time::Instant::now();
-
-    for (i, (req_id, dec_req)) in requests.into_iter().enumerate() {
-        // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
-        if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
-            tracing::info!(
-                "Current status {i}/{num_requests}. Sleeping for {:?} before sending {parallel_requests} more parallel requests.",
-                inter_request_delay
-            );
-            tokio::time::sleep(inter_request_delay).await;
-        }
-        let internal_client = internal_client.clone();
-        let core_endpoints_req = core_endpoints_req.clone();
-        let core_endpoints_resp = core_endpoints_resp.clone();
-        let kms_addrs = kms_addrs.clone();
-
-        join_set.spawn(async move {
-            // start timing this request's collect window
-            let request_start = tokio::time::Instant::now();
-
-            // make parallel requests by calling [decrypt] in a thread
-            let mut req_tasks = JoinSet::new();
-
-            for ce in core_endpoints_req.values() {
-                let req_cloned = dec_req.clone();
-                let mut cur_client = ce.clone();
-                req_tasks.spawn(async move {
-                    cur_client
-                        .public_decrypt(tonic::Request::new(req_cloned))
-                        .await
-                });
-            }
-
-            let mut req_response_vec = Vec::new();
-            while let Some(inner) = req_tasks.join_next().await {
-                match inner {
-                    Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
-                    Ok(Err(e)) => {
-                        tracing::warn!("Public decrypt request to a core failed: {e}");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Public decrypt request task panicked: {e}");
-                    }
-                }
-            }
-            if req_response_vec.len() < num_expected_responses {
-                anyhow::bail!(
-                    "Only {}/{} public decrypt requests succeeded, need at least {}",
-                    req_response_vec.len(),
-                    num_parties,
-                    num_expected_responses
-                );
-            }
-
-            tracing::info!(
-                "{:?} ###! Sent {}/{} public decrypt requests successfully. Since start {:?}",
-                req_id.as_str(),
-                req_response_vec.len(),
-                num_parties,
-                start.elapsed()
-            );
-
-            // collect only — verification is deferred to phase 2 (below) so it stays out of the throughput window.
-            let (resp_response_vec, time_to_get_responses) = get_public_decrypt_responses(
-                &core_endpoints_resp,
-                None,
-                None,
-                req_id,
-                max_iter,
-                num_expected_responses,
-                &*internal_client.read().await,
-                &kms_addrs,
-                request_start,
-            )
-            .await?;
-
-            Ok((req_id, dec_req, resp_response_vec, time_to_get_responses))
-        });
-    }
-
-    // Drain phase 1: gather every request, its responses, and its collect-only latency.
-    let mut collected = Vec::with_capacity(num_requests);
-    while let Some(result) = join_set.join_next().await {
-        let (req_id, dec_req, resp_response_vec, time_to_get_responses) = result??;
-        durations_to_get_responses.push(time_to_get_responses);
-        collected.push((req_id, dec_req, resp_response_vec));
-    }
-    let collect_elapsed = start.elapsed();
-
-    // PHASE 2: verify each result in parallel. Measured and reported separately from the throughput figure.
-    let verify_start = tokio::time::Instant::now();
-    let mut verify_tasks: JoinSet<Result<(RequestId, String), anyhow::Error>> = JoinSet::new();
-    for (req_id, dec_req, resp_response_vec) in collected {
-        let internal_client = internal_client.clone();
-        let kms_addrs = kms_addrs.clone();
-        let ptxt = ptxt.clone();
-        verify_tasks.spawn(async move {
-            verify_public_decrypt_responses(
-                &resp_response_vec,
-                PubDecVerificationMaterial::Request(dec_req),
-                Some(ptxt),
-                &*internal_client.read().await,
-                &kms_addrs,
-                num_expected_responses,
-            )?;
-            Ok((req_id, format!("{resp_response_vec:x?}")))
-        });
-    }
-
-    let mut result_vec = Vec::with_capacity(durations_to_get_responses.len());
-    while let Some(res) = verify_tasks.join_next().await {
-        let (req_id, msg) = res??;
-        result_vec.push((Some(req_id), msg));
-    }
-    let verify_elapsed = verify_start.elapsed();
-
-    print_phased_timings(
-        "public decrypt",
-        collect_elapsed,
-        &durations_to_get_responses,
-        verify_elapsed,
-    );
-
-    Ok(result_vec)
-}
-
-struct CollectedUserDecrypt {
+struct CollectedPublicDecrypt {
     req_id: RequestId,
-    user_decrypt_req: UserDecryptionRequest,
-    enc_pk: UnifiedPublicEncKey,
-    enc_sk: UnifiedPrivateEncKey,
-    resp_response_vec: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
+    dec_req: PublicDecryptionRequest,
+    resp_response_vec: Vec<PublicDecryptionResponse>,
     collect_duration: tokio::time::Duration,
 }
 
-struct UserDecryptMetrics {
+trait CollectedDecryptRateResult {
+    fn collect_duration(&self) -> tokio::time::Duration;
+    fn response_payload_bytes(&self) -> u64;
+    fn response_payload_messages(&self) -> u64;
+}
+
+impl CollectedDecryptRateResult for CollectedPublicDecrypt {
+    fn collect_duration(&self) -> tokio::time::Duration {
+        self.collect_duration
+    }
+
+    fn response_payload_bytes(&self) -> u64 {
+        self.resp_response_vec
+            .iter()
+            .map(|response| response.encoded_len() as u64)
+            .sum()
+    }
+
+    fn response_payload_messages(&self) -> u64 {
+        self.resp_response_vec.len() as u64
+    }
+}
+
+struct DecryptRateCollection<T> {
+    collected: Vec<T>,
+    completed: u64,
+    durations_to_get_responses: Vec<tokio::time::Duration>,
+    collect_elapsed: tokio::time::Duration,
+    offered: u64,
+    failed: u64,
+    shed: u64,
+    saturated: bool,
+    request_payload_bytes: u64,
+    request_payload_messages: u64,
+    response_payload_bytes: u64,
+    response_payload_messages: u64,
+}
+
+struct DecryptRateMetrics {
     target_rate: u64,
     duration_secs: u64,
     max_in_flight: usize,
@@ -301,17 +167,14 @@ struct UserDecryptMetrics {
     response_payload_messages: u64,
     response_payload_mib_per_sec: f64,
     response_payload_avg_bytes: f64,
-    reconstruction_failed: u64,
+    post_process_failed: u64,
     latency_stat: crate::DurationStat,
-    reconstruction_stat: crate::DurationStat,
-    reconstruction_wall: tokio::time::Duration,
+    post_process_stat: crate::DurationStat,
+    post_process_wall: tokio::time::Duration,
 }
 
-/// Wire format for the `USER_DECRYPT_METRICS` line the CI harness parses.
-/// Serializing a dedicated struct keeps the JSON shape (field names, nesting)
-/// tied to the type instead of a hand-maintained `format!` string.
 #[derive(serde::Serialize)]
-struct UserDecryptMetricsJson {
+struct DecryptRateMetricsJson {
     target_rate: u64,
     #[serde(rename = "duration")]
     duration_secs: u64,
@@ -330,24 +193,11 @@ struct UserDecryptMetricsJson {
     response_payload_messages: u64,
     response_payload_mib_per_sec: f64,
     response_payload_avg_bytes: f64,
-    reconstruction_failed: u64,
     latency_ms: DurationStatMsJson,
-    reconstruction_ms: ReconstructionMsJson,
 }
 
 #[derive(serde::Serialize)]
-struct DurationStatMsJson {
-    avg: f64,
-    std_dev: f64,
-    p50: f64,
-    p95: f64,
-    p99: f64,
-    min: f64,
-    max: f64,
-}
-
-#[derive(serde::Serialize)]
-struct ReconstructionMsJson {
+struct PhaseMsJson {
     avg: f64,
     std_dev: f64,
     p50: f64,
@@ -358,22 +208,25 @@ struct ReconstructionMsJson {
     wall: f64,
 }
 
-fn duration_stat_ms(stat: &crate::DurationStat) -> DurationStatMsJson {
-    let ms = |d: tokio::time::Duration| d.as_secs_f64() * 1000.0;
-    DurationStatMsJson {
-        avg: ms(stat.avg),
-        std_dev: ms(stat.std_dev),
-        p50: ms(stat.p50),
-        p95: ms(stat.p95),
-        p99: ms(stat.p99),
-        min: ms(stat.min),
-        max: ms(stat.max),
+fn duration_stat_with_wall_ms(
+    stat: &crate::DurationStat,
+    wall: tokio::time::Duration,
+) -> PhaseMsJson {
+    let stat = duration_stat_ms(stat);
+    PhaseMsJson {
+        avg: stat.avg,
+        std_dev: stat.std_dev,
+        p50: stat.p50,
+        p95: stat.p95,
+        p99: stat.p99,
+        min: stat.min,
+        max: stat.max,
+        wall: wall.as_secs_f64() * 1000.0,
     }
 }
 
-impl From<&UserDecryptMetrics> for UserDecryptMetricsJson {
-    fn from(m: &UserDecryptMetrics) -> Self {
-        let recon = duration_stat_ms(&m.reconstruction_stat);
+impl From<&DecryptRateMetrics> for DecryptRateMetricsJson {
+    fn from(m: &DecryptRateMetrics) -> Self {
         Self {
             target_rate: m.target_rate,
             duration_secs: m.duration_secs,
@@ -392,28 +245,742 @@ impl From<&UserDecryptMetrics> for UserDecryptMetricsJson {
             response_payload_messages: m.response_payload_messages,
             response_payload_mib_per_sec: m.response_payload_mib_per_sec,
             response_payload_avg_bytes: m.response_payload_avg_bytes,
-            reconstruction_failed: m.reconstruction_failed,
             latency_ms: duration_stat_ms(&m.latency_stat),
-            reconstruction_ms: ReconstructionMsJson {
-                avg: recon.avg,
-                std_dev: recon.std_dev,
-                p50: recon.p50,
-                p95: recon.p95,
-                p99: recon.p99,
-                min: recon.min,
-                max: recon.max,
-                wall: m.reconstruction_wall.as_secs_f64() * 1000.0,
-            },
         }
     }
 }
 
-impl UserDecryptMetrics {
-    fn log_json(&self) {
-        match serde_json::to_string(&UserDecryptMetricsJson::from(self)) {
-            Ok(metrics) => println!("USER_DECRYPT_METRICS {metrics}"),
-            Err(e) => tracing::error!("failed to serialize user decrypt metrics: {e}"),
+impl DecryptRateMetrics {
+    fn to_json(
+        &self,
+        failed_field: &'static str,
+        timing_field: &'static str,
+    ) -> serde_json::Result<String> {
+        let mut value = serde_json::to_value(DecryptRateMetricsJson::from(self))?;
+        let object = value
+            .as_object_mut()
+            .expect("metrics JSON starts as an object");
+        object.insert(failed_field.to_owned(), self.post_process_failed.into());
+        object.insert(
+            timing_field.to_owned(),
+            serde_json::to_value(duration_stat_with_wall_ms(
+                &self.post_process_stat,
+                self.post_process_wall,
+            ))?,
+        );
+        serde_json::to_string(&value)
+    }
+
+    fn log_json(
+        &self,
+        marker: &'static str,
+        failed_field: &'static str,
+        timing_field: &'static str,
+    ) {
+        match self.to_json(failed_field, timing_field) {
+            Ok(metrics) => println!("{marker} {metrics}"),
+            Err(e) => tracing::error!("failed to serialize {marker} metrics: {e}"),
         }
+    }
+}
+
+fn endpoint_clients(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+) -> CoreEndpointClients {
+    Arc::<[CoreEndpointClient]>::from(core_endpoints.values().cloned().collect::<Vec<_>>())
+}
+
+/// Collect responses from a set of already-spawned per-party fetch tasks, stopping as soon as
+/// `num_expected_responses` have arrived and draining the rest in the background. Shared by the
+/// public- and user-decrypt collectors, which differ only in how they build `resp_tasks`.
+async fn collect_decrypt_responses<Resp: Send + 'static>(
+    label: &'static str,
+    rate: u64,
+    request_start: tokio::time::Instant,
+    mut resp_tasks: JoinSet<anyhow::Result<Resp>>,
+    num_parties: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<(Vec<Resp>, tokio::time::Duration)> {
+    let mut resp_response_vec = Vec::new();
+    let mut collect_duration = None;
+    while let Some(resp) = resp_tasks.join_next().await {
+        match resp {
+            Ok(Ok(inner)) => resp_response_vec.push(inner),
+            Ok(Err(e)) => tracing::debug!("A core failed to return {label} result: {e}"),
+            Err(e) => tracing::debug!("{label} response task panicked: {e}"),
+        }
+        if resp_response_vec.len() >= num_expected_responses {
+            collect_duration = Some(request_start.elapsed());
+            break;
+        }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} {label} responses, need at least {}",
+            resp_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
+
+    let pending_response_tasks = resp_tasks.len();
+    if pending_response_tasks > 0 {
+        tokio::spawn(async move {
+            while let Some(resp) = resp_tasks.join_next().await {
+                match resp {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => tracing::debug!("Outstanding {label} response failed: {e}"),
+                    Err(e) => {
+                        tracing::debug!("Outstanding {label} response task panicked: {e}")
+                    }
+                }
+            }
+            tracing::debug!(
+                rate,
+                drained = pending_response_tasks,
+                "drained outstanding {label} resp tasks"
+            );
+        });
+    }
+
+    let collect_duration = collect_duration.expect("set once the response quota is met");
+    tracing::debug!(
+        rate,
+        got = resp_response_vec.len(),
+        needed = num_expected_responses,
+        elapsed = ?collect_duration,
+        "{label} resp"
+    );
+    Ok((resp_response_vec, collect_duration))
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn send_and_collect_public_decrypt(
+    rate: u64,
+    req_id: RequestId,
+    dec_req: PublicDecryptionRequest,
+    core_endpoints_req: CoreEndpointClients,
+    core_endpoints_resp: CoreEndpointClients,
+    num_parties: usize,
+    max_iter: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<CollectedPublicDecrypt> {
+    let request_start = tokio::time::Instant::now();
+
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints_req.iter() {
+        let req_cloned = dec_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .public_decrypt(tonic::Request::new(req_cloned))
+                .await
+        });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::debug!("Public decrypt request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::debug!("Public decrypt request task panicked: {e}");
+            }
+        }
+    }
+    if req_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only {}/{} public decrypt requests succeeded, need at least {}",
+            req_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
+
+    let mut resp_tasks = JoinSet::new();
+    for ce in core_endpoints_resp.iter() {
+        let mut cur_client = ce.clone();
+        resp_tasks.spawn(async move {
+            let mut response = cur_client
+                .get_public_decryption_result(tonic::Request::new(req_id.into()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for public decryption after {max_iter} retries."
+                    );
+                }
+                ctr += 1;
+                response = cur_client
+                    .get_public_decryption_result(tonic::Request::new(req_id.into()))
+                    .await;
+            }
+            let resp =
+                response.map_err(|e| anyhow::anyhow!("public decryption response failed: {e}"))?;
+            Ok(resp.into_inner())
+        });
+    }
+
+    let (resp_response_vec, collect_duration) = collect_decrypt_responses(
+        "public decrypt",
+        rate,
+        request_start,
+        resp_tasks,
+        num_parties,
+        num_expected_responses,
+    )
+    .await?;
+
+    Ok(CollectedPublicDecrypt {
+        req_id,
+        dec_req,
+        resp_response_vec,
+        collect_duration,
+    })
+}
+
+async fn verify_public_decrypt(
+    internal_client: Arc<RwLock<Client>>,
+    kms_addrs: Vec<alloy_primitives::Address>,
+    ptxt: TypedPlaintext,
+    num_expected_responses: usize,
+    collected: CollectedPublicDecrypt,
+) -> anyhow::Result<(RequestId, String, tokio::time::Duration)> {
+    let CollectedPublicDecrypt {
+        req_id,
+        dec_req,
+        resp_response_vec,
+        collect_duration: _,
+    } = collected;
+    let verify_one_start = tokio::time::Instant::now();
+    verify_public_decrypt_responses(
+        &resp_response_vec,
+        PubDecVerificationMaterial::Request(dec_req),
+        Some(ptxt.clone()),
+        &*internal_client.read().await,
+        &kms_addrs,
+        num_expected_responses,
+    )?;
+    Ok((
+        req_id,
+        format!("Public decrypted Plaintext {ptxt:?}"),
+        verify_one_start.elapsed(),
+    ))
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn do_public_decrypt_once<R: Rng + CryptoRng>(
+    rng: &mut R,
+    internal_client: Arc<RwLock<Client>>,
+    ct_batch: Vec<TypedCiphertext>,
+    key_id: KeyId,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    ptxt: TypedPlaintext,
+    num_parties: usize,
+    kms_addrs: Vec<alloy_primitives::Address>,
+    max_iter: usize,
+    num_expected_responses: usize,
+    domain: Eip712Domain,
+) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
+    let core_endpoints_req = endpoint_clients(core_endpoints_req);
+    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+
+    let req_id = RequestId::new_random(rng);
+    let dec_req = internal_client.write().await.public_decryption_request(
+        ct_batch,
+        &domain,
+        &req_id,
+        context_id.as_ref(),
+        &key_id.into(),
+        epoch_id.as_ref(),
+        &extra_data,
+    )?;
+
+    let collected = send_and_collect_public_decrypt(
+        1,
+        req_id,
+        dec_req,
+        core_endpoints_req,
+        core_endpoints_resp,
+        num_parties,
+        max_iter,
+        num_expected_responses,
+    )
+    .await?;
+    let collect_duration = collected.collect_duration;
+
+    let verify_start = tokio::time::Instant::now();
+    let (req_id, msg, verify_duration) = verify_public_decrypt(
+        internal_client,
+        kms_addrs,
+        ptxt,
+        num_expected_responses,
+        collected,
+    )
+    .await?;
+    let verify_elapsed = verify_start.elapsed();
+
+    print_phased_timings(
+        "public decrypt",
+        collect_duration,
+        &[collect_duration],
+        verify_elapsed,
+    );
+    tracing::debug!(elapsed = ?verify_duration, "pdec verify");
+
+    Ok(vec![(Some(req_id), msg)])
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
+    rng: &mut R,
+    rate: u64,
+    duration_secs: u64,
+    max_in_flight: usize,
+    drain_timeout_secs: u64,
+    internal_client: Arc<RwLock<Client>>,
+    ct_batch: Vec<TypedCiphertext>,
+    key_id: KeyId,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    ptxt: TypedPlaintext,
+    num_parties: usize,
+    kms_addrs: Vec<alloy_primitives::Address>,
+    max_iter: usize,
+    num_expected_responses: usize,
+    domain: Eip712Domain,
+) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    let total_requests = (rate * duration_secs) as usize;
+    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
+    let core_endpoints_req = endpoint_clients(core_endpoints_req);
+    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+
+    // PHASE 1: build the request batch before the timed launch window.
+    tracing::info!(
+        "Prebuilding {total_requests} public decrypt requests: rate={rate}/s, duration={duration_secs}s, max_in_flight={max_in_flight}"
+    );
+    let mut requests = Vec::with_capacity(total_requests);
+    for _ in 0..total_requests {
+        let req_id = RequestId::new_random(rng);
+        let dec_req = internal_client.write().await.public_decryption_request(
+            ct_batch.clone(),
+            &domain,
+            &req_id,
+            context_id.as_ref(),
+            &key_id.into(),
+            epoch_id.as_ref(),
+            &extra_data,
+        )?;
+        requests.push((req_id, dec_req));
+    }
+
+    let mut collection = collect_decrypt_rate(
+        "public decrypt",
+        rate,
+        duration_secs,
+        max_in_flight,
+        drain_timeout_secs,
+        total_requests,
+        requests.into_iter(),
+        core_endpoints_req.len(),
+        |(_req_id, dec_req)| dec_req.encoded_len() as u64,
+        |(req_id, dec_req)| {
+            let core_endpoints_req = Arc::clone(&core_endpoints_req);
+            let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
+            send_and_collect_public_decrypt(
+                rate,
+                req_id,
+                dec_req,
+                core_endpoints_req,
+                core_endpoints_resp,
+                num_parties,
+                max_iter,
+                num_expected_responses,
+            )
+        },
+    )
+    .await;
+
+    let collected = std::mem::take(&mut collection.collected);
+
+    // PHASE 4: verify collected responses and emit metrics.
+    let verify_start = tokio::time::Instant::now();
+    let mut verify_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
+    for collected_result in collected {
+        let internal_client = internal_client.clone();
+        let kms_addrs = kms_addrs.clone();
+        let ptxt = ptxt.clone();
+        verify_tasks.spawn(async move {
+            verify_public_decrypt(
+                internal_client,
+                kms_addrs,
+                ptxt,
+                num_expected_responses,
+                collected_result,
+            )
+            .await
+            .map(|(_, _, duration)| duration)
+        });
+    }
+
+    let mut verification_durations =
+        Vec::with_capacity(collection.durations_to_get_responses.len());
+    let mut verification_failed = 0_u64;
+    while let Some(res) = verify_tasks.join_next().await {
+        match res {
+            Ok(Ok(verify_duration)) => {
+                verification_durations.push(verify_duration);
+            }
+            Ok(Err(e)) => {
+                verification_failed += 1;
+                tracing::debug!("Public decrypt verification failed: {e}");
+            }
+            Err(e) => {
+                verification_failed += 1;
+                tracing::warn!("Public decrypt verification task panicked: {e}");
+            }
+        }
+    }
+    let verify_elapsed = verify_start.elapsed();
+
+    let metrics = decrypt_rate_metrics(
+        rate,
+        duration_secs,
+        max_in_flight,
+        &collection,
+        verification_failed,
+        &verification_durations,
+        verify_elapsed,
+    );
+    metrics.log_json(
+        "PUBLIC_DECRYPT_METRICS",
+        "verification_failed",
+        "verification_ms",
+    );
+    if verification_failed > 0 {
+        tracing::warn!(verification_failed, "public decrypt verification failures");
+    }
+
+    print_phased_timings(
+        "public decrypt",
+        collection.collect_elapsed,
+        &collection.durations_to_get_responses,
+        verify_elapsed,
+    );
+
+    if verification_failed > 0 {
+        anyhow::bail!("{verification_failed} public decrypt verifications failed");
+    }
+
+    Ok(Vec::new())
+}
+
+struct CollectedUserDecrypt {
+    req_id: RequestId,
+    user_decrypt_req: UserDecryptionRequest,
+    enc_pk: UnifiedPublicEncKey,
+    enc_sk: UnifiedPrivateEncKey,
+    resp_response_vec: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
+    collect_duration: tokio::time::Duration,
+}
+
+impl CollectedDecryptRateResult for CollectedUserDecrypt {
+    fn collect_duration(&self) -> tokio::time::Duration {
+        self.collect_duration
+    }
+
+    fn response_payload_bytes(&self) -> u64 {
+        self.resp_response_vec
+            .iter()
+            .map(|response| response.encoded_len() as u64)
+            .sum()
+    }
+
+    fn response_payload_messages(&self) -> u64 {
+        self.resp_response_vec.len() as u64
+    }
+}
+
+#[derive(serde::Serialize)]
+struct DurationStatMsJson {
+    avg: f64,
+    std_dev: f64,
+    p50: f64,
+    p95: f64,
+    p99: f64,
+    min: f64,
+    max: f64,
+}
+
+fn duration_stat_ms(stat: &crate::DurationStat) -> DurationStatMsJson {
+    let ms = |d: tokio::time::Duration| d.as_secs_f64() * 1000.0;
+    DurationStatMsJson {
+        avg: ms(stat.avg),
+        std_dev: ms(stat.std_dev),
+        p50: ms(stat.p50),
+        p95: ms(stat.p95),
+        p99: ms(stat.p99),
+        min: ms(stat.min),
+        max: ms(stat.max),
+    }
+}
+
+fn drain_finished_decrypts<T: CollectedDecryptRateResult + 'static>(
+    label: &'static str,
+    join_set: &mut JoinSet<Result<T, anyhow::Error>>,
+    collected: &mut Vec<T>,
+    durations: &mut Vec<tokio::time::Duration>,
+    failed: &mut u64,
+) {
+    while let Some(result) = join_set.try_join_next() {
+        match result {
+            Ok(Ok(collected_result)) => {
+                durations.push(collected_result.collect_duration());
+                collected.push(collected_result);
+            }
+            Ok(Err(e)) => {
+                *failed += 1;
+                tracing::debug!("{label} request failed: {e}");
+            }
+            Err(e) => {
+                *failed += 1;
+                tracing::warn!("{label} task panicked: {e}");
+            }
+        }
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn collect_decrypt_rate<Req, Requests, T, Fut, Spawn, PayloadBytes>(
+    label: &'static str,
+    rate: u64,
+    duration_secs: u64,
+    max_in_flight: usize,
+    drain_timeout_secs: u64,
+    total_requests: usize,
+    mut requests: Requests,
+    payload_targets_per_request: usize,
+    mut request_payload_bytes: PayloadBytes,
+    mut spawn_request: Spawn,
+) -> DecryptRateCollection<T>
+where
+    Requests: Iterator<Item = Req>,
+    T: CollectedDecryptRateResult + Send + 'static,
+    Fut: Future<Output = anyhow::Result<T>> + Send + 'static,
+    Spawn: FnMut(Req) -> Fut,
+    PayloadBytes: FnMut(&Req) -> u64,
+{
+    let mut join_set: JoinSet<Result<T, anyhow::Error>> = JoinSet::new();
+    let mut collected = Vec::with_capacity(total_requests);
+    let mut durations_to_get_responses = Vec::with_capacity(total_requests);
+    let mut offered = 0_u64;
+    let mut failed = 0_u64;
+    let mut shed = 0_u64;
+    let mut saturated = false;
+    let mut request_payload_bytes_total = 0_u64;
+    let mut request_payload_messages = 0_u64;
+
+    // PHASE 2: launch requests at the configured rate and collect completed work.
+    let run_start = tokio::time::Instant::now();
+    let deadline = run_start + tokio::time::Duration::from_secs(duration_secs);
+    let tick_period = tokio::time::Duration::from_millis(5);
+    let mut ticker = tokio::time::interval(tick_period);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut launch_accumulator = 0_u64;
+    // The accumulator assumes a steady 200 ticks/s. With MissedTickBehavior::Delay a
+    // stalled iteration pushes ticks late instead of catching up, so the offered rate
+    // can quietly fall below target. Count late ticks so that shortfall is observable.
+    let mut last_tick = tokio::time::Instant::now();
+    let mut late_ticks = 0_u64;
+
+    while tokio::time::Instant::now() < deadline {
+        ticker.tick().await;
+        let tick_now = tokio::time::Instant::now();
+        if tick_now.duration_since(last_tick) > tick_period * 2 {
+            late_ticks += 1;
+            if late_ticks == 1 {
+                tracing::warn!(
+                    rate,
+                    behind_ms = tick_now.duration_since(last_tick).as_millis() as u64,
+                    "{label} ticker fell behind; offered rate may drop below target - underpowered test runner?"
+                );
+            }
+        }
+        last_tick = tick_now;
+        drain_finished_decrypts(
+            label,
+            &mut join_set,
+            &mut collected,
+            &mut durations_to_get_responses,
+            &mut failed,
+        );
+
+        launch_accumulator = launch_accumulator.saturating_add(rate);
+        let launches = launch_accumulator / 200;
+        launch_accumulator %= 200;
+
+        for _ in 0..launches {
+            let Some(request) = requests.next() else {
+                break;
+            };
+            offered += 1;
+            if join_set.len() >= max_in_flight {
+                // Shed: client drops this arrival because the in-flight cap says saturated.
+                shed += 1;
+                saturated = true;
+                continue;
+            }
+            request_payload_bytes_total +=
+                request_payload_bytes(&request) * payload_targets_per_request as u64;
+            request_payload_messages += payload_targets_per_request as u64;
+            join_set.spawn(spawn_request(request));
+        }
+    }
+
+    if late_ticks > 0 {
+        tracing::warn!(
+            rate,
+            late_ticks,
+            offered,
+            target = total_requests,
+            "{label} ticker fell behind; offered rate likely below target - underpowered test runner?"
+        );
+    }
+
+    // PHASE 3: drain in-flight requests for a bounded period.
+    let drain_deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(drain_timeout_secs);
+    while !join_set.is_empty() && tokio::time::Instant::now() < drain_deadline {
+        if let Ok(Some(result)) =
+            tokio::time::timeout_at(drain_deadline, join_set.join_next()).await
+        {
+            match result {
+                Ok(Ok(collected_result)) => {
+                    durations_to_get_responses.push(collected_result.collect_duration());
+                    collected.push(collected_result);
+                }
+                Ok(Err(e)) => {
+                    failed += 1;
+                    tracing::debug!("{label} request failed: {e}");
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!("{label} task panicked: {e}");
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    if !join_set.is_empty() {
+        saturated = true;
+        let remaining = join_set.len();
+        failed += remaining as u64;
+        tracing::warn!("{label} drain timed out with {remaining} requests still in flight");
+        join_set.abort_all();
+    }
+
+    let collect_elapsed = run_start.elapsed();
+    let response_payload_bytes = collected
+        .iter()
+        .map(CollectedDecryptRateResult::response_payload_bytes)
+        .sum();
+    let response_payload_messages = collected
+        .iter()
+        .map(CollectedDecryptRateResult::response_payload_messages)
+        .sum();
+
+    let completed = collected.len() as u64;
+    DecryptRateCollection {
+        collected,
+        completed,
+        durations_to_get_responses,
+        collect_elapsed,
+        offered,
+        failed,
+        shed,
+        saturated,
+        request_payload_bytes: request_payload_bytes_total,
+        request_payload_messages,
+        response_payload_bytes,
+        response_payload_messages,
+    }
+}
+
+fn decrypt_rate_metrics<T>(
+    rate: u64,
+    duration_secs: u64,
+    max_in_flight: usize,
+    collection: &DecryptRateCollection<T>,
+    post_process_failed: u64,
+    post_process_durations: &[tokio::time::Duration],
+    post_process_wall: tokio::time::Duration,
+) -> DecryptRateMetrics {
+    let request_payload_mib_per_sec = if collection.collect_elapsed.is_zero() {
+        0.0
+    } else {
+        collection.request_payload_bytes as f64
+            / 1024.0
+            / 1024.0
+            / collection.collect_elapsed.as_secs_f64()
+    };
+    let request_payload_avg_bytes = if collection.request_payload_messages == 0 {
+        0.0
+    } else {
+        collection.request_payload_bytes as f64 / collection.request_payload_messages as f64
+    };
+    let response_payload_mib_per_sec = if collection.collect_elapsed.is_zero() {
+        0.0
+    } else {
+        collection.response_payload_bytes as f64
+            / 1024.0
+            / 1024.0
+            / collection.collect_elapsed.as_secs_f64()
+    };
+    let response_payload_avg_bytes = if collection.response_payload_messages == 0 {
+        0.0
+    } else {
+        collection.response_payload_bytes as f64 / collection.response_payload_messages as f64
+    };
+
+    DecryptRateMetrics {
+        target_rate: rate,
+        duration_secs,
+        max_in_flight,
+        offered: collection.offered,
+        completed: collection.completed,
+        failed: collection.failed,
+        shed: collection.shed,
+        // TODO: consider also reporting completed / duration_secs; this includes drain time.
+        achieved_rate: collection.completed as f64 / collection.collect_elapsed.as_secs_f64(),
+        saturated: collection.saturated,
+        request_payload_bytes: collection.request_payload_bytes,
+        request_payload_messages: collection.request_payload_messages,
+        request_payload_mib_per_sec,
+        request_payload_avg_bytes,
+        response_payload_bytes: collection.response_payload_bytes,
+        response_payload_messages: collection.response_payload_messages,
+        response_payload_mib_per_sec,
+        response_payload_avg_bytes,
+        post_process_failed,
+        latency_stat: crate::compute_stat_on_durations(&collection.durations_to_get_responses),
+        post_process_stat: crate::compute_stat_on_durations(post_process_durations),
+        post_process_wall,
     }
 }
 
@@ -497,67 +1064,19 @@ async fn send_and_collect_user_decrypt(
             }
             let resp =
                 response.map_err(|e| anyhow::anyhow!("user decryption response failed: {e}"))?;
-            Ok((req_id_clone, resp.into_inner()))
+            Ok(resp.into_inner())
         });
     }
 
-    let mut resp_response_vec = Vec::new();
-    let mut collect_duration = None;
-    while let Some(resp) = resp_tasks.join_next().await {
-        match resp {
-            Ok(Ok((_req_id, inner))) => {
-                resp_response_vec.push(inner);
-            }
-            Ok(Err(e)) => {
-                tracing::debug!("A core failed to return user decryption result: {e}");
-            }
-            Err(e) => {
-                tracing::debug!("User decryption response task panicked: {e}");
-            }
-        }
-        if resp_response_vec.len() >= num_expected_responses {
-            collect_duration = Some(request_start.elapsed());
-            break;
-        }
-    }
-    if resp_response_vec.len() < num_expected_responses {
-        anyhow::bail!(
-            "Only got {}/{} user decryption responses, need at least {}",
-            resp_response_vec.len(),
-            num_parties,
-            num_expected_responses
-        );
-    }
-    let pending_response_tasks = resp_tasks.len();
-    if pending_response_tasks > 0 {
-        tokio::spawn(async move {
-            while let Some(resp) = resp_tasks.join_next().await {
-                match resp {
-                    Ok(Ok((_req_id, _inner))) => {}
-                    Ok(Err(e)) => {
-                        tracing::debug!("Outstanding user decryption response failed: {e}");
-                    }
-                    Err(e) => {
-                        tracing::debug!("Outstanding user decryption response task panicked: {e}");
-                    }
-                }
-            }
-            tracing::debug!(
-                rate,
-                drained = pending_response_tasks,
-                "drained outstanding udec resp tasks"
-            );
-        });
-    }
-
-    let collect_duration = collect_duration.expect("set once the response quota is met");
-    tracing::debug!(
+    let (resp_response_vec, collect_duration) = collect_decrypt_responses(
+        "user decrypt",
         rate,
-        got = resp_response_vec.len(),
-        needed = num_expected_responses,
-        elapsed = ?collect_duration,
-        "udec resp"
-    );
+        request_start,
+        resp_tasks,
+        num_parties,
+        num_expected_responses,
+    )
+    .await?;
 
     Ok(CollectedUserDecrypt {
         req_id,
@@ -567,30 +1086,6 @@ async fn send_and_collect_user_decrypt(
         resp_response_vec,
         collect_duration,
     })
-}
-
-fn drain_finished_user_decrypts(
-    join_set: &mut JoinSet<Result<CollectedUserDecrypt, anyhow::Error>>,
-    collected: &mut Vec<CollectedUserDecrypt>,
-    durations: &mut Vec<tokio::time::Duration>,
-    failed: &mut u64,
-) {
-    while let Some(result) = join_set.try_join_next() {
-        match result {
-            Ok(Ok(collected_result)) => {
-                durations.push(collected_result.collect_duration);
-                collected.push(collected_result);
-            }
-            Ok(Err(e)) => {
-                *failed += 1;
-                tracing::debug!("User decrypt request failed: {e}");
-            }
-            Err(e) => {
-                *failed += 1;
-                tracing::warn!("User decrypt task panicked: {e}");
-            }
-        }
-    }
 }
 
 async fn reconstruct_user_decrypt(
@@ -666,11 +1161,8 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
-    let core_endpoints_req =
-        Arc::<[CoreEndpointClient]>::from(core_endpoints_req.values().cloned().collect::<Vec<_>>());
-    let core_endpoints_resp = Arc::<[CoreEndpointClient]>::from(
-        core_endpoints_resp.values().cloned().collect::<Vec<_>>(),
-    );
+    let core_endpoints_req = endpoint_clients(core_endpoints_req);
+    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
 
     let req_id = RequestId::new_random(rng);
     let (user_decrypt_req, enc_pk, enc_sk) =
@@ -738,12 +1230,10 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
-    let core_endpoints_req =
-        Arc::<[CoreEndpointClient]>::from(core_endpoints_req.values().cloned().collect::<Vec<_>>());
-    let core_endpoints_resp = Arc::<[CoreEndpointClient]>::from(
-        core_endpoints_resp.values().cloned().collect::<Vec<_>>(),
-    );
+    let core_endpoints_req = endpoint_clients(core_endpoints_req);
+    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
 
+    // PHASE 1: build the request batch before the timed launch window.
     tracing::info!(
         "Prebuilding {total_requests} user decrypt requests: rate={rate}/s, duration={duration_secs}s, max_in_flight={max_in_flight}"
     );
@@ -763,71 +1253,20 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         requests.push((req_id, user_decrypt_req, enc_pk, enc_sk));
     }
 
-    let mut request_iter = requests.into_iter();
-    let mut join_set: JoinSet<Result<CollectedUserDecrypt, anyhow::Error>> = JoinSet::new();
-    let mut collected = Vec::with_capacity(total_requests);
-    let mut durations_to_get_responses = Vec::with_capacity(total_requests);
-    let mut offered = 0_u64;
-    let mut failed = 0_u64;
-    let mut shed = 0_u64;
-    let mut saturated = false;
-    let mut request_payload_bytes = 0_u64;
-    let mut request_payload_messages = 0_u64;
-
-    let run_start = tokio::time::Instant::now();
-    let deadline = run_start + tokio::time::Duration::from_secs(duration_secs);
-    let tick_period = tokio::time::Duration::from_millis(5);
-    let mut ticker = tokio::time::interval(tick_period);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut launch_accumulator = 0_u64;
-    // The accumulator assumes a steady 200 ticks/s. With MissedTickBehavior::Delay a
-    // stalled iteration pushes ticks late instead of catching up, so the offered rate
-    // can quietly fall below target. Count late ticks so that shortfall is observable.
-    let mut last_tick = tokio::time::Instant::now();
-    let mut late_ticks = 0_u64;
-
-    while tokio::time::Instant::now() < deadline {
-        ticker.tick().await;
-        let tick_now = tokio::time::Instant::now();
-        if tick_now.duration_since(last_tick) > tick_period * 2 {
-            late_ticks += 1;
-            if late_ticks == 1 {
-                tracing::warn!(
-                    rate,
-                    behind_ms = tick_now.duration_since(last_tick).as_millis() as u64,
-                    "user decrypt ticker fell behind; offered rate may drop below target - underpowered test runner?"
-                );
-            }
-        }
-        last_tick = tick_now;
-        drain_finished_user_decrypts(
-            &mut join_set,
-            &mut collected,
-            &mut durations_to_get_responses,
-            &mut failed,
-        );
-
-        launch_accumulator = launch_accumulator.saturating_add(rate);
-        let launches = launch_accumulator / 200;
-        launch_accumulator %= 200;
-
-        for _ in 0..launches {
-            let Some((req_id, user_decrypt_req, enc_pk, enc_sk)) = request_iter.next() else {
-                break;
-            };
-            offered += 1;
-            if join_set.len() >= max_in_flight {
-                // Shed: client drops this arrival because the in-flight cap says saturated.
-                shed += 1;
-                saturated = true;
-                continue;
-            }
-            request_payload_bytes +=
-                user_decrypt_req.encoded_len() as u64 * core_endpoints_req.len() as u64;
-            request_payload_messages += core_endpoints_req.len() as u64;
+    let mut collection = collect_decrypt_rate(
+        "user decrypt",
+        rate,
+        duration_secs,
+        max_in_flight,
+        drain_timeout_secs,
+        total_requests,
+        requests.into_iter(),
+        core_endpoints_req.len(),
+        |(_req_id, user_decrypt_req, _enc_pk, _enc_sk)| user_decrypt_req.encoded_len() as u64,
+        |(req_id, user_decrypt_req, enc_pk, enc_sk)| {
             let core_endpoints_req = Arc::clone(&core_endpoints_req);
             let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
-            join_set.spawn(send_and_collect_user_decrypt(
+            send_and_collect_user_decrypt(
                 rate,
                 req_id,
                 user_decrypt_req,
@@ -838,85 +1277,14 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 num_parties,
                 max_iter,
                 num_expected_responses,
-            ));
-        }
-    }
+            )
+        },
+    )
+    .await;
 
-    if late_ticks > 0 {
-        tracing::warn!(
-            rate,
-            late_ticks,
-            offered,
-            target = total_requests,
-            "user decrypt ticker fell behind; offered rate likely below target - underpowered test runner?"
-        );
-    }
+    let collected = std::mem::take(&mut collection.collected);
 
-    let drain_deadline =
-        tokio::time::Instant::now() + tokio::time::Duration::from_secs(drain_timeout_secs);
-    while !join_set.is_empty() && tokio::time::Instant::now() < drain_deadline {
-        if let Ok(Some(result)) =
-            tokio::time::timeout_at(drain_deadline, join_set.join_next()).await
-        {
-            match result {
-                Ok(Ok(collected_result)) => {
-                    durations_to_get_responses.push(collected_result.collect_duration);
-                    collected.push(collected_result);
-                }
-                Ok(Err(e)) => {
-                    failed += 1;
-                    tracing::debug!("User decrypt request failed: {e}");
-                }
-                Err(e) => {
-                    failed += 1;
-                    tracing::warn!("User decrypt task panicked: {e}");
-                }
-            }
-        } else {
-            break;
-        }
-    }
-    if !join_set.is_empty() {
-        saturated = true;
-        let remaining = join_set.len();
-        failed += remaining as u64;
-        tracing::warn!("User decrypt drain timed out with {remaining} requests still in flight");
-        join_set.abort_all();
-    }
-
-    let collect_elapsed = run_start.elapsed();
-    let completed = collected.len() as u64;
-    let latency_stat = crate::compute_stat_on_durations(&durations_to_get_responses);
-    let request_payload_mib_per_sec = if collect_elapsed.is_zero() {
-        0.0
-    } else {
-        request_payload_bytes as f64 / 1024.0 / 1024.0 / collect_elapsed.as_secs_f64()
-    };
-    let request_payload_avg_bytes = if request_payload_messages == 0 {
-        0.0
-    } else {
-        request_payload_bytes as f64 / request_payload_messages as f64
-    };
-    let response_payload_bytes = collected
-        .iter()
-        .flat_map(|collected| collected.resp_response_vec.iter())
-        .map(|response| response.encoded_len() as u64)
-        .sum();
-    let response_payload_messages = collected
-        .iter()
-        .map(|collected| collected.resp_response_vec.len() as u64)
-        .sum();
-    let response_payload_mib_per_sec = if collect_elapsed.is_zero() {
-        0.0
-    } else {
-        response_payload_bytes as f64 / 1024.0 / 1024.0 / collect_elapsed.as_secs_f64()
-    };
-    let response_payload_avg_bytes = if response_payload_messages == 0 {
-        0.0
-    } else {
-        response_payload_bytes as f64 / response_payload_messages as f64
-    };
-
+    // PHASE 4: reconstruct collected responses and emit metrics.
     let reconstruct_start = tokio::time::Instant::now();
     let mut recon_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
     for collected_result in collected {
@@ -928,7 +1296,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         });
     }
 
-    let mut reconstruction_durations = Vec::with_capacity(durations_to_get_responses.len());
+    let mut reconstruction_durations =
+        Vec::with_capacity(collection.durations_to_get_responses.len());
     let mut reconstruction_failed = 0_u64;
     while let Some(res) = recon_tasks.join_next().await {
         match res {
@@ -946,33 +1315,21 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         }
     }
     let reconstruct_elapsed = reconstruct_start.elapsed();
-    let reconstruction_stat = crate::compute_stat_on_durations(&reconstruction_durations);
 
-    let metrics = UserDecryptMetrics {
-        target_rate: rate,
+    let metrics = decrypt_rate_metrics(
+        rate,
         duration_secs,
         max_in_flight,
-        offered,
-        completed,
-        failed,
-        shed,
-        // TODO: consider also reporting completed / duration_secs; this includes drain time.
-        achieved_rate: completed as f64 / collect_elapsed.as_secs_f64(),
-        saturated,
-        request_payload_bytes,
-        request_payload_messages,
-        request_payload_mib_per_sec,
-        request_payload_avg_bytes,
-        response_payload_bytes,
-        response_payload_messages,
-        response_payload_mib_per_sec,
-        response_payload_avg_bytes,
+        &collection,
         reconstruction_failed,
-        latency_stat,
-        reconstruction_stat,
-        reconstruction_wall: reconstruct_elapsed,
-    };
-    metrics.log_json();
+        &reconstruction_durations,
+        reconstruct_elapsed,
+    );
+    metrics.log_json(
+        "USER_DECRYPT_METRICS",
+        "reconstruction_failed",
+        "reconstruction_ms",
+    );
     if reconstruction_failed > 0 {
         tracing::warn!(
             reconstruction_failed,
@@ -982,8 +1339,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 
     print_phased_timings(
         "user decrypt",
-        collect_elapsed,
-        &durations_to_get_responses,
+        collection.collect_elapsed,
+        &collection.durations_to_get_responses,
         reconstruct_elapsed,
     );
 
@@ -1170,11 +1527,11 @@ pub(crate) async fn get_public_decrypt_responses(
     }
 
     let time_to_get_responses = start.elapsed();
-    tracing::info!(
-        "{:?} ###! Received {} public decrypt responses. Since start {:?}",
-        request_id.as_str(),
-        resp_response_vec.len(),
-        time_to_get_responses
+    tracing::debug!(
+        request_id = request_id.as_str(),
+        got = resp_response_vec.len(),
+        elapsed = ?time_to_get_responses,
+        "pdec resp"
     );
 
     resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
@@ -1194,15 +1551,15 @@ pub(crate) async fn get_public_decrypt_responses(
             kms_addrs,
             num_expected_responses,
         )?;
-        tracing::info!(
-            "{:?} ###! Verified public decrypt responses. Since start {:?}",
-            request_id.as_str(),
-            start.elapsed()
+        tracing::debug!(
+            request_id = request_id.as_str(),
+            elapsed = ?start.elapsed(),
+            "pdec verified"
         );
     } else {
         tracing::debug!(
-            "{:?} ###! Public decryption result fetched WITHOUT verification (no material supplied).",
-            request_id.as_str(),
+            request_id = request_id.as_str(),
+            "pdec fetched without verification"
         );
     }
 
@@ -1213,20 +1570,24 @@ pub(crate) async fn get_public_decrypt_responses(
 mod tests {
     use super::*;
 
-    fn sample_metrics(reconstruction_failed: u64) -> UserDecryptMetrics {
+    fn sample_metrics(
+        target_rate: u64,
+        offered: u64,
+        post_process_failed: u64,
+    ) -> DecryptRateMetrics {
         let sample = [
             tokio::time::Duration::from_millis(10),
             tokio::time::Duration::from_millis(20),
         ];
-        UserDecryptMetrics {
-            target_rate: 2400,
+        DecryptRateMetrics {
+            target_rate,
             duration_secs: 60,
             max_in_flight: 10_000,
-            offered: 144_000,
-            completed: 143_900,
-            failed: 100,
+            offered,
+            completed: offered - 100,
+            failed: 10,
             shed: 0,
-            achieved_rate: 2398.3,
+            achieved_rate: target_rate as f64 - 0.2,
             saturated: false,
             request_payload_bytes: 123,
             request_payload_messages: 4,
@@ -1236,11 +1597,39 @@ mod tests {
             response_payload_messages: 4,
             response_payload_mib_per_sec: 2.5,
             response_payload_avg_bytes: 114.0,
-            reconstruction_failed,
+            post_process_failed,
             latency_stat: crate::compute_stat_on_durations(&sample),
-            reconstruction_stat: crate::compute_stat_on_durations(&sample),
-            reconstruction_wall: tokio::time::Duration::from_millis(5),
+            post_process_stat: crate::compute_stat_on_durations(&sample),
+            post_process_wall: tokio::time::Duration::from_millis(5),
         }
+    }
+
+    // The `PUBLIC_DECRYPT_METRICS` JSON is parsed by
+    // ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml. Keep this
+    // in lockstep with that shell parser.
+    #[test]
+    fn public_decrypt_metrics_json_matches_ci_parser_contract() {
+        let json = sample_metrics(500, 30_000, 0)
+            .to_json("verification_failed", "verification_ms")
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["target_rate"], 500);
+        assert_eq!(v["duration"], 60);
+        assert_eq!(v["max_in_flight"], 10_000);
+        assert_eq!(v["offered"], 30_000);
+        assert!(v["achieved_rate"].is_number());
+        assert!(v["latency_ms"]["p50"].is_number());
+        assert!(v["latency_ms"]["p99"].is_number());
+        assert!(v["verification_ms"]["wall"].is_number());
+        assert_eq!(v["verification_failed"], 0);
+
+        let v_failed: serde_json::Value = serde_json::from_str(
+            &sample_metrics(500, 30_000, 3)
+                .to_json("verification_failed", "verification_ms")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v_failed["verification_failed"], 3);
     }
 
     // The `USER_DECRYPT_METRICS` JSON is parsed by
@@ -1248,8 +1637,9 @@ mod tests {
     // the field names/nesting so the serde refactor can't silently drift from that parser.
     #[test]
     fn user_decrypt_metrics_json_matches_ci_parser_contract() {
-        let json =
-            serde_json::to_string(&UserDecryptMetricsJson::from(&sample_metrics(0))).unwrap();
+        let json = sample_metrics(2400, 144_000, 0)
+            .to_json("reconstruction_failed", "reconstruction_ms")
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["target_rate"], 2400);
         assert_eq!(v["duration"], 60); // renamed from `duration_secs`
@@ -1262,7 +1652,9 @@ mod tests {
         assert_eq!(v["reconstruction_failed"], 0);
 
         let v_failed: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&UserDecryptMetricsJson::from(&sample_metrics(3))).unwrap(),
+            &sample_metrics(2400, 144_000, 3)
+                .to_json("reconstruction_failed", "reconstruction_ms")
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(v_failed["reconstruction_failed"], 3);
