@@ -398,7 +398,7 @@ pub(crate) fn now_activity_millis() -> u64 {
 /// [`Ordering::Relaxed`]: these values are only mutated while the owning
 /// session's `round_counter` lock is held, and are otherwise best-effort timeout
 /// hints that need no cross-variable ordering guarantees.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct AtomicDuration(AtomicU64);
 
 impl AtomicDuration {
@@ -685,6 +685,62 @@ impl NetworkSession {
                 );
             }
         }
+    }
+}
+
+#[cfg(feature = "bench-internals")]
+impl NetworkSession {
+    /// Build a detached [`NetworkSession`] for benchmarks, with no running gRPC
+    /// server or connected peers.
+    ///
+    /// A live unbounded sending channel is created for every role in `others`;
+    /// the receivers are returned so the caller can keep them open and drain
+    /// them (a dropped receiver would make [`Networking::send`] fail on a closed
+    /// channel).
+    ///
+    /// The migrated bookkeeping fields (`num_byte_sent` and the three timeouts)
+    /// are initialized with [`Default::default`] rather than by naming their
+    /// concrete type, so this constructor compiles unchanged whether those
+    /// fields are atomics (as now) or `RwLock`s (as before the atomics
+    /// migration) — letting the same benchmark run against both. The timeouts
+    /// therefore start at zero, which is fine: `send` never reads them.
+    pub fn new_for_bench<R: RoleTrait>(
+        owner: Identity,
+        session_id: SessionId,
+        others: &RoleAssignment<R>,
+        network_mode: NetworkMode,
+    ) -> (Self, Vec<UnboundedReceiver<ArcSendValueRequest>>) {
+        use dashmap::DashMap;
+
+        let mut sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>> =
+            HashMap::new();
+        let mut receivers: Vec<UnboundedReceiver<ArcSendValueRequest>> = Vec::new();
+        for (role, _identity) in others.iter() {
+            let (tx, rx) = unbounded_channel();
+            sending_channels.insert(role.get_role_kind(), tx);
+            receivers.push(rx);
+        }
+
+        let receiving_channels =
+            MessageQueueStore::new_initialized(1024, others, Arc::new(DashMap::new()));
+
+        let session = Self {
+            owner,
+            session_id,
+            sending_channels,
+            receiving_channels,
+            round_counter: tokio::sync::RwLock::new(0),
+            completed_parties: Arc::new(DashSet::new()),
+            num_byte_sent: Default::default(),
+            network_mode,
+            conf: OptionConfigWrapper { conf: None },
+            init_time: OnceLock::new(),
+            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            current_network_timeout: Default::default(),
+            next_network_timeout: Default::default(),
+            max_elapsed_time: Default::default(),
+        };
+        (session, receivers)
     }
 }
 
