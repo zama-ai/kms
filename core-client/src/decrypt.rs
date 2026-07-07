@@ -550,7 +550,7 @@ async fn send_and_collect_user_decrypt(
         });
     }
 
-    let collect_duration = collect_duration.unwrap_or_else(|| request_start.elapsed());
+    let collect_duration = collect_duration.expect("set once the response quota is met");
     tracing::debug!(
         rate,
         got = resp_response_vec.len(),
