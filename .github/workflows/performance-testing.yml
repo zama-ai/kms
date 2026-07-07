@@ -31,9 +31,9 @@ on:
           - 'threshold'
           - 'thresholdWithEnclave'
       client_logs:
-        description: 'Enable core-client tracing logs during perf tests'
+        description: 'Enable core-client tracing logs during perf tests (off by default; logging skews perf numbers)'
         required: true
-        default: true
+        default: false
         type: boolean
       fhe_params:
         description: 'FHE parameters for preprocessing and keygen'
@@ -115,6 +115,8 @@ jobs:
     needs: [docker-build]
     if: always() && !cancelled()
     name: performance-testing
+    permissions:
+      actions: read # Required to resolve the current job URL for Slack reports
     runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
     steps:
@@ -200,7 +202,7 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
           TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
-          CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'true' }}
+          CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'false' }}
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
@@ -429,7 +431,7 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-          GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           ###################################################################
           # Prepare and execute Argo workflow for performance testing
