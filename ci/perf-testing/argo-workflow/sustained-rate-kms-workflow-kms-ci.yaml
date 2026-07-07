@@ -28,7 +28,7 @@ spec:
     - name: tls
       value: "disabled"
     - name: client-logs
-      value: "enabled"
+      value: "disabled"
     - name: run_url
       value: "Manually triggered"
     - name: job_url
