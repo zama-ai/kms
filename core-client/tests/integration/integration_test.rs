@@ -140,7 +140,6 @@ fn build_test_core_config(
                     pcr1: mock_pcr_bytes.clone(),
                     pcr2: mock_pcr_bytes,
                 }],
-                ignore_aws_ca_chain: None,
                 attest_private_vault_root_key: None,
                 renew_slack_after_expiration: None,
                 renew_fail_retry_timeout: None,
