@@ -443,6 +443,7 @@ pub enum LweSecretKeyShareEnum<const EXTENSION_DEGREE: usize> {
 
 #[cfg(test)]
 impl<const EXTENSION_DEGREE: usize> LweSecretKeyShareEnum<EXTENSION_DEGREE> {
+    #[expect(unused)]
     pub(crate) fn unsafe_cast_to_z64(self) -> LweSecretKeyShare<Z64, EXTENSION_DEGREE> {
         match self {
             LweSecretKeyShareEnum::Z64(inner) => inner,
@@ -450,12 +451,15 @@ impl<const EXTENSION_DEGREE: usize> LweSecretKeyShareEnum<EXTENSION_DEGREE> {
         }
     }
 
+    #[expect(unused)]
     pub(crate) fn unsafe_cast_to_z128(self) -> LweSecretKeyShare<Z128, EXTENSION_DEGREE> {
         match self {
             LweSecretKeyShareEnum::Z64(_) => panic!("not z128"),
             LweSecretKeyShareEnum::Z128(inner) => inner,
         }
     }
+
+    #[expect(unused)]
     pub(crate) fn len(&self) -> usize {
         match self {
             LweSecretKeyShareEnum::Z64(inner) => inner.data.len(),
@@ -579,6 +583,7 @@ impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
         }
     }
 
+    #[expect(unused)]
     pub(crate) fn len(&self) -> usize {
         match self {
             GlweSecretKeyShareEnum::Z64(inner) => inner.data.len(),
@@ -586,6 +591,7 @@ impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
         }
     }
 
+    #[expect(unused)]
     pub(crate) fn polynomial_size(&self) -> tfhe::boolean::prelude::PolynomialSize {
         match self {
             GlweSecretKeyShareEnum::Z64(inner) => inner.polynomial_size,
