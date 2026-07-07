@@ -630,13 +630,47 @@ spec:
             ' /tmp/net-before.tsv /tmp/net-after.tsv
           }
 
+          allowed_failure_for_rate() {
+            case "$1:$2" in
+              pdec:1200|udec:2750) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          parameter_set_for_rate() {
+            case "$1:$2" in
+              # maxfail/maxshed are percentages of offered requests, not counts.
+              # pct is the minimum achieved_rate/target_rate percentage.
+              pdec:500) echo "maxfail=0,maxshed=0,pct=98" ;;
+              pdec:1000) echo "maxfail=1,maxshed=1,pct=90" ;;
+              # 1.2k is an exploratory public-decrypt probe and may warn.
+              pdec:1200) echo "maxfail=10,maxshed=25,pct=70" ;;
+              udec:2400) echo "maxfail=0,maxshed=0,pct=98" ;;
+              udec:2700) echo "maxfail=1,maxshed=1,pct=95" ;;
+              # 2.75k probes just above the clean 2.7k run; outside-set results warn.
+              udec:2750) echo "maxfail=10,maxshed=25,pct=70" ;;
+              *) echo "maxfail=0,maxshed=0,pct=100" ;;
+            esac
+          }
+
+          parameter_value() {
+            echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
+          }
+
           if [ -z "$key_id" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
+            parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
+            allowed_failure=false
+            if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
+              allowed_failure=true
+            fi
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "failed": 1,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
               "$metrics_key" \
               "{{inputs.parameters.rate}}" \
+              "$parameter_set" \
+              "$allowed_failure" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
             echo "Missing key_id from udec-key-gen; refusing to run $display_name"
@@ -644,12 +678,19 @@ spec:
           fi
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s\n    }\n  }\n}\n' \
+            parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
+            allowed_failure=false
+            if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
+              allowed_failure=true
+            fi
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
               "$metrics_key" \
               "{{inputs.parameters.rate}}" \
+              "$parameter_set" \
+              "$allowed_failure" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
             echo "Skipping $test_name because a lower $display_name rate did not produce valid metrics"
@@ -710,15 +751,57 @@ spec:
             echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
           fi
           network_metrics="$(network_metrics_suffix "$duration")"
+          parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
+          maxfail=$(parameter_value "$parameter_set" maxfail)
+          maxshed=$(parameter_value "$parameter_set" maxshed)
+          pct=$(parameter_value "$parameter_set" pct)
+          allowed_failure=false
+          if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
+            allowed_failure=true
+          fi
+          if [[ "$decrypt_metrics" =~ \"offered\":([0-9]+) ]]; then
+            metrics_offered="${BASH_REMATCH[1]}"
+          else
+            metrics_offered=0
+          fi
+          if [[ "$decrypt_metrics" =~ \"achieved_rate\":([-0-9.eE]+) ]]; then
+            metrics_achieved_rate="${BASH_REMATCH[1]}"
+          else
+            metrics_achieved_rate=0
+          fi
+          within_parameter_set=$(awk \
+            -v offered="$metrics_offered" \
+            -v failed="$metrics_failed" \
+            -v shed="$metrics_shed" \
+            -v achieved="$metrics_achieved_rate" \
+            -v target="{{inputs.parameters.rate}}" \
+            -v maxfail="$maxfail" \
+            -v maxshed="$maxshed" \
+            -v pct="$pct" '
+              BEGIN {
+                if (offered <= 0 || target <= 0) {
+                  print "false"
+                } else if ((failed * 100 / offered) <= maxfail &&
+                           (shed * 100 / offered) <= maxshed &&
+                           (achieved * 100 / target) >= pct) {
+                  print "true"
+                } else {
+                  print "false"
+                }
+              }')
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
-          decrypt_metrics="${decrypt_metrics%\}}${network_metrics}}"
+          limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
+          decrypt_metrics="${decrypt_metrics%\}}${network_metrics}${limit_metrics}}"
 
-          # Task success means "measurement exists"; the summary applies perf limits.
+          # Task success means "measurement exists"; capacity-ok gates the next rung.
           if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
             status="passed"
-            capacity_ok="true"
           else
             status="failed"
+          fi
+          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ]; then
+            capacity_ok="true"
+          else
             capacity_ok="false"
           fi
 
@@ -888,33 +971,6 @@ spec:
             esac
           }
 
-          allowed_failure_for_rate() {
-            case "$1:$2" in
-              pdec:1200|udec:2750) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
-          parameter_set_for_rate() {
-            case "$1:$2" in
-              # maxfail/maxshed are percentages of offered requests, not counts.
-              # pct is the minimum achieved_rate/target_rate percentage.
-              pdec:500) echo "maxfail=0,maxshed=0,pct=98" ;;
-              pdec:1000) echo "maxfail=1,maxshed=1,pct=90" ;;
-              # 1.2k is an exploratory public-decrypt probe and may warn.
-              pdec:1200) echo "maxfail=10,maxshed=25,pct=70" ;;
-              udec:2400) echo "maxfail=0,maxshed=0,pct=98" ;;
-              udec:2700) echo "maxfail=1,maxshed=1,pct=95" ;;
-              # 2.75k probes just above the clean 2.7k run; outside-set results warn.
-              udec:2750) echo "maxfail=10,maxshed=25,pct=70" ;;
-              *) echo "maxfail=0,maxshed=0,pct=100" ;;
-            esac
-          }
-
-          parameter_value() {
-            echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
-          }
-
           summarize_decrypt_rates() {
             kind="$1"
             display="$2"
@@ -967,6 +1023,9 @@ spec:
               network_tx_dropped=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_dropped // 0' "$result")
               network_rx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_errors // 0' "$result")
               network_tx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_errors // 0' "$result")
+              parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
+              within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
+              allowed_failure=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].allowed_failure // false' "$result")
               extra_failed=$(jq -r --arg k "$metrics_key" --arg f "$extra_failed_key" '.performance_metrics[$k][$f] // 0' "$result")
               p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p50 // empty' "$result")
               p95=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p95 // empty' "$result")
@@ -989,29 +1048,6 @@ spec:
               network_rx_short="$(fmt_1 "$network_rx_gbps")"
               network_tx_short="$(fmt_1 "$network_tx_gbps")"
 
-              # Parameter sets are per-rate because the top probe is intentionally near capacity.
-              parameter_set=$(parameter_set_for_rate "$kind" "$rate")
-              maxfail=$(parameter_value "$parameter_set" maxfail)
-              maxshed=$(parameter_value "$parameter_set" maxshed)
-              pct=$(parameter_value "$parameter_set" pct)
-
-              # Any single limit outside the parameter set fails the scenario.
-              within_parameter_set=$(jq -n \
-                --argjson offered "$offered" \
-                --argjson failed_requests "$failed_requests" \
-                --argjson shed "$shed" \
-                --argjson achieved_rate "$achieved_rate" \
-                --argjson target_rate "$target_rate" \
-                --argjson maxfail "$maxfail" \
-                --argjson maxshed "$maxshed" \
-                --argjson pct "$pct" '
-                  def pct_of($num; $den): if $den == 0 then 1000000 else ($num * 100 / $den) end;
-                  ($offered > 0)
-                  and (pct_of($failed_requests; $offered) <= $maxfail)
-                  and (pct_of($shed; $offered) <= $maxshed)
-                  and (($target_rate > 0) and (($achieved_rate * 100 / $target_rate) >= $pct))
-                ')
-
               # WARN is accepted-but-degraded. The top rate for each decrypt type
               # is an exploratory probe and can exceed its parameter set.
               if [ "$status" = "skipped" ]; then
@@ -1019,7 +1055,7 @@ spec:
                 inc_decrypt_counter "$kind" skipped
                 line="$(status_label "$outcome") ${target_rate}/s skipped"
               elif [ "$status" != "passed" ]; then
-                if allowed_failure_for_rate "$kind" "$rate"; then
+                if [ "$allowed_failure" = "true" ]; then
                   outcome=warned
                   inc_decrypt_counter "$kind" warned
                 else
@@ -1037,7 +1073,7 @@ spec:
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               else
-                if allowed_failure_for_rate "$kind" "$rate"; then
+                if [ "$allowed_failure" = "true" ]; then
                   outcome=warned
                   inc_decrypt_counter "$kind" warned
                 else
