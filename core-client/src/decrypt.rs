@@ -1244,7 +1244,7 @@ mod tests {
     }
 
     // The `USER_DECRYPT_METRICS` JSON is parsed by
-    // ci/perf-testing/argo-workflow/user-decrypt-rate-kms-workflow-kms-ci.yaml. This locks
+    // ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml. This locks
     // the field names/nesting so the serde refactor can't silently drift from that parser.
     #[test]
     fn user_decrypt_metrics_json_matches_ci_parser_contract() {

@@ -155,7 +155,7 @@ What the workflow does, end to end:
 5. Deploy KMS to the `kms-ci` namespace via `ci/scripts/deploy.sh`.
 6. Print a terse `before-perf` placement and network-counter snapshot.
 7. Submit the Argo workflow
-   (`ci/perf-testing/argo-workflow/user-decrypt-rate-kms-workflow-kms-ci.yaml`).
+   (`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`).
 8. Stream the Argo logs and send the Slack report.
 9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
 

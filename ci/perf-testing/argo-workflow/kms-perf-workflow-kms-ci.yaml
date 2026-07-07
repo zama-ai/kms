@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: user-decrypt-rate-kms-<version>-
+  generateName: kms-perf-<version>-
   namespace: kms-ci
   labels:
-    app: user-decrypt-rate-kms
+    app: kms-perf
 spec:
   serviceAccountName: workflow-runner
   activeDeadlineSeconds: 28800  # 8h cap for full perf runs.
@@ -22,7 +22,7 @@ spec:
     secret:
       secretName: slack-webhook
 
-  entrypoint: user-decrypt-rate-kms
+  entrypoint: kms-perf
   arguments:
     parameters:
     - name: tls
@@ -52,7 +52,7 @@ spec:
     # addition to the current 13-party 5/9 setup.
 
   templates:
-    - name: user-decrypt-rate-kms
+    - name: kms-perf
       dag:
         tasks:
           - name: preproc-key-gen
@@ -318,7 +318,7 @@ spec:
       metadata:
         labels:
           test: "{{inputs.parameters.test-name}}"
-          app: user-decrypt-rate-kms
+          app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
         karpenter.k8s.aws/instance-family: m5n
@@ -512,7 +512,7 @@ spec:
       metadata:
         labels:
           test: udec-rate-{{inputs.parameters.rate}}
-          app: user-decrypt-rate-kms
+          app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
         karpenter.k8s.aws/instance-family: m5n

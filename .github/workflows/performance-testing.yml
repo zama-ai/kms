@@ -450,7 +450,7 @@ jobs:
             CLIENT_LOGS_STATUS="disabled"
           fi
 
-          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/user-decrypt-rate-kms-workflow-kms-ci.yaml"
+          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml"
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
           else
