@@ -83,16 +83,12 @@ impl<F: Field> FieldHints<F> {
         } else {
             lagrange_polynomials(&embedded_points)
         };
-        let vanishing_poly = Self::compute_vanishing_poly(&embedded_points);
+        let vanishing_poly = vanishing_poly(&embedded_points);
         Ok(Self {
             embedded_points,
             lagrange_polys,
             vanishing_poly,
         })
-    }
-
-    fn compute_vanishing_poly(points: &[F]) -> Poly<F> {
-        vanishing_poly(points)
     }
 }
 
