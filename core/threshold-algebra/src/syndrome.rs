@@ -5,7 +5,7 @@ use super::{
     structure_traits::{Field, Ring},
 };
 
-/// Computes all polys L_i(Z) = ∏_{i ≠ j} (Z - alpha_j) for the given list of points.
+/// Computes all polys L_i(Z) = ∏_{j ≠ i} (Z - alpha_j) for the given list of points.
 /// This is the numerator part of the Lagrange basis (see [lagrange_polynomials()]).
 ///
 /// Builds the vanishing polynomial V(Z) = ∏_j (Z - alpha_j) once, then recovers each
