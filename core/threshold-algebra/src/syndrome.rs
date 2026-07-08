@@ -1,28 +1,18 @@
 use super::{
     matrix::compute_powers_list,
-    poly::Poly,
+    poly::{Poly, deflate_root, vanishing_poly},
     sharing::shamir::ShamirFieldPoly,
     structure_traits::{Field, Ring},
 };
-use std::ops::Neg;
 
-/// computes all polys L_i(Z) = \prod_{i \neq j} (Z - alpha_j) for the given list of points.
-/// this is the numerator part of [lagrange_polynomials()]
-pub fn lagrange_numerators<F: Ring + Neg<Output = F>>(points: &[F]) -> Vec<Poly<F>> {
-    let polys: Vec<_> = points
-        .iter()
-        .enumerate()
-        .map(|(i, _xi)| {
-            let mut numerator = Poly::one();
-            for (j, xj) in points.iter().enumerate() {
-                if i != j {
-                    numerator = numerator * Poly::from_coefs(vec![-*xj, F::ONE]);
-                }
-            }
-            numerator
-        })
-        .collect();
-    polys
+/// Computes all polys L_i(Z) = ∏_{i ≠ j} (Z - alpha_j) for the given list of points.
+/// This is the numerator part of the Lagrange basis (see [lagrange_polynomials()]).
+///
+/// Builds the vanishing polynomial V(Z) = ∏_j (Z - alpha_j) once, then recovers each
+/// L_i = V / (Z - alpha_i) by deflation (see [vanishing_poly()] and [deflate_root()]).
+pub fn lagrange_numerators<F: Ring>(points: &[F]) -> Vec<Poly<F>> {
+    let v = vanishing_poly(points);
+    points.iter().map(|&alfa| deflate_root(&v, alfa)).collect()
 }
 
 /// debug function that computes f(Z) = product_{p in points}(1 - pZ), only available in debug builds
