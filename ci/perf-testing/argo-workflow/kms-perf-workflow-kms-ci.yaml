@@ -1202,15 +1202,15 @@ spec:
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
           pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2200)"
           if [ -n "$pdec_raw_text" ]; then
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b\n*Raw data*\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
           else
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
           fi
           udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
           if [ -n "$udec_raw_text" ]; then
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b\n*Raw data*\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
           else
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${udec_lines:-No user decrypt tests\n}")"
           fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
@@ -1220,7 +1220,7 @@ spec:
           # (core-img/client-img ARE live: <version>/<client-version> are sed-substituted at submit.)
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
-            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
+            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
             "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
