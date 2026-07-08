@@ -38,7 +38,7 @@ spec:
     - name: fhe-params
       value: "Test"
     - name: duration
-      value: "45"
+      value: "30"
     - name: max-in-flight
       value: "10000"
     - name: data-type
