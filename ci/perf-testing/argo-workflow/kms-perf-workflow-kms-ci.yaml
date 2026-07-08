@@ -124,7 +124,7 @@ spec:
               - name: fhe-params
                 value: "Default"
 
-          - name: pdec-rate-500
+          - name: pdec-rate-1500
             dependencies: ["crs-gen"]
             template: run-decrypt-rate
             arguments:
@@ -132,43 +132,43 @@ spec:
               - name: kind
                 value: "pdec"
               - name: rate
-                value: "500"
+                value: "1500"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "true"
 
-          - name: pdec-rate-1000
-            dependencies: ["pdec-rate-500"]
+          - name: pdec-rate-1800
+            dependencies: ["pdec-rate-1500"]
             template: run-decrypt-rate
             arguments:
               parameters:
               - name: kind
                 value: "pdec"
               - name: rate
-                value: "1000"
+                value: "1800"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.pdec-rate-500.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.pdec-rate-1500.outputs.parameters.capacity-ok}}"
 
-          - name: pdec-rate-1200
-            dependencies: ["pdec-rate-1000"]
+          - name: pdec-rate-2000
+            dependencies: ["pdec-rate-1800"]
             template: run-decrypt-rate
             arguments:
               parameters:
               - name: kind
                 value: "pdec"
               - name: rate
-                value: "1200"
+                value: "2000"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.pdec-rate-1000.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.pdec-rate-1800.outputs.parameters.capacity-ok}}"
 
           # Temporarily disabled while iterating on Slack report formatting.
           # - name: udec-rate-2400
-          #   dependencies: ["udec-key-gen", "pdec-rate-1200"]
+          #   dependencies: ["udec-key-gen", "pdec-rate-2000"]
           #   template: run-decrypt-rate
           #   arguments:
           #     parameters:
@@ -216,9 +216,9 @@ spec:
               - "udec-preproc-key-gen"
               - "udec-key-gen"
               - "crs-gen"
-              - "pdec-rate-500"
-              - "pdec-rate-1000"
-              - "pdec-rate-1200"
+              - "pdec-rate-1500"
+              - "pdec-rate-1800"
+              - "pdec-rate-2000"
               # Temporarily disabled while iterating on Slack report formatting.
               # - "udec-rate-2400"
               # - "udec-rate-2700"
@@ -236,12 +236,12 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.test-result}}"
               - name: test-result-crs-gen
                 value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-pdec-500
-                value: "{{tasks.pdec-rate-500.outputs.parameters.test-result}}"
-              - name: test-result-pdec-1000
-                value: "{{tasks.pdec-rate-1000.outputs.parameters.test-result}}"
-              - name: test-result-pdec-1200
-                value: "{{tasks.pdec-rate-1200.outputs.parameters.test-result}}"
+              - name: test-result-pdec-1500
+                value: "{{tasks.pdec-rate-1500.outputs.parameters.test-result}}"
+              - name: test-result-pdec-1800
+                value: "{{tasks.pdec-rate-1800.outputs.parameters.test-result}}"
+              - name: test-result-pdec-2000
+                value: "{{tasks.pdec-rate-2000.outputs.parameters.test-result}}"
               # Temporarily disabled while iterating on Slack report formatting.
               # - name: test-result-udec-2400
               #   value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
@@ -635,7 +635,7 @@ spec:
 
           allowed_failure_for_rate() {
             case "$1:$2" in
-              pdec:1200|udec:2750) return 0 ;;
+              pdec:2000|udec:2750) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -644,10 +644,10 @@ spec:
             case "$1:$2" in
               # maxfail/maxshed are percentages of offered requests, not counts.
               # pct is the minimum achieved_rate/target_rate percentage.
-              pdec:500) echo "maxfail=0,maxshed=0,pct=98" ;;
-              pdec:1000) echo "maxfail=1,maxshed=1,pct=90" ;;
-              # 1.2k is an exploratory public-decrypt probe and may warn.
-              pdec:1200) echo "maxfail=10,maxshed=25,pct=70" ;;
+              pdec:1500) echo "maxfail=0,maxshed=0,pct=98" ;;
+              pdec:1800) echo "maxfail=1,maxshed=1,pct=90" ;;
+              # 2k is an exploratory public-decrypt probe and may warn.
+              pdec:2000) echo "maxfail=10,maxshed=25,pct=70" ;;
               udec:2400) echo "maxfail=0,maxshed=0,pct=98" ;;
               udec:2700) echo "maxfail=1,maxshed=1,pct=95" ;;
               # 2.75k probes just above the clean 2.7k run; outside-set results warn.
@@ -845,9 +845,9 @@ spec:
         - name: test-result-udec-preproc-key-gen
         - name: test-result-udec-key-gen
         - name: test-result-crs-gen
-        - name: test-result-pdec-500
-        - name: test-result-pdec-1000
-        - name: test-result-pdec-1200
+        - name: test-result-pdec-1500
+        - name: test-result-pdec-1800
+        - name: test-result-pdec-2000
         # Temporarily disabled while iterating on Slack report formatting.
         # - name: test-result-udec-2400
         # - name: test-result-udec-2700
@@ -877,9 +877,9 @@ spec:
           echo '{{inputs.parameters.test-result-udec-preproc-key-gen}}' > /mnt/results/udec-preproc-key-gen.json
           echo '{{inputs.parameters.test-result-udec-key-gen}}' > /mnt/results/udec-key-gen.json
           echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-pdec-500}}' > /mnt/results/pdec-rate-500.json
-          echo '{{inputs.parameters.test-result-pdec-1000}}' > /mnt/results/pdec-rate-1000.json
-          echo '{{inputs.parameters.test-result-pdec-1200}}' > /mnt/results/pdec-rate-1200.json
+          echo '{{inputs.parameters.test-result-pdec-1500}}' > /mnt/results/pdec-rate-1500.json
+          echo '{{inputs.parameters.test-result-pdec-1800}}' > /mnt/results/pdec-rate-1800.json
+          echo '{{inputs.parameters.test-result-pdec-2000}}' > /mnt/results/pdec-rate-2000.json
           # Temporarily disabled while iterating on Slack report formatting.
           # echo '{ {inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
           # echo '{ {inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
@@ -1168,7 +1168,7 @@ spec:
           done
 
           echo ""
-          summarize_decrypt_rates pdec "Public decrypt" public_decrypt 500 1000 1200
+          summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1500 1800 2000
           # Temporarily disabled while iterating on Slack report formatting.
           # summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750
 
