@@ -279,7 +279,7 @@ impl Client {
 
         let pbs_params = self.params.classic_pbs();
 
-        tracing::info!(
+        tracing::debug!(
             "User decryption response reconstruction with mode: {:?}. deg={degree}, #shares={amount_shares}",
             self.decryption_mode
         );

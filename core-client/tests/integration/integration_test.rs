@@ -1015,6 +1015,40 @@ fn cipher_params(
     }
 }
 
+/// Build `UserDecryptParameters` with a tiny rate-based run for integration tests.
+fn user_decrypt_params(
+    to_encrypt: &str,
+    data_type: FheType,
+    key_id: KeyId,
+    batch_size: usize,
+    no_compression: bool,
+    no_precompute_sns: bool,
+) -> UserDecryptParameters {
+    UserDecryptParameters {
+        to_encrypt: to_encrypt.to_string(),
+        data_type,
+        no_compression,
+        no_precompute_sns,
+        key_id,
+        context_id: None,
+        epoch_id: None,
+        batch_size,
+        rate: Some(1),
+        duration: Some(1),
+        max_in_flight: Some(10),
+    }
+}
+
+fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> UserDecryptFile {
+    UserDecryptFile {
+        input_path,
+        batch_size,
+        rate: Some(1),
+        duration: Some(1),
+        max_in_flight: Some(10),
+    }
+}
+
 /// Helper to run insecure preprocessing and key generation via CLI.
 async fn insecure_key_gen(
     config_path: &Path,
@@ -1119,6 +1153,9 @@ async fn integration_test_commands(
     let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
         cipher_params(val, dt, key_id, bs, no_comp, no_sns, None)
     };
+    let ucp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
+        user_decrypt_params(val, dt, key_id, bs, no_comp, no_sns)
+    };
 
     // Commands without SnS precompute (no_precompute_sns=true)
     let commands = vec![
@@ -1129,7 +1166,7 @@ async fn integration_test_commands(
             false,
             true,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0x1",
             FheType::Ebool,
             1,
@@ -1164,7 +1201,7 @@ async fn integration_test_commands(
             false,
             true,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
             FheType::Euint256,
             3,
@@ -1187,13 +1224,10 @@ async fn integration_test_commands(
             parallel_requests: 1,
             inter_request_delay_ms: 0,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-        })),
+        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+            ctxt_path.clone(),
+            3,
+        ))),
     ];
 
     // Commands with SnS precompute (no_precompute_sns=false)
@@ -1205,14 +1239,14 @@ async fn integration_test_commands(
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0x78",
             FheType::Euint8,
             2,
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0x1",
             FheType::Ebool,
             1,
@@ -1233,7 +1267,7 @@ async fn integration_test_commands(
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F",
             FheType::Euint256,
             3,
@@ -1256,13 +1290,10 @@ async fn integration_test_commands(
             parallel_requests: 1,
             inter_request_delay_ms: 0,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_with_sns_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-        })),
+        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+            ctxt_with_sns_path.clone(),
+            3,
+        ))),
     ];
 
     let all_commands = [commands, commands_for_sns_precompute].concat();
@@ -1276,10 +1307,13 @@ async fn integration_test_commands(
 
         // Validate result count matches expected requests
         match &command {
-            CCCommand::PublicDecrypt(cipher_arguments)
-            | CCCommand::UserDecrypt(cipher_arguments) => {
+            CCCommand::PublicDecrypt(cipher_arguments) => {
                 let num_expected_results = cipher_arguments.get_num_requests();
                 assert_eq!(results.len(), num_expected_results);
+            }
+            CCCommand::UserDecrypt(_) => {
+                assert!(results.is_empty());
+                continue;
             }
             _ => {}
         }
@@ -1381,6 +1415,9 @@ async fn integration_test_commands_default_keys(
     let cp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
         cipher_params(val, dt, key_id, bs, false, no_sns, None)
     };
+    let ucp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
+        user_decrypt_params(val, dt, key_id, bs, false, no_sns)
+    };
 
     let commands = vec![
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
@@ -1389,7 +1426,7 @@ async fn integration_test_commands_default_keys(
             2,
             true,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0x78",
             FheType::Euint8,
             2,
@@ -1401,7 +1438,7 @@ async fn integration_test_commands_default_keys(
             3,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
             FheType::Euint256,
             3,
@@ -1417,10 +1454,13 @@ async fn integration_test_commands_default_keys(
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         match &command {
-            CCCommand::PublicDecrypt(cipher_arguments)
-            | CCCommand::UserDecrypt(cipher_arguments) => {
+            CCCommand::PublicDecrypt(cipher_arguments) => {
                 let num_expected_results = cipher_arguments.get_num_requests();
                 assert_eq!(results.len(), num_expected_results);
+            }
+            CCCommand::UserDecrypt(_) => {
+                assert!(results.is_empty());
+                continue;
             }
             _ => {}
         }
