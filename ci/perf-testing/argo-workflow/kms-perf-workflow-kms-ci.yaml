@@ -42,7 +42,7 @@ spec:
     - name: max-in-flight
       value: "10000"
     - name: data-type
-      value: "euint256"
+      value: "euint64"
     - name: batch-size
       value: "1"
     - name: s3-config-map-name
@@ -614,7 +614,7 @@ spec:
 
           test_name="${kind}-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
-          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
           mkdir -p /tmp/artifacts
 
           capture_net_snapshot() {
