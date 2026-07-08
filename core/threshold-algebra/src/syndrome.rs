@@ -12,7 +12,10 @@ use super::{
 /// L_i = V / (Z - alpha_i) by deflation (see [vanishing_poly()] and [deflate_root()]).
 pub fn lagrange_numerators<F: Ring>(points: &[F]) -> Vec<Poly<F>> {
     let v = vanishing_poly(points);
-    points.iter().map(|&alpha| deflate_root(&v, alpha)).collect()
+    points
+        .iter()
+        .map(|&alpha| deflate_root(&v, alpha))
+        .collect()
 }
 
 /// debug function that computes f(Z) = product_{p in points}(1 - pZ), only available in debug builds
