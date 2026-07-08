@@ -591,15 +591,15 @@ pub(crate) fn vanishing_poly<F: Ring>(points: &[F]) -> Poly<F> {
     // Master poly V(Z) = ∏_j (Z - alpha_j), low-to-high, monic, degree n.
     let mut coefs = Vec::with_capacity(points.len() + 1);
     coefs.push(F::ONE);
-    for &alfa in points {
+    for &alpha in points {
         coefs.push(F::ONE); // leading coef is always 1 (monic), no multiply needed
         let m = coefs.len() - 1;
-        // Multiply the running product by (Z − alfa): coefₖ <- coefₖ₋₁ − alfa·coefₖ.
+        // Multiply the running product by (Z − alpha): coefₖ <- coefₖ₋₁ − alpha·coefₖ.
         // Walk high to low so coefₖ₋₁ still holds its pre-update value when we read it.
         for k in (1..m).rev() {
-            coefs[k] = coefs[k - 1] - alfa * coefs[k];
+            coefs[k] = coefs[k - 1] - alpha * coefs[k];
         }
-        coefs[0] = -(alfa * coefs[0]);
+        coefs[0] = -(alpha * coefs[0]);
     }
     // coefs is canonical because it's monic and the leading coef is F::ONE
     Poly::from_coefs_unchecked(coefs)
