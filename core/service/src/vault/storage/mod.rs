@@ -867,6 +867,11 @@ pub mod tests {
         let data_id = derive_request_id("BYTES_OVERWRITE").unwrap();
         let data_type = PubDataType::CRS.to_string();
 
+        // Ensure no old data is present from a previously interrupted run
+        delete_at_request_id(storage, &data_id, &data_type)
+            .await
+            .unwrap();
+
         // First bytes to store
         let original_bytes = vec![1, 2, 3, 4, 5];
         assert_eq!(
@@ -900,6 +905,11 @@ pub mod tests {
     ) {
         let data_id = derive_request_id("ID_OVERWRITE").unwrap();
         let data_type = PubDataType::CRS.to_string();
+
+        // Ensure no old data is present from a previously interrupted run
+        delete_at_request_id(storage, &data_id, &data_type)
+            .await
+            .unwrap();
 
         // First data to store
         let original_data = TestType { i: 42 };
@@ -1098,6 +1108,11 @@ pub mod tests {
 
         let data_id = derive_request_id("BYTES_EPOCH_OVERWRITE").unwrap();
         let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Ensure no old data is present from a previously interrupted run
+        delete_at_request_and_epoch_id(storage, &data_id, &epoch, &data_type)
+            .await
+            .unwrap();
 
         assert_eq!(
             storage
