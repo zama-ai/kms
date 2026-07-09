@@ -448,6 +448,19 @@ async fn send_and_collect_public_decrypt(
     })
 }
 
+/// Deterministic ordering key for a public decryption response. Responses are collected
+/// concurrently, so their arrival order is non-deterministic; the `verification_key` is the
+/// only per-party identifier present on the response itself, so we sort by it to give a
+/// stable order. Both the single-shot path here and the `PublicDecryptResult` fetch path
+/// (`get_public_decrypt_responses`) sort by this key, so their formatted output matches.
+fn public_decrypt_response_sort_key(response: &PublicDecryptionResponse) -> &[u8] {
+    response
+        .payload
+        .as_ref()
+        .map(|payload| payload.verification_key.as_slice())
+        .unwrap_or_default()
+}
+
 async fn verify_public_decrypt(
     internal_client: Arc<RwLock<Client>>,
     kms_addrs: Vec<alloy_primitives::Address>,
@@ -458,7 +471,7 @@ async fn verify_public_decrypt(
     let CollectedPublicDecrypt {
         req_id,
         dec_req,
-        resp_response_vec,
+        mut resp_response_vec,
         collect_duration: _,
     } = collected;
     let verify_one_start = tokio::time::Instant::now();
@@ -470,6 +483,9 @@ async fn verify_public_decrypt(
         &kms_addrs,
         num_expected_responses,
     )?;
+    resp_response_vec.sort_unstable_by(|a, b| {
+        public_decrypt_response_sort_key(a).cmp(public_decrypt_response_sort_key(b))
+    });
     Ok((
         req_id,
         format!("{resp_response_vec:x?}"),
@@ -1534,11 +1550,13 @@ pub(crate) async fn get_public_decrypt_responses(
         "pdec resp"
     );
 
-    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
-    let resp_response_vec: Vec<_> = resp_response_vec
+    let mut resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)
         .collect();
+    resp_response_vec.sort_unstable_by(|a, b| {
+        public_decrypt_response_sort_key(a).cmp(public_decrypt_response_sort_key(b))
+    });
 
     // Verify when material is supplied; `None` returns the responses unverified (the perf harness
     // passes `None` and verifies in its own phase).
