@@ -2,12 +2,15 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
-use crate::vault::storage::store_versioned_at_request_and_epoch_id;
+use crate::vault::storage::{
+    read_all_data_from_all_epochs_versioned, store_versioned_at_request_and_epoch_id,
+};
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
@@ -31,9 +34,10 @@ use crate::{
         },
     },
 };
+use kms_grpc::EpochId;
 use kms_grpc::{
     RequestId,
-    identifiers::{ContextId, EpochId},
+    identifiers::ContextId,
     rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics::METRICS;
@@ -468,7 +472,8 @@ where
                     PrivDataType::SigningKey
                     | PrivDataType::PrssSetup
                     | PrivDataType::PrssSetupCombined
-                    | PrivDataType::ContextInfo => {
+                    | PrivDataType::ContextInfo
+                    | PrivDataType::EpochData => {
                         let del_res = delete_at_request_id(
                             &mut (*priv_storage),
                             req_id,
@@ -608,7 +613,8 @@ where
             PrivDataType::SigningKey
             | PrivDataType::PrssSetup
             | PrivDataType::PrssSetupCombined
-            | PrivDataType::ContextInfo => {
+            | PrivDataType::ContextInfo
+            | PrivDataType::EpochData => {
                 if let Err(e) = store_versioned_at_request_id(
                     &mut *priv_storage,
                     req_id,
@@ -938,6 +944,23 @@ where
         Ok(context_map.into_values().collect())
     }
 
+    /// Read all epoch info entries from storage for a given context.
+    pub async fn read_all_epoch_info(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<Vec<EpochData>> {
+        let priv_storage = self.private_storage.lock().await;
+
+        #[expect(deprecated)]
+        let epoch_map: HashMap<_, EpochData> = read_all_data_from_all_epochs_versioned(
+            &*priv_storage,
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to read epoch info: {}", e))?;
+        Ok(epoch_map.into_values().collect())
+    }
+
     /// Synchronize the backup vault with the current private storage contents
     /// and log and update the metrics in case of an error.
     ///
@@ -1005,6 +1028,7 @@ where
                             .await?;
                         }
                         // Non epoched types
+                        #[expect(deprecated)]
                         PrivDataType::PrssSetupCombined => {
                             crate::engine::backup_operator::update_specific_backup_vault::<
                                 PrivS,
@@ -1048,6 +1072,15 @@ where
                                 ContextInfo,
                             >(
                                 &private_storage, &mut backup_vault, cur_type, overwrite
+                            )
+                            .await?;
+                        }
+                        PrivDataType::EpochData => {
+                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, EpochData>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
                             )
                             .await?;
                         }

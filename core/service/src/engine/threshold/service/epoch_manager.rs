@@ -38,8 +38,10 @@ use kms_grpc::{
     utils::tonic_result::BoxedStatus,
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
-use tfhe::zk::CompactPkeCrs;
+use tfhe::{Versionize, zk::CompactPkeCrs};
+use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
     endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
     online::preprocessing::BasePreprocessing,
@@ -111,6 +113,23 @@ const RESHARE_Z64_SESSION_COUNTER: u64 = 3;
 const RESHARE_Z128_SESSION_COUNTER: u64 = 4;
 const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 5;
 const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 6;
+
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum EpochDataVersions {
+    V0(EpochData),
+}
+
+/// Public because it's used by storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(EpochDataVersions)]
+pub struct EpochData {
+    pub context_id: ContextId,
+    pub prss: PRSSSetupCombined,
+}
+
+impl tfhe::named::Named for EpochData {
+    const NAME: &'static str = "kms::EpochData";
+}
 
 #[derive(Debug)]
 struct VerifiedKeyInfo {
@@ -274,7 +293,7 @@ impl<
 {
     /// This will load all PRSS setups from storage into session maker.
     pub async fn init_all_prss_from_storage(&self) -> anyhow::Result<()> {
-        let all_prss = self.crypto_storage.read_all_prss_info().await?;
+        let all_prss = self.crypto_storage.read_all_epoch_data().await?;
 
         for (epoch_id, prss) in all_prss {
             self.session_maker.add_epoch(epoch_id.into(), prss).await;
@@ -294,7 +313,7 @@ impl<
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
-        Self::internal_init_prss(
+        Self::internal_init_epoch(
             self.session_maker.clone(),
             &self.crypto_storage,
             context_id,
@@ -303,9 +322,8 @@ impl<
         .await
     }
 
-    // We let the caller store the PRSS in the meta store if needed
-    // as the caller might want to store additional information in case of a resharing
-    async fn internal_init_prss(
+    /// Execute the PRSS setup phase and store the epoch data in the storage backend (which includes the PRSS result)
+    async fn internal_init_epoch(
         session_maker: SessionMaker,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         context_id: &ContextId,
@@ -353,9 +371,15 @@ impl<
             num_parties: base_session.parameters.num_parties() as u8,
             threshold: base_session.parameters.threshold(),
         };
+        let epoch_data = EpochData {
+            context_id: *context_id,
+            prss: prss.clone(),
+        };
 
-        crypto_storage.write_prss_info(epoch_id, &prss).await?;
-        session_maker.add_epoch(*epoch_id, prss).await;
+        crypto_storage
+            .write_epoch_data(epoch_id, &epoch_data)
+            .await?;
+        session_maker.add_epoch(*epoch_id, epoch_data).await;
         tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
             epoch_id,
@@ -1101,6 +1125,7 @@ impl<
         // epoch (its PRSS, hence the epoch itself, is gone) and strand those shares forever.
         // Keeping PRSS for last guarantees a restarted node still sees the epoch and can finish the
         // deletion.
+        #[expect(deprecated)]
         if first_error.is_none()
             && let Err(e) = delete_at_request_id(
                 &mut (*priv_storage_guard),
@@ -1337,9 +1362,13 @@ impl<
             let epoch_id = epoch_id;
             let meta_store = meta_store;
             if do_prss
-                && let Err(e) =
-                    Self::internal_init_prss(session_maker, &crypto_storage, &context_id, &epoch_id)
-                        .await
+                && let Err(e) = Self::internal_init_epoch(
+                    session_maker,
+                    &crypto_storage,
+                    &context_id,
+                    &epoch_id,
+                )
+                .await
             {
                 let err = format!("PRSS initialization failed during epoch creation: {e:?}");
                 let _ =

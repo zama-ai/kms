@@ -299,8 +299,27 @@ pub enum PrivDataType {
     FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
+    // TODO should we actually remove PRSSSetup and handle all the places in the code where this causes a problem?
     #[deprecated(
-        note = "Use PrssSetupCombined instead, but this is still because we need to read legacy data"
+        note = "Use EpochData instead, but this is still there to avoid semantic change in the storage format"
+    )]
+    PrssSetup,
+    #[deprecated(
+        note = "Use EpochData instead, but this is still there because we need to read legacy data"
+    )]
+    PrssSetupCombined,
+    ContextInfo,
+    EpochData,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
+pub enum PrivDataTypeV1 {
+    SigningKey,
+    FheKeyInfo, // Only for the threshold case
+    CrsInfo,
+    FhePrivateKey, // Only used for the centralized case
+    #[deprecated(
+        note = "Use PrssSetupCombined instead, but this is still there to avoid semantic change in the storage format"
     )]
     PrssSetup,
     PrssSetupCombined,
@@ -318,15 +337,45 @@ pub enum PrivDataTypeV0 {
 }
 
 impl Upgrade<PrivDataType> for PrivDataTypeV0 {
-    type Error = std::convert::Infallible;
+    type Error = UnversionizeError;
     fn upgrade(self) -> Result<PrivDataType, Self::Error> {
         Ok(match self {
             PrivDataTypeV0::SigningKey => PrivDataType::SigningKey,
             PrivDataTypeV0::FheKeyInfo => PrivDataType::FheKeyInfo,
             PrivDataTypeV0::CrsInfo => PrivDataType::CrsInfo,
             PrivDataTypeV0::FhePrivateKey => PrivDataType::FhePrivateKey,
-            PrivDataTypeV0::PrssSetup => PrivDataType::PrssSetup,
+            PrivDataTypeV0::PrssSetup => {
+                return Err(UnversionizeError::Upgrade {
+                    from_vers: "0".to_string(),
+                    into_vers: "2".to_string(),
+                    source: anyhow::anyhow!(
+                        "PrivDataTypeV0::PrssSetup is deprecated and cannot be upgraded to PrivDataType"
+                    ).into(),
+                });
+            }
             PrivDataTypeV0::ContextInfo => PrivDataType::ContextInfo,
+        })
+    }
+}
+impl Upgrade<PrivDataType> for PrivDataTypeV1 {
+    type Error = UnversionizeError;
+    fn upgrade(self) -> Result<PrivDataType, Self::Error> {
+        Ok(match self {
+            PrivDataTypeV1::SigningKey => PrivDataType::SigningKey,
+            PrivDataTypeV1::FheKeyInfo => PrivDataType::FheKeyInfo,
+            PrivDataTypeV1::CrsInfo => PrivDataType::CrsInfo,
+            PrivDataTypeV1::FhePrivateKey => PrivDataType::FhePrivateKey,
+            PrivDataTypeV1::PrssSetup => {
+                return Err(UnversionizeError::Upgrade {
+                    from_vers: "1".to_string(),
+                    into_vers: "2".to_string(),
+                    source: anyhow::anyhow!(
+                        "PrivDataTypeV1::PrssSetup is deprecated and cannot be upgraded to PrivDataType"
+                    ).into(),
+                });
+            }
+            PrivDataTypeV1::PrssSetupCombined => PrivDataType::PrssSetupCombined,
+            PrivDataTypeV1::ContextInfo => PrivDataType::ContextInfo,
         })
     }
 }
@@ -340,8 +389,10 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             #[expect(deprecated)]
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            #[expect(deprecated)]
             PrivDataType::PrssSetupCombined => write!(f, "PrssSetupCombined"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+            PrivDataType::EpochData => write!(f, "EpochData"),
         }
     }
 }

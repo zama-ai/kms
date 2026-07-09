@@ -5,17 +5,16 @@ use std::{
 };
 
 use crate::{
-    engine::{context::ContextInfo, utils::MetricedError},
+    engine::{
+        context::ContextInfo, threshold::service::epoch_manager::EpochData, utils::MetricedError,
+    },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === External Crates ===
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
-use kms_grpc::{
-    RequestId,
-    identifiers::{ContextId, EpochId},
-};
+use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
 use threshold_execution::{
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession},
@@ -80,7 +79,7 @@ type ContextMap = HashMap<ContextId, Context>;
 pub(crate) struct SessionMaker {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     context_map: Arc<RwLock<ContextMap>>,
-    epoch_map: Arc<RwLock<HashMap<EpochId, PRSSSetupCombined>>>,
+    epoch_map: Arc<RwLock<HashMap<EpochId, EpochData>>>,
     verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
     rng: Arc<Mutex<AesRng>>,
 }
@@ -96,17 +95,18 @@ impl SessionMaker {
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
     ) -> anyhow::Result<Self> {
-        let session_maker = Self::new_uninitialized(networking_manager, verifier, rng);
-        let all_prss = crypto_storage.read_all_prss_info().await?;
-        if all_prss.is_empty() {
+        let session_maker: SessionMaker =
+            Self::new_uninitialized(networking_manager, verifier, rng);
+        let all_epochs = crypto_storage.read_all_epoch_data().await?;
+        if all_epochs.is_empty() {
             tracing::warn!(
-                "No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server"
+                "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"
             );
         }
-        for (epoch_id, prss) in all_prss {
+        for (epoch_id, prss) in all_epochs {
             session_maker.add_epoch(epoch_id.into(), prss).await;
             tracing::info!(
-                "Loaded PRSS Setup from storage for request ID {}.",
+                "Loaded epoch data from storage for request ID {}.",
                 epoch_id
             );
         }
@@ -200,12 +200,15 @@ impl SessionMaker {
             role_assignment,
         };
 
-        let default_prss = match (prss_setup_z128, prss_setup_z64) {
-            (Some(z128), Some(z64)) => Some(PRSSSetupCombined {
-                prss_setup_z128: z128,
-                prss_setup_z64: z64,
-                num_parties: 4,
-                threshold: 1,
+        let default_epoch = match (prss_setup_z128, prss_setup_z64) {
+            (Some(z128), Some(z64)) => Some(EpochData {
+                context_id: default_context_id,
+                prss: PRSSSetupCombined {
+                    prss_setup_z128: z128,
+                    prss_setup_z64: z64,
+                    num_parties: 4,
+                    threshold: 1,
+                },
             }),
             _ => None,
         };
@@ -216,8 +219,8 @@ impl SessionMaker {
                 default_context_id,
                 default_context,
             )]))),
-            epoch_map: Arc::new(RwLock::new(match default_prss {
-                Some(prss) => HashMap::from_iter([(*epoch_id, prss)]),
+            epoch_map: Arc::new(RwLock::new(match default_epoch {
+                Some(epoch) => HashMap::from_iter([(*epoch_id, epoch)]),
                 None => HashMap::new(),
             })),
             verifier: None,
@@ -386,9 +389,9 @@ impl SessionMaker {
         context_map.remove(context_id);
     }
 
-    pub(crate) async fn add_epoch(&self, epoch_id: EpochId, prss: PRSSSetupCombined) {
+    pub(crate) async fn add_epoch(&self, epoch_id: EpochId, epoch_data: EpochData) {
         let mut epoch_map = self.epoch_map.write().await;
-        epoch_map.insert(epoch_id, prss);
+        epoch_map.insert(epoch_id, epoch_data);
     }
 
     pub(crate) async fn remove_epoch(&self, epoch_id: &EpochId) {
@@ -506,7 +509,7 @@ impl SessionMaker {
             let prss_setup_extended = epoch_map_guard
                 .get(&epoch_id)
                 .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss_setup_z128;
+            let prss_setup = &prss_setup_extended.prss.prss_setup_z128;
             prss_setup.new_prss_session_state(session_id)
         };
 
@@ -533,7 +536,7 @@ impl SessionMaker {
             let prss_setup_extended = epoch_map_guard
                 .get(&epoch_id)
                 .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss_setup_z64;
+            let prss_setup = &prss_setup_extended.prss.prss_setup_z64;
 
             prss_setup.new_prss_session_state(session_id)
         };
