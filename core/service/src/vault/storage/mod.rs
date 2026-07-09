@@ -691,6 +691,11 @@ pub mod tests {
         let data = TestType { i: 46 };
         let req_id = derive_request_id("payload_size_test").unwrap();
 
+        // Ensure no old data is present; a skipped write records no sample
+        delete_at_request_id(storage, &req_id, "TestType")
+            .await
+            .unwrap();
+
         let before = observability::metrics::METRICS.payload_size_sample_count(TestType::NAME);
         store_versioned_at_request_id(storage, &req_id, &data, "TestType")
             .await
