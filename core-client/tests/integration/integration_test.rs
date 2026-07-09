@@ -2207,7 +2207,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "slow_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
