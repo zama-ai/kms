@@ -120,6 +120,10 @@ impl S3Storage {
         format!("{}/{}/{}/{}", self.prefix, data_type, epoch_id, data_id)
     }
 
+    /// Checks whether an object exists at the given key. Only a genuine 404
+    /// maps to `Ok(false)`; any other failure (e.g. access denied) is returned
+    /// as an error, so exists-guarded callers (overwrite checks, purge and
+    /// destroy-epoch flows) never mistake a failed check for absent data.
     async fn data_exists_at_key(&self, key: &str) -> anyhow::Result<bool> {
         tracing::info!(
             "Checking if object exists in bucket {} under key {}",
@@ -136,8 +140,11 @@ impl S3Storage {
         match result {
             Ok(_) => Ok(true),
             Err(sdk_error) => match sdk_error.as_service_error().map(|e| e.is_not_found()) {
-                Some(_) => Ok(false),
-                None => Err(sdk_error.into()),
+                Some(true) => Ok(false),
+                Some(false) | None => Err(anyhow_error_and_log(format!(
+                    "Could not check existence of object in bucket {} under key {}: {:?}",
+                    self.bucket, key, sdk_error
+                ))),
             },
         }
     }
@@ -1292,6 +1299,44 @@ mod tests {
             .expect_err("delete against a missing bucket must fail");
         assert!(
             err.to_string().contains(bucket),
+            "error must carry the bucket context, got: {err}"
+        );
+    }
+
+    /// An existence check that fails with a non-404 service error (here:
+    /// credentials the server rejects) must surface an error rather than
+    /// "data absent", so exists-guarded flows (overwrite checks, purge and
+    /// destroy-epoch) never skip work because of e.g. broken credentials.
+    #[tokio::test]
+    async fn test_exists_failure_propagates_s3() {
+        let prefix = std::stringify!(test_exists_failure_propagates_s3);
+        let credentials = aws_sdk_s3::config::Credentials::new(
+            "invalid-access-key",
+            "invalid-secret-key",
+            None,
+            None,
+            "s3-exists-negative-test",
+        );
+        let config = aws_sdk_s3::config::Builder::new()
+            .behavior_version(aws_config::BehaviorVersion::latest())
+            .region(Region::new(AWS_REGION))
+            .credentials_provider(credentials)
+            .endpoint_url(AWS_S3_ENDPOINT)
+            .force_path_style(true)
+            .build();
+        let storage = S3Storage::new(
+            S3Client::from_conf(config),
+            BUCKET_NAME.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+        )
+        .unwrap();
+        let err = storage
+            .data_exists(&RequestId::default(), "PublicKey")
+            .await
+            .expect_err("existence check with rejected credentials must fail");
+        assert!(
+            err.to_string().contains(BUCKET_NAME),
             "error must carry the bucket context, got: {err}"
         );
     }
