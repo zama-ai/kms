@@ -465,14 +465,14 @@ async fn verify_public_decrypt(
     verify_public_decrypt_responses(
         &resp_response_vec,
         PubDecVerificationMaterial::Request(dec_req),
-        Some(ptxt.clone()),
+        Some(ptxt),
         &*internal_client.read().await,
         &kms_addrs,
         num_expected_responses,
     )?;
     Ok((
         req_id,
-        format!("Public decrypted Plaintext {ptxt:?}"),
+        format!("{resp_response_vec:x?}"),
         verify_one_start.elapsed(),
     ))
 }
