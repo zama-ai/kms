@@ -629,6 +629,19 @@ fn verify_proof(
 ) -> anyhow::Result<InternalPublicParameter> {
     partial_proof.validate_points()?;
 
+    // The round number is fixed by the contributor's position in the sorted
+    // role list, which every party derives identically. Binding the round
+    // carried in the received public parameter to this expected value prevents
+    // a malicious contributor from inflating it: otherwise they could set an
+    // arbitrarily large round that passes the monotonicity check below and then
+    // makes every subsequent honest contribution be rejected as a stale round.
+    if partial_proof.new_pp.round != round {
+        return Err(anyhow_error_and_log(format!(
+            "bad round number: expected {round} but got {}",
+            partial_proof.new_pp.round
+        )));
+    }
+
     if current_pp.round >= partial_proof.new_pp.round {
         return Err(anyhow_error_and_log("bad round number".to_string()));
     }
@@ -1382,9 +1395,40 @@ mod tests {
         {
             let proof1 = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
 
-            // dlog check failed because input to Hash has the wrong round number
+            // the round carried in the proof (1) does not match the round the
+            // verifier expects for this position (11), so it is rejected before
+            // the dlog check
             assert!(
                 verify_proof(&pp1, &proof1, 11, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bad round number")
+            );
+        }
+        {
+            // A malicious contributor must not be able to inflate the round
+            // number stored in the public parameter. Before this was checked,
+            // a very large round would pass the monotonicity check and then
+            // cause every subsequent honest contribution to be rejected as
+            // stale, letting the attacker fix the final CRS to their own.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            proof.new_pp.round = u64::MAX;
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bad round number")
+            );
+        }
+        {
+            // The round number is also bound into the discrete-log proof. Even
+            // if a malicious contributor forges new_pp.round to the value the
+            // verifier expects (passing the round check above), a proof whose
+            // dlog was computed for a different round is still rejected.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 11, &r, sid);
+            proof.new_pp.round = 1;
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
                     .unwrap_err()
                     .to_string()
                     .contains("dlog check failed")
