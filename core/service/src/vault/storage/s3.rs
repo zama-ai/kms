@@ -2,21 +2,38 @@ use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
-use aws_sdk_s3::{Client as S3Client, error::ProvideErrorMetadata, primitives::ByteStream};
+use aws_sdk_s3::{
+    Client as S3Client,
+    error::ProvideErrorMetadata,
+    primitives::ByteStream,
+    types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
+};
 use kms_grpc::{RequestId, identifiers::EpochId};
 use serde::{Serialize, de::DeserializeOwned};
 #[cfg(test)]
 use std::cell::RefCell;
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::HashSet, str::FromStr, sync::mpsc};
 use tfhe::{
     Unversionize, Versionize,
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
 };
-use tokio::io::AsyncReadExt;
+use tokio::{io::AsyncReadExt, sync::oneshot};
 use url::Url;
 
 const PREALLOCATED_BLOB_SIZE: usize = 32768;
+
+/// Serialized bytes buffered per multipart part. 16 MiB keeps peak memory at
+/// O(part size) while a maximal 2 GiB (`SAFE_SER_SIZE_LIMIT`) object still
+/// yields only 128 parts, far below the S3 limit of 10,000.
+pub(crate) const S3_MULTIPART_PART_SIZE: usize = 16 * 1024 * 1024;
+
+/// S3's minimum size for every multipart part except the last.
+pub(crate) const S3_MULTIPART_MIN_PART_SIZE: usize = 5 * 1024 * 1024;
+
+/// Queue depth between the serializing task and the uploader thread; peak
+/// in-flight memory is roughly `(2 + capacity) * part_size`.
+const PART_CHANNEL_CAPACITY: usize = 1;
 
 #[derive(Debug, Clone)]
 pub struct S3Storage {
@@ -125,6 +142,10 @@ impl S3Storage {
         }
     }
 
+    /// Stores the versioned serialization of `data` under `key`. Payloads that
+    /// fit in one part buffer go out as a single PUT; larger ones are streamed
+    /// as a multipart upload so the full blob never sits in memory (see
+    /// [`s3_put_versioned`]).
     async fn store_data_at_key<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         key: &str,
@@ -135,14 +156,18 @@ impl S3Storage {
             &self.bucket,
             key
         );
-        let mut buf = Vec::new();
-        safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
-
-        let size = buf.len() as f64;
-        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
+        let size = s3_put_versioned(
+            &self.s3_client,
+            &self.bucket,
+            key,
+            data,
+            S3_MULTIPART_PART_SIZE,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .await?;
 
         // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
-        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size as f64);
 
         Ok(())
     }
@@ -634,6 +659,335 @@ pub(crate) async fn s3_put_blob(
     }
 }
 
+/// Upload id (if the multipart upload was created) plus the uploaded parts or
+/// the first upload error.
+type MultipartUploadResult = (Option<String>, anyhow::Result<Vec<CompletedPart>>);
+
+/// Channel ends connecting an [`S3PartWriter`] to its uploader thread.
+struct MultipartPipeline {
+    part_tx: mpsc::SyncSender<Vec<u8>>,
+    result_rx: oneshot::Receiver<MultipartUploadResult>,
+}
+
+/// Outcome of a finished serialization stream: either the whole payload fit in
+/// one buffer (store it with a single PUT) or the multipart pipeline ran.
+enum PartWriterOutcome {
+    Single(Vec<u8>),
+    Multipart(oneshot::Receiver<MultipartUploadResult>),
+}
+
+/// `std::io::Write` sink that buffers serialized bytes into `part_size` chunks
+/// and, once the first chunk fills, streams them to S3 as a multipart upload.
+///
+/// The serializer runs inline on the calling async task (it borrows the
+/// element, so it cannot move into `spawn_blocking`, and `block_in_place`
+/// panics on current-thread runtimes — same trade-off as
+/// `util::file_handling::safe_write_element_versioned`), while a dedicated
+/// uploader thread drains the bounded part queue, so serialization and upload
+/// overlap without unbounded buffering.
+struct S3PartWriter {
+    config: aws_sdk_s3::Config,
+    bucket: String,
+    key: String,
+    part_size: usize,
+    buf: Vec<u8>,
+    total_written: u64,
+    pipeline: Option<MultipartPipeline>,
+}
+
+impl S3PartWriter {
+    fn new(config: aws_sdk_s3::Config, bucket: &str, key: &str, part_size: usize) -> Self {
+        debug_assert!(part_size >= S3_MULTIPART_MIN_PART_SIZE);
+        Self {
+            config,
+            bucket: bucket.to_string(),
+            key: key.to_string(),
+            part_size,
+            buf: Vec::new(),
+            total_written: 0,
+            pipeline: None,
+        }
+    }
+
+    /// Ship the full buffer to the uploader thread, spawning it on first use.
+    fn spill(&mut self) -> std::io::Result<()> {
+        if self.pipeline.is_none() {
+            let (part_tx, part_rx) = mpsc::sync_channel(PART_CHANNEL_CAPACITY);
+            let (result_tx, result_rx) = oneshot::channel();
+            let (config, bucket, key) =
+                (self.config.clone(), self.bucket.clone(), self.key.clone());
+            std::thread::Builder::new()
+                .name("s3-multipart-upload".to_string())
+                .spawn(move || run_multipart_uploader(config, bucket, key, part_rx, result_tx))
+                .map_err(std::io::Error::other)?;
+            tracing::info!(
+                "Streaming multipart upload engaged for key {} ({} byte parts)",
+                self.key,
+                self.part_size
+            );
+            self.pipeline = Some(MultipartPipeline { part_tx, result_rx });
+        }
+        let part = std::mem::replace(&mut self.buf, Vec::with_capacity(self.part_size));
+        // The pipeline was just installed above if it was missing.
+        let pipeline = self.pipeline.as_ref().expect("pipeline installed above");
+        pipeline.part_tx.send(part).map_err(|_| {
+            std::io::Error::other("S3 multipart uploader stopped; it reports the root cause")
+        })
+    }
+
+    /// Finish the stream. The non-empty tail part is sent only when
+    /// serialization succeeded; closing the channel lets the uploader exit.
+    fn finish(mut self, serialization_ok: bool) -> PartWriterOutcome {
+        match self.pipeline.take() {
+            None => PartWriterOutcome::Single(self.buf),
+            Some(pipeline) => {
+                if serialization_ok && !self.buf.is_empty() {
+                    // A send error means the uploader already failed; that
+                    // error arrives through the result channel.
+                    let _ = pipeline.part_tx.send(std::mem::take(&mut self.buf));
+                }
+                drop(pipeline.part_tx);
+                PartWriterOutcome::Multipart(pipeline.result_rx)
+            }
+        }
+    }
+}
+
+impl std::io::Write for S3PartWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        // Ship only when more bytes arrive after the buffer filled, so a
+        // payload of exactly one part stays on the single-PUT fast path.
+        if self.buf.len() == self.part_size {
+            self.spill()?;
+        }
+        let n = std::cmp::min(self.part_size - self.buf.len(), data.len());
+        self.buf.extend_from_slice(&data[..n]);
+        self.total_written += n as u64;
+        Ok(n)
+    }
+
+    // Never flush a partial buffer: every part but the last must be at least
+    // `S3_MULTIPART_MIN_PART_SIZE`, and only `finish` knows which is last.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Uploads parts received over `part_rx` to a new multipart upload of
+/// `bucket`/`key`, reporting the outcome over `result_tx`.
+///
+/// Runs on a dedicated OS thread with its own single-threaded runtime and its
+/// own S3 client so uploads progress while the caller's runtime thread is
+/// blocked inside the serializer (see [`S3PartWriter`]). Dropping `part_rx` on
+/// error unblocks the serializing side with a send error.
+fn run_multipart_uploader(
+    config: aws_sdk_s3::Config,
+    bucket: String,
+    key: String,
+    part_rx: mpsc::Receiver<Vec<u8>>,
+    result_tx: oneshot::Sender<MultipartUploadResult>,
+) {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            let _ = result_tx.send((
+                None,
+                Err(anyhow::anyhow!("failed to build S3 uploader runtime: {e}")),
+            ));
+            return;
+        }
+    };
+    // Sharing the caller's HTTP client could hand out pooled connections that
+    // are driven by the caller's runtime, which stays blocked in the
+    // serializer for the duration of this upload; force a fresh pool instead.
+    let mut config = config.to_builder();
+    config.set_http_client(None);
+    let client = S3Client::from_conf(config.build());
+
+    // The SDK adds a CRC32 checksum to every part by default; declaring the
+    // algorithm up front keeps create/upload/complete consistent.
+    let created = rt.block_on(
+        client
+            .create_multipart_upload()
+            .bucket(&bucket)
+            .key(&key)
+            .checksum_algorithm(ChecksumAlgorithm::Crc32)
+            .send(),
+    );
+    let upload_id = match created {
+        Ok(out) => match out.upload_id {
+            Some(id) => id,
+            None => {
+                let _ = result_tx.send((
+                    None,
+                    Err(anyhow::anyhow!("S3 returned no upload id for key {key}")),
+                ));
+                return;
+            }
+        },
+        Err(err) => {
+            tracing::error!("{:?} {:?}", err.meta(), err.code());
+            let _ = result_tx.send((
+                None,
+                Err(anyhow::anyhow!(
+                    "AWS error creating multipart upload for key {key}: {err}"
+                )),
+            ));
+            return;
+        }
+    };
+
+    let mut parts = Vec::new();
+    // Parts are numbered from 1; the serialized-size limit caps the count far
+    // below S3's maximum of 10,000.
+    while let Ok(part_buf) = part_rx.recv() {
+        let part_number = parts.len() as i32 + 1;
+        match rt.block_on(
+            client
+                .upload_part()
+                .bucket(&bucket)
+                .key(&key)
+                .upload_id(&upload_id)
+                .part_number(part_number)
+                .body(ByteStream::from(part_buf))
+                .send(),
+        ) {
+            Ok(out) => parts.push(
+                CompletedPart::builder()
+                    .part_number(part_number)
+                    .set_e_tag(out.e_tag)
+                    .set_checksum_crc32(out.checksum_crc32)
+                    .build(),
+            ),
+            Err(err) => {
+                tracing::error!("{:?} {:?}", err.meta(), err.code());
+                // Returning drops `part_rx`, which fails the serializer's next
+                // send and unwinds the store operation.
+                let _ = result_tx.send((
+                    Some(upload_id),
+                    Err(anyhow::anyhow!(
+                        "AWS error uploading part {part_number} for key {key}: {err}"
+                    )),
+                ));
+                return;
+            }
+        }
+    }
+    let _ = result_tx.send((Some(upload_id), Ok(parts)));
+}
+
+/// Best-effort abort of a multipart upload; failures are only logged, leaving
+/// the orphaned parts for the bucket's `AbortIncompleteMultipartUpload`
+/// lifecycle rule to reclaim.
+async fn abort_multipart_upload_best_effort(
+    s3_client: &S3Client,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+) {
+    tracing::warn!("Aborting multipart upload {upload_id} for key {key}");
+    if let Err(err) = s3_client
+        .abort_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .send()
+        .await
+    {
+        tracing::error!(
+            "Failed to abort multipart upload {upload_id} for key {key}: {:?} {:?}",
+            err.meta(),
+            err.code()
+        );
+    }
+}
+
+/// Safe-serializes `data` (versioned) and stores it under `key` in `bucket`,
+/// returning the total number of serialized bytes.
+///
+/// Payloads that fit in one `part_size` buffer are stored with a single
+/// `PutObject`; larger ones are streamed as an S3 multipart upload so the full
+/// serialized blob never exists in memory. Visibility is all-or-nothing: the
+/// object appears only once `CompleteMultipartUpload` succeeds, and on any
+/// failure the multipart upload is aborted.
+pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
+    s3_client: &S3Client,
+    bucket: &str,
+    key: &str,
+    data: &T,
+    part_size: usize,
+    size_limit: u64,
+) -> anyhow::Result<u64> {
+    let mut writer = S3PartWriter::new(s3_client.config().clone(), bucket, key, part_size);
+    let ser_result = safe_serialize(data, &mut writer, size_limit).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to serialize {} for key {key}: {e}",
+            <T as Named>::NAME
+        )
+    });
+    let total_written = writer.total_written;
+    match writer.finish(ser_result.is_ok()) {
+        PartWriterOutcome::Single(buf) => {
+            ser_result?;
+            s3_put_blob(s3_client, bucket, key, buf).await?;
+        }
+        PartWriterOutcome::Multipart(result_rx) => {
+            let (upload_id, upload_result) = result_rx.await.map_err(|_| {
+                anyhow::anyhow!(
+                    "S3 multipart uploader thread died for key {key}; an incomplete \
+                     multipart upload may linger until the bucket lifecycle rule reaps it"
+                )
+            })?;
+            let parts = match (upload_result, ser_result) {
+                (Ok(parts), Ok(())) => parts,
+                // The uploader error is the root cause: its failure closes the
+                // part channel, which the serializer then sees as a write error.
+                (Err(upload_err), _) => {
+                    if let Some(id) = &upload_id {
+                        abort_multipart_upload_best_effort(s3_client, bucket, key, id).await;
+                    }
+                    return Err(upload_err);
+                }
+                (Ok(_), Err(ser_err)) => {
+                    if let Some(id) = &upload_id {
+                        abort_multipart_upload_best_effort(s3_client, bucket, key, id).await;
+                    }
+                    return Err(ser_err);
+                }
+            };
+            // The uploader only reports Ok after the channel closed, i.e. once
+            // every part (including the tail sent by `finish`) was uploaded.
+            let upload_id = upload_id.expect("upload id accompanies uploaded parts");
+            let part_count = parts.len();
+            let completed = CompletedMultipartUpload::builder()
+                .set_parts(Some(parts))
+                .build();
+            if let Err(err) = s3_client
+                .complete_multipart_upload()
+                .bucket(bucket)
+                .key(key)
+                .upload_id(&upload_id)
+                .multipart_upload(completed)
+                .send()
+                .await
+            {
+                tracing::error!("{:?} {:?}", err.meta(), err.code());
+                abort_multipart_upload_best_effort(s3_client, bucket, key, &upload_id).await;
+                return Err(anyhow::anyhow!(
+                    "AWS error completing multipart upload for key {key}: {err}"
+                ));
+            }
+            tracing::info!(
+                "Completed multipart upload of {total_written} bytes in {part_count} parts for key {key}"
+            );
+        }
+    }
+    Ok(total_written)
+}
+
 /// Find the AWS region from an S3 bucket URL.
 /// For example:
 /// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will return "eu-west-1".
@@ -876,6 +1230,143 @@ mod tests {
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
         assert!(!public_key_ids.is_empty());
+    }
+
+    mod multipart {
+        use super::*;
+        use crate::engine::base::derive_request_id;
+        use serde::Deserialize;
+        use tfhe_versionable::VersionsDispatch;
+
+        #[derive(Serialize, Deserialize, PartialEq, Debug, VersionsDispatch)]
+        pub enum TestBigTypeVersions {
+            V0(TestBigType),
+        }
+
+        impl Named for TestBigType {
+            const NAME: &'static str = "TestBigType";
+        }
+
+        /// Payload large enough to span several multipart parts.
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Versionize)]
+        #[versionize(TestBigTypeVersions)]
+        pub struct TestBigType {
+            pub data: Vec<u8>,
+        }
+
+        fn big_payload(len: usize) -> TestBigType {
+            TestBigType {
+                data: (0..len).map(|i| (i % 251) as u8).collect(),
+            }
+        }
+
+        #[tokio::test]
+        async fn s3_multipart_store_and_read() {
+            let prefix = std::stringify!(s3_multipart_store_and_read);
+            let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+            // Three parts at the minimal part size: 5 + 5 + ~1 MiB.
+            let data = big_payload(11 * 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            let size = s3_put_versioned(
+                &storage.s3_client,
+                BUCKET_NAME,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .await
+            .unwrap();
+
+            let stored = storage
+                .load_bytes(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+            assert_eq!(stored.len() as u64, size);
+            let read_back: TestBigType =
+                storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
+            assert_eq!(read_back, data);
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn s3_multipart_abort_on_error() {
+            let prefix = std::stringify!(s3_multipart_abort_on_error);
+            let storage = create_s3_storage(StorageType::PUB, prefix).await;
+            let data = big_payload(11 * 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            // A 6 MiB size limit fails serialization after the first 5 MiB
+            // part has already been shipped, exercising the abort path.
+            let res = s3_put_versioned(
+                &storage.s3_client,
+                BUCKET_NAME,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                6 * 1024 * 1024,
+            )
+            .await;
+            assert!(res.is_err(), "serialization over the size limit must fail");
+
+            // All-or-nothing: no object and no lingering multipart upload.
+            assert!(
+                !storage
+                    .data_exists(&req_id, TestBigType::NAME)
+                    .await
+                    .unwrap()
+            );
+            let pending = storage
+                .s3_client
+                .list_multipart_uploads()
+                .bucket(BUCKET_NAME)
+                .prefix(&key)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                pending.uploads().is_empty(),
+                "multipart upload was not aborted: {:?}",
+                pending.uploads()
+            );
+        }
+
+        #[tokio::test]
+        async fn s3_multipart_via_store_data() {
+            let prefix = std::stringify!(s3_multipart_via_store_data);
+            let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+            // One byte more than a production part, so the pipeline engages.
+            let data = big_payload(S3_MULTIPART_PART_SIZE + 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+
+            let before =
+                observability::metrics::METRICS.payload_size_sample_count(TestBigType::NAME);
+            let outcome = storage
+                .store_data(&data, &req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+            assert!(matches!(outcome, StoreWriteOutcome::Created));
+
+            let read_back: TestBigType =
+                storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
+            assert_eq!(read_back, data);
+            let after =
+                observability::metrics::METRICS.payload_size_sample_count(TestBigType::NAME);
+            assert!(
+                after > before,
+                "storing data must record a payload-size sample (before={before}, after={after})"
+            );
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+        }
     }
 }
 
