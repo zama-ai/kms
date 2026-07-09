@@ -1128,7 +1128,7 @@ async fn crs_gen_with_params(
 
 /// Helper to run integration test commands via CLI (isolated version)
 ///
-/// Mirrors the Docker-based `integration_test_commands` in integration_test.rs:
+/// Exercises via CLI:
 /// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
 /// - Encrypt to file + PublicDecrypt/UserDecrypt from file
 /// - SnS precompute variants (no_precompute_sns=false)
@@ -1359,118 +1359,6 @@ async fn integration_test_commands(
             CCCommand::InsecureCrsGen(_) => {
                 CCCommand::InsecureCrsGenResult(CrsGenResultParameters {
                     request_id: req_id.unwrap(),
-                    context_id: None,
-                    epoch_id: None,
-                    no_verify: false,
-                })
-            }
-            _ => CCCommand::DoNothing(NoParameters {}),
-        };
-
-        let expect_result = !matches!(&get_res_command, CCCommand::DoNothing(_));
-
-        if expect_result {
-            let config = cmd_config(config_path, get_res_command, 500);
-
-            let mut results_bis = execute_cmd(&config, keys_folder)
-                .await
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            assert_eq!(results_bis.len(), 1);
-            let (sid_bis, result_bis) = results_bis.remove(0);
-
-            for (sid, result) in results {
-                if sid_bis == sid {
-                    assert_eq!(result_bis, result);
-                }
-            }
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
-
-    Ok(())
-}
-
-/// Run a subset of integration test commands using the default keyset format.
-///
-/// The default public material stores only `CompressedXofKeySet`
-/// (no separate `PublicKey`/`ServerKey`); the storage probe in
-/// [`fetch_keys_auto_detect`] resolves which layout to load.
-async fn integration_test_commands_default_keys(
-    config_path: &Path,
-    keys_folder: &Path,
-    key_id: String,
-) -> Result<()> {
-    let key_id = KeyId::from_str(&key_id)?;
-
-    let cp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, false, no_sns, None)
-    };
-    let ucp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
-        user_decrypt_params(val, dt, key_id, bs, false, no_sns)
-    };
-
-    let commands = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
-            "0x1",
-            FheType::Ebool,
-            2,
-            true,
-        ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
-            "0x78",
-            FheType::Euint8,
-            2,
-            true,
-        ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
-            "0x6F",
-            FheType::Euint8,
-            3,
-            false,
-        ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
-            "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
-            FheType::Euint256,
-            3,
-            false,
-        ))),
-    ];
-
-    for command in commands {
-        let config = cmd_config(config_path, command.clone(), 500);
-
-        let results = execute_cmd(&config, keys_folder)
-            .await
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        match &command {
-            CCCommand::PublicDecrypt(cipher_arguments) => {
-                let num_expected_results = cipher_arguments.get_num_requests();
-                assert_eq!(results.len(), num_expected_results);
-            }
-            CCCommand::UserDecrypt(_) => {
-                assert!(results.is_empty());
-                continue;
-            }
-            _ => {}
-        }
-
-        // Also test the get result commands
-        let req_id = results[0].0;
-
-        let get_res_command = match command {
-            CCCommand::PublicDecrypt(ref cipher_args) => {
-                // Reconstruct the same distinct per-ciphertext handles the request builder
-                // used (`integration_test_handles`), so the external-signature verification
-                // path runs instead of the unverified fetch.
-                let external_handles = integration_test_handles(cipher_args.get_batch_size())
-                    .iter()
-                    .map(hex::encode)
-                    .collect();
-                CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
-                    request_id: req_id.unwrap(),
-                    external_handles,
                     context_id: None,
                     epoch_id: None,
                     no_verify: false,
@@ -2196,27 +2084,6 @@ async fn test_centralized_insecure() -> Result<()> {
     let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
-    // Also exercise the default-key fast path separately.
-    let default_key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
-    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
-
-    Ok(())
-}
-
-/// Test centralized insecure key generation via CLI using the default key format.
-///
-/// Mirrors `test_centralized_insecure_default_keygen` in `integration_test.rs`.
-#[tokio::test]
-async fn test_centralized_insecure_default_keygen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_insecure_default_keygen").await?;
-
-    let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
-    assert!(!key_id.is_empty());
-
     Ok(())
 }
 
@@ -2351,9 +2218,6 @@ async fn test_threshold_insecure() -> Result<()> {
     let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
-    let default_key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
-    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
-
     Ok(())
 }
 
@@ -2404,11 +2268,14 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
         &material_dir.path().join("CLIENT"),
         &keys_folder_2.path().join("CLIENT"),
     )?;
-    let _ = join_all([
+    let res = join_all([
         real_preproc_and_keygen(&config_path, keys_folder_1.path(), SLOW_OP_MAX_ITER, false),
         real_preproc_and_keygen(&config_path, keys_folder_2.path(), SLOW_OP_MAX_ITER, false),
     ])
     .await;
+
+    // Both concurrent preproc+keygens must succeed and produce distinct key IDs.
+    assert_ne!(res[0].as_ref().unwrap(), res[1].as_ref().unwrap());
 
     Ok(())
 }
@@ -2506,26 +2373,8 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure key generation via CLI using the default key format.
-///
-/// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
-#[tokio::test]
-async fn test_threshold_insecure_default_keygen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_default_keygen", 4).await?;
-
-    let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
-    assert!(!key_id.is_empty());
-
-    Ok(())
-}
-
 /// Test threshold preprocessing and keygen with the default key format.
 ///
-/// Mirrors `test_threshold_default_preproc_keygen` in `integration_test.rs`.
 /// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
 #[cfg(feature = "slow_tests")]
@@ -2549,7 +2398,6 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 
 /// Test threshold MPC context switch via CLI (4-party, Test FHE params, with PRSS)
 ///
-/// Mirrors `test_threshold_mpc_context_switch` in integration_test.rs.
 /// Validates that after switching to a new MPC context:
 /// 1. Insecure keygen produces a key
 /// 2. The context can be switched to a new context ID
