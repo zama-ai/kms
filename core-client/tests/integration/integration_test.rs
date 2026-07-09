@@ -1049,15 +1049,6 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> UserDecryptFile 
     }
 }
 
-/// Helper to run insecure preprocessing and key generation via CLI.
-async fn insecure_key_gen(
-    config_path: &Path,
-    test_path: &Path,
-    uncompressed: bool,
-) -> Result<String> {
-    insecure_preproc_and_keygen(config_path, test_path, uncompressed).await
-}
-
 /// Helper to run the insecure (dummy) preprocessing and insecure key generation
 /// via CLI (isolated version), exercising the explicit `--preproc-id` flow.
 async fn insecure_preproc_and_keygen(
@@ -2202,11 +2193,11 @@ async fn test_centralized_insecure() -> Result<()> {
 
     // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
     // Also exercise the default-key fast path separately.
-    let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let default_key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
 
     Ok(())
@@ -2357,10 +2348,10 @@ async fn test_threshold_insecure() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
-    let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let default_key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
     integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
 
     Ok(())
@@ -2574,7 +2565,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     let context_path = material_dir.path().join("mpc_context_switch.bin");
 
     // Generate a key in the current (default) context
-    let key_id = insecure_key_gen(&config_path, test_path, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, test_path, false).await?;
 
     // Create and store a new MPC context
     let context_id = derive_request_id("CONTEXT_ID")?.into();
