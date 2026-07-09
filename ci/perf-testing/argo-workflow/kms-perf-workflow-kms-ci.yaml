@@ -1389,9 +1389,9 @@ spec:
           fi
           udecd_raw_text="$(printf '%b' "$udecd_raw_lines" | head -c 2200)"
           if [ -n "$udecd_raw_text" ]; then
-            udecd_block="$(printf '*User decrypt — direct/no-poll {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b\n```%s\n```' "${udecd_lines:-No direct user decrypt tests\n}" "$udecd_raw_text")"
+            udecd_block="$(printf '*Experimental: udec-direct (no-poll) {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b\n```%s\n```' "${udecd_lines:-No direct user decrypt tests\n}" "$udecd_raw_text")"
           else
-            udecd_block="$(printf '*User decrypt — direct/no-poll {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b' "${udecd_lines:-No direct user decrypt tests\n}")"
+            udecd_block="$(printf '*Experimental: udec-direct (no-poll) {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b' "${udecd_lines:-No direct user decrypt tests\n}")"
           fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total} | User decrypt direct: ${udecd_passed}/${udecd_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
