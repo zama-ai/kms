@@ -276,11 +276,9 @@ pub struct Settings<'a> {
 }
 
 fn mode() -> ExecutionEnvironment {
-    let res = env::var("RUN_MODE")
+    env::var("RUN_MODE")
         .map(|enum_str| ExecutionEnvironment::from_str(enum_str.as_str()).unwrap_or_default())
-        .unwrap_or_else(|_| ExecutionEnvironment::Local);
-    println!("RUN_MODE={res}");
-    res
+        .unwrap_or_else(|_| ExecutionEnvironment::Local)
 }
 
 impl Settings<'_> {

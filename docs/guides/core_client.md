@@ -619,7 +619,7 @@ message PublicDecryptionResponsePayload {
 
 #### User Decryption
 
-Similar to public decryption, user decryption can be done as follows. To decrypt a given value of the provided FHE type, using the specified public key and then request a user decryption from the KMS cores run the following command:
+To decrypt a given value of the provided FHE type, using the specified public key, run the following command:
 
 Either directly from arguments provided to the cli:
 ```{bash}
@@ -631,26 +631,33 @@ Or from a file generated via the _Encryption_ command described above:
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> user-decrypt from-file --input-path <input-file-path>
 ```
 
-Upon success, the above commands print `User decrypted Plaintext <PLAINTEXT> - <REQUEST_ID>` for each request (specified via `--num-requests`).
+Upon success, the above commands print the decrypted plaintext. To run a fixed-rate load test, provide both `--rate` and `--duration`.
 
 #### Arguments
-Arguments required for the public/user decryption command are:
- - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and request a public/user decryption. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
+Arguments required for public and user decryption from args are:
+ - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and decrypt. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
  - `--data-type <DATA_TYPE>` - The data type of `to_encrypt`. Expected one of `ebool`, `euint4`, ..., `euint2048`.
- - `--key-id <KEY_ID>`- The key identifier to use for public/user decryption
+ - `--key-id <KEY_ID>`- The key identifier to use for decryption
 
-Optional command line options for the public/user decryption command are:
+Options shared by public and user decryption are:
  - `-b`/`--batch-size <BATCH_SIZE>`: the batch size of values to decrypt (default: `1`). This will run the operation on `BATCH_SIZE` copies of the same message.
- - `-n`/`--num-requests <NUM_REQUESTS>`: the number of requests that are sent in total. This will create `NUM_REQUESTS` copies of the same request (each with a different `REQUEST_ID`)
  - `--no-compression` / `--nc`: Disables ciphertext compression, resulting in the transmission of larger uncompressed ciphertexts (default: False = compression enabled)
  - `--no-precompute-sns` / `--ns`: Disables precomputation of the switch and squash on the core client. Setting this flag causes transmission of smaller ciphertexts and runs the SnS computation on the cores. (default: False = SnS precomputation enabled)
- - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
  - `--context-id <CONTEXT_ID>`: optionally specify the context ID to use for the decryption. Defaults to the default context if not specified.
  - `--epoch-id <EPOCH_ID>`: optionally specify the epoch ID to use for the decryption. Defaults to the default epoch if not specified.
+
+Public-decrypt-only options are:
+ - `-n`/`--num-requests <NUM_REQUESTS>`: the number of requests that are sent in total. This will create `NUM_REQUESTS` copies of the same request (each with a different `REQUEST_ID`)
+ - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
  - `-i`/`--inter-request-delay-ms <DELAY>`: delay in milliseconds between consecutive decrypt requests (default: `0`, i.e. no waiting between requests)
  - `-p`/`--parallel-requests <NUM>`: number of requests to be sent in parallel before waiting `<DELAY>` specified with `-i` (default: `0`, i.e. all requests are sent at once)
 
- __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>`, `-n`/`--num-requests <NUM_REQUESTS>`, `--inter-request-delay-ms <DELAY>`, and `-p`/`--parallel-requests <NUM>` are supported.
+User-decrypt-only options are:
+ - `--rate <REQUESTS_PER_SECOND>`: request launch rate. Must be used together with `--duration`.
+ - `--duration <SECONDS>`: load-test duration. Must be used together with `--rate`.
+ - `--max-in-flight <NUM>`: optional rate-mode cap for in-flight requests before the client starts shedding requests.
+
+ __NOTE__: For public decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `-n`/`--num-requests <NUM_REQUESTS>`, `--inter-request-delay-ms <DELAY>`, and `-p`/`--parallel-requests <NUM>` are supported. For user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, and `--max-in-flight <NUM>` are supported.
 
 ### Custodian context
 
@@ -742,7 +749,7 @@ This prints the public key for each configured core.
     $ PREPROC_ID=$(cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-preproc-key-gen | grep request_id | cut -d'"' -f4)
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen --preproc-id "$PREPROC_ID"
     ```
-- Generate an encryption of `0x2342` of type `euint16` and ask for a user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once it has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
+- Generate an encryption of `0x2342` of type `euint16` and ask for one user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once the request has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
     ```{bash}
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -l user-decrypt from-args --to-encrypt 0x2342 --data-type euint16 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```

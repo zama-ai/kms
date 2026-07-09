@@ -44,6 +44,9 @@ kmsCore:
     maxInterval: 60
     initialIntervalMs: 100
     cleanupIntervalSecs: 2
+    # NOTE: these thread counts are also printed in the perf Slack report; they are hardcoded
+    # in the report's config line (ci/perf-testing/argo-workflow/*-workflow-*.yaml). Update them
+    # there too when changing these values, or the report will misstate the deployed config.
     tokioWorkerThreads: 10
     rayonNumThreads: 40
     # peersList is generated dynamically by deploy.sh and should not be set here
@@ -127,7 +130,8 @@ kmsCoreClientTesting:
   # - fi
   # - key_id=$(cat /app/key-files/key-id.txt)
   # - crs_id=$(cat /app/key-files/crs-id.txt)
-  # - for i in 1 2 3 4 5; do echo "######################################################################"; echo "Launching public-decrypt with euint8"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint8 -k $key_id -e ff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint32"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint32 -k $key_id -e ffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint64"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint128"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint128 -k $key_id -e ffffffffffffffffffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint8"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint8 -k $key_id -e ff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint32"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint32 -k $key_id -e ffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint64"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint128"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint128 -k $key_id -e ffffffffffffffffffffffffffffffff --precompute-sns --num-requests 100; done
+  # - bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100
+  # - bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --rate 100 --duration 1 --max-in-flight 1000
 podSecurityContext:
   # To set when the image will support non root user
   runAsUser: 10003

@@ -269,9 +269,9 @@ Parameters:
 | Parameter | Notes |
 |-----------|-------|
 | `build` | Build fresh images (`true`) or use existing tags |
-| `deployment_type` | `threshold`, `thresholdWithEnclave`, `centralized`, `centralizedWithEnclave` |
+| `deployment_type` | `threshold`, `thresholdWithEnclave` |
 | `fhe_params` | `Default` or `Test` |
-| `tls` | Required for enclave deployments |
+| `tls` | Available only for `thresholdWithEnclave`; scheduled runs use TLS with enclave |
 | `kms_branch`, `kms_chart_version`, `tkms_infra_chart_version` | Source selectors |
 
 Two jobs: optional `docker-build`, then performance test execution against `aws-perf` (13-party threshold for stress testing). All Kubernetes waiting is handled inside `ci/scripts/deploy.sh`.
