@@ -6,7 +6,7 @@ use super::{
 };
 
 /// Computes all polys L_i(Z) = ∏_{j ≠ i} (Z - alpha_j) for the given list of points.
-/// This is the numerator part of the Lagrange basis (see [lagrange_polynomials()]).
+/// This is the numerator part of the Lagrange basis (see [`crate::poly::lagrange_polynomials`]).
 ///
 /// Builds the vanishing polynomial V(Z) = ∏_j (Z - alpha_j) once, then recovers each
 /// L_i = V / (Z - alpha_i) by deflation (see [vanishing_poly()] and [deflate_root()]).
