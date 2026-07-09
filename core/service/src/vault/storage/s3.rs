@@ -805,10 +805,16 @@ fn run_multipart_uploader(
     // serializer for the duration of this upload; force a fresh pool instead.
     let mut config = config.to_builder();
     config.set_http_client(None);
+    // Pin checksum calculation so an ambient `when_required` setting (env or
+    // profile) cannot strip the per-part CRC32 that the declared algorithm
+    // below obliges every part to carry.
+    config.set_request_checksum_calculation(Some(
+        aws_sdk_s3::config::RequestChecksumCalculation::WhenSupported,
+    ));
     let client = S3Client::from_conf(config.build());
 
-    // The SDK adds a CRC32 checksum to every part by default; declaring the
-    // algorithm up front keeps create/upload/complete consistent.
+    // The SDK adds a CRC32 checksum to every part under `WhenSupported`;
+    // declaring the algorithm up front keeps create/upload/complete consistent.
     let created = rt.block_on(
         client
             .create_multipart_upload()
@@ -928,6 +934,20 @@ pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
             <T as Named>::NAME
         )
     });
+    s3_finish_put(s3_client, bucket, key, writer, ser_result).await
+}
+
+/// Complete the store fed through an [`S3PartWriter`]: a single PUT for
+/// payloads that never spilled, otherwise complete or abort the multipart
+/// upload depending on `ser_result` and the uploader outcome. Returns the
+/// total number of bytes written to `writer`.
+async fn s3_finish_put(
+    s3_client: &S3Client,
+    bucket: &str,
+    key: &str,
+    writer: S3PartWriter,
+    ser_result: anyhow::Result<()>,
+) -> anyhow::Result<u64> {
     let total_written = writer.total_written;
     match writer.finish(ser_result.is_ok()) {
         PartWriterOutcome::Single(buf) => {
@@ -1285,6 +1305,21 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(stored.len() as u64, size);
+            // A multipart ETag ends in "-<part count>"; this proves the
+            // pipeline actually engaged instead of falling back to one PUT.
+            let head = storage
+                .s3_client
+                .head_object()
+                .bucket(BUCKET_NAME)
+                .key(&key)
+                .send()
+                .await
+                .unwrap();
+            let etag = head.e_tag.unwrap();
+            assert!(
+                etag.trim_matches('"').ends_with("-3"),
+                "expected a 3-part multipart ETag, got {etag}"
+            );
             let read_back: TestBigType =
                 storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
             assert_eq!(read_back, data);
@@ -1296,24 +1331,35 @@ mod tests {
 
         #[tokio::test]
         async fn s3_multipart_abort_on_error() {
+            use std::io::Write;
+
             let prefix = std::stringify!(s3_multipart_abort_on_error);
             let storage = create_s3_storage(StorageType::PUB, prefix).await;
-            let data = big_payload(11 * 1024 * 1024);
             let req_id = derive_request_id(prefix).unwrap();
             let key = storage.item_key(&req_id, TestBigType::NAME);
 
-            // A 6 MiB size limit fails serialization after the first 5 MiB
-            // part has already been shipped, exercising the abort path.
-            let res = s3_put_versioned(
+            // Drive the writer past one part so the pipeline engages (the
+            // multipart upload is created and part 1 ships), then finish with
+            // an injected serialization failure to exercise the abort path.
+            let mut writer = S3PartWriter::new(
+                storage.s3_client.config().clone(),
+                BUCKET_NAME,
+                &key,
+                S3_MULTIPART_MIN_PART_SIZE,
+            );
+            writer
+                .write_all(&vec![7u8; S3_MULTIPART_MIN_PART_SIZE + 1024 * 1024])
+                .unwrap();
+            let res = s3_finish_put(
                 &storage.s3_client,
                 BUCKET_NAME,
                 &key,
-                &data,
-                S3_MULTIPART_MIN_PART_SIZE,
-                6 * 1024 * 1024,
+                writer,
+                Err(anyhow::anyhow!("injected serialization failure")),
             )
             .await;
-            assert!(res.is_err(), "serialization over the size limit must fail");
+            let err = res.expect_err("injected failure must propagate");
+            assert!(err.to_string().contains("injected serialization failure"));
 
             // All-or-nothing: no object and no lingering multipart upload.
             assert!(
@@ -1333,6 +1379,47 @@ mod tests {
             assert!(
                 pending.uploads().is_empty(),
                 "multipart upload was not aborted: {:?}",
+                pending.uploads()
+            );
+        }
+
+        #[tokio::test]
+        async fn s3_oversized_payload_stores_nothing() {
+            let prefix = std::stringify!(s3_oversized_payload_stores_nothing);
+            let storage = create_s3_storage(StorageType::PUB, prefix).await;
+            let data = big_payload(11 * 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            // bincode's size-limit pre-pass rejects the payload before a
+            // single byte is written, so nothing must reach S3 at all.
+            let res = s3_put_versioned(
+                &storage.s3_client,
+                BUCKET_NAME,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                6 * 1024 * 1024,
+            )
+            .await;
+            assert!(res.is_err(), "serialization over the size limit must fail");
+            assert!(
+                !storage
+                    .data_exists(&req_id, TestBigType::NAME)
+                    .await
+                    .unwrap()
+            );
+            let pending = storage
+                .s3_client
+                .list_multipart_uploads()
+                .bucket(BUCKET_NAME)
+                .prefix(&key)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                pending.uploads().is_empty(),
+                "no multipart upload should ever be created: {:?}",
                 pending.uploads()
             );
         }
