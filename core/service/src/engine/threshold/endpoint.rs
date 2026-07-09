@@ -244,7 +244,7 @@ impl_endpoint! {
                 .context_id
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-            parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+            let context_id =parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
 
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
@@ -252,11 +252,7 @@ impl_endpoint! {
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            // TODO
-            // self.epoch_manager
-            //     .destroy_mpc_epochs(&epoch_ids)
-            //     .await
-            //     .map_err(Status::from)?;
+            self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
 
             // Every epoch is now gone, so it is safe to remove the context.
             self.context_manager

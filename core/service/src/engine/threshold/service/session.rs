@@ -53,7 +53,7 @@ struct Context {
     role_assignment: RoleAssignment<Role>,
     threshold: u8,
 }
-
+// TODO move to epoch_manager.rs
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PRSSSetupCombinedVersions {
     V0(PRSSSetupCombined),
@@ -150,6 +150,16 @@ impl SessionMaker {
     pub async fn inactive_sessions(&self) -> u64 {
         let reader_guard = self.networking_manager.read().await;
         reader_guard.inactive_session_count().await
+    }
+
+    /// Return the epoch Ids associated with a given context Id.
+    pub async fn epochs_for_context(&self, context_id: &ContextId) -> Vec<EpochId> {
+        let epoch_map = self.epoch_map.read().await;
+        epoch_map
+            .iter()
+            .filter(|(_, epoch_data)| epoch_data.context_id == *context_id)
+            .map(|(epoch_id, _)| *epoch_id)
+            .collect()
     }
 
     #[cfg(test)]

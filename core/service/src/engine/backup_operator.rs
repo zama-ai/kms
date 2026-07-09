@@ -791,12 +791,7 @@ where
                     .await?;
             }
             PrivDataType::EpochData => {
-                restore_data_type_for_all_epochs::<PrivS, EpochData>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
+                restore_data_type::<PrivS, EpochData>(priv_storage, backup_vault, cur_type).await?;
             }
         }
     }

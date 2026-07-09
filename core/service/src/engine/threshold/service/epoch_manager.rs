@@ -37,7 +37,9 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
 };
-use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
+use observability::metrics_names::{
+    OP_DESTROY_EPOCH, OP_DESTROY_MPC_CONTEXT, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::{Versionize, zk::CompactPkeCrs};
@@ -1407,6 +1409,23 @@ impl<
             )?;
 
         self.destroy_epoch_and_purge_cache(&epoch_id).await
+    }
+
+    async fn destroy_epochs_for_context(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<(), MetricedError> {
+        if !self.session_maker.context_exists(context_id).await {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                None,
+                anyhow::anyhow!("Context ID {} does not exist", context_id),
+                tonic::Code::NotFound,
+            ));
+        };
+
+        let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
+        self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
 
     async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {

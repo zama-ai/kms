@@ -9,18 +9,24 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 use super::base::CryptoMaterialStorage;
 use crate::{
-    cryptography::signatures::{PrivateSigKey, compute_eip712_signature}, engine::{
+    cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
+    engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        threshold::service::{
-            ThresholdFheKeys, epoch_manager::EpochData, session::PRSSSetupCombined,
-        },
+        threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
         utils::verify_public_key_digest_from_bytes,
-    }, util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim}, vault::{
-        Vault, storage::{
-            Storage, StorageExt, crypto_material::{
+    },
+    util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},
+    vault::{
+        Vault,
+        storage::{
+            Storage, StorageExt,
+            crypto_material::{
                 PublicKeySet,
                 base::{StorageError, update_meta_store},
-            }, delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_from_all_epochs_versioned, read_all_data_versioned, read_versioned_at_request_and_epoch_id, read_versioned_at_request_id, store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            },
+            delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
+            read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         },
     },
 };
@@ -88,21 +94,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
     }
 
-    // TODO
     /// Read all epoch data into the storage backend.
     /// The result is a map of epoch IDs to their corresponding epoch data.
     /// That is, epochs are flattened and NOT indexed by their associated context ID.
     pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
         let priv_storage = self.inner.private_storage.lock().await;
-        let intermidiate_res: HashMap<(RequestId, EpochId), EpochData> =
-            read_all_data_from_all_epochs_versioned(
-                &*priv_storage,
-                &PrivDataType::EpochData.to_string(),
-            )
-            .await?;
+        let intermidiate_res: HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
         Ok(intermidiate_res
             .into_iter()
-            .map(|((req_id, _epoch_id), epoch_data)| (req_id.into(), epoch_data))
+            .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
             .collect())
     }
 
