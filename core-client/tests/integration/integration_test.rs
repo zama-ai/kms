@@ -1258,6 +1258,16 @@ async fn integration_test_commands(
             true,
             false,
         ))),
+        // Production format: `BigCompressed` (compressed + SnS precomputed). The other blocks
+        // cover Small*/BigExpanded; this is the format real deployments actually run, so the
+        // suite must exercise it explicitly.
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+            "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            FheType::Euint256,
+            2,
+            false,
+            false,
+        ))),
         CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F",
             FheType::Euint256,
@@ -2422,14 +2432,16 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     // Perform the context switch
     new_mpc_context(&config_path, &context_path, test_path).await?;
 
-    // Verify that a public-decrypt request succeeds in the new context
+    // Verify that a public-decrypt request succeeds in the new context.
+    // Uses `BigCompressed` (no_compression=false, no_precompute_sns=false) — the production
+    // format and the fast decrypt path; this test exercises the context switch, not ciphertext types.
     let mut params = cipher_params(
         "0x1",
         FheType::Ebool,
         KeyId::from_str(&key_id)?,
         1,
         false,
-        true,
+        false,
         None,
     );
     params.context_id = Some(context_id);
@@ -3063,11 +3075,13 @@ async fn test_threshold_reshare() -> Result<()> {
     assert_eq!(resharing_result.len(), 2);
     let ddec_config = cmd_config(
         &config_path,
+        // `BigCompressed` (production format, fast path) — this test exercises reshare, not
+        // ciphertext types.
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x123456".to_string(),
             data_type: FheType::Euint64,
             no_compression: false,
-            no_precompute_sns: true,
+            no_precompute_sns: false,
             key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
             context_id: Some(context_id),
             epoch_id: Some(new_epoch_id),
