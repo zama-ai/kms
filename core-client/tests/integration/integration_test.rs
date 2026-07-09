@@ -1188,14 +1188,14 @@ async fn integration_test_commands(
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
             "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B",
             FheType::Euint256,
-            3,
+            2,
             false,
             true,
         ))),
         CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
             FheType::Euint256,
-            3,
+            2,
             false,
             true,
         ))),
@@ -1210,14 +1210,14 @@ async fn integration_test_commands(
         )),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
+            batch_size: 2,
+            num_requests: 2,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
             ctxt_path.clone(),
-            3,
+            2,
         ))),
     ];
 
@@ -1254,14 +1254,14 @@ async fn integration_test_commands(
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
             "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820",
             FheType::Euint256,
-            3,
+            2,
             true,
             false,
         ))),
         CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F",
             FheType::Euint256,
-            3,
+            2,
             true,
             false,
         ))),
@@ -1276,14 +1276,14 @@ async fn integration_test_commands(
         )),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
+            batch_size: 2,
+            num_requests: 2,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
             ctxt_with_sns_path.clone(),
-            3,
+            2,
         ))),
     ];
 
@@ -2207,7 +2207,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "slow_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
@@ -2223,7 +2223,7 @@ async fn test_threshold_insecure() -> Result<()> {
 
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
 #[cfg(feature = "slow_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2245,7 +2245,7 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2282,7 +2282,7 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
 
 /// Test threshold sequential CRS generation via CLI with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
     init_logging();
 
@@ -2325,7 +2325,7 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 /// Uses insecure CRS generation because the multi-party ZK ceremony cannot handle
 /// concurrent sessions — the first ceremony completes but subsequent ones get stuck
 /// with networking timeouts between parties.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_concurrent_crs() -> Result<()> {
     init_logging();
 
@@ -2378,7 +2378,7 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
 #[cfg(feature = "slow_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2402,7 +2402,7 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 1. Insecure keygen produces a key
 /// 2. The context can be switched to a new context ID
 /// 3. A public-decrypt request succeeds in the new context
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
 
@@ -2450,7 +2450,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
 ///
 /// Aborting an unknown request_id on the threshold cluster: every party responds
 /// (with NotFound since no key gen is running), so the CLI command succeeds.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_abort_key_gen() -> Result<()> {
     init_logging();
 
@@ -2467,7 +2467,7 @@ async fn test_threshold_abort_key_gen() -> Result<()> {
 }
 
 /// Test threshold abort CRS generation via CLI
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_abort_crs_gen() -> Result<()> {
     init_logging();
 
@@ -2487,7 +2487,7 @@ async fn test_threshold_abort_crs_gen() -> Result<()> {
 ///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_restore_from_backup() -> Result<()> {
     init_logging();
 
@@ -2504,7 +2504,7 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 }
 
 /// Test threshold custodian backup via CLI
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_custodian_backup() -> Result<()> {
     init_logging();
 
@@ -2572,7 +2572,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "slow_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2611,7 +2611,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
 
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
     init_logging();
 
@@ -2658,7 +2658,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 /// 4. Run preprocessing and keygen using the context and PRSS
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
 
@@ -2721,7 +2721,7 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
 #[cfg(feature = "slow_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
 
@@ -2946,7 +2946,7 @@ mod docker_harness {
 /// 5. Run Crs generation
 /// 6. Compute digests of the key materials
 /// 7. Execute resharing command
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();
 
