@@ -39,17 +39,17 @@ they produce are real regardless of this setting.
 
 ## Reading the results
 
-The public-decrypt test runs three scenarios, each sending `1 × euint64` for 60
+The public-decrypt test runs three scenarios, each sending `1 × euint64` for 30
 seconds:
 
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
-| stable | 500 req/s | no failures, no shedding, ≥98% of target rate |
-| near-limit | 1,000 req/s | ≤1% failures, ≤1% shed, ≥90% of target rate |
-| over-limit | 1,200 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+| stable | 1,100 req/s | no failures, no shedding, ≥98% of target rate |
+| near-limit | 1,300 req/s | ≤1% failures, ≤1% shed, ≥90% of target rate |
+| over-limit | 1,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
 The user-decrypt test also runs three scenarios, each sending `1 × euint64` for
-60 seconds:
+30 seconds:
 
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
@@ -67,10 +67,10 @@ Each scenario lands on one of these outcomes:
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
 - **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, **or** it's the `2,750` probe, which is expected to run hot and is
-  never allowed to fail the workflow.
-- **❌ fail** — a `2,400` or `2,700` scenario went outside its budget. This
-  fails the whole workflow.
+  traffic, **or** it's the `1,500` (pdec) or `2,750` (udec) probe, which is
+  expected to run hot and is never allowed to fail the workflow.
+- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,400`/`2,700` (udec) scenario went
+  outside its budget. This fails the whole workflow.
 - **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
   run in ascending order and stop climbing once one falls over).
 

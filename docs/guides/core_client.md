@@ -645,8 +645,6 @@ Options shared by public and user decryption are:
  - `--no-precompute-sns` / `--ns`: Disables precomputation of the switch and squash on the core client. Setting this flag causes transmission of smaller ciphertexts and runs the SnS computation on the cores. (default: False = SnS precomputation enabled)
  - `--context-id <CONTEXT_ID>`: optionally specify the context ID to use for the decryption. Defaults to the default context if not specified.
  - `--epoch-id <EPOCH_ID>`: optionally specify the epoch ID to use for the decryption. Defaults to the default epoch if not specified.
-
-Public-decrypt-only options are:
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
 
 Public/user-decrypt rate-mode options are:
