@@ -1,11 +1,168 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::path::Path;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{Unversionize, Versionize};
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+
+/// Process-wide sequence for partial-write temp names; together with the pid
+/// it makes `.<name>.partial.<pid>.<seq>` unique among live writers.
+static PARTIAL_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// `.<final_name>.partial.<pid>.<seq>` — the temp-name grammar shared by the
+/// writer and [`sweep_stale_partials`]; `OsString` so non-UTF-8 destination
+/// names keep working.
+pub(crate) fn partial_file_name(final_name: &OsStr, pid: u32, seq: u64) -> OsString {
+    let mut name = OsString::from(".");
+    name.push(final_name);
+    name.push(format!(".partial.{pid}.{seq}"));
+    name
+}
+
+/// Strictly parse a directory-entry name as a partial-write temp file,
+/// returning the embedded writer pid. Parses from the end so a destination
+/// name that itself contains ".partial." cannot confuse it.
+fn parse_partial_owner_pid(file_name: &str) -> Option<u32> {
+    let rest = file_name.strip_prefix('.')?;
+    let (rest, seq) = rest.rsplit_once('.')?;
+    seq.parse::<u64>().ok()?;
+    let (rest, pid) = rest.rsplit_once('.')?;
+    let pid = pid.parse::<u32>().ok()?;
+    let name = rest.strip_suffix(".partial")?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(pid)
+}
+
+/// Create the partial-write temp file for `final_name`, reclaiming a same-name
+/// orphan on collision. Reclaiming is safe: pids are unique among live
+/// processes and [`PARTIAL_SEQ`] is process-wide, so an existing file carrying
+/// our own pid can only be a dead predecessor's leftover (e.g. the server
+/// being pid 1 on every container restart).
+fn create_partial_tempfile(
+    parent: &Path,
+    final_name: &OsStr,
+    pid: u32,
+    seq: u64,
+) -> std::io::Result<tempfile::NamedTempFile> {
+    let tmp_name = partial_file_name(final_name, pid, seq);
+    let build = || {
+        tempfile::Builder::new()
+            .prefix(&tmp_name)
+            .rand_bytes(0)
+            .tempfile_in(parent)
+    };
+    match build() {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            tracing::warn!(
+                "reclaiming orphaned partial file {} left by a dead process with reused pid {pid}",
+                parent.join(&tmp_name).display()
+            );
+            std::fs::remove_file(parent.join(&tmp_name))?;
+            build()
+        }
+        res => res,
+    }
+}
+
+/// Directory layout is at most `{root}/{data_type}/{epoch_id}/{file}`; one
+/// extra level of headroom.
+const MAX_SWEEP_DEPTH: usize = 4;
+
+/// Best-effort removal of `.<name>.partial.<pid>.<seq>` files orphaned under
+/// `root` by hard-crashed processes (on a clean failure the temp file's drop
+/// guard removes it). Only files whose embedded pid is neither our own nor a
+/// live process are deleted, so in-flight writes of concurrent writers are
+/// never touched; IO errors are logged and never propagated.
+pub(crate) fn sweep_stale_partials(root: &Path) {
+    let mut candidates: Vec<(PathBuf, u32)> = Vec::new();
+    collect_partial_files(root, 0, &mut candidates);
+    if candidates.is_empty() {
+        return;
+    }
+    if !sysinfo::IS_SUPPORTED_SYSTEM {
+        tracing::warn!(
+            "cannot check process liveness on this platform; keeping {} partial file(s) under {}",
+            candidates.len(),
+            root.display()
+        );
+        return;
+    }
+    let own_pid = std::process::id();
+    let mut pids: Vec<sysinfo::Pid> = candidates
+        .iter()
+        .filter(|(_, pid)| *pid != own_pid)
+        .map(|(_, pid)| sysinfo::Pid::from_u32(*pid))
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    // One batched liveness query for all encountered pids.
+    let mut system = sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing());
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&pids),
+        false,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
+    for (path, pid) in candidates {
+        if pid == own_pid || system.process(sysinfo::Pid::from_u32(pid)).is_some() {
+            // In-flight write of this or another live process.
+            continue;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => tracing::info!(
+                "removed stale partial file {} of dead process {pid}",
+                path.display()
+            ),
+            // A concurrent sweeper of the same root won the race.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!(
+                "failed to remove stale partial file {}: {e}",
+                path.display()
+            ),
+        }
+    }
+}
+
+/// Recursively collect partial-write files under `dir` for
+/// [`sweep_stale_partials`]; depth-limited, does not follow symlinks, skips
+/// unreadable entries.
+fn collect_partial_files(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u32)>) {
+    if depth > MAX_SWEEP_DEPTH {
+        tracing::warn!(
+            "partial-file sweep stopping at unexpected directory depth {depth} in {}",
+            dir.display()
+        );
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("partial-file sweep cannot read {}: {e}", dir.display());
+            }
+            return;
+        }
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        // `file_type` does not follow symlinks, so linked dirs are not recursed.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_partial_files(&entry.path(), depth + 1, out);
+        } else if file_type.is_file()
+            && let Some(pid) = entry.file_name().to_str().and_then(parse_partial_owner_pid)
+        {
+            out.push((entry.path(), pid));
+        }
+    }
+}
 
 /// Write some bytes to a file without serialization. Works for ASCII text without extra thought too.
 pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::Result<()> {
@@ -33,9 +190,9 @@ pub async fn safe_write_element_versioned<
     element: &T,
 ) -> anyhow::Result<()> {
     let file_path = file_path.as_ref();
-    if file_path.file_name().is_none() {
+    let Some(file_name) = file_path.file_name() else {
         anyhow::bail!("invalid file path: {}", file_path.display());
-    }
+    };
     // Create the parent directories of the file path if they don't exist
     if let Some(p) = file_path.parent() {
         tokio::fs::create_dir_all(p).await?
@@ -44,14 +201,16 @@ pub async fn safe_write_element_versioned<
     // over `file_path`, so a crash mid-write cannot leave a partial file there
     // (rename alone is not a durability barrier). The temp file must live in
     // the same directory (rename cannot cross filesystems); its dot-prefixed
-    // name is skipped by directory listings (`FileStorage::all_data_ids`
-    // parses every non-hidden name as a `RequestId`) and is unique per writer,
-    // so concurrent writers to the same path cannot collide.
+    // name (`.<name>.partial.<pid>.<seq>`) is skipped by directory listings
+    // (`FileStorage::all_data_ids` parses every non-hidden name as a
+    // `RequestId`), unique among live writers, and pid-attributable so
+    // `sweep_stale_partials` can reclaim it if this process hard-crashes.
     let parent = match file_path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
-    let tmp = tempfile::NamedTempFile::new_in(parent)
+    let seq = PARTIAL_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = create_partial_tempfile(parent, file_name, std::process::id(), seq)
         .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
     let mut writer = std::io::BufWriter::new(tmp);
     safe_serialize(element, &mut writer, SAFE_SER_SIZE_LIMIT).map_err(|e| {
@@ -120,11 +279,23 @@ pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
     use crate::util::file_handling::{
-        read_element, safe_read_element_versioned, safe_write_element_versioned, write_bytes,
-        write_element,
+        create_partial_tempfile, parse_partial_owner_pid, partial_file_name, read_element,
+        safe_read_element_versioned, safe_write_element_versioned, sweep_stale_partials,
+        write_bytes, write_element,
     };
     use crate::vault::storage::tests::TestType;
+    use std::ffi::OsStr;
     use tokio::fs::remove_file;
+
+    /// Larger than any real pid (Linux `pid_max` <= 2^22, macOS ~10^5) yet
+    /// still positive when converted to the platform's i32 pid representation.
+    const NEVER_LIVE_PID: u32 = 999_999_999;
+
+    fn plant_partial(dir: &std::path::Path, final_name: &str, pid: u32) -> std::path::PathBuf {
+        let path = dir.join(partial_file_name(OsStr::new(final_name), pid, 0));
+        std::fs::write(&path, b"partial junk").unwrap();
+        path
+    }
 
     #[tokio::test]
     async fn read_write_text() {
@@ -242,5 +413,128 @@ mod tests {
         // The destination still holds the original element, never a partial file.
         let read_back: TestType = safe_read_element_versioned(&path).await.unwrap();
         assert_eq!(read_back, original);
+    }
+
+    // The writer and the sweep share the name grammar; a drift breaks the sweep.
+    #[test]
+    fn partial_name_roundtrip() {
+        let name = partial_file_name(OsStr::new("element"), 123, 7);
+        assert_eq!(name.to_str().unwrap(), ".element.partial.123.7");
+        assert_eq!(parse_partial_owner_pid(name.to_str().unwrap()), Some(123));
+    }
+
+    #[test]
+    fn parse_partial_rejects_non_matching() {
+        for name in [
+            "element",                  // regular data file
+            ".hidden",                  // plain dotfile
+            ".gitkeep",                 // plain dotfile
+            ".tmpAbC123",               // old NamedTempFile naming
+            ".name.partial.abc.1",      // non-numeric pid
+            ".name.partial.12",         // missing seq
+            ".partial.12.1",            // empty destination name
+            ".name.partial.12.1x",      // non-numeric seq
+            ".name.partial..1",         // empty pid
+            ".n.partial.99999999999.1", // pid exceeds u32
+            ".name.partiality.12.1",    // marker is a substring, not ".partial"
+        ] {
+            assert_eq!(parse_partial_owner_pid(name), None, "must reject {name}");
+        }
+        // A destination name containing ".partial." itself still parses to the
+        // trailing pid, never to the embedded number.
+        assert_eq!(
+            parse_partial_owner_pid(".a.partial.1.b.partial.12.1"),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn create_partial_tempfile_reclaims_same_name_orphan() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = partial_file_name(OsStr::new("element"), 42, 7);
+        std::fs::write(dir.path().join(&name), b"stale orphan").unwrap();
+
+        let tmp = create_partial_tempfile(dir.path(), OsStr::new("element"), 42, 7).unwrap();
+        assert_eq!(tmp.path().file_name().unwrap(), name.as_os_str());
+        // The orphan was replaced by a fresh empty file, not appended to.
+        assert_eq!(std::fs::metadata(tmp.path()).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn sweep_removes_dead_pid_partials_recursively() {
+        let dir = tempfile::tempdir().unwrap();
+        let type_dir = dir.path().join("t");
+        let epoch_dir = type_dir.join("epoch1");
+        std::fs::create_dir_all(&epoch_dir).unwrap();
+        let orphans = [
+            plant_partial(dir.path(), "a", NEVER_LIVE_PID),
+            plant_partial(&type_dir, "b", NEVER_LIVE_PID),
+            plant_partial(&epoch_dir, "c", NEVER_LIVE_PID),
+        ];
+        let keepers = [
+            type_dir.join("realdata"),
+            type_dir.join(".gitkeep"),
+            type_dir.join(".tmpAbC123"),
+        ];
+        for keeper in &keepers {
+            std::fs::write(keeper, b"keep me").unwrap();
+        }
+
+        sweep_stale_partials(dir.path());
+
+        for orphan in &orphans {
+            assert!(!orphan.exists(), "orphan not swept: {}", orphan.display());
+        }
+        for keeper in &keepers {
+            assert!(keeper.exists(), "non-partial deleted: {}", keeper.display());
+        }
+    }
+
+    #[test]
+    fn sweep_keeps_own_pid_partials() {
+        let dir = tempfile::tempdir().unwrap();
+        // Another vault instance in this process may be mid-write.
+        let inflight = plant_partial(dir.path(), "element", std::process::id());
+        sweep_stale_partials(dir.path());
+        assert!(inflight.exists());
+    }
+
+    // The sweep must never remove a live foreign process' in-flight write.
+    #[cfg(unix)]
+    #[test]
+    fn sweep_keeps_live_foreign_pid_partials() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let inflight = plant_partial(dir.path(), "element", child.id());
+
+        sweep_stale_partials(dir.path());
+        let kept = inflight.exists();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(kept, "live foreign process' partial was removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sweep_removes_partial_of_exited_process() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        child.wait().unwrap();
+        // Pid reuse between wait() and the sweep is practically impossible
+        // (allocation is sequential); NEVER_LIVE_PID tests carry the
+        // deterministic burden.
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = plant_partial(dir.path(), "element", child.id());
+
+        sweep_stale_partials(dir.path());
+        assert!(!orphan.exists(), "dead process' partial was kept");
+    }
+
+    #[test]
+    fn sweep_of_missing_root_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        sweep_stale_partials(&dir.path().join("does-not-exist"));
     }
 }
