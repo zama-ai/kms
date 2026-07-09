@@ -1036,7 +1036,7 @@ fn public_decrypt_params(
     }
 }
 
-/// Build `DecryptParameters` with a tiny rate-based run for integration tests.
+/// Build `DecryptParameters` for a single non-rate user decrypt.
 fn user_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1055,11 +1055,7 @@ fn user_decrypt_params(
         epoch_id: None,
         batch_size,
         ciphertext_output_path: None,
-        rate_options: DecryptRateOptions {
-            rate: Some(1),
-            duration: Some(1),
-            max_in_flight: Some(10),
-        },
+        rate_options: DecryptRateOptions::default(),
     }
 }
 
@@ -1067,11 +1063,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
     DecryptFile {
         input_path,
         batch_size,
-        rate_options: DecryptRateOptions {
-            rate: Some(1),
-            duration: Some(1),
-            max_in_flight: Some(10),
-        },
+        rate_options: DecryptRateOptions::default(),
     }
 }
 
@@ -1329,12 +1321,8 @@ async fn integration_test_commands(
 
         // Validate result count matches expected requests
         match &command {
-            CCCommand::PublicDecrypt(_) => {
+            CCCommand::PublicDecrypt(_) | CCCommand::UserDecrypt(_) => {
                 assert_eq!(results.len(), 1);
-            }
-            CCCommand::UserDecrypt(_) => {
-                assert!(results.is_empty());
-                continue;
             }
             _ => {}
         }
@@ -1475,12 +1463,8 @@ async fn integration_test_commands_default_keys(
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         match &command {
-            CCCommand::PublicDecrypt(_) => {
+            CCCommand::PublicDecrypt(_) | CCCommand::UserDecrypt(_) => {
                 assert_eq!(results.len(), 1);
-            }
-            CCCommand::UserDecrypt(_) => {
-                assert!(results.is_empty());
-                continue;
             }
             _ => {}
         }
