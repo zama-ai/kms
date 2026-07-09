@@ -180,7 +180,7 @@ async fn do_context_switch(
         // This context was created without an epoch transition of its own (decryption above reused
         // the existing key/epoch), so it has no associated epochs to remove.
         let req = internal_client
-            .destroy_mpc_context_request(&new_context_id, &[])
+            .destroy_mpc_context_request(&new_context_id)
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
@@ -290,7 +290,6 @@ async fn test_destroy_context_erases_epoch_data_4p() {
         let mut client = client.clone();
         let req = DestroyMpcContextRequest {
             context_id: Some(default_context.into()),
-            epoch_ids: vec![epoch_id.into()],
         };
         destroy_tasks.spawn(async move { client.destroy_mpc_context(req).await });
     }

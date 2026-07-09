@@ -104,7 +104,7 @@ impl SessionMaker {
             );
         }
         for (epoch_id, prss) in all_epochs {
-            session_maker.add_epoch(epoch_id.into(), prss).await;
+            session_maker.add_epoch(epoch_id, prss).await;
             tracing::info!(
                 "Loaded epoch data from storage for request ID {}.",
                 epoch_id

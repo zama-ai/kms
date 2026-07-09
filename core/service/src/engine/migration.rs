@@ -379,6 +379,7 @@ where
     let prss: PRSSSetupCombined = match read_versioned_at_request_id(
         priv_storage,
         &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+        #[allow(deprecated)]
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await
@@ -396,12 +397,14 @@ where
         priv_storage,
         &(*DEFAULT_EPOCH_ID).into(),
         &prss,
+        #[allow(deprecated)]
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await?;
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+            #[allow(deprecated)]
             &PrivDataType::PrssSetupCombined.to_string(),
         )
         .await?;
@@ -1236,6 +1239,7 @@ mod tests {
             storage
                 .data_exists(
                     &epoch_id.into(),
+                    #[allow(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),
                 )
                 .await
@@ -1458,6 +1462,7 @@ mod tests {
             &mut storage,
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
             &prss_combined,
+            #[allow(deprecated)]
             &PrivDataType::PrssSetupCombined.to_string(),
         )
         .await
@@ -1474,6 +1479,7 @@ mod tests {
             storage
                 .data_exists(
                     &(*DEFAULT_EPOCH_ID).into(),
+                    #[allow(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),
                 )
                 .await
@@ -1482,7 +1488,9 @@ mod tests {
         assert!(
             !storage
                 .data_exists(
+                    #[allow(deprecated)]
                     &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+                    #[allow(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),
                 )
                 .await

@@ -1247,7 +1247,6 @@ mod tests {
         // now we try to delete the stored context, passing the (unrelated) epoch ID in `epoch_ids`
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
-            epoch_ids: vec![epoch_id.into()],
         });
 
         let response = context_manager.destroy_mpc_context(request).await;
@@ -2063,7 +2062,6 @@ mod tests {
         // Destroy the context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
-            epoch_ids: vec![],
         });
         let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
@@ -2141,7 +2139,6 @@ mod tests {
         // Destroy the context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
-            epoch_ids: vec![],
         });
         context_manager.destroy_mpc_context(request).await.unwrap();
 
@@ -2216,7 +2213,6 @@ mod tests {
         // Destroy the middle context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_ids[1].into()),
-            epoch_ids: vec![],
         });
         context_manager.destroy_mpc_context(request).await.unwrap();
 

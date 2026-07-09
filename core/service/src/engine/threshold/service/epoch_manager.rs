@@ -298,7 +298,7 @@ impl<
         let all_prss = self.crypto_storage.read_all_epoch_data().await?;
 
         for (epoch_id, prss) in all_prss {
-            self.session_maker.add_epoch(epoch_id.into(), prss).await;
+            self.session_maker.add_epoch(epoch_id, prss).await;
             tracing::info!(
                 "Loaded PRSS Setup from storage for request ID {}.",
                 epoch_id
@@ -1721,6 +1721,7 @@ pub(crate) mod tests {
         let prss_after_first: std::collections::HashMap<RequestId, PRSSSetupCombined> =
             read_all_data_versioned(
                 &priv_storage[0],
+                #[allow(deprecated)]
                 &PrivDataType::PrssSetupCombined.to_string(),
             )
             .await
@@ -1752,6 +1753,7 @@ pub(crate) mod tests {
         let prss_after_second: std::collections::HashMap<RequestId, PRSSSetupCombined> =
             read_all_data_versioned(
                 &priv_storage[0],
+                #[allow(deprecated)]
                 &PrivDataType::PrssSetupCombined.to_string(),
             )
             .await
@@ -1786,6 +1788,7 @@ pub(crate) mod tests {
                 &mut (*guarded_private_storage),
                 &(*epoch_id).into(),
                 &prss,
+                #[allow(deprecated)]
                 &PrivDataType::PrssSetupCombined.to_string(),
             )
             .await
@@ -2193,15 +2196,18 @@ pub(crate) mod tests {
         // Add the epoch to the session maker with PRSS data
         let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
         let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
-        let prss = PRSSSetupCombined {
-            prss_setup_z128,
-            prss_setup_z64,
-            num_parties: 4,
-            threshold: 1,
+        let epoch = EpochData {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            prss: PRSSSetupCombined {
+                prss_setup_z128,
+                prss_setup_z64,
+                num_parties: 4,
+                threshold: 1,
+            },
         };
         epoch_manager
             .session_maker
-            .add_epoch(epoch_id, prss.clone())
+            .add_epoch(epoch_id, epoch.clone())
             .await;
 
         // Store some test data under this epoch
@@ -2226,8 +2232,8 @@ pub(crate) mod tests {
             store_versioned_at_request_id(
                 &mut (*priv_storage),
                 &epoch_id.into(),
-                &prss,
-                &PrivDataType::PrssSetupCombined.to_string(),
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
             )
             .await
             .unwrap();
@@ -2314,19 +2320,24 @@ pub(crate) mod tests {
         // Cover both epoch-scoped private data types the cascade erases.
         let data_types = [PrivDataType::FheKeyInfo, PrivDataType::CrsInfo];
         let data_id = derive_request_id("cascade_test_data").unwrap();
-        let prss_type = PrivDataType::PrssSetupCombined.to_string();
 
         // Seed two epochs, each with PRSS data plus a key share and a CRS entry.
         for epoch_id in &epoch_ids {
-            let prss = PRSSSetupCombined {
-                prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
-                prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
-                num_parties: 4,
-                threshold: 1,
+            let epoch = EpochData {
+                context_id: *DEFAULT_MPC_CONTEXT,
+                prss: PRSSSetupCombined {
+                    prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
+                        vec![],
+                        vec![],
+                    ),
+                    prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                    num_parties: 4,
+                    threshold: 1,
+                },
             };
             epoch_manager
                 .session_maker
-                .add_epoch(*epoch_id, prss.clone())
+                .add_epoch(*epoch_id, epoch.clone())
                 .await;
 
             let private_storage = epoch_manager.crypto_storage.get_private_storage();
@@ -2345,8 +2356,8 @@ pub(crate) mod tests {
             store_versioned_at_request_id(
                 &mut (*priv_storage),
                 &(*epoch_id).into(),
-                &prss,
-                &prss_type,
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
             )
             .await
             .unwrap();
@@ -2382,7 +2393,7 @@ pub(crate) mod tests {
             }
             assert!(
                 !priv_storage
-                    .data_exists(&(*epoch_id).into(), &prss_type)
+                    .data_exists(&(*epoch_id).into(), &PrivDataType::EpochData.to_string())
                     .await
                     .unwrap(),
                 "PRSS setup should be gone for {epoch_id}"
