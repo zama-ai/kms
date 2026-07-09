@@ -330,7 +330,7 @@ pub async fn read_text_at_request_id<S: StorageReader>(
 }
 
 /// Delete ALL data under a given `request_id`, but ignore anything that might be under epochs (e.g., FHE keys, PRSS setups and CRS info).
-/// Observe that this method does not produce any error regardless of any whether data is deleted or not.
+/// Missing data is skipped without error, but an error is returned if existing data could not be deleted.
 pub async fn delete_all_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
@@ -691,6 +691,11 @@ pub mod tests {
         let data = TestType { i: 46 };
         let req_id = derive_request_id("payload_size_test").unwrap();
 
+        // Ensure no old data is present: a leftover object from a previous run
+        // (persistent buckets) would make the store a no-op and record nothing.
+        delete_at_request_id(storage, &req_id, "TestType")
+            .await
+            .unwrap();
         let before = observability::metrics::METRICS.payload_size_sample_count(TestType::NAME);
         store_versioned_at_request_id(storage, &req_id, &data, "TestType")
             .await

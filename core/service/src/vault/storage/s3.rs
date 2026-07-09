@@ -1,6 +1,6 @@
 use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
-use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
+use crate::{anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
 use aws_sdk_s3::{
     Client as S3Client,
@@ -172,7 +172,10 @@ impl S3Storage {
         Ok(())
     }
 
-    /// Deletes the object at the given key, if it exists. Does not fail if the object does not exist or if the deletion fails.
+    /// Deletes the object at the given key. Deleting a non-existent key succeeds
+    /// (S3 `DeleteObject` is idempotent), but genuine deletion failures are
+    /// returned so callers never mistake a failed delete for a successful one
+    /// (e.g. the destroy-epoch and purge flows must be able to retry).
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",
@@ -180,17 +183,18 @@ impl S3Storage {
             key
         );
 
-        // Attempt S3 deletion but don't fail on errors
-        if let Err(e) = self
-            .s3_client
+        self.s3_client
             .delete_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
             .await
-        {
-            tracing::warn!("S3 delete failed: {:?}", e);
-        }
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "Could not delete object in bucket {} under key {}: {:?}",
+                    self.bucket, key, e
+                ))
+            })?;
 
         Ok(())
     }
@@ -1250,6 +1254,46 @@ mod tests {
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
         assert!(!public_key_ids.is_empty());
+    }
+
+    /// Deleting a key that was never stored must succeed: S3 `DeleteObject` is
+    /// idempotent, so deletes of absent objects stay non-fatal.
+    #[tokio::test]
+    async fn test_delete_missing_key_is_ok_s3() {
+        let prefix = std::stringify!(test_delete_missing_key_is_ok_s3);
+        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+        storage
+            .delete_data(&RequestId::default(), "PublicKey")
+            .await
+            .unwrap();
+    }
+
+    /// A delete that genuinely fails (here: the bucket does not exist) must
+    /// surface an error, so purge/destroy flows never mistake a failed delete
+    /// for a successful one.
+    #[tokio::test]
+    async fn test_delete_failure_propagates_s3() {
+        let prefix = std::stringify!(test_delete_failure_propagates_s3);
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+            .await
+            .unwrap();
+        let bucket = "no-such-bucket-delete-test";
+        let mut storage = S3Storage::new(
+            s3_client,
+            bucket.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+        )
+        .unwrap();
+        let err = storage
+            .delete_data(&RequestId::default(), "PublicKey")
+            .await
+            .expect_err("delete against a missing bucket must fail");
+        assert!(
+            err.to_string().contains(bucket),
+            "error must carry the bucket context, got: {err}"
+        );
     }
 
     mod multipart {
