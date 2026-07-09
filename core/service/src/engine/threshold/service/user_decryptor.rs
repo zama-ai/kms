@@ -6,6 +6,7 @@ use std::{
 };
 
 // === External Crates ===
+use aes_prng::AesRng;
 use algebra::{
     base_ring::Z128,
     galois_rings::{
@@ -27,8 +28,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
-        TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
+        OP_USER_DECRYPT_DIRECT, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST,
+        OP_USER_DECRYPT_RESULT, TAG_PARTY_ID, TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -143,6 +144,31 @@ pub struct RealUserDecryptor<
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
     pub(crate) _dec: std::marker::PhantomData<Dec>,
+}
+
+/// Everything needed to run one user decryption, produced by
+/// [`RealUserDecryptor::prepare_user_decrypt`]. The async path
+/// ([`UserDecryptor::user_decrypt`]) and the synchronous path
+/// ([`UserDecryptor::user_decrypt_direct`]) share this setup; they differ only in
+/// whether [`RealUserDecryptor::inner_user_decrypt`] is spawned onto a background
+/// task (recording the outcome in the meta-store) or awaited inline.
+struct PreparedUserDecrypt {
+    req_id: RequestId,
+    session_maker: ImmutableSessionMaker,
+    context_id: ContextId,
+    epoch_id: EpochId,
+    rng: AesRng,
+    typed_ciphertexts: Vec<TypedCiphertext>,
+    link: Vec<u8>,
+    signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
+    client_enc_key_bytes_orig: Vec<u8>,
+    fhe_keys_rlock:
+        OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), ThresholdFheKeys>, ThresholdFheKeys>,
+    dec_mode: DecryptionMode,
+    domain: alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+    metric_tags: Vec<(&'static str, String)>,
+    meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
 }
 
 impl<
@@ -396,6 +422,145 @@ impl<
         Ok((payload, external_signature, extra_data))
     }
 
+    /// Shared setup for both user-decryption paths: validate the request,
+    /// resolve role/context/epoch, load the FHE keys, and build the
+    /// signcryption key. Does not acquire a rate-limiter permit and does not
+    /// start a timer — the caller owns those so it can decide their lifetime
+    /// (moved into a spawned task vs. held across an inline await).
+    async fn prepare_user_decrypt(
+        &self,
+        request: Request<UserDecryptionRequest>,
+        op: &'static str,
+    ) -> Result<PreparedUserDecrypt, MetricedError> {
+        let inner = Arc::new(request.into_inner());
+        tracing::info!("{}", format_user_request(&inner));
+
+        let (
+            typed_ciphertexts,
+            link,
+            client_enc_key_bytes_orig, // the original bytes for the encryption key
+            client_address,
+            req_id,
+            key_id,
+            context_id,
+            epoch_id,
+            domain,
+            extra_data,
+        ) = validate_user_decrypt_req(inner.as_ref())?;
+        let my_role = validate_context_and_epoch(
+            op,
+            &self.session_maker,
+            Some(req_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
+        let dec_mode = self.decryption_mode;
+        let metric_tags = vec![
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+        ];
+
+        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
+        let crypto_storage = self.crypto_storage.clone();
+        let rng = self.base_kms.new_rng().await;
+
+        let sk = (*self.base_kms.sig_key().map_err(|e| {
+            MetricedError::new(op, Some(req_id), e, tonic::Code::FailedPrecondition)
+        })?)
+        .clone();
+        let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
+            &client_enc_key_bytes_orig,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                op,
+                Some(req_id),
+                anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
+        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
+            sk,
+            client_enc_key,
+            client_address.to_vec(),
+        ));
+        let session_maker = self.session_maker.clone();
+
+        // Note that we'll hold a read lock for some time
+        // as it is moved into the tokio task
+        // but this should be ok since write locks
+        // happen rarely as keygen is a rare event.
+        let fhe_keys_rlock = crypto_storage
+            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    op,
+                    Some(req_id),
+                    anyhow::anyhow!("fhe key not found due to {e:?}"),
+                    tonic::Code::NotFound,
+                )
+            })?;
+
+        Ok(PreparedUserDecrypt {
+            req_id,
+            session_maker,
+            context_id,
+            epoch_id,
+            rng,
+            typed_ciphertexts,
+            link,
+            signcryption_key,
+            client_enc_key_bytes_orig,
+            fhe_keys_rlock,
+            dec_mode,
+            domain,
+            extra_data,
+            metric_tags,
+            meta_store,
+        })
+    }
+
+    /// Sign the user-decryption payload with the KMS signing key and assemble
+    /// the gRPC response. Shared by the async path
+    /// ([`UserDecryptor::get_result`]) and the synchronous path
+    /// ([`UserDecryptor::user_decrypt_direct`]).
+    fn assemble_user_decryption_response(
+        &self,
+        req_id: RequestId,
+        values: UserDecryptCallValues,
+        op: &'static str,
+    ) -> Result<UserDecryptionResponse, MetricedError> {
+        let (payload, external_signature, extra_data) = values;
+        let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
+            MetricedError::new(
+                op,
+                Some(req_id),
+                anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
+                tonic::Code::Internal,
+            )
+        })?;
+
+        let sig = self
+            .base_kms
+            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+            .map_err(|e| {
+                MetricedError::new(
+                    op,
+                    Some(req_id),
+                    anyhow!("Could not sign payload {payload:?}: {e:?}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        Ok(UserDecryptionResponse {
+            signature: sig.sig.to_vec(),
+            external_signature,
+            payload: Some(payload),
+            extra_data,
+        })
+    }
+
     #[cfg(test)]
     async fn init_test(
         base_kms: BaseKmsStruct,
@@ -456,83 +621,26 @@ impl<
             .time_operation(OP_USER_DECRYPT_REQUEST)
             .start();
 
-        let inner = Arc::new(request.into_inner());
-        tracing::info!("{}", format_user_request(&inner));
-
-        let (
-            typed_ciphertexts,
-            link,
-            client_enc_key_bytes_orig, // the original bytes for the encryption key
-            client_address,
+        let PreparedUserDecrypt {
             req_id,
-            key_id,
+            session_maker,
             context_id,
             epoch_id,
+            rng,
+            typed_ciphertexts,
+            link,
+            signcryption_key,
+            client_enc_key_bytes_orig,
+            fhe_keys_rlock,
+            dec_mode,
             domain,
             extra_data,
-        ) = validate_user_decrypt_req(inner.as_ref())?;
-        let my_role = validate_context_and_epoch(
-            OP_USER_DECRYPT_REQUEST,
-            &self.session_maker,
-            Some(req_id),
-            &context_id,
-            &epoch_id,
-        )
-        .await?;
-        let dec_mode = self.decryption_mode;
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
-        ];
+            metric_tags,
+            meta_store,
+        } = self
+            .prepare_user_decrypt(request, OP_USER_DECRYPT_REQUEST)
+            .await?;
         timer.tags(metric_tags.clone());
-
-        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
-        let crypto_storage = self.crypto_storage.clone();
-        let rng = self.base_kms.new_rng().await;
-
-        let sk = (*self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?)
-        .clone();
-        let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
-            &client_enc_key_bytes_orig,
-        )
-        .map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
-                tonic::Code::Internal,
-            )
-        })?;
-        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
-            sk,
-            client_enc_key,
-            client_address.to_vec(),
-        ));
-        // the result of the computation is tracked the tracker
-        let session_maker = self.session_maker.clone();
-
-        // Note that we'll hold a read lock for some time
-        // as it is moved into the tokio task
-        // but this should be ok since write locks
-        // happen rarely as keygen is a rare event.
-        let fhe_keys_rlock = crypto_storage
-            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!("fhe key not found due to {e:?}"),
-                    tonic::Code::NotFound,
-                )
-            })?;
 
         // Below we write to the meta-store, leaving this [req_id] in the
         // "Started" (Pending) state. The management task updates it on every
@@ -574,6 +682,76 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
+    async fn user_decrypt_direct(
+        &self,
+        request: Request<UserDecryptionRequest>,
+    ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
+        // Same resource-exhaustion reasoning as `user_decrypt`. Here nothing is
+        // recorded in the meta-store, so a request rejected with
+        // `ResourceExhausted` can simply be resent unchanged.
+        let permit = self.rate_limiter.start_user_decrypt().await?;
+        let mut timer = metrics::METRICS
+            .time_operation(OP_USER_DECRYPT_DIRECT)
+            .start();
+
+        let PreparedUserDecrypt {
+            req_id,
+            session_maker,
+            context_id,
+            epoch_id,
+            rng,
+            typed_ciphertexts,
+            link,
+            signcryption_key,
+            client_enc_key_bytes_orig,
+            fhe_keys_rlock,
+            dec_mode,
+            domain,
+            extra_data,
+            metric_tags,
+            meta_store: _,
+        } = self
+            .prepare_user_decrypt(request, OP_USER_DECRYPT_DIRECT)
+            .await?;
+        timer.tags(metric_tags.clone());
+
+        // Run the decryption inline instead of spawning it, and skip the
+        // meta-store entirely: the caller blocks on this call and receives the
+        // signed contribution in a single round trip.
+        let values = Self::inner_user_decrypt(
+            &req_id,
+            session_maker,
+            context_id,
+            epoch_id,
+            rng,
+            typed_ciphertexts,
+            link,
+            signcryption_key,
+            client_enc_key_bytes_orig,
+            fhe_keys_rlock,
+            dec_mode,
+            &domain,
+            extra_data,
+            metric_tags,
+        )
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_DIRECT,
+                Some(req_id),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+        // Stop the timer and release the rate-limiter permit before signing.
+        drop(timer);
+        drop(permit);
+
+        let response =
+            self.assemble_user_decryption_response(req_id, values, OP_USER_DECRYPT_DIRECT)?;
+        Ok(Response::new(response))
+    }
+
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
@@ -597,34 +775,11 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (payload, external_signature, extra_data) = (*arc).clone();
+        let values = (*arc).clone();
 
-        let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let sig = self
-            .base_kms
-            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_RESULT,
-                    Some(request_id),
-                    anyhow!("Could not sign payload {payload:?}: {e:?}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        Ok(Response::new(UserDecryptionResponse {
-            signature: sig.sig.to_vec(),
-            external_signature,
-            payload: Some(payload),
-            extra_data,
-        }))
+        let response =
+            self.assemble_user_decryption_response(request_id, values, OP_USER_DECRYPT_RESULT)?;
+        Ok(Response::new(response))
     }
 }
 

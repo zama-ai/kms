@@ -32,6 +32,8 @@ pub const OP_PUBLIC_DECRYPT_REQUEST: &str = "public_decrypt_request";
 pub const OP_PUBLIC_DECRYPT_RESULT: &str = "public_decrypt_result";
 pub const OP_USER_DECRYPT_REQUEST: &str = "user_decrypt_request";
 pub const OP_USER_DECRYPT_RESULT: &str = "user_decrypt_result";
+// Synchronous (blocking, no-poll) user decryption endpoint. Benchmark variant.
+pub const OP_USER_DECRYPT_DIRECT: &str = "user_decrypt_direct";
 // Inner variants of the OP
 // Corresponds to a single ciphertext
 pub const OP_PUBLIC_DECRYPT_INNER: &str = "public_decrypt_inner";

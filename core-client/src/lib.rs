@@ -337,6 +337,7 @@ trait DecryptRateArgs {
     fn get_rate(&self) -> Option<u64>;
     fn get_duration(&self) -> Option<u64>;
     fn get_max_in_flight(&self) -> Option<usize>;
+    fn get_direct(&self) -> bool;
 }
 
 fn validate_decrypt_rate_args(cf: &impl DecryptRateArgs) -> anyhow::Result<()> {
@@ -632,6 +633,13 @@ impl DecryptRateArgs for DecryptArguments {
             }
         }
     }
+
+    fn get_direct(&self) -> bool {
+        match self {
+            DecryptArguments::FromFile(cipher_file) => cipher_file.rate_options.direct,
+            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.rate_options.direct,
+        }
+    }
 }
 
 impl DecryptArguments {
@@ -649,6 +657,10 @@ impl DecryptArguments {
 
     pub fn get_max_in_flight(&self) -> Option<usize> {
         DecryptRateArgs::get_max_in_flight(self)
+    }
+
+    pub fn get_direct(&self) -> bool {
+        DecryptRateArgs::get_direct(self)
     }
 }
 
@@ -760,6 +772,11 @@ pub struct DecryptRateOptions {
     /// Maximum number of in-flight requests allowed during a rate-mode run.
     #[clap(long)]
     pub max_in_flight: Option<usize>,
+    /// Use the synchronous `UserDecryptDirect` endpoint (blocking, single round
+    /// trip, no polling) instead of the async submit-then-poll flow. Only
+    /// affects user decryption; ignored for public decryption.
+    #[clap(long, default_value_t = false)]
+    pub direct: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -2137,6 +2154,7 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
+            let direct = cipher_args.get_direct();
             match (cipher_args.get_rate(), cipher_args.get_duration()) {
                 (Some(rate), Some(duration)) => {
                     let max_in_flight = cipher_args
@@ -2160,6 +2178,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        direct,
                     )
                     .await?
                 }
@@ -2178,6 +2197,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        direct,
                     )
                     .await?
                 }
@@ -3001,6 +3021,7 @@ mod tests {
                 rate: Some(10),
                 duration: Some(10),
                 max_in_flight: None,
+                direct: false,
             },
         }
     }

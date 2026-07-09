@@ -21,8 +21,8 @@ use kms_grpc::kms::v1::{
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
-    OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_DIRECT,
+    OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use tonic::{Request, Response};
@@ -146,6 +146,142 @@ pub async fn user_decrypt_impl<
     );
 
     Ok(Response::new(Empty {}))
+}
+
+/// Synchronous variant of [`user_decrypt_impl`]: run the user decryption inline
+/// (no background task, no meta-store, no polling) and return the signed
+/// response directly. Benchmark counterpart to the async submit-then-poll path.
+pub async fn user_decrypt_direct_impl<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+>(
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    request: Request<UserDecryptionRequest>,
+) -> Result<Response<UserDecryptionResponse>, MetricedError> {
+    // Same resource-exhaustion reasoning as `user_decrypt_impl`; nothing is
+    // recorded here, so a rejected request can simply be resent.
+    let permit = service.rate_limiter.start_user_decrypt().await?;
+    let timer = METRICS
+        .time_operation(OP_USER_DECRYPT_DIRECT)
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
+        .start();
+
+    let inner = request.into_inner();
+    let (
+        typed_ciphertexts,
+        link,
+        client_enc_key_bytes,
+        client_address,
+        request_id,
+        key_id,
+        context_id,
+        epoch_id,
+        domain,
+        extra_data,
+    ) = validate_user_decrypt_req(&inner)?;
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            OP_USER_DECRYPT_DIRECT,
+            Some(request_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+
+    let keys = service
+        .crypto_storage
+        .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_DIRECT,
+                Some(request_id),
+                anyhow::anyhow!("Key ID {key_id} not found: {e}"),
+                tonic::Code::NotFound,
+            )
+        })?;
+    let sig_key = service.base_kms.sig_key().map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_DIRECT,
+            Some(request_id),
+            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+            tonic::Code::FailedPrecondition,
+        )
+    })?;
+    let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_DIRECT,
+            Some(request_id),
+            anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
+            tonic::Code::Internal,
+        )
+    })?;
+
+    let mut rng = service.base_kms.new_rng().await;
+
+    tracing::info!(
+        "Starting direct user decryption using key_id {} for request ID {}",
+        &key_id,
+        &request_id
+    );
+    // Run inline rather than spawning; the caller blocks on the result.
+    let (payload, external_signature) = async_user_decrypt::<PubS, PrivS>(
+        &keys,
+        &sig_key,
+        &mut rng,
+        &typed_ciphertexts,
+        &link,
+        &client_enc_key_bytes,
+        &client_address,
+        server_verf_key,
+        &domain,
+        &extra_data,
+    )
+    .await
+    .map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_DIRECT,
+            Some(request_id),
+            anyhow::anyhow!("Failed direct user decryption: {e}"),
+            tonic::Code::Internal,
+        )
+    })?;
+    // Stop the timer and release the rate-limiter permit before signing.
+    drop(timer);
+    drop(permit);
+
+    // Sign the payload, mirroring `get_user_decryption_result_impl`.
+    let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_DIRECT,
+            Some(request_id),
+            anyhow::anyhow!("Could not serialize user decryption payload: {e}"),
+            tonic::Code::Internal,
+        )
+    })?;
+    let sig = service
+        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_DIRECT,
+                Some(request_id),
+                anyhow::anyhow!("Could not sign user decryption payload: {e}"),
+                tonic::Code::Aborted,
+            )
+        })?;
+
+    Ok(Response::new(UserDecryptionResponse {
+        signature: sig.sig.to_vec(),
+        external_signature,
+        payload: Some(payload),
+        extra_data,
+    }))
 }
 
 /// Implementation of the get_user_decryption_result endpoint

@@ -1012,8 +1012,46 @@ async fn send_and_collect_user_decrypt(
     num_parties: usize,
     max_iter: usize,
     num_expected_responses: usize,
+    direct: bool,
 ) -> anyhow::Result<CollectedUserDecrypt> {
     let request_start = tokio::time::Instant::now();
+
+    // Synchronous path: a single blocking `user_decrypt_direct` call per party
+    // returns the party's response directly. There is no second (poll) phase,
+    // so `core_endpoints_resp` and `max_iter` are unused here.
+    if direct {
+        let mut resp_tasks = JoinSet::new();
+        for ce in core_endpoints_req.iter() {
+            let req_cloned = user_decrypt_req.clone();
+            let mut cur_client = ce.clone();
+            resp_tasks.spawn(async move {
+                cur_client
+                    .user_decrypt_direct(tonic::Request::new(req_cloned))
+                    .await
+                    .map(|resp| resp.into_inner())
+                    .map_err(|e| anyhow::anyhow!("user decrypt direct request failed: {e}"))
+            });
+        }
+
+        let (resp_response_vec, collect_duration) = collect_decrypt_responses(
+            "user decrypt direct",
+            rate,
+            request_start,
+            resp_tasks,
+            num_parties,
+            num_expected_responses,
+        )
+        .await?;
+
+        return Ok(CollectedUserDecrypt {
+            req_id,
+            user_decrypt_req,
+            enc_pk,
+            enc_sk,
+            resp_response_vec,
+            collect_duration,
+        });
+    }
 
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints_req.iter() {
@@ -1174,6 +1212,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     domain: Eip712Domain,
+    direct: bool,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
@@ -1203,6 +1242,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
         num_parties,
         max_iter,
         num_expected_responses,
+        direct,
     )
     .await?;
     let collect_duration = collected.collect_duration;
@@ -1242,6 +1282,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     domain: Eip712Domain,
+    direct: bool,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
@@ -1293,6 +1334,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 num_parties,
                 max_iter,
                 num_expected_responses,
+                direct,
             )
         },
     )

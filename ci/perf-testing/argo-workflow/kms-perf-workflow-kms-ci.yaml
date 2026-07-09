@@ -248,6 +248,79 @@ spec:
               - name: previous-ok
                 value: "{{tasks.udec-rate-2700.outputs.parameters.capacity-ok}}"
 
+          # --- Synchronous user-decrypt (UserDecryptDirect) suite ---
+          # Same rates and key as the async udec suite above, but each request is a
+          # single blocking call per party (no submit-then-poll). Runs after the
+          # async suite so the two don't contend for the cluster, and is
+          # report-only: `previous-ok=true` so every scenario runs, and its
+          # outcomes never fail the workflow (see summary-report). This is a
+          # head-to-head comparison probe, not a gate.
+          - name: pause-udec-direct-0
+            dependencies: ["udec-rate-2750"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-direct-rate-2400
+            dependencies: ["pause-udec-direct-0"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec-direct"
+              - name: rate
+                value: "2400"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "true"
+
+          - name: pause-udec-direct-1
+            dependencies: ["udec-direct-rate-2400"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-direct-rate-2700
+            dependencies: ["pause-udec-direct-1"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec-direct"
+              - name: rate
+                value: "2700"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "true"
+
+          - name: pause-udec-direct-2
+            dependencies: ["udec-direct-rate-2700"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-direct-rate-2750
+            dependencies: ["pause-udec-direct-2"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec-direct"
+              - name: rate
+                value: "2750"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "true"
+
           - name: summary
             dependencies:
               - "preproc-key-gen"
@@ -261,6 +334,9 @@ spec:
               - "udec-rate-2400"
               - "udec-rate-2700"
               - "udec-rate-2750"
+              - "udec-direct-rate-2400"
+              - "udec-direct-rate-2700"
+              - "udec-direct-rate-2750"
             template: summary-report
             arguments:
               parameters:
@@ -286,6 +362,12 @@ spec:
                 value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
               - name: test-result-udec-2750
                 value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
+              - name: test-result-udec-direct-2400
+                value: "{{tasks.udec-direct-rate-2400.outputs.parameters.test-result}}"
+              - name: test-result-udec-direct-2700
+                value: "{{tasks.udec-direct-rate-2700.outputs.parameters.test-result}}"
+              - name: test-result-udec-direct-2750
+                value: "{{tasks.udec-direct-rate-2750.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -593,6 +675,9 @@ spec:
           EOF
 
           kind="{{inputs.parameters.kind}}"
+          # `direct_flag` appends `--direct` for the synchronous user-decrypt
+          # endpoint (UserDecryptDirect): one blocking call per party, no polling.
+          direct_flag=""
           case "$kind" in
             pdec)
               command_name="public-decrypt"
@@ -606,6 +691,13 @@ spec:
               metrics_key="user_decrypt"
               display_name="user decrypt"
               ;;
+            udec-direct)
+              command_name="user-decrypt"
+              metrics_marker="USER_DECRYPT_METRICS"
+              metrics_key="user_decrypt"
+              display_name="user decrypt (direct)"
+              direct_flag="--direct"
+              ;;
             *)
               echo "Unsupported decrypt kind: $kind"
               exit 1
@@ -614,7 +706,7 @@ spec:
 
           test_name="${kind}-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
-          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}} ${direct_flag}"
           mkdir -p /tmp/artifacts
 
           capture_net_snapshot() {
@@ -895,6 +987,9 @@ spec:
         - name: test-result-udec-2400
         - name: test-result-udec-2700
         - name: test-result-udec-2750
+        - name: test-result-udec-direct-2400
+        - name: test-result-udec-direct-2700
+        - name: test-result-udec-direct-2750
         - name: tls
         - name: run_url
         - name: job_url
@@ -926,6 +1021,9 @@ spec:
           echo '{{inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
           echo '{{inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
           echo '{{inputs.parameters.test-result-udec-2750}}' > /mnt/results/udec-rate-2750.json
+          echo '{{inputs.parameters.test-result-udec-direct-2400}}' > /mnt/results/udec-direct-rate-2400.json
+          echo '{{inputs.parameters.test-result-udec-direct-2700}}' > /mnt/results/udec-direct-rate-2700.json
+          echo '{{inputs.parameters.test-result-udec-direct-2750}}' > /mnt/results/udec-direct-rate-2750.json
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -962,6 +1060,16 @@ spec:
           udec_skipped=0
           udec_lines=""
           udec_raw_lines=""
+
+          # Synchronous user-decrypt (UserDecryptDirect) comparison probe.
+          # Report-only: never contributes to the workflow's pass/fail decision.
+          udecd_total=0
+          udecd_passed=0
+          udecd_warned=0
+          udecd_failed=0
+          udecd_skipped=0
+          udecd_lines=""
+          udecd_raw_lines=""
 
           status_label() {
             case "$1" in
@@ -1004,6 +1112,7 @@ spec:
               crs) crs_lines="${crs_lines}${2}\n" ;;
               pdec) pdec_lines="${pdec_lines}${2}\n" ;;
               udec) udec_lines="${udec_lines}${2}\n" ;;
+              udecd) udecd_lines="${udecd_lines}${2}\n" ;;
             esac
           }
 
@@ -1015,6 +1124,7 @@ spec:
             case "$1" in
               pdec) pdec_raw_lines="${pdec_raw_lines}${2}\n" ;;
               udec) udec_raw_lines="${udec_raw_lines}${2}\n" ;;
+              udecd) udecd_raw_lines="${udecd_raw_lines}${2}\n" ;;
             esac
           }
 
@@ -1024,6 +1134,10 @@ spec:
             metrics_key="$3"
             shift 3
 
+            # `file_prefix` decouples the artifact filename from the counter
+            # namespace: the synchronous suite writes `udec-direct-rate-*.json`
+            # but its counters must use a shell-safe token (`udecd`, no hyphen).
+            file_prefix="$kind"
             case "$kind" in
               pdec)
                 extra_failed_key="verification_failed"
@@ -1035,6 +1149,12 @@ spec:
                 timing_key="reconstruction_ms"
                 timing_label="recon"
                 ;;
+              udecd)
+                extra_failed_key="reconstruction_failed"
+                timing_key="reconstruction_ms"
+                timing_label="recon"
+                file_prefix="udec-direct"
+                ;;
               *)
                 echo "Unsupported decrypt summary kind: $kind"
                 return 1
@@ -1043,7 +1163,7 @@ spec:
 
             echo "${display} perf tests:"
             for rate in "$@"; do
-              result="/mnt/results/${kind}-rate-${rate}.json"
+              result="/mnt/results/${file_prefix}-rate-${rate}.json"
               inc_decrypt_counter "$kind" total
               if ! jq empty "$result" 2>/dev/null; then
                 inc_decrypt_counter "$kind" failed
@@ -1212,6 +1332,7 @@ spec:
           echo ""
           summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500
           summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750
+          summarize_decrypt_rates udecd "User decrypt (direct)" user_decrypt 2400 2700 2750
 
           finite_total=$((keygen_total + crs_total))
           finite_passed=$((keygen_passed + crs_passed))
@@ -1228,12 +1349,19 @@ spec:
           else
             udec_success_rate=0
           fi
+          udecd_accepted=$((udecd_passed + udecd_warned))
+          if [ $udecd_total -gt 0 ]; then
+            udecd_success_rate=$(( (udecd_accepted * 100) / udecd_total ))
+          else
+            udecd_success_rate=0
+          fi
 
           echo "----------------------------------------"
           echo "Keygen: ${keygen_passed}/${keygen_total} passed"
           echo "CRS: ${crs_passed}/${crs_total} passed"
           echo "Public decrypt: ${pdec_passed} passed, ${pdec_warned} warned, ${pdec_failed} failed, ${pdec_skipped} skipped (${pdec_success_rate}% accepted)"
           echo "User decrypt: ${udec_passed} passed, ${udec_warned} warned, ${udec_failed} failed, ${udec_skipped} skipped (${udec_success_rate}% accepted)"
+          echo "User decrypt (direct, report-only): ${udecd_passed} passed, ${udecd_warned} warned, ${udecd_failed} failed, ${udecd_skipped} skipped (${udecd_success_rate}% accepted)"
           echo "=========================================="
 
           if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
@@ -1259,7 +1387,13 @@ spec:
           else
             udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${udec_lines:-No user decrypt tests\n}")"
           fi
-          status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
+          udecd_raw_text="$(printf '%b' "$udecd_raw_lines" | head -c 2200)"
+          if [ -n "$udecd_raw_text" ]; then
+            udecd_block="$(printf '*User decrypt — direct/no-poll {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b\n```%s\n```' "${udecd_lines:-No direct user decrypt tests\n}" "$udecd_raw_text")"
+          else
+            udecd_block="$(printf '*User decrypt — direct/no-poll {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b' "${udecd_lines:-No direct user decrypt tests\n}")"
+          fi
+          status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total} | User decrypt direct: ${udecd_passed}/${udecd_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
           # hardcoded mirrors of the deployed config (kms-service values-kms-ci.yaml + the karpenter
           # nodepools). They do NOT auto-update — keep them in sync here, and in the sibling
@@ -1284,6 +1418,7 @@ spec:
             --arg crs "$crs_block" \
             --arg pdec "$pdec_block" \
             --arg udec "$udec_block" \
+            --arg udecd "$udecd_block" \
             '{
               text: $title,
               blocks: [
@@ -1299,7 +1434,8 @@ spec:
                 {type: "section", text: {type: "mrkdwn", text: $keygen}},
                 {type: "section", text: {type: "mrkdwn", text: $crs}},
                 {type: "section", text: {type: "mrkdwn", text: $pdec}},
-                {type: "section", text: {type: "mrkdwn", text: $udec}}
+                {type: "section", text: {type: "mrkdwn", text: $udec}},
+                {type: "section", text: {type: "mrkdwn", text: $udecd}}
               ]
             }'
           )

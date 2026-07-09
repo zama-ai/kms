@@ -57,6 +57,25 @@ The user-decrypt test also runs three scenarios, each sending `1 × euint64` for
 | near-limit | 2,700 req/s | ≤1% failures, ≤1% shed, ≥95% of target rate |
 | over-limit | 2,750 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
+### User-decrypt direct (no-poll) comparison
+
+After the async user-decrypt suite, the workflow runs the same three rates
+(2,400 / 2,700 / 2,750 req/s) again through the synchronous `UserDecryptDirect`
+endpoint (`user-decrypt … --direct`). Instead of submitting a request and
+polling each party for the result, the client makes one blocking call per party
+and gets that party's signed contribution back in a single round trip.
+
+This suite exists to measure what the per-party polling tax costs: at n=13 the
+async path pays a submit round trip plus repeated poll round trips *per party*,
+while the direct path pays one round trip per party. Compare the `udec` and
+`udec-direct` blocks in the Slack report (latency percentiles and achieved rate)
+to see the difference.
+
+It is **report-only**: every direct scenario runs regardless of the async
+results, and its outcomes never fail the workflow — it is a comparison probe,
+not a gate. It reuses the async suite's key, and runs after it so the two never
+contend for the cluster.
+
 The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
 not raw counts — `maxshed=25` means "no more than 25% of offered requests were
 shed." The rate percentage (`pct`) is the minimum acceptable ratio of achieved

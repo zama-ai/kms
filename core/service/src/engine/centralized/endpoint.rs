@@ -24,7 +24,7 @@ use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl}
 use crate::engine::centralized::service::{get_key_gen_result_impl, key_gen_impl};
 use crate::engine::centralized::service::{
     get_public_decryption_result_impl, get_user_decryption_result_impl, public_decrypt_impl,
-    user_decrypt_impl,
+    user_decrypt_direct_impl, user_decrypt_impl,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::utils::MetricedError;
@@ -183,6 +183,17 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
         METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
         get_user_decryption_result_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn user_decrypt_direct(
+        &self,
+        request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
+        METRICS.increment_request_counter(OP_USER_DECRYPT_DIRECT);
+        user_decrypt_direct_impl(self, request)
             .await
             .map_err(|e| e.into())
     }

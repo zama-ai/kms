@@ -242,6 +242,31 @@ service CoreServiceEndpoint {
   // * The `request_id` in `request` can be used to retrieve the result of the user decryption again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
 
+  // Synchronous variant of user decryption: runs this party's partial user
+  // decryption inline and returns its [`UserDecryptionResponse`] directly.
+  //
+  // Unlike [`UserDecrypt`]/[`GetUserDecryptionResult`], this does NOT return
+  // immediately and does NOT record the request in the meta-store: the caller
+  // holds the connection open for the whole decryption and receives the
+  // signed contribution in a single round trip, with no polling.
+  //
+  // This exists to benchmark the polling overhead of the async design against a
+  // blocking call (see `ci/perf-testing`). The request validation, rate
+  // limiting, signcryption and signing are identical to the async path; only
+  // the spawn+poll+meta-store machinery is dropped. Because no `request_id` is
+  // consumed, a `ResourceExhausted` response can be retried with the same
+  // request. The trade-off is the loss of disconnect/restart recovery that the
+  // meta-store provides on the async path.
+  //
+  // # Parameters / # Conditions
+  // * Same pre-conditions as [`UserDecrypt`], except there is no post-condition
+  //   on `request_id` consumption (nothing is stored for later retrieval).
+  //
+  // # Returns
+  // * `Response<UserDecryptionResponse>` — identical in shape to what
+  //   [`GetUserDecryptionResult`] returns for the async path.
+  rpc UserDecryptDirect(kms.v1.UserDecryptionRequest) returns (kms.v1.UserDecryptionResponse);
+
   // Start CRS generation.
   //
   // That is, it generates a common reference string (CRS) for the KMS.
