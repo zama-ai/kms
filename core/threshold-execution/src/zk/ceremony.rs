@@ -637,13 +637,16 @@ fn verify_proof(
     // makes every subsequent honest contribution be rejected as a stale round.
     if partial_proof.new_pp.round != round {
         return Err(anyhow_error_and_log(format!(
-            "bad round number: expected {round} but got {}",
+            "bad round number: expected {round} but got {} from new partial proof",
             partial_proof.new_pp.round
         )));
     }
 
     if current_pp.round >= partial_proof.new_pp.round {
-        return Err(anyhow_error_and_log("bad round number".to_string()));
+        return Err(anyhow_error_and_log(format!(
+            "bad round number: current round {} is not less than new round {}",
+            current_pp.round, partial_proof.new_pp.round
+        )));
     }
 
     let new_pp = partial_proof.new_pp.clone();
@@ -656,14 +659,18 @@ fn verify_proof(
     // current_pp, whose dimensions we control.
     let witness_dim = current_pp.witness_dim();
     if new_pp.g1g2list.g1s.len() != witness_dim * 2 {
-        return Err(anyhow_error_and_log(
-            "crs length check failed (g)".to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "crs length check failed (g). expected {} but got {}",
+            witness_dim * 2,
+            new_pp.g1g2list.g1s.len()
+        )));
     }
     if new_pp.witness_dim() != witness_dim {
-        return Err(anyhow_error_and_log(
-            "crs length check failed (g_hat)".to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "crs length check failed (g_hat). expected {} but got {}",
+            witness_dim,
+            new_pp.witness_dim()
+        )));
     }
 
     let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
