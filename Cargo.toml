@@ -153,12 +153,12 @@ nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
 oid-registry = "=0.8.1"  # OID registry for ASN.1 - LOW RISK: rusticata team
-opentelemetry = "=0.31.0"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
-opentelemetry-http = "=0.31.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
-opentelemetry-otlp = { version = "=0.31.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
-opentelemetry-semantic-conventions = "=0.31.0"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
-opentelemetry-stdout = { version = "=0.31.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
-opentelemetry_sdk = { version = "=0.31.0", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
+opentelemetry = "=0.32.0"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
+opentelemetry-http = "=0.32.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
+opentelemetry-otlp = { version = "=0.32.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
+opentelemetry-semantic-conventions = "=0.32.1"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
+opentelemetry-stdout = { version = "=0.32.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
+opentelemetry_sdk = { version = "=0.32.1", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
@@ -173,7 +173,7 @@ rasn-cms = "=0.28.13"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individ
 rayon = "=1.12.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
 redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
-reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 275M+ downloads
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 571M+ downloads; since 0.13 the rustls feature validates against the OS trust store (rustls-platform-verifier) with aws-lc-rs — irrelevant for our self-signed/plain-HTTP endpoints
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.26.1"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.9", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
@@ -213,8 +213,8 @@ tower = "=0.5.3"  # Service framework - LOW RISK: tower-rs team
 tower-http = "=0.6.11"  # HTTP middleware - LOW RISK: tower-rs team
 tracing = { version = "=0.1.44", features = ["log"] }  # Application instrumentation - LOW RISK: tokio-rs team
 tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
-tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
-tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
+tracing-opentelemetry = "=0.33.0"  # OpenTelemetry integration - LOW RISK: tokio-rs team
+tracing-subscriber = { version = "=0.3.23", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
