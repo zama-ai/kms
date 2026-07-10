@@ -66,6 +66,9 @@ data:
     {{- end }}
   kms-gen-keys.toml: |
     [keygen]
+    # Explicit key so config-rs keeps this table — empty tables are dropped
+    # (rust-cli/config-rs#443), which would make the [keygen] section vanish.
+    overwrite = false
     {{- if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"

@@ -72,7 +72,11 @@ enum KeygenMode {
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 struct KmsGenKeysConfig {
-    /// Required key-generation controls such as overwrite and listing behavior.
+    /// Key-generation controls such as overwrite and listing behavior.
+    /// Defaults apply when the `[keygen]` section is empty or omitted — config-rs
+    /// drops empty tables (rust-cli/config-rs), so the section must not be
+    /// mandatory when all its fields are optional.
+    #[serde(default)]
     #[validate(nested)]
     keygen: KeygenConfig,
     /// AWS settings used when any configured storage or keychain depends on AWS services.
@@ -99,8 +103,8 @@ struct KmsGenKeysConfig {
     mock_enclave: bool,
 }
 
-/// Options under the required `[keygen]` section.
-#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+/// Options under the `[keygen]` section.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, Default)]
 #[serde(deny_unknown_fields)]
 struct KeygenConfig {
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
