@@ -1132,7 +1132,16 @@ where
     };
 
     // now we create chunks from the received syndrome polynomials
-    // and create the secret key share
+    // and create the secret key share.
+    // Each opened element contributes exactly `r` syndrome coefficients, so the opened list must split evenly into
+    // `r`-sized chunks; a remainder means the opening returned an unexpected length.
+    if all_syndrome_polys.len() % syn_ctx.r != 0 {
+        return Err(anyhow_error_and_log(format!(
+            "Opened syndrome length {} is not a multiple of the syndrome size r = {}",
+            all_syndrome_polys.len(),
+            syn_ctx.r
+        )));
+    }
     let mut new_sk_share = Vec::with_capacity(expected_input_len);
     let chunks = all_syndrome_polys.chunks_exact(syn_ctx.r);
     if chunks.len() != all_shamir_shares.len() {

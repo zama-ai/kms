@@ -58,8 +58,8 @@ where
     party_count: usize,
     /// RS redundancy `r = n − (t + 1)`: the number of syndrome coefficients.
     pub r: usize,
-    /// `alpha_powers[i][j] = αᵢʲ` for `j ∈ 0..=r`, where `αᵢ = embed(roleᵢ)` is party `i`'s ring point: the Vandermonde
-    /// weights of the syndrome map. Read as `alpha_powers[i][j]` in [`Self::compute`].
+    /// `alpha_powers[i][j] = αᵢʲ` for `j ∈ 0..r` (exponents `0..=r−1`), where `αᵢ = embed(roleᵢ)` is party `i`'s ring
+    /// point: the Vandermonde weights of the syndrome map. Read as `alpha_powers[i][j]` in [`Self::compute`].
     alpha_powers: Vec<Vec<ResiduePoly<Z, EXT>>>,
     /// `inv_denoms[i] = 1 / Lᵢ(αᵢ) = 1 / ∏_{j≠i}(αᵢ − αⱼ)`, the inverse Lagrange denominator for party `i`. The second
     /// factor of each syndrome term in [`Self::compute`] (`numerator * inv_denoms[i]`).
@@ -87,13 +87,22 @@ where
     /// field.
     pub fn new(parties: &[Role], threshold: usize) -> Result<Self> {
         let party_count = parties.len();
-        // RS redundancy r = n − (t + 1); needs room for the parity, i.e. the committee must satisfy n ≥ t + 1.
+        // RS redundancy r = n − (t + 1); needs room for the parity, i.e. the committee must satisfy n > t + 1.
         let r = party_count.checked_sub(threshold + 1).ok_or_else(|| {
             anyhow!(
                 "committee size {party_count} is smaller than threshold + 1 = {}",
                 threshold + 1
             )
         })?;
+        // r == 0 (committee size exactly t + 1) leaves no redundancy: there are no syndrome coefficients, so error
+        // correction is impossible. Reject it here rather than let the empty syndrome surface as a downstream panic
+        // (`chunks_exact(0)` in `reshare.rs`) or an `r - 1` underflow in the `alpha_powers` precompute below.
+        if r == 0 {
+            return Err(anyhow!(
+                "committee size {party_count} equals threshold + 1 = {}: no RS redundancy, error correction is impossible",
+                threshold + 1
+            ));
+        }
 
         // --- Field-level decode hints (consumed per bit-plane by `decode_syndrome` in `decode`) ---
         // The parties as points of the quotient field (GF16) — the field syndrome decoding runs in.
@@ -117,8 +126,9 @@ where
             .collect::<Result<Vec<ResiduePoly<Z, EXT>>>>()?;
         // Lagrange numerators Lᵢ(Z) = ∏_{j≠i}(Z − αⱼ) (the Lᵢ of Eq. 15 in the spec).
         let lagrange_numerators = lagrange_numerators(&parties);
-        // alpha_powers[i][j] = αᵢʲ for j ∈ 0..=r — the Vandermonde weights.
-        let alpha_powers = compute_powers_list(&parties, r);
+        // alpha_powers[i][j] = αᵢʲ for j ∈ 0..r — the Vandermonde weights. `compute` only reads exponents up to r − 1,
+        // so we stop there (`compute_powers_list` yields `max_exponent + 1` powers per party, i.e. exponents 0..=r−1).
+        let alpha_powers = compute_powers_list(&parties, r - 1);
         // inv_denoms[i] = 1 / Lᵢ(αᵢ): evaluate each numerator at its own point, then invert once.
         let inv_denoms: Vec<ResiduePoly<Z, EXT>> = parties
             .iter()
