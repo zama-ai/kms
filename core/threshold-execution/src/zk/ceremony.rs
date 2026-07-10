@@ -647,6 +647,25 @@ fn verify_proof(
     }
 
     let new_pp = partial_proof.new_pp.clone();
+
+    // Validate the received CRS dimensions before any indexing below, so that a
+    // malformed proof (e.g. empty or wrong-length point vectors) is rejected
+    // with an error instead of panicking on an out-of-bounds index. Such a
+    // panic would propagate out of the compute task and abort the ceremony,
+    // letting a single malicious contributor break liveness. The reference is
+    // current_pp, whose dimensions we control.
+    let witness_dim = current_pp.witness_dim();
+    if new_pp.g1g2list.g1s.len() != witness_dim * 2 {
+        return Err(anyhow_error_and_log(
+            "crs length check failed (g)".to_string(),
+        ));
+    }
+    if new_pp.witness_dim() != witness_dim {
+        return Err(anyhow_error_and_log(
+            "crs length check failed (g_hat)".to_string(),
+        ));
+    }
+
     let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
     let g1_j = new_pp.g1g2list.g1s[0]; // g_{1, j}
 
@@ -669,20 +688,6 @@ fn verify_proof(
     if g1_j == curve::G1::ZERO {
         return Err(anyhow_error_and_log(
             "non-degenerative check failed".to_string(),
-        ));
-    }
-
-    // I (caller) need to make sure the lengths are correct
-    // the point of reference is the current_pp
-    let witness_dim = current_pp.witness_dim();
-    if new_pp.g1g2list.g1s.len() != witness_dim * 2 {
-        return Err(anyhow_error_and_log(
-            "crs length check failed (g)".to_string(),
-        ));
-    }
-    if new_pp.witness_dim() != witness_dim {
-        return Err(anyhow_error_and_log(
-            "crs length check failed (g_hat)".to_string(),
         ));
     }
 
@@ -1204,6 +1209,86 @@ mod tests {
         }
     }
 
+    // A malicious party that broadcasts a structurally malformed proof: the
+    // point vectors are emptied. An honest verifier must reject this with an
+    // error (not panic on an out-of-bounds index), so that the ceremony stays
+    // live and still produces a valid CRS from the honest contributions.
+    #[derive(Clone, Default)]
+    struct MalformedProofCeremony<BCast: Broadcast> {
+        broadcast: BCast,
+    }
+
+    impl<B: Broadcast + Default> ProtocolDescription for MalformedProofCeremony<B> {
+        fn protocol_desc(depth: usize) -> String {
+            let indent = Self::INDENT_STRING.repeat(depth);
+            format!(
+                "{}-MalformedProofCeremony:\n{}",
+                indent,
+                B::protocol_desc(depth + 1)
+            )
+        }
+    }
+
+    #[async_trait]
+    impl<BCast: Broadcast + Default> Ceremony for MalformedProofCeremony<BCast> {
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
+            &self,
+            session: &mut S,
+            witness_dim: usize,
+            max_num_bits: Option<u32>,
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
+            let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
+            all_roles_sorted.sort();
+            let my_role = session.my_role();
+
+            let mut pp = InternalPublicParameter::new(witness_dim, max_num_bits);
+
+            let sid = session.session_id();
+            for (round, role) in all_roles_sorted.iter().enumerate() {
+                let round = round as u64;
+                if role == &my_role {
+                    let mut tau = curve::ZeroizeZp::ZERO;
+                    tau.rand_in_place(&mut session.rng());
+                    let mut r = curve::ZeroizeZp::ZERO;
+                    r.rand_in_place(&mut session.rng());
+                    // make a structurally malformed proof by emptying the point
+                    // lists; the round number is left correct so the malformed
+                    // vectors are what an honest verifier trips on.
+                    let mut proof: PartialProof =
+                        make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
+                    proof.new_pp.g1g2list.g1s.clear();
+                    proof.new_pp.g1g2list.g2s.clear();
+                    let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
+
+                    let _ = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
+                        .await?;
+                    pp = proof.new_pp;
+                } else {
+                    let hm = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update::<Z, _>(
+                            session,
+                            HashSet::from([*role]),
+                            None,
+                        )
+                        .await
+                        .unwrap();
+                    let msg = hm.get(role).unwrap();
+                    if let BroadcastValue::PartialProof(proof) = msg {
+                        pp = proof.new_pp.clone();
+                    }
+                }
+            }
+
+            Ok(FinalizedInternalPublicParameter {
+                inner: pp,
+                sid: session.session_id(),
+            })
+        }
+    }
+
     async fn test_ceremony_strategies_large<
         C: Ceremony + 'static,
         Z: Ring,
@@ -1280,6 +1365,28 @@ mod tests {
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
     ) {
         let malicious_party = BadProofCeremony {
+            broadcast: broadcast_strategy,
+        };
+        test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
+            params.clone(),
+            witness_dim,
+            malicious_party.clone(),
+        ).await;
+    }
+
+    // Liveness: a party that broadcasts a structurally malformed proof (empty
+    // point vectors) must not stall or crash the ceremony. The honest parties
+    // reject it and still agree on a valid CRS built from the honest rounds.
+    #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    async fn test_malformed_proof_ceremony<BCast: Broadcast + Default + 'static>(
+        #[case] params: TestingParameters,
+        #[case] witness_dim: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
+        let malicious_party = MalformedProofCeremony {
             broadcast: broadcast_strategy,
         };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
@@ -1432,6 +1539,32 @@ mod tests {
                     .unwrap_err()
                     .to_string()
                     .contains("dlog check failed")
+            );
+        }
+        {
+            // A malformed proof with an empty G1 list must be rejected with an
+            // error, never panic on an out-of-bounds index. verify_proof runs
+            // inside a compute task whose panic would abort the whole ceremony,
+            // so this is a liveness guard: lengths are checked before indexing.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            proof.new_pp.g1g2list.g1s.clear();
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("crs length check failed (g)")
+            );
+        }
+        {
+            // Same guard for the G2 (g_hat) list: a truncated g2s vector is
+            // rejected, not indexed into.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            proof.new_pp.g1g2list.g2s.clear();
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("crs length check failed (g_hat)")
             );
         }
         {
