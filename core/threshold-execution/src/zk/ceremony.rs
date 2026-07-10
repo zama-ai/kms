@@ -647,7 +647,7 @@ fn verify_proof(
     }
 
     // Also check that the received round is strictly greater (newer) than the current known round.
-    // We might have skipped a previous round, so the current known round might be less than the expected round.
+    // We might have skipped a previous round (if some parties were offline), so the current known round might be less than the expected round.
     if partial_proof_to_check.new_pp.round <= current_pp.round {
         return Err(anyhow_error_and_log(format!(
             "bad round number: new partial proof round {} is not greater than current round {}",
