@@ -996,6 +996,22 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
             }
         }
 
+        // Post-ceremony invariant. `pp.round` is the sorted position of the last
+        // accepted contribution, so it must fall in `1..=num_parties`:
+        // - `0` means no contribution was folded in (only possible if every party
+        //   was skipped, i.e. more faults than the protocol tolerates) — the CRS is
+        //   the trivial `pp_0` and its trapdoor is known.
+        // - a value above `num_parties` can only arise from a round that escaped the
+        //   binding in `verify_proof`.
+        // Either way the result is unsafe, so fail loudly instead of returning it.
+        let num_parties = all_roles_sorted.len() as u64;
+        if pp.round == 0 || pp.round > num_parties {
+            return Err(anyhow_error_and_log(format!(
+                "CRS ceremony for session {sid} ended with an invalid final round {}: expected 1..={num_parties}",
+                pp.round
+            )));
+        }
+
         Ok(FinalizedInternalPublicParameter { inner: pp, sid })
     }
 }
