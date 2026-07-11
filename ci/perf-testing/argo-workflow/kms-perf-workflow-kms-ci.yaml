@@ -503,8 +503,8 @@ spec:
           app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
-        karpenter.k8s.aws/instance-family: c6in
-        karpenter.k8s.aws/instance-size: 32xlarge
+        karpenter.k8s.aws/instance-family: c8in
+        karpenter.k8s.aws/instance-size: 96xlarge
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
@@ -699,8 +699,8 @@ spec:
           app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
-        karpenter.k8s.aws/instance-family: c6in
-        karpenter.k8s.aws/instance-size: 32xlarge
+        karpenter.k8s.aws/instance-family: c8in
+        karpenter.k8s.aws/instance-size: 96xlarge
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
@@ -1528,7 +1528,7 @@ spec:
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
             "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
-            "core=c7a.16xlarge, core-client=c6in.32xlarge, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
+            "core=c7a.16xlarge, core-client=c8in.96xlarge, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
           else
