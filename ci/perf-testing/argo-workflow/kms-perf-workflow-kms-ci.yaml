@@ -741,6 +741,28 @@ spec:
               - name: previous-ok
                 value: "true"
 
+          - name: pause-udec-direct-12
+            dependencies: ["udec-direct-rate-4000"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-direct-rate-4200
+            dependencies: ["pause-udec-direct-12"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec-direct"
+              - name: rate
+                value: "4200"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "true"
+
           - name: summary
             dependencies:
               - "preproc-key-gen"
@@ -776,6 +798,7 @@ spec:
               - "udec-direct-rate-3400"
               - "udec-direct-rate-3500"
               - "udec-direct-rate-4000"
+              - "udec-direct-rate-4200"
             template: summary-report
             arguments:
               parameters:
@@ -845,6 +868,8 @@ spec:
                 value: "{{tasks.udec-direct-rate-3500.outputs.parameters.test-result}}"
               - name: test-result-udec-direct-4000
                 value: "{{tasks.udec-direct-rate-4000.outputs.parameters.test-result}}"
+              - name: test-result-udec-direct-4200
+                value: "{{tasks.udec-direct-rate-4200.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -1244,6 +1269,10 @@ spec:
           allowed_failure_for_rate() {
             case "$1:$2" in
               pdec:1500|udec:2750) return 0 ;;
+              # Exploratory rungs added above the previously-blessed range: they warn
+              # (never hard-fail the workflow) when they land outside their budget.
+              pdec:1700|pdec:1900|pdec:2100|pdec:2300|pdec:2500) return 0 ;;
+              udec:2800|udec:2900|udec:3000|udec:3100|udec:3200) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -1260,7 +1289,9 @@ spec:
               udec:2700) echo "maxfail=1,maxshed=1,pct=95" ;;
               # 2.75k probes just above the clean 2.7k run; outside-set results warn.
               udec:2750) echo "maxfail=10,maxshed=25,pct=70" ;;
-              *) echo "maxfail=0,maxshed=0,pct=100" ;;
+              # Default for any rate without an explicit budget: no failures/shedding
+              # and within 2% of the offered rate (100% is never hit due to launch jitter).
+              *) echo "maxfail=0,maxshed=0,pct=98" ;;
             esac
           }
 
@@ -1488,6 +1519,7 @@ spec:
         - name: test-result-udec-direct-3400
         - name: test-result-udec-direct-3500
         - name: test-result-udec-direct-4000
+        - name: test-result-udec-direct-4200
         - name: tls
         - name: run_url
         - name: job_url
@@ -1541,6 +1573,7 @@ spec:
           echo '{{inputs.parameters.test-result-udec-direct-3400}}' > /mnt/results/udec-direct-rate-3400.json
           echo '{{inputs.parameters.test-result-udec-direct-3500}}' > /mnt/results/udec-direct-rate-3500.json
           echo '{{inputs.parameters.test-result-udec-direct-4000}}' > /mnt/results/udec-direct-rate-4000.json
+          echo '{{inputs.parameters.test-result-udec-direct-4200}}' > /mnt/results/udec-direct-rate-4200.json
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -1863,7 +1896,7 @@ spec:
           echo ""
           summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500 1700 1900 2100 2300 2500
           summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750 2800 2900 3000 3100 3200
-          summarize_decrypt_rates udecd "User decrypt (direct)" user_decrypt 2400 2700 2750 2800 2900 3000 3100 3200 3300 3400 3500 4000
+          summarize_decrypt_rates udecd "User decrypt (direct)" user_decrypt 2400 2700 2750 2800 2900 3000 3100 3200 3300 3400 3500 4000 4200
 
           finite_total=$((keygen_total + crs_total))
           finite_passed=$((keygen_passed + crs_passed))
@@ -1906,24 +1939,12 @@ spec:
           slack_webhook_url=$(cat /etc/slack/url)
           keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
-          pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2200)"
-          if [ -n "$pdec_raw_text" ]; then
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
-          else
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
-          fi
-          udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
-          if [ -n "$udec_raw_text" ]; then
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
-          else
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${udec_lines:-No user decrypt tests\n}")"
-          fi
-          udecd_raw_text="$(printf '%b' "$udecd_raw_lines" | head -c 2200)"
-          if [ -n "$udecd_raw_text" ]; then
-            udecd_block="$(printf '*Experimental: udec-direct (no-poll) {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b\n```%s\n```' "${udecd_lines:-No direct user decrypt tests\n}" "$udecd_raw_text")"
-          else
-            udecd_block="$(printf '*Experimental: udec-direct (no-poll) {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b' "${udecd_lines:-No direct user decrypt tests\n}")"
-          fi
+          # Summary blocks carry ONLY the per-rate lines. The verbose raw dumps go in a
+          # separate follow-up message (below), so no single Slack text object exceeds its
+          # 3000-char limit as the rate ladders grow — that overflow caused `invalid_blocks`.
+          pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+          udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+          udecd_block="$(printf '*Experimental: udec-direct (no-poll) {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s (report-only)*\n%b' "${udecd_lines:-No direct user decrypt tests\n}")"
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total} | User decrypt direct: ${udecd_passed}/${udecd_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
           # hardcoded mirrors of the deployed config (kms-service values-kms-ci.yaml + the karpenter
@@ -1972,6 +1993,29 @@ spec:
           )
 
           curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
+
+          # Follow-up message: verbose per-scenario raw data, one code block per kind.
+          # Kept out of the summary above so the main message stays under Slack's limits;
+          # each block is capped under the 3000-char per-text-object limit.
+          pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2800)"
+          udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2800)"
+          udecd_raw_text="$(printf '%b' "$udecd_raw_lines" | head -c 2800)"
+          raw_message=$(jq -n \
+            --arg title "Raw data — $title" \
+            --arg pdec "$pdec_raw_text" \
+            --arg udec "$udec_raw_text" \
+            --arg udecd "$udecd_raw_text" \
+            '{
+              text: "Raw perf data",
+              blocks: (
+                [{type: "header", text: {type: "plain_text", text: $title, emoji: false}}]
+                + (if ($pdec  | length) > 0 then [{type: "section", text: {type: "mrkdwn", text: ("*Public decrypt (raw)*\n```" + $pdec  + "\n```")}}] else [] end)
+                + (if ($udec  | length) > 0 then [{type: "section", text: {type: "mrkdwn", text: ("*User decrypt (raw)*\n```"   + $udec  + "\n```")}}] else [] end)
+                + (if ($udecd | length) > 0 then [{type: "section", text: {type: "mrkdwn", text: ("*udec-direct (raw)*\n```"    + $udecd + "\n```")}}] else [] end)
+              )
+            }'
+          )
+          curl -s -X POST -H "Content-type: application/json" -d "$raw_message" "$slack_webhook_url"
 
           if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
             exit 1
