@@ -836,7 +836,7 @@ where
     let mut last_tick = Instant::now();
     let mut late_ticks = 0_u64;
 
-    // Until the deadline: on each tick, reap any finished requests and launch the tick's
+    // Until the deadline: on each tick, collect any finished requests and launch the tick's
     // share of new ones, skipping any that would exceed the in-flight cap.
     while Instant::now() < deadline {
         ticker.tick().await;
