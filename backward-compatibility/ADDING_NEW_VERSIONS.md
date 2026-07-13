@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-When adding a new KMS version (e.g., v0.14.0), follow these steps:
+When adding a new KMS version (e.g., v0.16.0), follow these steps:
 
 ### Step 1: Check Dependency Compatibility
 
@@ -10,10 +10,10 @@ Before adding a new version, verify it's compatible with existing generator vers
 
 ```bash
 # Check key dependencies in the new release
-curl -s "https://raw.githubusercontent.com/zama-ai/kms/v0.14.0/Cargo.toml" | grep -E "serde|alloy|tfhe"
+curl -s "https://raw.githubusercontent.com/zama-ai/kms/v0.16.0/Cargo.toml" | grep -E "serde|alloy|tfhe"
 
-# Compare with the most recent deterministic generator (currently v0.14.0)
-grep -E "serde|alloy|tfhe" backward-compatibility/generate-v0.14.0/Cargo.toml
+# Compare with the most recent deterministic generator (currently v0.15.0)
+grep -E "serde|alloy|tfhe" backward-compatibility/generate-v0.15.0/Cargo.toml
 ```
 
 **Key dependencies to check:**
@@ -24,24 +24,24 @@ grep -E "serde|alloy|tfhe" backward-compatibility/generate-v0.14.0/Cargo.toml
 
 ### Step 2A: If Dependencies Are Compatible
 
-Add the version to the most recent compatible deterministic generator (e.g., `generate-v0.14.0`):
+Add the version to the most recent compatible deterministic generator (e.g., `generate-v0.15.0`):
 
-1. **Add dependencies** to `backward-compatibility/generate-v0.14.0/Cargo.toml`:
+1. **Add dependencies** to `backward-compatibility/generate-v0.15.0/Cargo.toml`:
 ```toml
-kms_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.14.0" }
-kms_grpc_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.14.0" }
-algebra_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "v0.14.0" }
-threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "v0.14.0", features = ["testing"] }
+kms_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.16.0" }
+kms_grpc_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.16.0" }
+algebra_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "v0.16.0" }
+threshold_execution_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "v0.16.0", features = ["testing"] }
 # and so on, see the examples in kms/backward-compatibility/generate-vX.X.X/Cargo.toml
 ```
 
-2. **Create** `backward-compatibility/generate-v0.14.0/src/data_0_14.rs` implementing `KMSCoreVersion` trait
+2. **Create** `backward-compatibility/generate-v0.15.0/src/data_0_16.rs` implementing `KMSCoreVersion` trait
 
-3. **Update** `backward-compatibility/generate-v0.14.0/src/main.rs` to generate data for v0.14.0
+3. **Update** `backward-compatibility/generate-v0.15.0/src/main.rs` to generate data for v0.16.0
 
 4. **Update** root `Makefile`:
-   - Add v0.14.0 to `DETERMINISTIC_BWC_VERSIONS`
-   - Add a `generate-backward-compatibility-v0.14.0` target if this version has its own generator crate
+   - Add v0.16.0 to `DETERMINISTIC_BWC_VERSIONS`
+   - Add a `generate-backward-compatibility-v0.16.0` target if this version has its own generator crate
 
 5. **Generate the data**:
 ```bash
@@ -65,21 +65,23 @@ Create a new generator crate for the incompatible version:
 For eaxample:
 
 ```bash
-cp -r backward-compatibility/generate-v0.13.20 backward-compatibility/generate-v0.14.0
+cp -r backward-compatibility/generate-v0.15.0 backward-compatibility/generate-v0.16.0
 ```
 
-2. **Update** `backward-compatibility/generate-v0.14.0/Cargo.toml`:
-   - Package name: `backward-compatibility-generate-v0-14-0` (use dashes, include patch version)
-   - Package version: `0.14.0` (matches the KMS version exactly)
-   - Update all KMS dependencies to v0.14.0 (or to the release commit if the tag is not available yet)
-   - Update dependency versions (serde, alloy, tfhe) to match v0.14.0's requirements
+2. **Update** `backward-compatibility/generate-v0.16.0/Cargo.toml`:
+   - Package name: `backward-compatibility-generate-v0-16-0` (use dashes, include patch version)
+   - Package version: `0.16.0` (matches the KMS version exactly)
+   - Update all KMS dependencies to v0.16.0 (or to the release commit if the tag is not available yet)
+   - Update dependency versions (serde, alloy, tfhe) to match v0.16.0's requirements
+   - Update the `[[bin]]` name to `backward-compatibility-generate-v0-16-0`
 
 3. **Update** the copied source files:
-   - Rename `backward-compatibility/generate-v0.14.0/src/data_0_13.rs` to `data_0_14.rs`
-   - Change imports from `kms_0_13_20`, `kms_grpc_0_13_20`, and sibling aliases to their `0_14_0` names
-   - Update `VERSION_NUMBER` to `"0.14.0"`
-   - Update `src/lib.rs` and `src/main.rs` module names and imports to use `data_0_14`
-   - Fix any API changes between v0.13.20 and v0.14.0
+   - Rename `backward-compatibility/generate-v0.16.0/src/data_0_15.rs` to `data_0_16.rs`
+   - Change imports from `kms_0_15_0`, `kms_grpc_0_15_0`, and sibling aliases to their `0_16_0` names
+   - Update `VERSION_NUMBER` to `"0.16.0"`
+   - Rename the `V0_15_0` / `KmsV0_15_0` / … structs to their `0_16_0` names
+   - Update `src/lib.rs` and `src/main.rs` module names and imports to use `data_0_16`
+   - Fix any API changes between v0.15.0 and v0.16.0
 
 4. **Update** root `Cargo.toml` to exclude the new generator:
 ```toml
@@ -90,20 +92,31 @@ exclude = [
     "backward-compatibility/generate-v0.13.0",
     "backward-compatibility/generate-v0.13.10",
     "backward-compatibility/generate-v0.13.20",
-    "backward-compatibility/generate-v0.14.0",  # Add this
+    "backward-compatibility/generate-v0.14.0",
+    "backward-compatibility/generate-v0.15.0",
+    "backward-compatibility/generate-v0.16.0",  # Add this
 ]
 ```
 
-5. **Update** root `Makefile`:
+5. **Update** root `Makefile`. Make the new version the sole deterministic one and freeze the
+   version it supersedes, so `generate-backward-compatibility-all` only regenerates the newest
+   version and the previous version's committed data becomes immutable:
 ```makefile
-DETERMINISTIC_BWC_VERSIONS := 0.14.0
+FROZEN_BWC_VERSIONS := 0.11.0 0.11.1 0.13.0 0.13.10 0.13.20 0.14.0 0.15.0  # add 0.15.0
+DETERMINISTIC_BWC_VERSIONS := 0.16.0
 
-generate-backward-compatibility-v0.14.0:
-	cd backward-compatibility/generate-v0.14.0 && cargo run --release
+generate-backward-compatibility-v0.16.0:
+	cd backward-compatibility/generate-v0.16.0 && cargo run --release
 ```
 
-6. **Do not add the new version to `FROZEN_BWC_VERSIONS`** unless the generator is known to be non-deterministic and the generated data is intentionally frozen (some excptions on this rule is if we have to make backport some fixes and make a minor release from one of the v0.13.x versions). `clean-backward-compatibility-data` derives deterministic data directories from `DETERMINISTIC_BWC_VERSIONS`.
-In more detail, the kms code initially had versioned data structures that could not be serialized deterministically (e.g., due to the use of `HashMap`), this made changes harder to review because a lot of the backward compatibility data would change during re-generation. To fix this issue, we made sure all versioned data had deterministic serialization for v0.14.0 and later, and froze all prior backward compatibility data, defined in `FROZEN_BWC_VERSIONS`.
+6. **Keep the new version out of `FROZEN_BWC_VERSIONS`** — it is the one deterministic version that
+`generate-backward-compatibility-all` will regenerate. Instead, freeze the version it *supersedes*
+(step 5): once a version is released its committed data should no longer change, so it moves from
+`DETERMINISTIC_BWC_VERSIONS` into `FROZEN_BWC_VERSIONS`. This keeps regeneration cheap (only the
+newest version is rebuilt) while leaving prior data immutable. `clean-backward-compatibility-data`
+derives the data directories to wipe from `DETERMINISTIC_BWC_VERSIONS`, so frozen dirs are never
+touched.
+In more detail, the kms code initially had versioned data structures that could not be serialized deterministically (e.g., due to the use of `HashMap`), this made changes harder to review because a lot of the backward compatibility data would change during re-generation. To fix this issue, we made sure all versioned data had deterministic serialization for v0.14.0 and later. Everything before that — plus every released deterministic version once a newer one supersedes it — is listed in `FROZEN_BWC_VERSIONS`.
 
 7. **Test the new generator**:
 ```bash
@@ -140,7 +153,7 @@ Create a new generator crate when:
 Before committing, verify the generator builds:
 
 ```bash
-cd backward-compatibility/generate-v0.14.0
+cd backward-compatibility/generate-v0.16.0
 cargo check
 cargo build --release
 ```
@@ -168,7 +181,7 @@ This will:
 
 Or run individual generators:
 ```bash
-make generate-backward-compatibility-v0.14.0
+make generate-backward-compatibility-v0.15.0
 ```
 
 ⚠️ **Important**: Frozen generator crates can still be run directly for historical investigation, but their output may be non-deterministic and should not be committed. Additionally, running deterministic generators is idempotent for all generators listed in `DETERMINISTIC_BWC_VERSIONS` and if that is not the case, it must be fixed.
