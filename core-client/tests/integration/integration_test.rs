@@ -1054,6 +1054,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> UserDecryptFile 
 async fn insecure_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
+    max_iter: usize,
     uncompressed: bool,
 ) -> Result<String> {
     let preproc_config = cmd_config(
@@ -1062,7 +1063,7 @@ async fn insecure_preproc_and_keygen(
             context_id: None,
             epoch_id: None,
         }),
-        200,
+        max_iter,
     );
     let preproc_id = run_cmd(&preproc_config, test_path, "insecure preprocessing").await?;
 
@@ -1075,7 +1076,7 @@ async fn insecure_preproc_and_keygen(
                 ..Default::default()
             },
         }),
-        200,
+        max_iter,
     );
     let key_id = run_cmd(&keygen_config, test_path, "insecure key-gen").await?;
     Ok(key_id.to_string())
@@ -2081,7 +2082,7 @@ async fn test_centralized_insecure() -> Result<()> {
 
     // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
     let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
     Ok(())
@@ -2215,7 +2216,8 @@ async fn test_threshold_insecure() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
+    let key_id =
+        insecure_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
     Ok(())
@@ -2413,7 +2415,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     let context_path = material_dir.path().join("mpc_context_switch.bin");
 
     // Generate a key in the current (default) context
-    let key_id = insecure_preproc_and_keygen(&config_path, test_path, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, test_path, 200, false).await?;
 
     // Create and store a new MPC context
     let context_id = derive_request_id("CONTEXT_ID")?.into();
