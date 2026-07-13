@@ -778,7 +778,7 @@ where
                 private_storage_info
             );
             epoch_manager
-                .init_prss(&default_context_id, &epoch_id_prss)
+                .init_epoch(&default_context_id, &epoch_id_prss)
                 .await?;
         }
     }

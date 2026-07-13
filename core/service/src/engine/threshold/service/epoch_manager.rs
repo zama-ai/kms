@@ -293,8 +293,8 @@ impl<
     Reshare: ReshareSecretKeys + Default + 'static,
 > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
-    /// This will load all PRSS setups from storage into session maker.
-    pub async fn init_all_prss_from_storage(&self) -> anyhow::Result<()> {
+    /// This will load all epochs from storage into session maker.
+    pub async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
         let all_prss = self.crypto_storage.read_all_epoch_data().await?;
 
         for (epoch_id, prss) in all_prss {
@@ -307,10 +307,10 @@ impl<
         Ok(())
     }
 
-    /// Wrapper around the internal method [`Self::internal_init_prss`]
+    /// Wrapper around the internal method [`Self::internal_init_epoch`]
     /// so it's easier to call from the outside if necessary.
     /// (e.g. when initializing the KMS core with `ensure_default_prss` set to true.)
-    pub async fn init_prss(
+    pub async fn init_epoch(
         &self,
         context_id: &ContextId,
         epoch_id: &EpochId,
@@ -1639,7 +1639,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn prss_from_storage_test() {
+    async fn epoch_data_from_storage_test() {
         // We're starting two sets of servers in this test, both sets of servers will load all the keys
         // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
         // and this leads to OOM. So we reduce the amount of parties to 4 for this test.
@@ -1716,18 +1716,14 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        // Structural check: PRSS must be on disk after the first run (persisted by PrssSetup).
-        let prss_after_first: std::collections::HashMap<RequestId, PRSSSetupCombined> =
-            read_all_data_versioned(
-                &priv_storage[0],
-                #[allow(deprecated)]
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap();
+        // Structural check: epoch must be on disk after the first run (persisted by PrssSetup).
+        let epoch_after_first: std::collections::HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
+                .await
+                .unwrap();
         let default_epoch_as_req: RequestId = (*DEFAULT_EPOCH_ID).into();
         assert!(
-            prss_after_first.contains_key(&default_epoch_as_req),
+            epoch_after_first.contains_key(&default_epoch_as_req),
             "expected PRSS for default epoch in party-0 private storage after first run"
         );
 
@@ -1749,24 +1745,20 @@ pub(crate) mod tests {
         }
 
         // Second startup must not regenerate PRSS on disk (load-from-storage path only).
-        let prss_after_second: std::collections::HashMap<RequestId, PRSSSetupCombined> =
-            read_all_data_versioned(
-                &priv_storage[0],
-                #[allow(deprecated)]
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap();
+        let epoch_after_second: std::collections::HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
+                .await
+                .unwrap();
         assert_eq!(
-            prss_after_first, prss_after_second,
+            epoch_after_first, epoch_after_second,
             "PRSS in storage must be unchanged after second server run (no silent regeneration)"
         );
     }
 
     #[tokio::test]
-    async fn load_all_prss() {
+    async fn load_all_epochs() {
         let mut rng = AesRng::seed_from_u64(42);
-
+        let context_id: ContextId = ContextId::new_random(&mut rng);
         // initially the storage should be empty
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
         let epoch_ids: Vec<EpochId> = (0..3).map(|_| EpochId::new_random(&mut rng)).collect();
@@ -1776,26 +1768,28 @@ pub(crate) mod tests {
             let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
             let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
 
-            let prss = PRSSSetupCombined {
-                prss_setup_z128,
-                prss_setup_z64,
-                num_parties: 4,
-                threshold: 1,
+            let epoch = EpochData {
+                prss: PRSSSetupCombined {
+                    prss_setup_z128,
+                    prss_setup_z64,
+                    num_parties: 4,
+                    threshold: 1,
+                },
+                context_id,
             };
 
             store_versioned_at_request_id(
                 &mut (*guarded_private_storage),
                 &(*epoch_id).into(),
-                &prss,
-                #[allow(deprecated)]
-                &PrivDataType::PrssSetupCombined.to_string(),
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
             )
             .await
             .unwrap();
         }
 
         assert_eq!(0, epoch_manager.session_maker.epoch_count().await);
-        epoch_manager.init_all_prss_from_storage().await.unwrap();
+        epoch_manager.init_all_epochs_from_storage().await.unwrap();
         assert_eq!(
             epoch_ids.len(),
             epoch_manager.session_maker.epoch_count().await
