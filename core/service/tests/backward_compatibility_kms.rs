@@ -9,7 +9,7 @@ use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    CrsGenMetadataWithExtraDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
@@ -23,7 +23,7 @@ use backward_compatibility::{
 use common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use hashing::hash_versioned;
 use kms_grpc::{
-    ContextId, RequestId,
+    RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{
@@ -56,9 +56,7 @@ use kms_lib::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
         context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
-        threshold::service::{
-            EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
-        },
+        threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
@@ -628,38 +626,6 @@ fn test_prss_setup_combined(
         Err(test.failure(
             format!(
                 "Invalid PRSS Setup Combined test:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
-fn test_epoch_data(
-    dir: &Path,
-    test: &EpochDataTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: EpochData = load_and_unversionize(dir, test, format)?;
-    let prss_setup_z64: PRSSSetup<ResiduePolyF4Z64> =
-        load_and_unversionize_auxiliary(dir, test, &test.prss_setup_64, format)?;
-    let prss_setup_z128: PRSSSetup<ResiduePolyF4Z128> =
-        load_and_unversionize_auxiliary(dir, test, &test.prss_setup_128, format)?;
-    let new_versionized = EpochData {
-        context_id: ContextId::from_bytes(test.context_id),
-        prss: PRSSSetupCombined {
-            prss_setup_z64,
-            prss_setup_z128,
-            num_parties: test.amount,
-            threshold: test.threshold,
-        },
-    };
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid EpochData test:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1318,9 +1284,6 @@ impl TestedModule for KMS {
             }
             Self::Metadata::PrssSetupCombined(test) => {
                 test_prss_setup_combined(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::EpochData(test) => {
-                test_epoch_data(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::BackupCiphertext(test) => {
                 test_backup_ciphertext(test_dir.as_ref(), test, format).into()
