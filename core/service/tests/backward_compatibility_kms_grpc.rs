@@ -66,7 +66,7 @@ fn test_priv_data_type(
     let original_versionized: PrivDataType = load_and_unversionize(dir, test, format)?;
 
     // Last element in the enum
-    let new_versionized = PrivDataType::ContextInfo;
+    let new_versionized = PrivDataType::EpochData;
 
     if original_versionized != new_versionized {
         Err(test.failure(
