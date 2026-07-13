@@ -1694,10 +1694,7 @@ impl KmsGrpcV0_15_0 {
     }
 
     fn gen_priv_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
-        // Use `ContextInfo`, the newest `PrivDataType` variant that exists in every replayed
-        // version. The loader compares all versions' vectors against a single expected variant,
-        // so it must be one present since the oldest frozen version.
-        let priv_data_type = PrivDataType::ContextInfo;
+        let priv_data_type = PrivDataType::EpochData;
         store_versioned_test!(&priv_data_type, dir, &PRIV_DATA_TYPE.test_filename);
 
         TestMetadataKmsGrpc::PrivDataType(PRIV_DATA_TYPE)

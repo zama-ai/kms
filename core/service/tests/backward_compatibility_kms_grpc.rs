@@ -65,11 +65,8 @@ fn test_priv_data_type(
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: PrivDataType = load_and_unversionize(dir, test, format)?;
 
-    // Canonical variant for the round-trip check: it must be present in *every* version whose
-    // data this test replays (0.11.1 onward). `ContextInfo` is the newest such variant — newer
-    // ones like `EpochData` don't exist in the older frozen vectors, so their data would never
-    // decode to it.
-    let new_versionized = PrivDataType::ContextInfo;
+    // Last element in the enum
+    let new_versionized = PrivDataType::EpochData;
 
     if original_versionized != new_versionized {
         Err(test.failure(
