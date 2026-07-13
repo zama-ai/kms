@@ -138,16 +138,8 @@ spec:
               - name: previous-ok
                 value: "true"
 
-          - name: pause-pdec-1
-            dependencies: ["pdec-rate-1100"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "10"
-
           - name: pdec-rate-1300
-            dependencies: ["pause-pdec-1"]
+            dependencies: ["pdec-rate-1100"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -160,16 +152,8 @@ spec:
               - name: previous-ok
                 value: "{{tasks.pdec-rate-1100.outputs.parameters.capacity-ok}}"
 
-          - name: pause-pdec-2
-            dependencies: ["pdec-rate-1300"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "10"
-
           - name: pdec-rate-1500
-            dependencies: ["pause-pdec-2"]
+            dependencies: ["pdec-rate-1300"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -182,16 +166,8 @@ spec:
               - name: previous-ok
                 value: "{{tasks.pdec-rate-1300.outputs.parameters.capacity-ok}}"
 
-          - name: pause-inter-suite
-            dependencies: ["pdec-rate-1500"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "30"
-
           - name: udec-rate-2400
-            dependencies: ["udec-key-gen", "pause-inter-suite"]
+            dependencies: ["udec-key-gen", "pdec-rate-1500"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -203,17 +179,8 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "true"
-
-          - name: pause-udec-1
-            dependencies: ["udec-rate-2400"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "10"
-
           - name: udec-rate-2700
-            dependencies: ["pause-udec-1"]
+            dependencies: ["udec-rate-2400"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -225,17 +192,8 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
-
-          - name: pause-udec-2
-            dependencies: ["udec-rate-2700"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "10"
-
           - name: udec-rate-2750
-            dependencies: ["pause-udec-2"]
+            dependencies: ["udec-rate-2700"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -873,13 +831,6 @@ spec:
           - name: FHE_PARAMETER
             value: 'Default'
         resources: *core-client-resources
-
-    - name: pause
-      inputs:
-        parameters:
-        - name: duration
-      suspend:
-        duration: "{{inputs.parameters.duration}}s"
 
     - name: summary-report
       inputs:
