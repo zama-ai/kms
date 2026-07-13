@@ -37,7 +37,9 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
 };
-use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
+use observability::metrics_names::{
+    OP_DESTROY_EPOCH, OP_DESTROY_MPC_CONTEXT, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::{Versionize, zk::CompactPkeCrs};

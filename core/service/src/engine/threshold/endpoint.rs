@@ -244,7 +244,7 @@ impl_endpoint! {
                 .context_id
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-            let context_id = parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+            let context_id =parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
 
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
