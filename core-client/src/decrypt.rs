@@ -107,6 +107,7 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
+/// One public-decrypt request paired with its responses and collection latency.
 struct CollectedPublicDecrypt {
     req_id: RequestId,
     dec_req: PublicDecryptionRequest,
@@ -137,6 +138,7 @@ impl CollectedDecryptRateResult for CollectedPublicDecrypt {
     }
 }
 
+/// Accumulated responses and counters from a single rate-test run.
 struct DecryptRateCollection<T> {
     collected: Vec<T>,
     completed: u64,
@@ -152,6 +154,7 @@ struct DecryptRateCollection<T> {
     response_payload_messages: u64,
 }
 
+/// Metrics computed from a rate-test run: throughput, payloads, and latency stats.
 struct DecryptRateMetrics {
     target_rate: u64,
     duration_secs: u64,
@@ -176,6 +179,7 @@ struct DecryptRateMetrics {
     post_process_wall: Duration,
 }
 
+/// JSON-serializable view of [`DecryptRateMetrics`] consumed by the CI parser.
 #[derive(serde::Serialize)]
 struct DecryptRateMetricsJson {
     target_rate: u64,
@@ -199,6 +203,7 @@ struct DecryptRateMetricsJson {
     latency_ms: DurationStatMsJson,
 }
 
+/// Per-phase latency percentiles in milliseconds, plus wall-clock duration.
 #[derive(serde::Serialize)]
 struct PhaseMsJson {
     avg: f64,
@@ -301,7 +306,7 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
     num_parties: usize,
     num_expected_responses: usize,
 ) -> anyhow::Result<(Vec<Resp>, Duration)> {
-    let mut resp_response_vec = Vec::new();
+    let mut resp_response_vec = Vec::with_capacity(num_expected_responses);
     let mut collect_duration = None;
     while let Some(resp) = resp_tasks.join_next().await {
         match resp {
@@ -378,7 +383,7 @@ async fn send_and_collect_public_decrypt(
         });
     }
 
-    let mut req_response_vec = Vec::new();
+    let mut req_response_vec = Vec::with_capacity(core_endpoints_req.len());
     while let Some(inner) = req_tasks.join_next().await {
         match inner {
             Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
@@ -703,6 +708,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     Ok(Vec::new())
 }
 
+/// One user-decrypt request paired with its keys, responses, and collection latency.
 struct CollectedUserDecrypt {
     req_id: RequestId,
     user_decrypt_req: UserDecryptionRequest,
@@ -729,6 +735,7 @@ impl CollectedDecryptRateResult for CollectedUserDecrypt {
     }
 }
 
+/// Latency percentiles in milliseconds, serialized into rate-test JSON.
 #[derive(serde::Serialize)]
 struct DurationStatMsJson {
     avg: f64,
@@ -1022,7 +1029,7 @@ async fn send_and_collect_user_decrypt(
         });
     }
 
-    let mut req_response_vec = Vec::new();
+    let mut req_response_vec = Vec::with_capacity(core_endpoints_req.len());
     while let Some(inner) = req_tasks.join_next().await {
         match inner {
             Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
@@ -1508,7 +1515,7 @@ pub(crate) async fn get_public_decrypt_responses(
             Ok((core_conf, request_id, resp.into_inner()))
         });
     }
-    let mut resp_response_vec = Vec::new();
+    let mut resp_response_vec = Vec::with_capacity(core_endpoints.len());
     while let Some(resp) = resp_tasks.join_next().await {
         match resp {
             Ok(Ok((core_conf, _req_id, inner))) => {
