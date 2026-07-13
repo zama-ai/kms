@@ -300,7 +300,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl_with_spec(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
@@ -344,13 +344,14 @@ async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         true,
         false,
         false,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -360,13 +361,14 @@ async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         true,
         false,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -376,13 +378,14 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         true,
         true,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -412,13 +415,14 @@ async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         false,
         false,
         FheParameter::Default,
+        None,
     )
     .await
 }
@@ -435,13 +439,14 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         true,
         false,
         false,
         FheParameter::Default,
+        None,
     )
     .await
 }
@@ -531,29 +536,10 @@ fn generate_threshold_cli_config(
     Ok(config_path)
 }
 
-/// Internal implementation for threshold CLI test setup
-async fn setup_isolated_threshold_cli_test_impl(
-    test_name: &str,
-    party_count: usize,
-    ensure_default_prss: bool,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
-    fhe_params: FheParameter,
-) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl_with_spec(
-        test_name,
-        party_count,
-        ensure_default_prss,
-        with_backup_vault,
-        with_custodian_keychain,
-        fhe_params,
-        None,
-    )
-    .await
-}
-
-/// Internal implementation for threshold CLI test setup with optional material spec
-async fn setup_isolated_threshold_cli_test_impl_with_spec(
+/// Internal implementation for threshold CLI test setup.
+///
+/// `material_spec` overrides the default material selected for `fhe_params`.
+async fn setup_isolated_threshold_cli_test(
     test_name: &str,
     party_count: usize,
     ensure_default_prss: bool,
