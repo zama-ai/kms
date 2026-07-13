@@ -83,41 +83,10 @@ spec:
                   value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
-          # insecure Keygen
-          ##########################################################################
-          - name: insecure-preproc-key-gen
-            dependencies: ["key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "insecure-preproc-key-gen"
-                - name: test-command
-                  value: "insecure-preproc-key-gen"
-                - name: fhe-params
-                  value: "Default"
-
-          - name: insecure-key-gen
-            dependencies: ["insecure-preproc-key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "insecure-key-gen"
-                - name: test-command
-                  value: "insecure-key-gen -i {{tasks.insecure-preproc-key-gen.outputs.parameters.request-id}}"
-                - name: fhe-params
-                  value: "Default"
-
-          ##########################################################################
           # real CRS gen
           ##########################################################################
           - name: crs-gen
-            dependencies: ["insecure-key-gen"]
+            dependencies: ["key-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -128,7 +97,7 @@ spec:
                 - name: test-command
                   value: "crs-gen --max-num-bits 2048"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
           # WARMUP Decrypt test (1 request)
           ##########################################################################
@@ -142,9 +111,9 @@ spec:
                 - name: test-name
                   value: "warmup-public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
           # Public decrypt tests
           ##########################################################################
@@ -160,7 +129,7 @@ spec:
                 - name: test-command
                   value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
           # User decrypt tests
           ##########################################################################
@@ -174,9 +143,9 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # Public decrypt tests
@@ -191,9 +160,9 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # User decrypt tests
@@ -210,7 +179,7 @@ spec:
                 - name: test-command
                   value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # Public decrypt tests
@@ -225,9 +194,9 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req100"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
 
           ##########################################################################
@@ -243,9 +212,9 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req100"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # Public decrypt tests
@@ -260,9 +229,9 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req500"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
 
           ##########################################################################
@@ -278,9 +247,9 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req500"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # Public decrypt tests
@@ -295,9 +264,9 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1000"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
 
           ##########################################################################
@@ -313,27 +282,26 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1000"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           # Summary report generation
           - name: generate-summary
             dependencies: [
               "preproc-key-gen",                # Preprocessing keygen with FHE_PARAMS = Test
               "key-gen",                        # Keygen with FHE_PARAMS = Test
-              "insecure-key-gen",               # Insecure keygen with FHE_PARAMS = Default
-              "crs-gen",                        # CRS gen with FHE_PARAMS = Default
-              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "crs-gen",                        # CRS gen with FHE_PARAMS = Test
+              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt tests with FHE_PARAMS = Test
+              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt tests with FHE_PARAMS = Test
+              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt tests with FHE_PARAMS = Test
+              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt tests with FHE_PARAMS = Test
+              "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt tests with FHE_PARAMS = Test
+              "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt tests with FHE_PARAMS = Test
+              "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Test
+              "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Test
+              "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Test
+              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Test
             ]
             template: summary-report
             continueOn:
@@ -345,28 +313,26 @@ spec:
               - name: test-result-2
                 value: "{{tasks.key-gen.outputs.parameters.test-result}}"
               - name: test-result-3
-                value: "{{tasks.insecure-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-4
                 value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-5
+              - name: test-result-4
                 value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-6
+              - name: test-result-5
                 value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-7
+              - name: test-result-6
                 value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-8
+              - name: test-result-7
                 value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-9
+              - name: test-result-8
                 value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-10
+              - name: test-result-9
                 value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-11
+              - name: test-result-10
                 value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-12
+              - name: test-result-11
                 value: "{{tasks.user-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-13
+              - name: test-result-12
                 value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
-              - name: test-result-14
+              - name: test-result-13
                 value: "{{tasks.user-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
@@ -605,7 +571,6 @@ spec:
         - name: test-result-11
         - name: test-result-12
         - name: test-result-13
-        - name: test-result-14
         - name: tls
         - name: run_url
       script:
@@ -625,18 +590,17 @@ spec:
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-1}}' > /mnt/results/preproc-key-gen.json
           echo '{{inputs.parameters.test-result-2}}' > /mnt/results/key-gen.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/insecure-key-gen.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-9}}' > /mnt/results/public-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-10}}' > /mnt/results/user-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-11}}' > /mnt/results/public-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-12}}' > /mnt/results/user-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-13}}' > /mnt/results/public-decrypt-euint64-req1000.json
-          echo '{{inputs.parameters.test-result-14}}' > /mnt/results/user-decrypt-euint64-req1000.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/crs-gen.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/public-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-9}}' > /mnt/results/user-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-10}}' > /mnt/results/public-decrypt-euint64-req500.json
+          echo '{{inputs.parameters.test-result-11}}' > /mnt/results/user-decrypt-euint64-req500.json
+          echo '{{inputs.parameters.test-result-12}}' > /mnt/results/public-decrypt-euint64-req1000.json
+          echo '{{inputs.parameters.test-result-13}}' > /mnt/results/user-decrypt-euint64-req1000.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -658,7 +622,6 @@ spec:
           for result in \
             /mnt/results/preproc-key-gen.json \
             /mnt/results/key-gen.json \
-            /mnt/results/insecure-key-gen.json \
             /mnt/results/crs-gen.json \
             /mnt/results/public-decrypt-euint64-req1.json \
             /mnt/results/user-decrypt-euint64-req1.json \
@@ -831,7 +794,6 @@ spec:
                 "text": "\`\`\`\n$(for result in \
                   /mnt/results/preproc-key-gen.json \
                   /mnt/results/key-gen.json \
-                  /mnt/results/insecure-key-gen.json \
                   /mnt/results/crs-gen.json \
                   /mnt/results/public-decrypt-euint64-req1.json \
                   /mnt/results/user-decrypt-euint64-req1.json \
