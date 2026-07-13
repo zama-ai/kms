@@ -1120,23 +1120,22 @@ impl<
             }
         }
 
-        // Delete the PRSS setup (stored under epoch_id as a request_id) only once every key/CRS
-        // deletion above has succeeded. The PRSS is what resurrects the epoch after a restart —
-        // the session maker is rebuilt from PRSS storage on startup — so it doubles as the durable
-        // retry marker. Deleting it while key/CRS shares remain would let a restarted node skip the
-        // epoch (its PRSS, hence the epoch itself, is gone) and strand those shares forever.
-        // Keeping PRSS for last guarantees a restarted node still sees the epoch and can finish the
-        // deletion.
-        #[expect(deprecated)]
+        // Delete the epoch data (stored under epoch_id as a request_id) only once every key/CRS
+        // meta data deletion above has succeeded. The epoch data (which holds the PRSS setup) is what
+        // resurrects the epoch after a restart — the session maker is rebuilt from epoch-data
+        // storage on startup — so it doubles as the durable retry marker. Deleting it while
+        // key/CRS meta data remain would let a restarted node skip the epoch (its epoch data, hence
+        // the epoch itself, is gone) and strand those shares forever. Keeping the epoch data for
+        // last guarantees a restarted node still sees the epoch and can finish the deletion.
         if first_error.is_none()
             && let Err(e) = delete_at_request_id(
                 &mut (*priv_storage_guard),
                 &(*epoch_id).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
+                &PrivDataType::EpochData.to_string(),
             )
             .await
         {
-            tracing::error!("Error deleting PrssSetupCombined epoch ID {epoch_id}: {e:?}");
+            tracing::error!("Error deleting EpochData epoch ID {epoch_id}: {e:?}");
             first_error = Some(e);
         }
 

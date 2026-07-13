@@ -53,7 +53,7 @@ struct Context {
     role_assignment: RoleAssignment<Role>,
     threshold: u8,
 }
-// TODO move to epoch_manager.rs
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PRSSSetupCombinedVersions {
     V0(PRSSSetupCombined),
