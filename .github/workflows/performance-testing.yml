@@ -519,8 +519,9 @@ jobs:
             exit 0
           fi
           echo "[cpu] per-core CPU via metrics-server (~15s resolution); cores request 48 vCPU (=48000m)."
-          echo "[cpu] correlate the timestamps below with the rung timestamps in the Argo log above."
-          cat core-cpu-samples.log
+          echo "[cpu] full timeseries is in the core-cpu-samples artifact; correlate its timestamps with the rung timestamps in the Argo log."
+          echo "[cpu] $(wc -l < core-cpu-samples.log) sample lines captured; last 500 below (the sampler loop is uncapped, so the full dump is unbounded — hence the tail + artifact):"
+          tail -n 500 core-cpu-samples.log
 
       - name: Capture network diagnostics after perf
         if: always()
@@ -536,6 +537,14 @@ jobs:
         with:
           name: argo-workflow-logs.txt
           path: argo-workflow-logs.txt
+          retention-days: 30
+
+      - name: Upload core CPU samples
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-cpu-samples.log
+          path: core-cpu-samples.log
           retention-days: 30
 
       # ======================================================================
