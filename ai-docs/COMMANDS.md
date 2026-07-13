@@ -97,8 +97,8 @@ cargo test --test 'backward_compatibility_*' -- --include-ignored
 
 Regenerate vectors. Versions are split into two lists in the `Makefile`:
 
-- `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
-- `DETERMINISTIC_BWC_VERSIONS` — `0.14.0` and future versions. Re-running produces byte-identical output.
+- `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`, `0.14.0`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
+- `DETERMINISTIC_BWC_VERSIONS` — `0.15.0` and future versions. Re-running produces byte-identical output.
 
 Regenerate all deterministic versions (cleans only deterministic data dirs first, then runs their generators; frozen versions are left untouched):
 
@@ -109,10 +109,10 @@ make generate-backward-compatibility-all
 Regenerate for a single deterministic version:
 
 ```
-make generate-backward-compatibility-v0.14.0
+make generate-backward-compatibility-v0.15.0
 ```
 
-Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, and `v0.13.20` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.
+Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, `v0.13.20` and `v0.14.0` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.
 
 Remove generated BC data for deterministic versions only — frozen data dirs and all shared `.ron` files are preserved:
 
