@@ -300,7 +300,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl_with_spec(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
@@ -344,13 +344,14 @@ async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         true,
         false,
         false,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -360,13 +361,14 @@ async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         true,
         false,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -376,13 +378,14 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         true,
         true,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -412,13 +415,14 @@ async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         false,
         false,
         FheParameter::Default,
+        None,
     )
     .await
 }
@@ -435,13 +439,14 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         true,
         false,
         false,
         FheParameter::Default,
+        None,
     )
     .await
 }
@@ -531,29 +536,10 @@ fn generate_threshold_cli_config(
     Ok(config_path)
 }
 
-/// Internal implementation for threshold CLI test setup
-async fn setup_isolated_threshold_cli_test_impl(
-    test_name: &str,
-    party_count: usize,
-    ensure_default_prss: bool,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
-    fhe_params: FheParameter,
-) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl_with_spec(
-        test_name,
-        party_count,
-        ensure_default_prss,
-        with_backup_vault,
-        with_custodian_keychain,
-        fhe_params,
-        None,
-    )
-    .await
-}
-
-/// Internal implementation for threshold CLI test setup with optional material spec
-async fn setup_isolated_threshold_cli_test_impl_with_spec(
+/// Internal implementation for threshold CLI test setup.
+///
+/// `material_spec` overrides the default material selected for `fhe_params`.
+async fn setup_isolated_threshold_cli_test(
     test_name: &str,
     party_count: usize,
     ensure_default_prss: bool,
@@ -1054,6 +1040,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> UserDecryptFile 
 async fn insecure_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
+    max_iter: usize,
     uncompressed: bool,
 ) -> Result<String> {
     let preproc_config = cmd_config(
@@ -1062,7 +1049,7 @@ async fn insecure_preproc_and_keygen(
             context_id: None,
             epoch_id: None,
         }),
-        200,
+        max_iter,
     );
     let preproc_id = run_cmd(&preproc_config, test_path, "insecure preprocessing").await?;
 
@@ -1075,7 +1062,7 @@ async fn insecure_preproc_and_keygen(
                 ..Default::default()
             },
         }),
-        200,
+        max_iter,
     );
     let key_id = run_cmd(&keygen_config, test_path, "insecure key-gen").await?;
     Ok(key_id.to_string())
@@ -2091,7 +2078,7 @@ async fn test_centralized_insecure() -> Result<()> {
 
     // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
     let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
     Ok(())
@@ -2217,7 +2204,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
@@ -2225,7 +2212,8 @@ async fn test_threshold_insecure() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
+    let key_id =
+        insecure_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
     Ok(())
@@ -2233,7 +2221,7 @@ async fn test_threshold_insecure() -> Result<()> {
 
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
 #[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2255,7 +2243,7 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2292,7 +2280,7 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
 
 /// Test threshold sequential CRS generation via CLI with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
     init_logging();
 
@@ -2335,7 +2323,7 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 /// Uses insecure CRS generation because the multi-party ZK ceremony cannot handle
 /// concurrent sessions — the first ceremony completes but subsequent ones get stuck
 /// with networking timeouts between parties.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_concurrent_crs() -> Result<()> {
     init_logging();
 
@@ -2388,7 +2376,7 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
 #[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2412,7 +2400,7 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 1. Insecure keygen produces a key
 /// 2. The context can be switched to a new context ID
 /// 3. A public-decrypt request succeeds in the new context
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
 
@@ -2423,7 +2411,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     let context_path = material_dir.path().join("mpc_context_switch.bin");
 
     // Generate a key in the current (default) context
-    let key_id = insecure_preproc_and_keygen(&config_path, test_path, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, test_path, 200, false).await?;
 
     // Create and store a new MPC context
     let context_id = derive_request_id("CONTEXT_ID")?.into();
@@ -2462,7 +2450,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
 ///
 /// Aborting an unknown request_id on the threshold cluster: every party responds
 /// (with NotFound since no key gen is running), so the CLI command succeeds.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_abort_key_gen() -> Result<()> {
     init_logging();
 
@@ -2479,7 +2467,7 @@ async fn test_threshold_abort_key_gen() -> Result<()> {
 }
 
 /// Test threshold abort CRS generation via CLI
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_abort_crs_gen() -> Result<()> {
     init_logging();
 
@@ -2499,7 +2487,7 @@ async fn test_threshold_abort_crs_gen() -> Result<()> {
 ///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_restore_from_backup() -> Result<()> {
     init_logging();
 
@@ -2516,7 +2504,7 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 }
 
 /// Test threshold custodian backup via CLI
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_custodian_backup() -> Result<()> {
     init_logging();
 
@@ -2584,7 +2572,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2623,7 +2611,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
 
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
     init_logging();
 
@@ -2670,7 +2658,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 /// 4. Run preprocessing and keygen using the context and PRSS
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
 
@@ -2733,7 +2721,7 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
 #[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
 
@@ -2958,7 +2946,7 @@ mod docker_harness {
 /// 5. Run Crs generation
 /// 6. Compute digests of the key materials
 /// 7. Execute resharing command
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();
 
