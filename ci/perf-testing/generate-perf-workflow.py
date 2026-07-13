@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expand perf-scenarios.yaml into the concrete Argo perf workflow.
+"""Expand perf-scenarios.toml into the concrete Argo perf workflow.
 
 Reads a workflow *template* containing `# <<GENERATED:NAME>>` marker lines and
 replaces each with a block generated from the rate scenarios in the scenarios file.
