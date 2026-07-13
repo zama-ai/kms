@@ -322,52 +322,8 @@ spec:
               - name: duration
                 value: "10"
 
-          - name: udec-rate-2700
-            dependencies: ["pause-udec-1"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2700"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
-
-          - name: pause-udec-2
-            dependencies: ["udec-rate-2700"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "10"
-
-          - name: udec-rate-2750
-            dependencies: ["pause-udec-2"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2750"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "{{tasks.udec-rate-2700.outputs.parameters.capacity-ok}}"
-
-          - name: pause-udec-3
-            dependencies: ["udec-rate-2750"]
-            template: pause
-            arguments:
-              parameters:
-              - name: duration
-                value: "10"
-
           - name: udec-rate-2800
-            dependencies: ["pause-udec-3"]
+            dependencies: ["pause-udec-1"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -378,7 +334,7 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.udec-rate-2750.outputs.parameters.capacity-ok}}"
+                value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
 
           - name: pause-udec-4
             dependencies: ["udec-rate-2800"]
@@ -468,6 +424,94 @@ spec:
               - name: previous-ok
                 value: "{{tasks.udec-rate-3100.outputs.parameters.capacity-ok}}"
 
+          - name: pause-udec-8
+            dependencies: ["udec-rate-3200"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-rate-3300
+            dependencies: ["pause-udec-8"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec"
+              - name: rate
+                value: "3300"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "{{tasks.udec-rate-3200.outputs.parameters.capacity-ok}}"
+
+          - name: pause-udec-9
+            dependencies: ["udec-rate-3300"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-rate-3400
+            dependencies: ["pause-udec-9"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec"
+              - name: rate
+                value: "3400"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "{{tasks.udec-rate-3300.outputs.parameters.capacity-ok}}"
+
+          - name: pause-udec-10
+            dependencies: ["udec-rate-3400"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-rate-3500
+            dependencies: ["pause-udec-10"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec"
+              - name: rate
+                value: "3500"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "{{tasks.udec-rate-3400.outputs.parameters.capacity-ok}}"
+
+          - name: pause-udec-11
+            dependencies: ["udec-rate-3500"]
+            template: pause
+            arguments:
+              parameters:
+              - name: duration
+                value: "10"
+
+          - name: udec-rate-3600
+            dependencies: ["pause-udec-11"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec"
+              - name: rate
+                value: "3600"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "{{tasks.udec-rate-3500.outputs.parameters.capacity-ok}}"
+
           # --- Synchronous user-decrypt (UserDecryptDirect) suite ---
           # Same rates and key as the async udec suite above, but each request is a
           # single blocking call per party (no submit-then-poll). Runs after the
@@ -476,7 +520,7 @@ spec:
           # outcomes never fail the workflow (see summary-report). This is a
           # head-to-head comparison probe, not a gate.
           - name: pause-udec-direct-0
-            dependencies: ["udec-rate-3200"]
+            dependencies: ["udec-rate-3600"]
             template: pause
             arguments:
               parameters:
@@ -779,13 +823,15 @@ spec:
               - "pdec-rate-2300"
               - "pdec-rate-2500"
               - "udec-rate-2400"
-              - "udec-rate-2700"
-              - "udec-rate-2750"
               - "udec-rate-2800"
               - "udec-rate-2900"
               - "udec-rate-3000"
               - "udec-rate-3100"
               - "udec-rate-3200"
+              - "udec-rate-3300"
+              - "udec-rate-3400"
+              - "udec-rate-3500"
+              - "udec-rate-3600"
               - "udec-direct-rate-2400"
               - "udec-direct-rate-2700"
               - "udec-direct-rate-2750"
@@ -830,10 +876,6 @@ spec:
                 value: "{{tasks.pdec-rate-2500.outputs.parameters.test-result}}"
               - name: test-result-udec-2400
                 value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
-              - name: test-result-udec-2700
-                value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
-              - name: test-result-udec-2750
-                value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
               - name: test-result-udec-2800
                 value: "{{tasks.udec-rate-2800.outputs.parameters.test-result}}"
               - name: test-result-udec-2900
@@ -844,6 +886,14 @@ spec:
                 value: "{{tasks.udec-rate-3100.outputs.parameters.test-result}}"
               - name: test-result-udec-3200
                 value: "{{tasks.udec-rate-3200.outputs.parameters.test-result}}"
+              - name: test-result-udec-3300
+                value: "{{tasks.udec-rate-3300.outputs.parameters.test-result}}"
+              - name: test-result-udec-3400
+                value: "{{tasks.udec-rate-3400.outputs.parameters.test-result}}"
+              - name: test-result-udec-3500
+                value: "{{tasks.udec-rate-3500.outputs.parameters.test-result}}"
+              - name: test-result-udec-3600
+                value: "{{tasks.udec-rate-3600.outputs.parameters.test-result}}"
               - name: test-result-udec-direct-2400
                 value: "{{tasks.udec-direct-rate-2400.outputs.parameters.test-result}}"
               - name: test-result-udec-direct-2700
@@ -1273,6 +1323,7 @@ spec:
               # (never hard-fail the workflow) when they land outside their budget.
               pdec:1700|pdec:1900|pdec:2100|pdec:2300|pdec:2500) return 0 ;;
               udec:2800|udec:2900|udec:3000|udec:3100|udec:3200) return 0 ;;
+              udec:3300|udec:3400|udec:3500|udec:3600) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -1500,13 +1551,15 @@ spec:
         - name: test-result-pdec-2300
         - name: test-result-pdec-2500
         - name: test-result-udec-2400
-        - name: test-result-udec-2700
-        - name: test-result-udec-2750
         - name: test-result-udec-2800
         - name: test-result-udec-2900
         - name: test-result-udec-3000
         - name: test-result-udec-3100
         - name: test-result-udec-3200
+        - name: test-result-udec-3300
+        - name: test-result-udec-3400
+        - name: test-result-udec-3500
+        - name: test-result-udec-3600
         - name: test-result-udec-direct-2400
         - name: test-result-udec-direct-2700
         - name: test-result-udec-direct-2750
@@ -1554,13 +1607,15 @@ spec:
           echo '{{inputs.parameters.test-result-pdec-2300}}' > /mnt/results/pdec-rate-2300.json
           echo '{{inputs.parameters.test-result-pdec-2500}}' > /mnt/results/pdec-rate-2500.json
           echo '{{inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
-          echo '{{inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
-          echo '{{inputs.parameters.test-result-udec-2750}}' > /mnt/results/udec-rate-2750.json
           echo '{{inputs.parameters.test-result-udec-2800}}' > /mnt/results/udec-rate-2800.json
           echo '{{inputs.parameters.test-result-udec-2900}}' > /mnt/results/udec-rate-2900.json
           echo '{{inputs.parameters.test-result-udec-3000}}' > /mnt/results/udec-rate-3000.json
           echo '{{inputs.parameters.test-result-udec-3100}}' > /mnt/results/udec-rate-3100.json
           echo '{{inputs.parameters.test-result-udec-3200}}' > /mnt/results/udec-rate-3200.json
+          echo '{{inputs.parameters.test-result-udec-3300}}' > /mnt/results/udec-rate-3300.json
+          echo '{{inputs.parameters.test-result-udec-3400}}' > /mnt/results/udec-rate-3400.json
+          echo '{{inputs.parameters.test-result-udec-3500}}' > /mnt/results/udec-rate-3500.json
+          echo '{{inputs.parameters.test-result-udec-3600}}' > /mnt/results/udec-rate-3600.json
           echo '{{inputs.parameters.test-result-udec-direct-2400}}' > /mnt/results/udec-direct-rate-2400.json
           echo '{{inputs.parameters.test-result-udec-direct-2700}}' > /mnt/results/udec-direct-rate-2700.json
           echo '{{inputs.parameters.test-result-udec-direct-2750}}' > /mnt/results/udec-direct-rate-2750.json
@@ -1895,7 +1950,7 @@ spec:
 
           echo ""
           summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500 1700 1900 2100 2300 2500
-          summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750 2800 2900 3000 3100 3200
+          summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2800 2900 3000 3100 3200 3300 3400 3500 3600
           summarize_decrypt_rates udecd "User decrypt (direct)" user_decrypt 2400 2700 2750 2800 2900 3000 3100 3200 3300 3400 3500 4000 4200
 
           finite_total=$((keygen_total + crs_total))
