@@ -91,9 +91,9 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    CrsGenMetadataWithExtraDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
-    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
+    EpochDataTest, InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
@@ -1694,6 +1694,9 @@ impl KmsGrpcV0_15_0 {
     }
 
     fn gen_priv_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
+        // `EpochData` is the last variant of the enum as of v0.15.0. Older generators
+        // emit `ContextInfo` (the last variant at their time); the loader in
+        // `backward_compatibility_kms_grpc.rs` expects the right variant per version.
         let priv_data_type = PrivDataType::EpochData;
         store_versioned_test!(&priv_data_type, dir, &PRIV_DATA_TYPE.test_filename);
 
