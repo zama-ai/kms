@@ -1414,15 +1414,6 @@ impl<
         &self,
         context_id: &ContextId,
     ) -> Result<(), MetricedError> {
-        if !self.session_maker.context_exists(context_id).await {
-            return Err(MetricedError::new(
-                OP_DESTROY_MPC_CONTEXT,
-                None,
-                anyhow::anyhow!("Context ID {} does not exist", context_id),
-                tonic::Code::NotFound,
-            ));
-        };
-
         let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
         self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
