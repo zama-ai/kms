@@ -45,7 +45,7 @@ authors = ["Zama"]
 publish = true
 edition = "2024"
 license = "BSD-3-Clause-Clear"
-version = "0.14.0-0"
+version = "0.15.0-0"
 repository = "https://github.com/zama-ai/kms"
 description = "Key Management System for the Zama Protocol."
 
@@ -153,12 +153,12 @@ nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
 oid-registry = "=0.8.1"  # OID registry for ASN.1 - LOW RISK: rusticata team
-opentelemetry = "=0.31.0"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
-opentelemetry-http = "=0.31.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
-opentelemetry-otlp = { version = "=0.31.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
-opentelemetry-semantic-conventions = "=0.31.0"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
-opentelemetry-stdout = { version = "=0.31.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
-opentelemetry_sdk = { version = "=0.31.0", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
+opentelemetry = "=0.32.0"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
+opentelemetry-http = "=0.32.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
+opentelemetry-otlp = { version = "=0.32.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
+opentelemetry-semantic-conventions = "=0.32.1"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
+opentelemetry-stdout = { version = "=0.32.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
+opentelemetry_sdk = { version = "=0.32.1", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
@@ -173,9 +173,9 @@ rasn-cms = "=0.28.13"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individ
 rayon = "=1.12.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
 redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
-reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 275M+ downloads
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 571M+ downloads; since 0.13 the rustls feature validates against the OS trust store (rustls-platform-verifier) with aws-lc-rs — irrelevant for our self-signed/plain-HTTP endpoints
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
-rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
+rstest = "=0.26.1"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.9", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
 schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
 serde = { version = "1.0.228", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
@@ -186,8 +186,8 @@ sha3 = "=0.12.0"  # SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downlo
 shake = "=0.1.0"  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads
 signature = "=2.2.0"  # Digital signature traits - LOW RISK: RustCrypto org, 50M+ downloads
 statrs = "=0.18.0"  # Statistical functions - LOW RISK: starts-dev team
-strum = "=0.27.1"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
-strum_macros = "=0.27.1"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
+strum = "=0.28.0"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
+strum_macros = "=0.28.0"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
 syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RISK: Reputable individual maintainer (dtolnay), 993M downloads
 sysinfo = "0.38.4"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
@@ -203,18 +203,18 @@ tokio = { version = "=1.52.3", features = ["full"] }  # Async runtime - LOW RISK
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.18", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
 tokio-vsock = "=0.7.2"  # Async virtio socket support - MEDIUM RISK: same rust-vsock org/owners as vsock, 5M+ downloads, documented, and purpose-built to replace the remaining bespoke poll-based relay loop in vsocktun
-toml = "=0.9.11"  # TOML serialization for tests and tooling - LOW RISK: rust-lang maintained, widely used
+toml = "=1.1.2"  # TOML serialization for tests and tooling - LOW RISK: rust-lang maintained, widely used
 tonic = "=0.14.6"  # gRPC framework - LOW RISK: hyperium team
 tonic-health = "=0.14.6"  # gRPC health checking - LOW RISK: hyperium team
 tonic-prost = "=0.14.6"  # prost codec for tonic gRPC - LOW RISK: hyperium team
 tonic-prost-build = "=0.14.6"  # gRPC code generation with prost - LOW RISK: hyperium team
-tonic-tls = { version = "=0.6.1", features = ["rustls"] }  # TLS support for tonic - MEDIUM RISK: single developer
+tonic-tls = { version = "=0.7.1", features = ["rustls"] }  # TLS support for tonic - MEDIUM RISK: single developer
 tower = "=0.5.3"  # Service framework - LOW RISK: tower-rs team
-tower-http = "=0.6.8"  # HTTP middleware - LOW RISK: tower-rs team
+tower-http = "=0.6.11"  # HTTP middleware - LOW RISK: tower-rs team
 tracing = { version = "=0.1.44", features = ["log"] }  # Application instrumentation - LOW RISK: tokio-rs team
 tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
-tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
-tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
+tracing-opentelemetry = "=0.33.0"  # OpenTelemetry integration - LOW RISK: tokio-rs team
+tracing-subscriber = { version = "=0.3.23", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,

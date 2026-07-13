@@ -52,6 +52,10 @@ spec:
           args:
             - -c
             - |
+              # Fail loudly on any assembly error (e.g. a socat image without
+              # `envsubst`) instead of silently writing empty kms-*.toml and
+              # letting the core/gen-keys start with no config.
+              set -e
               {{- include "kmsCoreInitEnvVars" . | nindent 14 }}
               envsubst < /var/lib/kms-core/config/kms-server.toml > kms-server.toml
               envsubst < /var/lib/kms-core/config/aws.toml >> kms-server.toml

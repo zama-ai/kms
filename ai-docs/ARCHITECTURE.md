@@ -30,7 +30,7 @@ RPCs (preprocessing, reshare) are only meaningful in threshold mode.
 
 The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM.
 
-The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts. 
+The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
 ## Workspace layout
 
@@ -205,7 +205,7 @@ Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
 `NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit`
 / `CustodianBackupRecovery` RPCs defined in
-[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). 
+[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto).
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
@@ -275,7 +275,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.94.0`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
+- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.97.0`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
