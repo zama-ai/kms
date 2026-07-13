@@ -2,7 +2,7 @@
 """Expand perf-scenarios.yaml into the concrete Argo perf workflow.
 
 Reads a workflow *template* containing `# <<GENERATED:NAME>>` marker lines and
-replaces each with a block generated from the rate ladders in the scenarios file.
+replaces each with a block generated from the rate scenarios in the scenarios file.
 Run at submit time (see the "Run performance testing" step), before the image-tag
 `sed`. Fails loudly on any invalid scenario so a bad edit never reaches a run.
 
@@ -12,7 +12,7 @@ Run at submit time (see the "Run performance testing" step), before the image-ta
 Reads TOML via the stdlib `tomllib` (Python >= 3.11) — no third-party deps.
 
 Markers (indentation is taken from the marker line, so blocks land correctly):
-  dag-tasks       the rung DAG tasks (chained, previous-ok gated)
+  dag-tasks       the rate DAG tasks (chained, previous-ok gated)
   summary-args    the summary task's test-result arguments
   summary-inputs  the summary template's test-result input params
   summary-echo    the summary's "write each result JSON" lines
@@ -47,7 +47,7 @@ def load_scenarios(path):
     for kind, scen in scenarios.items():
         if "key" not in scen or "rates" not in scen:
             die(f"scenario '{kind}' needs 'key' and 'rates'")
-        rungs = []
+        rates = []
         for i, entry in enumerate(scen["rates"]):
             if not isinstance(entry, dict):
                 die(f"{kind}.rates[{i}] must be an inline table with a 'rate' key, got {entry!r}")
@@ -56,16 +56,16 @@ def load_scenarios(path):
             unknown = set(entry) - RATE_KEYS
             if unknown:
                 die(f"{kind}.rates[{i}] (rate {entry['rate']}) has unknown keys: {sorted(unknown)}")
-            rungs.append({**defaults, **entry})
-        resolved[kind] = {"key": scen["key"], "after": scen.get("after", []), "rungs": rungs}
+            rates.append({**defaults, **entry})
+        resolved[kind] = {"key": scen["key"], "after": scen.get("after", []), "rates": rates}
     return resolved
 
 
 def dag_tasks(kind, scen):
-    key, after, rungs = scen["key"], scen["after"], scen["rungs"]
+    key, after, rates = scen["key"], scen["after"], scen["rates"]
     out = []
     prev = None
-    for r in rungs:
+    for r in rates:
         name = f"{kind}-rate-{r['rate']}"
         if prev is None:
             deps = [key] + after
@@ -96,9 +96,13 @@ def dag_tasks(kind, scen):
     return out[:-1]  # drop trailing blank
 
 
+def summary_deps(kind, scen):
+    return [f'- "{kind}-rate-{r["rate"]}"' for r in scen["rates"]]
+
+
 def summary_args(kind, scen):
     out = []
-    for r in scen["rungs"]:
+    for r in scen["rates"]:
         name = f"{kind}-rate-{r['rate']}"
         out += [
             f"- name: test-result-{name}",
@@ -108,24 +112,25 @@ def summary_args(kind, scen):
 
 
 def summary_inputs(kind, scen):
-    return [f"- name: test-result-{kind}-rate-{r['rate']}" for r in scen["rungs"]]
+    return [f"- name: test-result-{kind}-rate-{r['rate']}" for r in scen["rates"]]
 
 
 def summary_echo(kind, scen):
     out = []
-    for r in scen["rungs"]:
+    for r in scen["rates"]:
         name = f"{kind}-rate-{r['rate']}"
         out.append(f"echo '{{{{inputs.parameters.test-result-{name}}}}}' > /mnt/results/{name}.json")
     return out
 
 
 def rate_vars(kind, scen):
-    rates = " ".join(str(r["rate"]) for r in scen["rungs"])
+    rates = " ".join(str(r["rate"]) for r in scen["rates"])
     return [f'{kind}_rates="{rates}"']
 
 
 BUILDERS = {
     "dag-tasks": dag_tasks,
+    "summary-deps": summary_deps,
     "summary-args": summary_args,
     "summary-inputs": summary_inputs,
     "summary-echo": summary_echo,
@@ -172,8 +177,8 @@ def main():
     else:
         with open(args.out, "w") as f:
             f.write(rendered)
-    n = sum(len(s["rungs"]) for s in scenarios.values())
-    sys.stderr.write(f"generate-perf-workflow: expanded {n} rungs across {len(scenarios)} scenario(s)\n")
+    n = sum(len(s["rates"]) for s in scenarios.values())
+    sys.stderr.write(f"generate-perf-workflow: expanded {n} rates across {len(scenarios)} scenario(s)\n")
 
 
 if __name__ == "__main__":

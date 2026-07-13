@@ -15,6 +15,45 @@ The user-decrypt test offers a fixed number of requests per second for a fixed
 duration, then reports whether the KMS kept up. The current CI suite uses this
 to measure how many user decryptions per second the deployment can handle.
 
+## Managing rate scenarios
+
+The rates to test and their pass/fail limits live in [`perf-scenarios.toml`](perf-scenarios.toml). At submit time
+`generate-perf-workflow.py` expands it into the Argo workflow (filling the `# <<GENERATED:…>>` markers), so adding or
+removing a rate is a one-line edit.
+
+```toml
+[defaults]              # applied to every rate unless the rate overrides it
+duration = 60           # measurement window, seconds
+pause = 10              # pause before the test
+maxfail = 0             # max failed requests, % of offered
+maxshed = 0             # max shed (rate-limited) requests, % of offered
+pct = 98                # min achieved/target rate, %
+allowfail = false       # false → a breach fails the run; true → warns only
+
+[scenarios.udec]
+key = "udec-key-gen"    # task providing the decryption key
+rates = [
+  { rate = 2400 },                                              # uses the defaults
+  { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },          # override some limits
+  { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
+```
+
+Rules:
+
+- every `rates` entry is an inline table with a `rate` key;
+- anything unspecified falls back to `[defaults]`.
+
+`keygen`/`crs` are one-shot setup and not configured here.
+
+To preview the fully-expanded workflow locally:
+
+```bash
+python3 ci/perf-testing/generate-perf-workflow.py \
+  --scenarios ci/perf-testing/perf-scenarios.toml \
+  --template ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml -o -
+```
+
 ## Quick start
 
 To iterate on the user-decrypt test, trigger the workflow with these values:
