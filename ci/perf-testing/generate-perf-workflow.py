@@ -36,18 +36,40 @@ def load_scenarios(path):
         doc = tomllib.load(f)
     if not isinstance(doc, dict) or "defaults" not in doc or "scenarios" not in doc:
         die(f"{path}: expected top-level [defaults] and [scenarios] tables")
+
     defaults = doc["defaults"]
+    if not isinstance(defaults, dict):
+        die(f"{path}: [defaults] must be a table")
+    unknown_defaults = set(defaults) - DEFAULT_KEYS
+    if unknown_defaults:
+        die(f"defaults has unknown keys: {sorted(unknown_defaults)}")
     missing = DEFAULT_KEYS - set(defaults)
     if missing:
         die(f"defaults is missing required keys: {sorted(missing)}")
+
     scenarios = doc["scenarios"]
     if not isinstance(scenarios, dict) or not scenarios:
         die("'scenarios' must be a non-empty mapping of kind -> config")
 
     resolved = {}
     for kind, scen in scenarios.items():
+        if not isinstance(scen, dict):
+            die(f"scenario '{kind}' must be a table")
+        unknown_scen = set(scen) - {"key", "after", "rates"}
+        if unknown_scen:
+            die(f"scenario '{kind}' has unknown keys: {sorted(unknown_scen)}")
         if "key" not in scen or "rates" not in scen:
             die(f"scenario '{kind}' needs 'key' and 'rates'")
+        if not isinstance(scen["key"], str) or not scen["key"]:
+            die(f"scenario '{kind}'.key must be a non-empty string")
+
+        after = scen.get("after", [])
+        if not isinstance(after, list) or not all(isinstance(x, str) for x in after):
+            die(f"scenario '{kind}'.after must be a list of strings")
+
+        if not isinstance(scen["rates"], list) or not scen["rates"]:
+            die(f"scenario '{kind}'.rates must be a non-empty array of inline tables")
+
         rates = []
         for i, entry in enumerate(scen["rates"]):
             if not isinstance(entry, dict):
@@ -57,8 +79,19 @@ def load_scenarios(path):
             unknown = set(entry) - RATE_KEYS
             if unknown:
                 die(f"{kind}.rates[{i}] (rate {entry['rate']}) has unknown keys: {sorted(unknown)}")
-            rates.append({**defaults, **entry})
-        resolved[kind] = {"key": scen["key"], "after": scen.get("after", []), "rates": rates}
+
+            merged = {**defaults, **entry}
+            if not isinstance(merged["rate"], int):
+                die(f"{kind}.rates[{i}].rate must be an int, got {merged['rate']!r}")
+            for k in ("duration", "pause", "maxfail", "maxshed", "pct"):
+                v = merged[k]
+                if not isinstance(v, int) or v < 0:
+                    die(f"{kind}.rates[{i}].{k} must be a non-negative int, got {v!r}")
+            if not isinstance(merged["allowfail"], bool):
+                die(f"{kind}.rates[{i}].allowfail must be a bool, got {merged['allowfail']!r}")
+
+            rates.append(merged)
+        resolved[kind] = {"key": scen["key"], "after": after, "rates": rates}
     return resolved
 
 
