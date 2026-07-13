@@ -8,7 +8,7 @@
 
 ################################################################
 ## Second stage builds the kms-core binaries
-FROM rust:1.94-slim-bookworm AS kms-threshold
+FROM rust:1.97-slim-bookworm AS kms-threshold
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \

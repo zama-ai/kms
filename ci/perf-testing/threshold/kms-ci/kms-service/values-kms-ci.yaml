@@ -92,10 +92,11 @@ tracing:
   enabled: false
   endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
 
-socat:
-  image:
-    name: alpine/socat
-    tag: latest
+# NOTE: do NOT override socat.image with a stock image (e.g. alpine/socat). The
+# config init container (kms-core-init-load-env) runs `envsubst`, which
+# alpine/socat lacks — that silently emitted empty kms-*.toml and broke
+# non-enclave threshold deploys (gen-keys got no config). Inherit the chart
+# default (Zama socat, has envsubst), same as the enclave path.
 rustLog: info
 minio:
   enabled: false
