@@ -819,27 +819,31 @@ where
     let run_start = Instant::now();
     let deadline = run_start + Duration::from_secs(duration_secs);
     let tick_period = Duration::from_millis(5);
+    // Number of ticks per second implied by `tick_period` (e.g. 1000ms / 5ms = 200).
+    // Pacing works like a token bucket: each tick adds `rate` tokens to the accumulator
+    // and we launch one request per whole `ticks_per_sec` of tokens, carrying the
+    // remainder to the next tick. On-schedule ticks therefore offer exactly `rate`
+    // requests per second, spread evenly rather than in a burst.
+    let ticks_per_sec = (1000 / tick_period.as_millis()) as u64;
     let mut ticker = tokio::time::interval(tick_period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut launch_accumulator = 0_u64;
-    // The accumulator assumes a steady 200 ticks/s. With MissedTickBehavior::Delay a
-    // stalled iteration pushes ticks late instead of catching up, so the offered rate
-    // can quietly fall below target. Count late ticks so that shortfall is observable.
+    // The pacing above only hits `rate` if ticks actually arrive `ticks_per_sec` times a
+    // second. `MissedTickBehavior::Delay` does not replay ticks skipped during a stalled
+    // iteration to catch up — it just lets the schedule slip. Fewer ticks per second means
+    // fewer launches per second, so the offered rate can silently fall below target. Count
+    // ticks that arrive late (a gap over 2x the period) so that shortfall is logged.
     let mut last_tick = Instant::now();
     let mut late_ticks = 0_u64;
 
+    // Until the deadline: on each tick, reap any finished requests and launch the tick's
+    // share of new ones, skipping any that would exceed the in-flight cap.
     while Instant::now() < deadline {
         ticker.tick().await;
         let tick_now = Instant::now();
+        // We consider a tick that fires 2 x tick period (10ms) as being "late".
         if tick_now.duration_since(last_tick) > tick_period * 2 {
             late_ticks += 1;
-            if late_ticks == 1 {
-                tracing::warn!(
-                    rate,
-                    behind_ms = tick_now.duration_since(last_tick).as_millis() as u64,
-                    "{label} ticker fell behind; offered rate may drop below target - underpowered test runner?"
-                );
-            }
         }
         last_tick = tick_now;
         drain_finished_decrypts(
@@ -850,9 +854,11 @@ where
             &mut failed,
         );
 
+        // Add this tick's `rate` tokens, launch one request per whole `ticks_per_sec` accumulated, and carry the
+        // fractional remainder to the next tick.
         launch_accumulator = launch_accumulator.saturating_add(rate);
-        let launches = launch_accumulator / 200;
-        launch_accumulator %= 200;
+        let launches = launch_accumulator / ticks_per_sec;
+        launch_accumulator %= ticks_per_sec;
 
         for _ in 0..launches {
             let Some(request) = requests.next() else {
@@ -860,7 +866,7 @@ where
             };
             offered += 1;
             if join_set.len() >= max_in_flight {
-                // Shed: client drops this arrival because the in-flight cap says saturated.
+                // Shed: client drops this req because the in-flight cap says saturated.
                 shed += 1;
                 saturated = true;
                 continue;
@@ -878,7 +884,7 @@ where
             late_ticks,
             offered,
             target = total_requests,
-            "{label} ticker fell behind; offered rate likely below target - underpowered test runner?"
+            "{label} ticker fell behind on {late_ticks} tick(s); offered rate likely below target - underpowered test runner?"
         );
     }
 
@@ -954,9 +960,7 @@ fn decrypt_rate_metrics<T>(
         0.0
     } else {
         collection.request_payload_bytes as f64
-            / 1024.0
-            / 1024.0
-            / collection.collect_elapsed.as_secs_f64()
+            / (1024.0 * 1024.0 * collection.collect_elapsed.as_secs_f64())
     };
     let request_payload_avg_bytes = if collection.request_payload_messages == 0 {
         0.0
@@ -967,9 +971,7 @@ fn decrypt_rate_metrics<T>(
         0.0
     } else {
         collection.response_payload_bytes as f64
-            / 1024.0
-            / 1024.0
-            / collection.collect_elapsed.as_secs_f64()
+            / (1024.0 * 1024.0 * collection.collect_elapsed.as_secs_f64())
     };
     let response_payload_avg_bytes = if collection.response_payload_messages == 0 {
         0.0
