@@ -127,7 +127,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
@@ -177,7 +177,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "{{workflow.parameters.fhe-params}}"
 
