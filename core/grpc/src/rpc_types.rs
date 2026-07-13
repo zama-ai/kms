@@ -278,7 +278,8 @@ impl Default for PubDataType {
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrivDataTypeVersions {
     V0(PrivDataTypeV0),
-    V1(PrivDataType),
+    V1(PrivDataTypeV1),
+    V2(PrivDataType),
 }
 
 /// PrivDataType
@@ -336,24 +337,17 @@ pub enum PrivDataTypeV0 {
     ContextInfo, // MPC context information
 }
 
-impl Upgrade<PrivDataType> for PrivDataTypeV0 {
-    type Error = UnversionizeError;
-    fn upgrade(self) -> Result<PrivDataType, Self::Error> {
+impl Upgrade<PrivDataTypeV1> for PrivDataTypeV0 {
+    type Error = std::convert::Infallible;
+    fn upgrade(self) -> Result<PrivDataTypeV1, Self::Error> {
+        #[allow(deprecated)]
         Ok(match self {
-            PrivDataTypeV0::SigningKey => PrivDataType::SigningKey,
-            PrivDataTypeV0::FheKeyInfo => PrivDataType::FheKeyInfo,
-            PrivDataTypeV0::CrsInfo => PrivDataType::CrsInfo,
-            PrivDataTypeV0::FhePrivateKey => PrivDataType::FhePrivateKey,
-            PrivDataTypeV0::PrssSetup => {
-                return Err(UnversionizeError::Upgrade {
-                    from_vers: "0".to_string(),
-                    into_vers: "2".to_string(),
-                    source: anyhow::anyhow!(
-                        "PrivDataTypeV0::PrssSetup is deprecated and cannot be upgraded to PrivDataType"
-                    ).into(),
-                });
-            }
-            PrivDataTypeV0::ContextInfo => PrivDataType::ContextInfo,
+            PrivDataTypeV0::SigningKey => PrivDataTypeV1::SigningKey,
+            PrivDataTypeV0::FheKeyInfo => PrivDataTypeV1::FheKeyInfo,
+            PrivDataTypeV0::CrsInfo => PrivDataTypeV1::CrsInfo,
+            PrivDataTypeV0::FhePrivateKey => PrivDataTypeV1::FhePrivateKey,
+            PrivDataTypeV0::PrssSetup => PrivDataTypeV1::PrssSetup,
+            PrivDataTypeV0::ContextInfo => PrivDataTypeV1::ContextInfo,
         })
     }
 }
