@@ -13,6 +13,7 @@ Reads TOML via the stdlib `tomllib` (Python >= 3.11) — no third-party deps.
 
 Markers (indentation is taken from the marker line, so blocks land correctly):
   dag-tasks       the rate DAG tasks (chained, previous-ok gated)
+  summary-deps    the summary task's dependencies for generated rate tasks
   summary-args    the summary task's test-result arguments
   summary-inputs  the summary template's test-result input params
   summary-echo    the summary's "write each result JSON" lines
