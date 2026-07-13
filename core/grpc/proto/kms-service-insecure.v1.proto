@@ -52,6 +52,11 @@ service CoreServiceEndpoint {
 
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
 
+  // Synchronous variant of user decryption. See the secure service definition
+  // for the full documentation. Mirrored here so the generated
+  // `CoreServiceEndpoint` trait is identical under the `insecure` feature.
+  rpc UserDecryptDirect(kms.v1.UserDecryptionRequest) returns (kms.v1.UserDecryptionResponse);
+
   rpc CrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
   rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);

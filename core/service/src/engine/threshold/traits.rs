@@ -12,6 +12,12 @@ pub trait UserDecryptor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError>;
+    /// Synchronous variant: runs the user decryption inline (no background task,
+    /// no meta-store, no polling) and returns this party's response directly.
+    async fn user_decrypt_direct(
+        &self,
+        request: Request<UserDecryptionRequest>,
+    ) -> Result<Response<UserDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
