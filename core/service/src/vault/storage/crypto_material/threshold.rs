@@ -84,7 +84,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner
             .write_all::<EpochData, EpochData>(
                 &(*epoch_id).into(), // using epoch_id as req_id since epoch data is stored under this directly
-                Some(epoch_id),
+                None,
                 None, // no public data for epoch info
                 Some((epoch_data, PrivDataType::EpochData)),
                 true,
@@ -94,7 +94,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
     }
 
-    /// Read all epoch data into the storage backend.
+    /// Read all epoch data from the storage backend.
     /// The result is a map of epoch IDs to their corresponding epoch data.
     /// That is, epochs are flattened and NOT indexed by their associated context ID.
     pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {

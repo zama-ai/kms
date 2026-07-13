@@ -100,7 +100,6 @@ pub trait EpochManager {
 
     /// Destroy every epoch associated with `context_id`.
     /// This is needed for context destruction since the Context manager does not compose with the epoch manager.
-    /// TODO do we want to make a change to wrap the epoch manager inside the context manager?
     async fn destroy_epochs_for_context(&self, context_id: &ContextId)
     -> Result<(), MetricedError>;
 
