@@ -19,8 +19,11 @@ use kms_lib::{
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
 use std::{collections::HashMap, future::Future, sync::Arc};
-use tokio::sync::RwLock;
-use tokio::task::JoinSet;
+use tokio::{
+    sync::RwLock,
+    task::JoinSet,
+    time::{Duration, Instant},
+};
 use tonic::transport::Channel;
 
 type CoreEndpointClient = CoreServiceEndpointClient<Channel>;
@@ -108,17 +111,17 @@ struct CollectedPublicDecrypt {
     req_id: RequestId,
     dec_req: PublicDecryptionRequest,
     resp_response_vec: Vec<PublicDecryptionResponse>,
-    collect_duration: tokio::time::Duration,
+    collect_duration: Duration,
 }
 
 trait CollectedDecryptRateResult {
-    fn collect_duration(&self) -> tokio::time::Duration;
+    fn collect_duration(&self) -> Duration;
     fn response_payload_bytes(&self) -> u64;
     fn response_payload_messages(&self) -> u64;
 }
 
 impl CollectedDecryptRateResult for CollectedPublicDecrypt {
-    fn collect_duration(&self) -> tokio::time::Duration {
+    fn collect_duration(&self) -> Duration {
         self.collect_duration
     }
 
@@ -137,8 +140,8 @@ impl CollectedDecryptRateResult for CollectedPublicDecrypt {
 struct DecryptRateCollection<T> {
     collected: Vec<T>,
     completed: u64,
-    durations_to_get_responses: Vec<tokio::time::Duration>,
-    collect_elapsed: tokio::time::Duration,
+    durations_to_get_responses: Vec<Duration>,
+    collect_elapsed: Duration,
     offered: u64,
     failed: u64,
     shed: u64,
@@ -170,7 +173,7 @@ struct DecryptRateMetrics {
     post_process_failed: u64,
     latency_stat: crate::DurationStat,
     post_process_stat: crate::DurationStat,
-    post_process_wall: tokio::time::Duration,
+    post_process_wall: Duration,
 }
 
 #[derive(serde::Serialize)]
@@ -208,10 +211,7 @@ struct PhaseMsJson {
     wall: f64,
 }
 
-fn duration_stat_with_wall_ms(
-    stat: &crate::DurationStat,
-    wall: tokio::time::Duration,
-) -> PhaseMsJson {
+fn duration_stat_with_wall_ms(stat: &crate::DurationStat, wall: Duration) -> PhaseMsJson {
     let stat = duration_stat_ms(stat);
     PhaseMsJson {
         avg: stat.avg,
@@ -296,11 +296,11 @@ fn endpoint_clients(
 async fn collect_decrypt_responses<Resp: Send + 'static>(
     label: &'static str,
     rate: u64,
-    request_start: tokio::time::Instant,
+    request_start: Instant,
     mut resp_tasks: JoinSet<anyhow::Result<Resp>>,
     num_parties: usize,
     num_expected_responses: usize,
-) -> anyhow::Result<(Vec<Resp>, tokio::time::Duration)> {
+) -> anyhow::Result<(Vec<Resp>, Duration)> {
     let mut resp_response_vec = Vec::new();
     let mut collect_duration = None;
     while let Some(resp) = resp_tasks.join_next().await {
@@ -365,7 +365,7 @@ async fn send_and_collect_public_decrypt(
     max_iter: usize,
     num_expected_responses: usize,
 ) -> anyhow::Result<CollectedPublicDecrypt> {
-    let request_start = tokio::time::Instant::now();
+    let request_start = Instant::now();
 
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints_req.iter() {
@@ -410,10 +410,7 @@ async fn send_and_collect_public_decrypt(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
+                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
                         "timeout while waiting for public decryption after {max_iter} retries."
@@ -467,14 +464,14 @@ async fn verify_public_decrypt(
     ptxt: TypedPlaintext,
     num_expected_responses: usize,
     collected: CollectedPublicDecrypt,
-) -> anyhow::Result<(RequestId, String, tokio::time::Duration)> {
+) -> anyhow::Result<(RequestId, String, Duration)> {
     let CollectedPublicDecrypt {
         req_id,
         dec_req,
         mut resp_response_vec,
         collect_duration: _,
     } = collected;
-    let verify_one_start = tokio::time::Instant::now();
+    let verify_one_start = Instant::now();
     verify_public_decrypt_responses(
         &resp_response_vec,
         PubDecVerificationMaterial::Request(dec_req),
@@ -538,7 +535,7 @@ pub(crate) async fn do_public_decrypt_once<R: Rng + CryptoRng>(
     .await?;
     let collect_duration = collected.collect_duration;
 
-    let verify_start = tokio::time::Instant::now();
+    let verify_start = Instant::now();
     let (req_id, msg, verify_duration) = verify_public_decrypt(
         internal_client,
         kms_addrs,
@@ -635,8 +632,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     let collected = std::mem::take(&mut collection.collected);
 
     // PHASE 4: verify collected responses and emit metrics.
-    let verify_start = tokio::time::Instant::now();
-    let mut verify_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
+    let verify_start = Instant::now();
+    let mut verify_tasks: JoinSet<Result<Duration, anyhow::Error>> = JoinSet::new();
     for collected_result in collected {
         let internal_client = internal_client.clone();
         let kms_addrs = kms_addrs.clone();
@@ -712,11 +709,11 @@ struct CollectedUserDecrypt {
     enc_pk: UnifiedPublicEncKey,
     enc_sk: UnifiedPrivateEncKey,
     resp_response_vec: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
-    collect_duration: tokio::time::Duration,
+    collect_duration: Duration,
 }
 
 impl CollectedDecryptRateResult for CollectedUserDecrypt {
-    fn collect_duration(&self) -> tokio::time::Duration {
+    fn collect_duration(&self) -> Duration {
         self.collect_duration
     }
 
@@ -744,7 +741,7 @@ struct DurationStatMsJson {
 }
 
 fn duration_stat_ms(stat: &crate::DurationStat) -> DurationStatMsJson {
-    let ms = |d: tokio::time::Duration| d.as_secs_f64() * 1000.0;
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
     DurationStatMsJson {
         avg: ms(stat.avg),
         std_dev: ms(stat.std_dev),
@@ -760,7 +757,7 @@ fn drain_finished_decrypts<T: CollectedDecryptRateResult + 'static>(
     label: &'static str,
     join_set: &mut JoinSet<Result<T, anyhow::Error>>,
     collected: &mut Vec<T>,
-    durations: &mut Vec<tokio::time::Duration>,
+    durations: &mut Vec<Duration>,
     failed: &mut u64,
 ) {
     while let Some(result) = join_set.try_join_next() {
@@ -812,21 +809,21 @@ where
     let mut request_payload_messages = 0_u64;
 
     // PHASE 2: launch requests at the configured rate and collect completed work.
-    let run_start = tokio::time::Instant::now();
-    let deadline = run_start + tokio::time::Duration::from_secs(duration_secs);
-    let tick_period = tokio::time::Duration::from_millis(5);
+    let run_start = Instant::now();
+    let deadline = run_start + Duration::from_secs(duration_secs);
+    let tick_period = Duration::from_millis(5);
     let mut ticker = tokio::time::interval(tick_period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut launch_accumulator = 0_u64;
     // The accumulator assumes a steady 200 ticks/s. With MissedTickBehavior::Delay a
     // stalled iteration pushes ticks late instead of catching up, so the offered rate
     // can quietly fall below target. Count late ticks so that shortfall is observable.
-    let mut last_tick = tokio::time::Instant::now();
+    let mut last_tick = Instant::now();
     let mut late_ticks = 0_u64;
 
-    while tokio::time::Instant::now() < deadline {
+    while Instant::now() < deadline {
         ticker.tick().await;
-        let tick_now = tokio::time::Instant::now();
+        let tick_now = Instant::now();
         if tick_now.duration_since(last_tick) > tick_period * 2 {
             late_ticks += 1;
             if late_ticks == 1 {
@@ -879,9 +876,8 @@ where
     }
 
     // PHASE 3: drain in-flight requests for a bounded period.
-    let drain_deadline =
-        tokio::time::Instant::now() + tokio::time::Duration::from_secs(drain_timeout_secs);
-    while !join_set.is_empty() && tokio::time::Instant::now() < drain_deadline {
+    let drain_deadline = Instant::now() + Duration::from_secs(drain_timeout_secs);
+    while !join_set.is_empty() && Instant::now() < drain_deadline {
         if let Ok(Some(result)) =
             tokio::time::timeout_at(drain_deadline, join_set.join_next()).await
         {
@@ -944,8 +940,8 @@ fn decrypt_rate_metrics<T>(
     max_in_flight: usize,
     collection: &DecryptRateCollection<T>,
     post_process_failed: u64,
-    post_process_durations: &[tokio::time::Duration],
-    post_process_wall: tokio::time::Duration,
+    post_process_durations: &[Duration],
+    post_process_wall: Duration,
 ) -> DecryptRateMetrics {
     let request_payload_mib_per_sec = if collection.collect_elapsed.is_zero() {
         0.0
@@ -1013,7 +1009,7 @@ async fn send_and_collect_user_decrypt(
     max_iter: usize,
     num_expected_responses: usize,
 ) -> anyhow::Result<CollectedUserDecrypt> {
-    let request_start = tokio::time::Instant::now();
+    let request_start = Instant::now();
 
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints_req.iter() {
@@ -1064,10 +1060,7 @@ async fn send_and_collect_user_decrypt(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
+                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
                         "timeout while waiting for user decryption after {max_iter} retries."
@@ -1108,7 +1101,7 @@ async fn reconstruct_user_decrypt(
     internal_client: Arc<RwLock<Client>>,
     expected: TestingPlaintext,
     collected: CollectedUserDecrypt,
-) -> anyhow::Result<(RequestId, String, tokio::time::Duration)> {
+) -> anyhow::Result<(RequestId, String, Duration)> {
     let CollectedUserDecrypt {
         req_id,
         user_decrypt_req,
@@ -1117,7 +1110,7 @@ async fn reconstruct_user_decrypt(
         resp_response_vec,
         collect_duration: _,
     } = collected;
-    let reconstruct_one_start = tokio::time::Instant::now();
+    let reconstruct_one_start = Instant::now();
     let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req)
         .map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
     let eip712_domain = protobuf_to_alloy_domain(
@@ -1207,7 +1200,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
     .await?;
     let collect_duration = collected.collect_duration;
 
-    let reconstruct_start = tokio::time::Instant::now();
+    let reconstruct_start = Instant::now();
     let (req_id, msg, reconstruct_duration) =
         reconstruct_user_decrypt(internal_client, expected, collected).await?;
     let reconstruct_elapsed = reconstruct_start.elapsed();
@@ -1301,8 +1294,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let collected = std::mem::take(&mut collection.collected);
 
     // PHASE 4: reconstruct collected responses and emit metrics.
-    let reconstruct_start = tokio::time::Instant::now();
-    let mut recon_tasks: JoinSet<Result<tokio::time::Duration, anyhow::Error>> = JoinSet::new();
+    let reconstruct_start = Instant::now();
+    let mut recon_tasks: JoinSet<Result<Duration, anyhow::Error>> = JoinSet::new();
     for collected_result in collected {
         let internal_client = internal_client.clone();
         recon_tasks.spawn(async move {
@@ -1476,8 +1469,8 @@ pub(crate) async fn get_public_decrypt_responses(
     num_expected_responses: usize,
     internal_client: &Client,
     kms_addrs: &[alloy_primitives::Address],
-    start: tokio::time::Instant,
-) -> anyhow::Result<(Vec<PublicDecryptionResponse>, tokio::time::Duration)> {
+    start: Instant,
+) -> anyhow::Result<(Vec<PublicDecryptionResponse>, Duration)> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
@@ -1493,7 +1486,7 @@ pub(crate) async fn get_public_decrypt_responses(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
+                tokio::time::sleep(Duration::from_millis(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
@@ -1593,10 +1586,7 @@ mod tests {
         offered: u64,
         post_process_failed: u64,
     ) -> DecryptRateMetrics {
-        let sample = [
-            tokio::time::Duration::from_millis(10),
-            tokio::time::Duration::from_millis(20),
-        ];
+        let sample = [Duration::from_millis(10), Duration::from_millis(20)];
         DecryptRateMetrics {
             target_rate,
             duration_secs: 60,
@@ -1618,7 +1608,7 @@ mod tests {
             post_process_failed,
             latency_stat: crate::compute_stat_on_durations(&sample),
             post_process_stat: crate::compute_stat_on_durations(&sample),
-            post_process_wall: tokio::time::Duration::from_millis(5),
+            post_process_wall: Duration::from_millis(5),
         }
     }
 
