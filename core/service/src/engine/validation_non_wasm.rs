@@ -1296,6 +1296,31 @@ mod tests {
             );
         }
 
+        // An unset typed identity always takes the legacy EVM route. The former Solana-prefixed
+        // string overload is therefore rejected by the existing checksummed-address parser.
+        {
+            let legacy_solana_address =
+                format!("solana:{}", alloy_primitives::hex::encode([0x11; 32]));
+            let req = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                domain: Some(domain.clone()),
+                client_address: legacy_solana_address.clone(),
+                enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+                client_identity: None,
+            };
+            assert_eq!(
+                unpack_user_decrypt_req(&req).unwrap_err().to_string(),
+                format!(
+                    "Error parsing checksummed client address: {legacy_solana_address} - invalid string length"
+                )
+            );
+        }
+
         // bad public key
         {
             // note that we're serializing the inner mlkem512 public key, which is not supported

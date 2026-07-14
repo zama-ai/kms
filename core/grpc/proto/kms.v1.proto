@@ -430,7 +430,8 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address, encoded using EIP-55. I.e. including `0x`.
+  // The EVM client's blockchain wallet address, encoded using EIP-55. I.e. including `0x`.
+  // This is required for EVM link computation and ignored for typed Solana requests.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
@@ -452,10 +453,9 @@ message UserDecryptionRequest {
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   RequestId epoch_id = 9;
 
-  // Typed client identity — replaces the `solana:<hex>`-prefixed `client_address` (field 4)
-  // string overload. When set, the request is routed STRICTLY by variant: a Solana request MUST
-  // use `solana_pubkey` and is NEVER reparsed as an EVM address (fails closed, never routes to
-  // EVM). Legacy clients leave this unset and fall back to `client_address`.
+  // Typed client identity. A Solana request MUST use `solana_pubkey`; no `client_address` string
+  // selects the Solana route. `evm_address` and an unset identity both use the EVM route, where
+  // `client_address` remains required for link computation.
   oneof client_identity {
     // 20-byte EVM wallet address.
     bytes evm_address = 10;

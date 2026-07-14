@@ -12,25 +12,6 @@ pub(super) struct ValidatedSolanaUserDecrypt {
     pub(super) domain: alloy_sol_types::Eip712Domain,
 }
 
-/// Parses a Solana-native user-decryption client identity carried as
-/// `"solana:<64 lowercase hex chars>"` in [`UserDecryptionRequest::client_address`].
-///
-/// Solana users authenticate with an ed25519 `signMessage` over a 32-byte pubkey rather
-/// than an EVM EIP-712 wallet signature over a 20-byte address, so the standard checksummed
-/// `Address` parse cannot represent them. Returns `None` for an ordinary EVM client address,
-/// which takes the unchanged EIP-712 path.
-fn parse_legacy_pubkey(client_address: &str) -> Option<[u8; 32]> {
-    let hex = client_address.strip_prefix("solana:")?;
-    // Canonical form: exactly 64 LOWERCASE hex chars. The kms-connector sets this field with
-    // `hex::encode` (lowercase) over the 32-byte ed25519 pubkey, so requiring that exact encoding
-    // keeps one identity ↔ one client_address ↔ one derived client_id (no upper/mixed-case aliasing).
-    if hex.len() != 64 || !hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
-        return None;
-    }
-    let bytes = alloy_primitives::hex::decode(hex).ok()?;
-    <[u8; 32]>::try_from(bytes.as_slice()).ok()
-}
-
 /// Derives the stable 20-byte signcryption `client_id` from a 32-byte Solana pubkey as
 /// `keccak256(pubkey)[12..]`, mirroring EVM address derivation. The client reproduces this
 /// to de-signcrypt the response; it is a deterministic label, not an authorization input
@@ -43,18 +24,16 @@ fn client_id(solana_pubkey: &[u8; 32]) -> alloy_primitives::Address {
 pub(super) fn validate_if_solana(
     req: &UserDecryptionRequest,
 ) -> Result<Option<ValidatedSolanaUserDecrypt>, Box<dyn std::error::Error + Send + Sync>> {
-    // Solana-native user decryption: the client identity is a 32-byte ed25519 pubkey carried
-    // as "solana:<hex>" (the EVM checksum parse below cannot represent it) and there is no EVM
-    // verifying contract. Authorization (RPC-verified on-chain ACL + ed25519 signMessage) is
+    // Solana-native user decryption: the client identity is a typed 32-byte ed25519 pubkey and
+    // there is no EVM verifying contract. Authorization (RPC-verified on-chain ACL + ed25519 signMessage) is
     // enforced by the kms-connector before this call — exactly as the gateway enforces the EVM
     // ACL before the EVM path — so here we only bind the response to the request via the Solana
     // link (`compute_link_solana`). The link is passed opaquely into signcryption, so the
     // binding is sound as long as the client recomputes the same link. The response cert is the
     // standard secp256k1 EIP-712 the gateway verifies, signed under the gateway's `Decryption`
     // domain (`req.domain`) — see the domain note below.
-    // Typed-identity routing (fails CLOSED): when the `client_identity` oneof is set, route
-    // STRICTLY by variant — a Solana request is handled as Solana and NEVER reparsed as an EVM
-    // address. Legacy clients leave it unset and fall back to the `client_address` string overload.
+    // Typed-identity routing fails closed: only `solana_pubkey` selects this path. An EVM identity
+    // or an unset identity follows the unchanged EVM route.
     let solana_pubkey = match &req.client_identity {
         Some(ClientIdentity::SolanaPubkey(pubkey)) => <[u8; 32]>::try_from(pubkey.as_slice())
             .map_err(|_| {
@@ -63,11 +42,7 @@ pub(super) fn validate_if_solana(
                     pubkey.len()
                 )
             })?,
-        Some(ClientIdentity::EvmAddress(_)) => return Ok(None),
-        None => match parse_legacy_pubkey(&req.client_address) {
-            Some(pubkey) => pubkey,
-            None => return Ok(None),
-        },
+        Some(ClientIdentity::EvmAddress(_)) | None => return Ok(None),
     };
 
     let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
@@ -100,7 +75,7 @@ pub(super) fn validate_if_solana(
 
 #[cfg(test)]
 mod tests {
-    use super::{client_id, parse_legacy_pubkey, validate_if_solana};
+    use super::{client_id, validate_if_solana};
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::{
         TypedCiphertext, UserDecryptionRequest, user_decryption_request::ClientIdentity,
@@ -160,39 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_canonical_legacy_identity_only() {
-        let pubkey = [0x11u8; 32];
-        let address = format!("solana:{}", alloy_primitives::hex::encode(pubkey));
-        assert_eq!(parse_legacy_pubkey(&address), Some(pubkey));
-        assert_eq!(
-            parse_legacy_pubkey("0x66f9664f97F2b50F62D13eA064982f936dE76657"),
-            None
-        );
-        assert_eq!(parse_legacy_pubkey("solana:zz"), None);
-        assert_eq!(parse_legacy_pubkey("solana:1122"), None);
-        assert_eq!(
-            parse_legacy_pubkey(&alloy_primitives::hex::encode(pubkey)),
-            None
-        );
-
-        let letters = [0xabu8; 32];
-        assert_eq!(
-            parse_legacy_pubkey(&format!(
-                "solana:{}",
-                alloy_primitives::hex::encode(letters).to_uppercase()
-            )),
-            None
-        );
-        assert_eq!(
-            parse_legacy_pubkey(&format!(
-                "solana:{}",
-                alloy_primitives::hex::encode(letters)
-            )),
-            Some(letters)
-        );
-    }
-
-    #[test]
     fn client_id_is_keccak_derived_and_deterministic() {
         let pubkey = [0x22u8; 32];
         let id = client_id(&pubkey);
@@ -204,12 +146,14 @@ mod tests {
     }
 
     #[test]
-    fn typed_solana_identity_requires_32_bytes() {
-        let req = request(Some(ClientIdentity::SolanaPubkey(vec![0x11; 31])));
-        assert_eq!(
-            validate(&req).unwrap_err().to_string(),
-            "Solana client identity must be a 32-byte pubkey, got 31 bytes"
-        );
+    fn typed_solana_identity_requires_exactly_32_bytes() {
+        for actual in [31, 33] {
+            let req = request(Some(ClientIdentity::SolanaPubkey(vec![0x11; actual])));
+            assert_eq!(
+                validate(&req).unwrap_err().to_string(),
+                format!("Solana client identity must be a 32-byte pubkey, got {actual} bytes")
+            );
+        }
     }
 
     #[test]
@@ -220,10 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn canonical_legacy_identity_routes_to_solana() {
+    fn unset_identity_does_not_route_a_legacy_solana_string_to_solana() {
         let mut req = request(None);
         req.client_address = format!("solana:{}", alloy_primitives::hex::encode([0x11; 32]));
-        assert!(validate(&req).unwrap());
+        assert!(!validate(&req).unwrap());
     }
 
     #[test]
