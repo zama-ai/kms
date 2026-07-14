@@ -523,9 +523,9 @@ async fn test_decryption_threshold_legacy_prss_switch() {
     {
         let _public_guard = LegacyThresholdGuard::set(
             DecryptKind::Public,
-            Some(id_value.checked_add(U256::from(1u64)).unwrap()),
+            id_value.checked_add(U256::from(1u64)).unwrap(),
         );
-        let _user_guard = LegacyThresholdGuard::set(DecryptKind::User, Some(U256::ZERO));
+        let _user_guard = LegacyThresholdGuard::set(DecryptKind::User, U256::ZERO);
         decryption_threshold(
             TEST_PARAM,
             key_id,
@@ -548,7 +548,7 @@ async fn test_decryption_threshold_legacy_prss_switch() {
     // schedule, decryption still succeeds.
     let decisions_before = LEGACY_PRSS_DECISIONS.load(Ordering::SeqCst);
     {
-        let _public_guard = LegacyThresholdGuard::set(DecryptKind::Public, Some(id_value));
+        let _public_guard = LegacyThresholdGuard::set(DecryptKind::Public, id_value);
         decryption_threshold(
             TEST_PARAM,
             key_id,

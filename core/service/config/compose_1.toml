@@ -27,6 +27,15 @@ path = "./backup_vault"
 prefix = "BACKUP-p1"
 
 [threshold]
+
+# Issue#3089: temporary request-ID activation thresholds for the PRSS-Mask counter-schedule
+# fix (#663). Requests with a raw request ID (interpreted as a big-endian integer) strictly
+# below the value run the legacy (pre-#663) schedule; requests at or above it run the fixed
+# one. Mandatory; decimal or 0x-prefixed hex string, up to 256 bits. Consensus constants:
+# all MPC parties must configure identical values. Use "0" to always run the fixed schedule.
+# Remove once the migration is complete.
+legacy_prss_mask_before_public_decrypt_id = "0"
+legacy_prss_mask_before_user_decrypt_id = "0"
 listen_address = "0.0.0.0"
 listen_port = 50001
 

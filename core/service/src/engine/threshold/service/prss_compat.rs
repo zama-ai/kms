@@ -23,8 +23,9 @@
 //! (`KMS_CORE__THRESHOLD__LEGACY_PRSS_MASK_BEFORE_PUBLIC_DECRYPT_ID`, etc.).
 //!
 //! Values are decimal or 0x-prefixed hex integers (up to 256 bits), and are consensus
-//! constants: all parties MUST configure identical values. Unset means the fixed PRSS schedule
-//! is always used. Malformed values fail at config load / server startup, never silently.
+//! constants: all parties MUST configure identical values. The default of "0" means the fixed
+//! PRSS schedule is always used (no request ID is strictly below 0). Malformed values fail at
+//! config load / server startup, never silently.
 //!
 //! NOTE: the comparison must be done on the raw request ID interpreted as a big-endian
 //! integer. Derived session IDs are hashes of it and carry no order.
@@ -45,8 +46,8 @@ pub(crate) enum DecryptKind {
     User,
 }
 
-static LEGACY_BEFORE_PUBLIC: OnceLock<Option<U256>> = OnceLock::new();
-static LEGACY_BEFORE_USER: OnceLock<Option<U256>> = OnceLock::new();
+static LEGACY_BEFORE_PUBLIC: OnceLock<U256> = OnceLock::new();
+static LEGACY_BEFORE_USER: OnceLock<U256> = OnceLock::new();
 
 /// Parse a threshold value as decimal or 0x-prefixed hex.
 pub(crate) fn parse_threshold(raw: &str) -> Result<U256, String> {
@@ -74,14 +75,11 @@ pub(crate) fn parse_threshold(raw: &str) -> Result<U256, String> {
 /// conflicting values (which can only happen with multiple in-process servers, e.g. in tests —
 /// those must all agree since the values are consensus constants anyway).
 ///
-/// If never called (e.g. centralized KMS), the fixed schedule is always used.
+/// If never called (e.g. centralized KMS), or left at the config default of 0, the fixed
+/// schedule is always used.
 pub(crate) fn init_from_conf(conf: &ThresholdPartyConf) -> anyhow::Result<()> {
-    let parse = |name: &str, raw: &Option<String>| -> anyhow::Result<Option<U256>> {
-        raw.as_ref()
-            .map(|raw| {
-                parse_threshold(raw).map_err(|e| anyhow::anyhow!("invalid [threshold].{name}: {e}"))
-            })
-            .transpose()
+    let parse = |name: &str, raw: &str| -> anyhow::Result<U256> {
+        parse_threshold(raw).map_err(|e| anyhow::anyhow!("invalid [threshold].{name}: {e}"))
     };
     let public = parse(
         "legacy_prss_mask_before_public_decrypt_id",
@@ -95,19 +93,15 @@ pub(crate) fn init_from_conf(conf: &ThresholdPartyConf) -> anyhow::Result<()> {
     set_or_check(&LEGACY_BEFORE_PUBLIC, public, "public decryption")?;
     set_or_check(&LEGACY_BEFORE_USER, user, "user decryption")?;
 
-    if public.is_some() || user.is_some() {
+    if public != U256::ZERO || user != U256::ZERO {
         tracing::info!(
-            "PRSS-Mask legacy schedule activation thresholds configured: requests with ID strictly below public={public:?} / user={user:?} will use the legacy (pre-#663) schedule"
+            "PRSS-Mask legacy schedule activation thresholds configured: requests with ID strictly below public={public} / user={user} will use the legacy (pre-#663) schedule"
         );
     }
     Ok(())
 }
 
-fn set_or_check(
-    cell: &OnceLock<Option<U256>>,
-    value: Option<U256>,
-    name: &str,
-) -> anyhow::Result<()> {
+fn set_or_check(cell: &OnceLock<U256>, value: U256, name: &str) -> anyhow::Result<()> {
     match cell.set(value) {
         Ok(()) => Ok(()),
         // Already initialized: tolerate idempotent re-initialization with the identical value.
@@ -123,7 +117,7 @@ fn set_or_check(
                 Ok(())
             } else {
                 Err(anyhow::anyhow!(
-                    "conflicting re-initialization of the {name} PRSS-Mask schedule threshold: already set to {existing:?}, refusing {rejected:?}"
+                    "conflicting re-initialization of the {name} PRSS-Mask schedule threshold: already set to {existing}, refusing {rejected}"
                 ))
             }
         }
@@ -150,13 +144,11 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> boo
     // Test builds first check the scoped override (see [`test_prs_compat`]), so integration
     // tests can vary the threshold at runtime without touching the global configuration.
     #[cfg(test)]
-    let threshold = match test_prs_compat::get(kind) {
-        Some(overridden) => overridden,
-        None => cell.get().copied().flatten(),
-    };
-    // Uninitialized (centralized KMS) or configured-absent both mean: fixed schedule.
+    let threshold = test_prs_compat::get(kind).or_else(|| cell.get().copied());
+    // Uninitialized (centralized KMS) means: fixed schedule (as does the config default of 0,
+    // handled naturally by the strictly-below comparison).
     #[cfg(not(test))]
-    let threshold = cell.get().copied().flatten();
+    let threshold = cell.get().copied();
 
     match threshold {
         None => false,
@@ -179,7 +171,7 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> boo
 /// of the threshold; everything downstream (comparison, counting, wiring) is the production
 /// code path, and config parsing itself is covered by the unit tests below. The override takes
 /// precedence over values set by [`init_from_conf`] (in-process test servers initialize with
-/// absent thresholds).
+/// the default threshold of 0).
 #[cfg(test)]
 pub(crate) mod test_prs_compat {
     use super::DecryptKind;
@@ -192,30 +184,31 @@ pub(crate) mod test_prs_compat {
     pub(crate) static LEGACY_PRSS_DECISIONS: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(0);
 
-    static OVERRIDE_PUBLIC: RwLock<Option<Option<U256>>> = RwLock::new(None);
-    static OVERRIDE_USER: RwLock<Option<Option<U256>>> = RwLock::new(None);
+    static OVERRIDE_PUBLIC: RwLock<Option<U256>> = RwLock::new(None);
+    static OVERRIDE_USER: RwLock<Option<U256>> = RwLock::new(None);
 
-    fn cell(kind: DecryptKind) -> &'static RwLock<Option<Option<U256>>> {
+    fn cell(kind: DecryptKind) -> &'static RwLock<Option<U256>> {
         match kind {
             DecryptKind::Public => &OVERRIDE_PUBLIC,
             DecryptKind::User => &OVERRIDE_USER,
         }
     }
 
-    pub(super) fn get(kind: DecryptKind) -> Option<Option<U256>> {
+    pub(super) fn get(kind: DecryptKind) -> Option<U256> {
         *cell(kind).read().unwrap()
     }
 
     /// RAII guard that overrides the legacy-schedule activation threshold for one stream for
-    /// the duration of a test and clears it on drop (including on panic/unwind).
-    /// `Some(threshold)` behaves as if the config field were set to that value, `None` as
-    /// absent. The override is process-global state: only use it in `#[serial]` tests.
+    /// the duration of a test and clears it on drop (including on panic/unwind). Behaves as if
+    /// the config field were set to that value; a threshold of 0 behaves like the config
+    /// default (fixed schedule always). The override is process-global state: only use it in
+    /// `#[serial]` tests.
     pub(crate) struct LegacyThresholdGuard {
         kind: DecryptKind,
     }
 
     impl LegacyThresholdGuard {
-        pub(crate) fn set(kind: DecryptKind, threshold: Option<U256>) -> Self {
+        pub(crate) fn set(kind: DecryptKind, threshold: U256) -> Self {
             *cell(kind).write().unwrap() = Some(threshold);
             Self { kind }
         }

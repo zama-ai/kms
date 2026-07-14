@@ -52,14 +52,14 @@ pub struct ThresholdPartyConf {
     /// big-endian integer, is strictly below the configured value run the legacy PRSS.
     /// Values are decimal or 0x-prefixed hex integers of up to 256 bits, given as
     /// strings. All MPC parties MUST configure identical values.
-    /// Absent means the fixed schedule is always used. Public and user decryption
-    /// request IDs come from separate counters, hence one threshold each.
-    /// Remove once the migration is complete.
-    #[serde(default)]
-    pub legacy_prss_mask_before_public_decrypt_id: Option<String>,
+    /// MANDATORY: must be provided explicitly, either in the config file or through the
+    /// config env layer (`KMS_CORE__THRESHOLD__LEGACY_PRSS_MASK_BEFORE_PUBLIC_DECRYPT_ID`);
+    /// config loading errors otherwise. Use "0" to always run the fixed schedule (no request
+    /// ID is strictly below 0). Public and user decryption request IDs come from separate
+    /// counters, hence one threshold each. Remove once the migration is complete.
+    pub legacy_prss_mask_before_public_decrypt_id: String,
     /// See [`Self::legacy_prss_mask_before_public_decrypt_id`].
-    #[serde(default)]
-    pub legacy_prss_mask_before_user_decrypt_id: Option<String>,
+    pub legacy_prss_mask_before_user_decrypt_id: String,
 }
 
 fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
@@ -108,9 +108,7 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
             &conf.legacy_prss_mask_before_user_decrypt_id,
         ),
     ] {
-        if let Some(raw) = value
-            && let Err(e) = parse_threshold(raw)
-        {
+        if let Err(e) = parse_threshold(value) {
             return Err(
                 ValidationError::new("Invalid PRSS-Mask schedule activation threshold")
                     .with_message(format!("{name}: {e}").into()),
