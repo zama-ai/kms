@@ -52,11 +52,14 @@ kmsCore:
   # with enough margin for the slowest party to upgrade before the counters reach
   # them. ALWAYS quote the values (they are 256-bit integers, decimal or 0x-prefixed hex;
   # unquoted large YAML numbers get mangled). Remove once the migration is complete.
-  # Default to "100" for testing purpose and because we've already had more requests on mainnet so
-  # that's a safe value to use for now. Needs to be revisited for deployment!!.
+  # PRSS-Mask legacy-schedule activation thresholds (Issue#3089). Left EMPTY by default so the
+  # config omits the fields entirely — pre-#663 binaries reject unknown config keys, so during a
+  # rolling upgrade these must stay unset until every party runs the new binary, then be enabled
+  # in a second pass (see ci/scripts/rolling_upgrade.sh). Empty => new binary defaults to "0"
+  # (always the fixed schedule). Set to a decimal/0x-hex request-ID threshold to activate.
   legacyPrssMask:
-    beforePublicDecryptId: "100"
-    beforeUserDecryptId: "100"
+    beforePublicDecryptId: ""
+    beforeUserDecryptId: ""
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false

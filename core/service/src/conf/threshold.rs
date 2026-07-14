@@ -52,14 +52,23 @@ pub struct ThresholdPartyConf {
     /// big-endian integer, is strictly below the configured value run the legacy PRSS.
     /// Values are decimal or 0x-prefixed hex integers of up to 256 bits, given as
     /// strings. All MPC parties MUST configure identical values.
-    /// MANDATORY: must be provided explicitly, either in the config file or through the
-    /// config env layer (`KMS_CORE__THRESHOLD__LEGACY_PRSS_MASK_BEFORE_PUBLIC_DECRYPT_ID`);
-    /// config loading errors otherwise. Use "0" to always run the fixed schedule (no request
-    /// ID is strictly below 0). Public and user decryption request IDs come from separate
-    /// counters, hence one threshold each. Remove once the migration is complete.
+    /// OPTIONAL: defaults to "0" (always run the fixed schedule, since no request ID is
+    /// strictly below 0) when absent. This lets a config written by an older chart — or a
+    /// rolling upgrade that enables the threshold only *after* the new binary is running —
+    /// parse cleanly, which is required because pre-#663 binaries reject the field entirely
+    /// (`deny_unknown_fields`) and the config is read fresh at process start. Public and user
+    /// decryption request IDs come from separate counters, hence one threshold each. Remove
+    /// once the migration is complete.
+    #[serde(default = "default_legacy_prss_mask_threshold")]
     pub legacy_prss_mask_before_public_decrypt_id: String,
     /// See [`Self::legacy_prss_mask_before_public_decrypt_id`].
+    #[serde(default = "default_legacy_prss_mask_threshold")]
     pub legacy_prss_mask_before_user_decrypt_id: String,
+}
+
+/// Default PRSS-Mask activation threshold ("0" = always use the fixed post-#663 schedule).
+fn default_legacy_prss_mask_threshold() -> String {
+    "0".to_string()
 }
 
 fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
