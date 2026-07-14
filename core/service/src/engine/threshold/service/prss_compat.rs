@@ -105,16 +105,32 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> any
         ),
         DecryptKind::User => (&LEGACY_BEFORE_USER, LEGACY_PRSS_BEFORE_USER_DECRYPT_ID_ENV),
     };
+    // In production the env var is read and parsed once and cached. Test builds first check
+    // the scoped override (see [`test_override`]), which avoids mutating process environment
+    // variables at runtime — that is unsafe with concurrently running threads and could
+    // corrupt tests running in parallel.
+    #[cfg(test)]
+    let threshold = match test_prs_compat::get(kind) {
+        Some(overridden) => overridden,
+        None => cell
+            .get_or_init(|| read_env_threshold(var))
+            .clone()
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+    };
+    #[cfg(not(test))]
     let threshold = cell
         .get_or_init(|| read_env_threshold(var))
-        .as_ref()
+        .clone()
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(match threshold {
         None => false,
         Some(threshold) => {
-            let legacy = is_before(req_id, threshold);
+            let legacy = is_before(req_id, &threshold);
             if legacy {
+                #[cfg(test)]
+                test_prs_compat::LEGACY_PRSS_DECISIONS
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 tracing::info!(
                     "Using legacy (pre-#663) PRSS-Mask schedule for {kind:?} decryption request {req_id} (ID < {var}={threshold})"
                 );
@@ -122,6 +138,60 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> any
             legacy
         }
     })
+}
+
+/// Scoped, test-only override of the activation thresholds. This replaces mutating the
+/// process environment in tests: `std::env::set_var` is unsafe with concurrently running
+/// threads (the tokio servers spawned by integration tests read the env), and a leaked env
+/// var would corrupt other tests. The override only substitutes the *source* of the
+/// threshold; everything downstream (comparison, counting, wiring) is the production code
+/// path, and env parsing itself is covered by the unit tests below.
+#[cfg(test)]
+pub(crate) mod test_prs_compat {
+    use super::DecryptKind;
+    use alloy_primitives::U256;
+    use std::sync::RwLock;
+
+    /// Test-only counter of how many times the gate selected the legacy schedule, so integration
+    /// tests can assert that the switch actually happened (decryption outcomes are identical under
+    /// both schedules when all parties agree, so success alone cannot distinguish them).
+    pub(crate) static LEGACY_PRSS_DECISIONS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    static OVERRIDE_PUBLIC: RwLock<Option<Option<U256>>> = RwLock::new(None);
+    static OVERRIDE_USER: RwLock<Option<Option<U256>>> = RwLock::new(None);
+
+    fn cell(kind: DecryptKind) -> &'static RwLock<Option<Option<U256>>> {
+        match kind {
+            DecryptKind::Public => &OVERRIDE_PUBLIC,
+            DecryptKind::User => &OVERRIDE_USER,
+        }
+    }
+
+    pub(super) fn get(kind: DecryptKind) -> Option<Option<U256>> {
+        *cell(kind).read().unwrap()
+    }
+
+    /// RAII guard that overrides the legacy-schedule activation threshold for one stream for
+    /// the duration of a test and clears it on drop (including on panic/unwind).
+    /// `Some(threshold)` behaves as if the env var were set to that value, `None` as unset.
+    /// The override is process-global state: only use it in `#[serial]` tests.
+    pub(crate) struct LegacyThresholdGuard {
+        kind: DecryptKind,
+    }
+
+    impl LegacyThresholdGuard {
+        pub(crate) fn set(kind: DecryptKind, threshold: Option<U256>) -> Self {
+            *cell(kind).write().unwrap() = Some(threshold);
+            Self { kind }
+        }
+    }
+
+    impl Drop for LegacyThresholdGuard {
+        fn drop(&mut self) {
+            *cell(self.kind).write().unwrap() = None;
+        }
+    }
 }
 
 #[cfg(test)]

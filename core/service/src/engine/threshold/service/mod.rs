@@ -21,7 +21,7 @@ pub(crate) mod epoch_manager;
 //mod initiator;
 mod key_generator;
 mod preprocessor;
-mod prss_compat;
+pub mod prss_compat;
 mod public_decryptor;
 pub(crate) mod reshare_utils;
 pub mod session;

@@ -475,3 +475,95 @@ pub async fn run_decryption_threshold_optionally_fail(
         }
     }
 }
+
+/// Issue#3089: check that the request-ID-gated switch between the legacy (pre-#663) and the
+/// fixed PRSS-Mask counter schedule happens as expected for public decryption.
+///
+/// The request ID used by [`decryption_threshold`] is deterministic, so the test recomputes it
+/// and places the activation threshold right around it (via the scoped test override — the
+/// process env vars are never mutated, only their parsing is unit-tested separately):
+/// - threshold = ID + 1: the request is strictly below it, so every party must select the
+///   legacy schedule (asserted via a test-only decision counter, since the decryption outcome
+///   is identical under both schedules when all parties agree), and decryption must still
+///   succeed with correct plaintexts (the legacy path works end-to-end);
+/// - threshold = ID: strictly-below semantics, so the fixed schedule must be selected and
+///   decryption must again succeed.
+///
+/// The user-decryption threshold is simultaneously set to 0 in the first phase to check that
+/// the public stream is gated by its own threshold only. A multi-block plaintext (U16) is used
+/// so the batched PRSS-Mask path (amount > 1), where the two schedules actually differ, is
+/// exercised.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_decryption_threshold_legacy_prss_switch() {
+    use crate::engine::threshold::service::prss_compat::{
+        DecryptKind,
+        test_prs_compat::{LEGACY_PRSS_DECISIONS, LegacyThresholdGuard},
+    };
+    use alloy_primitives::U256;
+    use std::sync::atomic::Ordering;
+
+    let amount_parties = 4;
+    let key_id: &RequestId = &TEST_THRESHOLD_KEY_ID_4P;
+    let msgs = vec![TestingPlaintext::U16(444)];
+    let enc_config = EncryptionConfig {
+        compression: true,
+        precompute_sns: false,
+    };
+
+    // Recompute the deterministic request ID that decryption_threshold (parallelism = 1, so
+    // j = 0) will use, and interpret it as a big-endian integer like the gate does.
+    let request_id = derive_request_id(&format!("TEST_DEC_ID_0_KEY_{key_id}_{msgs:?}")).unwrap();
+    let id_value = U256::try_from_be_slice(request_id.as_bytes()).unwrap();
+
+    // Phase 1: threshold strictly above the request ID => legacy schedule on every party,
+    // decryption still succeeds. The user-decryption threshold is set to 0 at the same time
+    // to check that it does not affect the public stream.
+    let decisions_before = LEGACY_PRSS_DECISIONS.load(Ordering::SeqCst);
+    {
+        let _public_guard = LegacyThresholdGuard::set(
+            DecryptKind::Public,
+            Some(id_value.checked_add(U256::from(1u64)).unwrap()),
+        );
+        let _user_guard = LegacyThresholdGuard::set(DecryptKind::User, Some(U256::ZERO));
+        decryption_threshold(
+            TEST_PARAM,
+            key_id,
+            msgs.clone(),
+            enc_config,
+            1,
+            amount_parties,
+            None,
+            Some(DecryptionMode::NoiseFloodSmall),
+        )
+        .await;
+    }
+    let legacy_decisions = LEGACY_PRSS_DECISIONS.load(Ordering::SeqCst) - decisions_before;
+    assert_eq!(
+        legacy_decisions, amount_parties as u64,
+        "every party must have selected the legacy PRSS-Mask schedule exactly once"
+    );
+
+    // Phase 2: threshold equal to the request ID => strictly-below semantics select the fixed
+    // schedule, decryption still succeeds.
+    let decisions_before = LEGACY_PRSS_DECISIONS.load(Ordering::SeqCst);
+    {
+        let _public_guard = LegacyThresholdGuard::set(DecryptKind::Public, Some(id_value));
+        decryption_threshold(
+            TEST_PARAM,
+            key_id,
+            msgs.clone(),
+            enc_config,
+            1,
+            amount_parties,
+            None,
+            Some(DecryptionMode::NoiseFloodSmall),
+        )
+        .await;
+    }
+    let legacy_decisions = LEGACY_PRSS_DECISIONS.load(Ordering::SeqCst) - decisions_before;
+    assert_eq!(
+        legacy_decisions, 0,
+        "a request ID equal to the threshold must already use the fixed PRSS-Mask schedule"
+    );
+}
