@@ -20,8 +20,8 @@ use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
-        self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
-        UserDecryptionResponse, UserDecryptionResponsePayload,
+        self, CiphertextFormat, Empty, TypedCiphertext, TypedSigncryptedCiphertext,
+        UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
 };
 use observability::{
@@ -35,7 +35,7 @@ use rand::{CryptoRng, RngCore};
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
         SmallOfflineNoiseFloodSession, partial_decrypt_using_noiseflooding,
         secure_partial_decrypt_using_bitdec,
     },
@@ -50,6 +50,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::{
         compute_external_user_decrypt_signature,
         encryption::UnifiedPublicEncKey,
@@ -72,7 +73,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+            update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -87,9 +89,7 @@ pub trait NoiseFloodPartialDecryptor: Send + Sync {
     type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
@@ -111,9 +111,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
 
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
         HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
@@ -123,14 +121,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
     where
         ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve,
     {
-        partial_decrypt_using_noiseflooding(
-            noiseflood_session,
-            server_key,
-            ck,
-            ct,
-            secret_key_share,
-        )
-        .await
+        partial_decrypt_using_noiseflooding(noiseflood_session, ct, secret_key_share).await
     }
 }
 
@@ -229,7 +220,13 @@ impl<
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let decomp_key = keys.decompression_key();
+            // Only the SmallCompressed format needs the decompression key to deserialize.
+            // Fetching it would lazily decompress the (multi-GiB) keyset, so avoid it for
+            // the Big*/SmallExpanded formats that don't use it.
+            let decomp_key = match ct_format {
+                CiphertextFormat::SmallCompressed => keys.decompression_key(),
+                _ => None,
+            };
             let low_level_ct = spawn_compute_bound(move || {
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
             })
@@ -247,14 +244,16 @@ impl<
                         })?;
                     let mut noiseflood_session = Dec::Prep::new(session);
 
-                    let pdec = Dec::partial_decrypt(
-                        &mut noiseflood_session,
-                        keys.integer_server_key(),
-                        keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?,
-                        low_level_ct,
-                        &keys.private_keys,
-                    )
-                    .await;
+                    // Only `Small` ciphertexts need switch&squash; the closure (and hence the
+                    // lazy key decompression it triggers) does not run for the Big* variants.
+                    let ct = low_level_ct.with_sns_keys(|| {
+                        let server_key = keys.integer_server_key();
+                        let ck = keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?;
+                        Ok((server_key, ck))
+                    })?;
+
+                    let pdec =
+                        Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
 
                     let res = match pdec {
                         Ok((partial_dec_map, packing_factor, time)) => {
@@ -413,7 +412,7 @@ impl<
         Self {
             base_kms,
             crypto_storage,
-            user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            user_decrypt_meta_store: MetaStore::new_unlimited(),
             session_maker,
             tracker,
             rate_limiter,
@@ -490,16 +489,6 @@ impl<
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        add_req_to_meta_store(
-            &mut meta_store.write().await,
-            &req_id,
-            OP_USER_DECRYPT_REQUEST,
-        )?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -545,9 +534,16 @@ impl<
                 )
             })?;
 
+        // Below we write to the meta-store, leaving this [req_id] in the
+        // "Started" (Pending) state. The management task updates it on every
+        // outcome path; should the permit ever be dropped without an update, the
+        // store's reaper fails the entry rather than leaving it Pending forever.
+        let meta_permit =
+            add_or_redo_failed_in_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
+            let meta_permit = meta_permit;
 
             let result = Self::inner_user_decrypt(
                 &req_id,
@@ -566,12 +562,8 @@ impl<
                 metric_tags,
             )
             .await;
-            update_req_in_meta_store(
-                &mut meta_store.write().await,
-                &req_id,
-                result,
-                OP_USER_DECRYPT_REQUEST,
-            );
+            update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
+                .await;
         };
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
@@ -598,12 +590,14 @@ impl<
                 })?;
 
         // Retrieve the UserDecryptMetaStore object
-        let (payload, external_signature, extra_data) = retrieve_from_meta_store(
-            self.user_decrypt_meta_store.read().await,
+        let arc = retrieve_from_meta_store_with_timeout(
+            &self.user_decrypt_meta_store,
             &request_id,
             OP_USER_DECRYPT_RESULT,
+            DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
+        let (payload, external_signature, extra_data) = (*arc).clone();
 
         let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
             MetricedError::new(
@@ -687,9 +681,7 @@ mod tests {
 
         async fn partial_decrypt(
             noiseflood_session: &mut Self::Prep,
-            _server_key: Arc<tfhe::integer::ServerKey>,
-            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-            _ct: LowLevelCiphertext,
+            _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
             HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
@@ -751,9 +743,8 @@ mod tests {
         );
 
         let key_id = RequestId::new_random(rng);
-        let mut key_store = MetaStore::new_unlimited();
-        key_store.insert(&key_id).unwrap();
-        let key_meta_store = Arc::new(RwLock::new(key_store));
+        let key_meta_store = MetaStore::new_unlimited();
+        let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
         let user_decryptor =
             RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
@@ -782,6 +773,7 @@ mod tests {
                 threshold_fhe_keys,
                 PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                meta_store_permit,
                 "",
             )
             .await
@@ -1159,9 +1151,10 @@ mod tests {
             client_identity: None,
         });
         user_decryptor.user_decrypt(request).await.unwrap();
-        user_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        crate::testing::utils::poll_result_until_ready(|| {
+            user_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }

@@ -1,3 +1,4 @@
+use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
     CrsGenerator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
@@ -8,10 +9,14 @@ use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::{ContextId, EpochId};
 use observability::{metrics::METRICS, metrics_names::*};
 use threshold_networking::health_check::HealthCheckStatus;
 
 use tonic::{Request, Response, Status};
+
+/// Upper bound on the number of epochs a single `DestroyMpcContext` request may carry.
+const MAX_DESTROY_MPC_EPOCHS: usize = 1024;
 
 macro_rules! impl_endpoint {
     { impl CoreServiceEndpoint $implementations:tt } => {
@@ -66,6 +71,26 @@ impl_endpoint! {
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
             self.keygen_preprocessor.partial_key_gen_preproc(request).await.map_err(|e| e.into())
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn insecure_key_gen_preproc(
+            &self,
+            request: Request<KeyGenPreprocRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.insecure_key_gen_preproc(request).await.map_err(|e| e.into())
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn get_insecure_key_gen_preproc_result(
+            &self,
+            request: Request<RequestId>,
+        ) -> Result<Response<KeyGenPreprocResult>, Status> {
+            METRICS.increment_request_counter(OP_INSECURE_KEYGEN_PREPROC_RESULT);
+            self.keygen_preprocessor.get_insecure_result(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -211,7 +236,51 @@ impl_endpoint! {
             request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-            self.context_manager.destroy_mpc_context(request).await.map_err(|e| e.into())
+            let inner = request.into_inner();
+
+            // Validate the whole request before mutating anything: a request with valid epoch_ids
+            // but a missing/malformed context_id must not erase epochs and only then fail context
+            // parsing.
+            //
+            // Note: we extract the inner message and later re-wrap it in `Request::new(inner)`.
+            let proto_context_id = inner
+                .context_id
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
+            parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+
+            // Bound the epoch list so a malformed or hostile request cannot trigger unbounded
+            // deletion work.
+            if inner.epoch_ids.len() > MAX_DESTROY_MPC_EPOCHS {
+                return Err(Status::invalid_argument(format!(
+                    "DestroyMpcContext lists {} epochs, exceeding the maximum of {MAX_DESTROY_MPC_EPOCHS}",
+                    inner.epoch_ids.len()
+                )));
+            }
+
+            // Parse every epoch ID up front so a malformed ID is rejected before any deletion.
+            let epoch_ids = inner
+                .epoch_ids
+                .iter()
+                .map(|id| parse_grpc_request_id::<EpochId>(id, RequestIdParsingErr::Epoch))
+                .collect::<Result<Vec<EpochId>, _>>()?;
+
+            // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
+            // material. Erase them before touching anything else so that if there is a problem, the worst transient
+            // state is "shares gone, context metadata lingers" rather than "context gone, shares still on disk".
+            //
+            // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
+            // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
+            self.epoch_manager
+                .destroy_mpc_epochs(&epoch_ids)
+                .await
+                .map_err(Status::from)?;
+
+            // Every epoch is now gone, so it is safe to remove the context.
+            self.context_manager
+                .destroy_mpc_context(Request::new(inner))
+                .await
+                .map_err(Status::from)
         }
 
         #[tracing::instrument(skip_all)]
@@ -407,6 +476,20 @@ impl_endpoint! {
             };
 
             Ok(Response::new(response))
+        }
+
+
+        #[tracing::instrument(skip(self, request))]
+        async fn bandwidth_benchmark(
+            &self,
+            request: Request<kms_grpc::kms::v1::BandwidthBenchmarkRequest>,
+        ) -> Result<Response<kms_grpc::kms::v1::BandwidthBenchmarkResponse>, Status> {
+            run_bandwidth_benchmark(
+                request,
+                self.session_maker.clone(),
+                std::sync::Arc::clone(&self.bandwidth_bench_limiter),
+                &self.bandwidth_bench_config,
+            ).await
         }
     }
 }

@@ -145,6 +145,17 @@ impl BitwisePoly {
             self.coefs[idx] = value;
         }
     }
+
+    /// Overwrite the coefficients from `poly`, reusing this buffer's existing allocation.
+    ///
+    /// Each field coefficient is reduced to its byte representation — the same value the
+    /// `From<Poly<GFx>>` impls produce (those map `coef.0`; `Into<u8>` is the identity on the
+    /// stored byte) — but `clear` + `extend` keeps the `Vec`'s capacity, so the hot reconstruction
+    /// loop reuses one buffer across all bits instead of allocating a fresh `BitwisePoly` per bit.
+    pub fn overwrite_from_poly<F: Into<u8> + Copy>(&mut self, poly: &Poly<F>) {
+        self.coefs.clear();
+        self.coefs.extend(poly.coefs().iter().map(|c| (*c).into()));
+    }
 }
 
 impl<Z> Poly<Z>
@@ -289,7 +300,7 @@ where
     }
 
     /// return a poly that is constant zero
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Poly {
             // an empty polynomial is considered zero
             coefs: vec![],
@@ -613,103 +624,116 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
                 .to_string(),
         ));
     }
-    let mut res = Poly::zero();
+
+    // res = Σ_i lagrange_polys[i] * values[i], accumulated coefficient-wise into a single buffer. This function runs
+    // once per bit, ring_size times per opened value, so this is a hot spot for reconstruction.
+    //
+    // Each Lagrange basis poly over these `n` points has degree exactly n-1 (n coefficients), so the interpolant has at
+    // most `n` coefficients.
+    let mut coefs = vec![F::ZERO; lagrange_polys.len()];
     for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
-        let term = li * vi;
-        res = res + term;
+        for (acc, lc) in coefs.iter_mut().zip(li.coefs.iter()) {
+            *acc += *lc * *vi;
+        }
     }
-    Ok(res)
+    Ok(Poly::from_coefs(coefs))
 }
 
-/// computes the extended Euclidean algorithm for a and b and stops when r1 reaches the stop degree or higher
-fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
-    let (mut r0, mut r1) = (a, b);
-    let (mut t0, mut t1) = (Poly::zero(), Poly::one());
-    // r = gcd(a, b) = a * s + b * t
-    // note that s is not computed here
+/// Runs the extended Euclidean algorithm for `a` and `b` until `deg(r1) < stop`.
+///
+/// Precondition: `deg(b) >= stop`. Callers should ensure `deg(b) < stop`. This code runs the loop at least once and `a`
+/// is always read — hence `a` is cloned up front.
+///
+/// Returns the low-degree remainder `r1` and its Bézout cofactor `t1` with
+/// respect to the original `b`.
+fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
+    let mut r0 = a.clone();
+    let mut r1 = b;
+
+    // Invariant: each remainder is `a * s + b * t`; we only track `t`.
+    let mut t0 = Poly::zero();
+    let mut t1 = Poly::one();
+
     while r1.deg() >= stop {
-        let (q, _) = &r0 / &r1;
-        (r0, r1) = (r1.clone(), r0 - (&q * r1));
-        (t0, t1) = (t1.clone(), t0 - (&q * t1));
+        let (q, r2) = &r0 / &r1;
+        let t2 = t0 - (&q * &t1);
+
+        r0 = r1;
+        r1 = r2;
+
+        t0 = t1;
+        t1 = t2;
     }
-    // return r and t
+
     (r1, t1)
 }
 
-//NIST: Level Zero Operation
-/// Runs Gao decoding algorithm.
+/// Common tail of [`gao_decoding`] and [`gao_decoding_with_field_hints`].
 ///
-/// - `points` holds the x-coordinates
-/// - `values` holds the y-coordinates
-/// - `k` such that we apply error correction to a polynomial of degree < k
-///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
-/// - `max_errs` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
-///
-/// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
-pub fn gao_decoding<F: Field>(
-    points: &[F],
-    values: &[F],
+/// Given the interpolation polynomial `r` (through the points/values) and the vanishing
+/// polynomial `g = prod(X - xi)` — however they were obtained — run the partial extended
+/// Euclidean algorithm and recover the message polynomial, with the usual error/degree checks.
+/// `n` is the number of evaluation points and `k` the RS dimension (`degree + 1`).
+fn gao_decoding_common<F: Field>(
+    n: usize,
     k: usize,
-    max_errs: usize,
+    max_errors: usize,
+    r: Poly<F>,
+    g: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
-    // in the literature we find (n, k, d) codes
-    // parameter k is called v in the NIST doc (the RS dimension)
-    // this means that n is the number of points xi for which we have some values yi
-    // yi ~= G(xi))
-    // where deg(G) <= k-1
-    let n = points.len();
-
-    // d = n-k+1
+    // d = n - k + 1
     let d = (n + 1)
         .checked_sub(k)
         .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
 
-    // sanity checks for parameter sizes
-    if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: mismatch between number of values and points".to_string(),
-        ));
-    }
-
-    // We are expecting to correct more than what can be done
+    // We are expecting to correct more than what can be done:
     // Gao can only correct up to (d-1)/2 errors
-    if 2 * max_errs >= d {
+    if 2 * max_errors >= d {
         return Err(anyhow_error_and_log(
             "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
         ));
     }
 
-    // R \in GF(256)[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
-    let r = lagrange_interpolation(points, values)?;
+    // apply EEA to compute q0, q1 such that
+    // q1 = gcd(g, r) = g * t + r * q0, with q1 | g and q1 | r.
+    // q1 and q0 are called g(x) and v(x), respectively, in the Gao paper.
+    // q0 = v(x) is the error locator polynomial; its roots are the error positions xi.
+    let gcd_stop = (n + k) / 2;
 
-    // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
-    // note that deg(G) >= deg(R)
-    let mut g = Poly::one();
-    for xi in points.iter() {
-        let fi = Poly {
-            coefs: vec![-*xi, F::ONE],
+    // The "honest parties" fast path: if the interpolant through all n points already has degree below the Gao stop
+    // bound it *is* the message — any polynomial that low-degree and consistent with all n points must equal G when the
+    // error count is within the correctable bound. partial_xgcd would return (r, 1).
+    if r.deg() < gcd_stop {
+        return if r.deg() >= k {
+            Err(anyhow_error_and_log(format!(
+                "Gao decoding failure: Division result is of too high degree {}, but should be at most {}.",
+                r.deg(),
+                k - 1
+            )))
+        } else {
+            Ok(r)
         };
-        g = g * fi;
     }
 
-    // apply EEA to compute q0, q1 such that
-    // q1 = gcd(g, r) = g * t + r * q0
-    // q1 | g, q1 | r
-    // q1 and q0 are called g(x) and v(x), respectively in the Gao paper.
-    // q0 = v(x) is the error locator polynomial. Its roots are the error positions xi.
-    let gcd_stop = (n + k) / 2;
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
     // abort early if we have too many errors
-    if q0.deg() > max_errs {
+    if q0.deg() > max_errors {
         return Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.",
+            "Gao decoding failure: Allowed at most {max_errors} errors but xgcd factor degree indicates {}.",
             q0.deg()
         )));
     }
 
     // h is called f_1(x) in the Gao paper.
-    let (h, rem) = q1 / &q0;
+    let (h, rem) = if q0.deg() == 0 && q0.coef(0) != F::ZERO {
+        // q0 is a nonzero constant c (the common no-error case: the xgcd cofactor is the unit poly).
+        // Then q1 / q0 = q1 * c⁻¹ exactly, with zero remainder — divide by the scalar in place
+        // instead of allocating a fresh quotient via long division.
+        (q1 / &q0.coef(0), Poly::zero())
+    } else {
+        q1 / &q0
+    };
 
     if !rem.is_zero() {
         Err(anyhow_error_and_log(format!(
@@ -726,14 +750,88 @@ pub fn gao_decoding<F: Field>(
     }
 }
 
+//NIST: Level Zero Operation
+/// Runs Gao decoding algorithm.
+///
+/// - `points` holds the x-coordinates
+/// - `values` holds the y-coordinates
+/// - `k` such that we apply error correction to a polynomial of degree < k
+///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
+/// - `max_errors` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
+///
+/// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
+pub fn gao_decoding<F: Field>(
+    points: &[F],
+    values: &[F],
+    k: usize,
+    max_errors: usize,
+) -> anyhow::Result<Poly<F>> {
+    // in the literature we find (n, k, d) codes
+    // parameter k is called v in the NIST doc (the RS dimension)
+    // this means that n is the number of points xi for which we have some values yi
+    // yi ~= G(xi)), where deg(G) <= k-1
+    let n = points.len();
+
+    // sanity check for parameter sizes
+    if values.len() != points.len() {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure: mismatch between number of values and points".to_string(),
+        ));
+    }
+
+    // R \in F[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
+    let r = lagrange_interpolation(points, values)?;
+
+    // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
+    // note that deg(G) >= deg(R)
+    let mut g = Poly::one();
+    for xi in points.iter() {
+        let fi = Poly {
+            coefs: vec![-*xi, F::ONE],
+        };
+        g = g * fi;
+    }
+
+    gao_decoding_common(n, k, max_errors, r, &g)
+}
+
+/// Like [`gao_decoding`] but reuses precomputed Lagrange polynomials and the vanishing polynomial
+/// from [`FieldHints`](crate::error_correction::FieldHints).
+///
+/// The caller must ensure that `lagrange_polys` and `vanishing_poly` were built from the same
+/// `points` slice passed here.
+pub fn gao_decoding_with_field_hints<F: Field>(
+    points: &[F],
+    values: &[F],
+    k: usize,
+    max_errors: usize,
+    lagrange_polys: &[Poly<F>],
+    vanishing_poly: &Poly<F>,
+) -> anyhow::Result<Poly<F>> {
+    let n = points.len();
+
+    if values.len() != points.len() {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure: mismatch between number of values and points".to_string(),
+        ));
+    }
+
+    // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
+    let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
+
+    // partial_xgcd only clones "G" if the EEA loop actually runs, which is quite rare.
+    gao_decoding_common(n, k, max_errors, r, vanishing_poly)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error_correction::MemoizedExceptionals;
+    use crate::error_correction::{FieldHints, MemoizedExceptionals};
     use crate::galois_fields::gf16::GF16;
     use crate::galois_rings::degree_4::ResiduePolyF4Z128;
     use proptest::prelude::*;
     use rstest::rstest;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_lagrange_mod2() {
@@ -811,15 +909,21 @@ mod tests {
         let f = Poly {
             coefs: vec![GF16::from(7), GF16::from(13), GF16::from(2)],
         };
-        let xs = vec![
-            GF16::from(2),
-            GF16::from(3),
-            GF16::from(4),
-            GF16::from(5),
-            GF16::from(6),
-            GF16::from(7),
-            GF16::from(8),
+        let roles = vec![
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+            Role::indexed_from_one(4),
+            Role::indexed_from_one(5),
+            Role::indexed_from_one(6),
+            Role::indexed_from_one(7),
+            Role::indexed_from_one(8),
         ];
+
+        let xs = roles
+            .iter()
+            .map(|r| GF16::from(r.one_based() as u8))
+            .collect::<Vec<_>>();
+
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
 
         tracing::debug!(
@@ -835,6 +939,18 @@ mod tests {
         ys[1] += GF16::from(4);
         let polynomial = gao_decoding(&xs, &ys, f.coefs.len(), 2).unwrap();
         assert_eq!(polynomial.eval(&GF16::from(0)), GF16::from(7));
+
+        let field_hint = FieldHints::new(&roles).unwrap();
+        let polynomial_with_hint = gao_decoding_with_field_hints(
+            &xs,
+            &ys,
+            f.coefs.len(),
+            2,
+            &field_hint.lagrange_polys,
+            &field_hint.vanishing_poly,
+        )
+        .unwrap();
+        assert_eq!(polynomial_with_hint.eval(&GF16::from(0)), GF16::from(7));
     }
 
     #[test]
@@ -842,20 +958,41 @@ mod tests {
         let f = Poly {
             coefs: vec![GF16::from(7), GF16::from(3), GF16::from(8)],
         };
-        let xs = vec![
-            GF16::from(2),
-            GF16::from(3),
-            GF16::from(4),
-            GF16::from(5),
-            GF16::from(6),
-            GF16::from(7),
+        let roles = vec![
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+            Role::indexed_from_one(4),
+            Role::indexed_from_one(5),
+            Role::indexed_from_one(6),
+            Role::indexed_from_one(7),
         ];
+
+        let xs = roles
+            .iter()
+            .map(|r| GF16::from(r.one_based() as u8))
+            .collect::<Vec<_>>();
+
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
         // adding two errors
         ys[0] += GF16::from(2);
         ys[1] += GF16::from(5);
         let r = gao_decoding(&xs, &ys, 3, 1).unwrap_err().to_string();
         assert!(r.contains(
+            "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
+        ));
+
+        let field_hint = FieldHints::new(&roles).unwrap();
+        let r_with_hint = gao_decoding_with_field_hints(
+            &xs,
+            &ys,
+            3,
+            1,
+            &field_hint.lagrange_polys,
+            &field_hint.vanishing_poly,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(r_with_hint.contains(
             "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
         ));
     }

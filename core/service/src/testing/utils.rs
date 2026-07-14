@@ -367,11 +367,13 @@ pub async fn compute_cipher_from_stored_key(
     };
 
     // compute_cipher can take a long time since it may do SnS
-    let (send, recv) = tokio::sync::oneshot::channel();
-    rayon::spawn_fifo(move || {
-        let _ = send.send(compute_cipher(msg, &pk, Some(server_key), enc_config));
-    });
-    recv.await.unwrap()
+    // Use a tokio spawn_blocking instead of rayon because computer_cipher sets
+    // the server key which is a thread global variable using RefCell in tfhe
+    // and if the key is reset in another rayon thread while compute_cipher is running,
+    // it can cause a panic due to the RefCell borrow rules.
+    tokio::task::spawn_blocking(move || compute_cipher(msg, &pk, Some(server_key), enc_config))
+        .await
+        .unwrap()
 }
 
 /// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
@@ -643,6 +645,50 @@ pub mod setup {
         )
         .await;
     }
+}
+
+/// Poll a non-blocking KMS `get_*_result` endpoint until it yields a terminal result.
+///
+/// The result endpoints return [`tonic::Code::Unavailable`] while the background
+/// task (keygen, CRS gen, decryption, …) is still running. This helper repeatedly
+/// invokes `fetch` — which must issue a single `get_*_result` request — retrying
+/// with a short delay while the response is `Unavailable`, and returns the first
+/// terminal outcome (a success, or any non-`Unavailable` error), mirroring how
+/// real clients poll.
+/// use [`poll_result_until_ready_with_max_tries`].
+pub async fn poll_result_until_ready<T, Fut, F>(
+    fetch: F,
+) -> Result<tonic::Response<T>, crate::engine::utils::MetricedError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<
+            Output = Result<tonic::Response<T>, crate::engine::utils::MetricedError>,
+        >,
+{
+    poll_result_until_ready_with_max_tries(crate::consts::MAX_TRIES, fetch).await
+}
+
+/// Like [`poll_result_until_ready`] but with an explicit attempt budget (100ms
+/// apart), for genuinely long-running operations whose background task can far
+/// outlast the default [`crate::consts::MAX_TRIES`] window.
+pub async fn poll_result_until_ready_with_max_tries<T, Fut, F>(
+    max_tries: usize,
+    mut fetch: F,
+) -> Result<tonic::Response<T>, crate::engine::utils::MetricedError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<
+            Output = Result<tonic::Response<T>, crate::engine::utils::MetricedError>,
+        >,
+{
+    for _ in 0..max_tries {
+        let res = fetch().await;
+        if !matches!(&res, Err(e) if e.code() == tonic::Code::Unavailable) {
+            return res;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("result endpoint never became ready after {max_tries} attempts");
 }
 
 // NOTE: this test stays out of the setup module

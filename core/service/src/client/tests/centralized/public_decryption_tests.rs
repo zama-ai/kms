@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::common::assert_plaintext;
+use crate::client::tests::common::{PollConfig, assert_plaintext, retrying_poll};
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
@@ -238,33 +238,21 @@ pub(crate) async fn run_decryption_centralized(
     let mut resp_tasks = JoinSet::new();
     for req in &reqs {
         let req_id_clone = req.request_id.as_ref().unwrap().clone();
-        let mut cur_client = kms_client.clone();
+        let cur_client = kms_client.clone();
         resp_tasks.spawn(async move {
-            // Sleep initially to give the server some time to complete the decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-            // send query
-            let mut response = cur_client
-                .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                .await;
-
-            // retry counter
-            let mut ctr = 0_u64;
-
-            // retry while decryption is not finished, wait between retries and only up to a maximum number of retries
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                // we may wait up to 50s for tests (include slow profiles), for big ciphertexts
-                if ctr >= 1000 {
-                    panic!("timeout while waiting for decryption result");
-                }
-                ctr += 1;
-                response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-            }
+            // Retry while decryption is not finished: poll after an initial delay,
+            // then every 50ms for up to 1000 tries (~50s, covers slow profiles and
+            // big ciphertexts).
+            let response = retrying_poll(
+                cur_client,
+                req_id_clone.clone(),
+                "public decryption result",
+                PollConfig::default(),
+                |client, request| {
+                    Box::pin(async move { client.get_public_decryption_result(request).await })
+                },
+            )
+            .await;
 
             // we have a valid response or some error happened, return this
             (req_id_clone, response.unwrap().into_inner())

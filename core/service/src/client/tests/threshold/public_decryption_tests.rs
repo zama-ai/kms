@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -112,15 +113,16 @@ async fn test_decryption_threshold_precompute_sns(
     .await;
 }
 
-#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
 ) {
     decryption_threshold(
         DEFAULT_PARAM,
@@ -133,7 +135,7 @@ async fn default_decryption_threshold(
         parallelism,
         amount_parties,
         None,
-        None,
+        Some(decryption_mode),
     )
     .await;
 }
@@ -202,6 +204,7 @@ pub async fn decryption_threshold(
     decryption_mode: Option<DecryptionMode>,
 ) {
     assert!(parallelism > 0);
+
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * parallelism,
         pub_decrypt: 100,
@@ -312,7 +315,6 @@ pub async fn run_decryption_threshold_optionally_fail(
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
-    let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             data_root_path,
@@ -329,7 +331,6 @@ pub async fn run_decryption_threshold_optionally_fail(
             external_handle: i.to_be_bytes().to_vec(),
         };
         cts.push(ctt);
-        bits += msg.bits() as u64;
     }
 
     // make parallel requests by calling [decrypt] in a thread
@@ -402,36 +403,19 @@ pub async fn run_decryption_threshold_optionally_fail(
             continue;
         }
         for req in &reqs {
-            let mut cur_client = kms_clients.get(i).unwrap().clone();
+            let cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
-                // Sleep to give the server some time to complete decryption
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    100 * bits * parallelism as u64,
-                ))
+                let response = retrying_poll(
+                    cur_client,
+                    req_id_clone.clone(),
+                    "public decryption result",
+                    PollConfig::default(),
+                    |client, request| {
+                        Box::pin(async move { client.get_public_decryption_result(request).await })
+                    },
+                )
                 .await;
-
-                let mut response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-                let mut ctr = 0u64;
-                while response.is_err()
-                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                {
-                    // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        4 * bits.clamp(100, 1000),
-                    ))
-                    .await;
-                    // do at most 600 retries (stop after max. 10 minutes for large types)
-                    if ctr >= 600 {
-                        panic!("timeout while waiting for decryption");
-                    }
-                    ctr += 1;
-                    response = cur_client
-                        .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                }
                 (req_id_clone, response.unwrap().into_inner())
             });
         }

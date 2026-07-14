@@ -55,7 +55,7 @@ use kms_lib::{
     },
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
-        context::{ContextInfo, NodeInfo, SoftwareVersion},
+        context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
     util::key_setup::FhePublicKey,
@@ -65,6 +65,7 @@ use rand::RngCore;
 use rand::SeedableRng;
 use std::{
     collections::{BTreeMap, HashMap},
+    fs::File,
     path::Path,
     sync::Arc,
 };
@@ -117,13 +118,13 @@ fn test_typed_plaintext(
     let original: TypedPlaintext = match format {
         DataFormat::Bincode => {
             let path = dir.join(format!("{}.bincode", test.test_filename()));
-            let bytes = std::fs::read(&path).map_err(|e| {
+            let file = File::open(&path).map_err(|e| {
                 test.failure(
                     format!("Failed to read file {}: {}", path.display(), e),
                     format,
                 )
             })?;
-            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
+            bc2wrap::deserialize_from(file).map_err(|e| {
                 test.failure(
                     format!("Failed to deserialize TypedPlaintext: {}", e),
                     format,
@@ -453,13 +454,13 @@ fn test_signcryption_payload(
     let original: SigncryptionPayload = match format {
         DataFormat::Bincode => {
             let path = dir.join(format!("{}.bincode", test.test_filename()));
-            let bytes = std::fs::read(&path).map_err(|e| {
+            let file = File::open(&path).map_err(|e| {
                 test.failure(
                     format!("Failed to read file {}: {}", path.display(), e),
                     format,
                 )
             })?;
-            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
+            bc2wrap::deserialize_from(file).map_err(|e| {
                 test.failure(
                     format!("Failed to deserialize SigncryptionPayload: {}", e),
                     format,
@@ -719,12 +720,12 @@ fn test_context_info(
     let node_info = NodeInfo {
         mpc_identity: "Staoshi Nakamoto".to_string(),
         party_id: 42,
-        verification_key: None,
+        signer_address: None,
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
         public_storage_prefix: Some("PUB".to_string()),
-        extra_verification_keys: vec![],
+        extra_signer_addresses: vec![],
     };
     let software_version = SoftwareVersion {
         major: 2,
@@ -770,12 +771,12 @@ fn test_node_info(
     let new_versionized = NodeInfo {
         mpc_identity: test.mpc_identity.to_string(),
         party_id: test.party_id,
-        verification_key: Some(verf_key),
+        signer_address: Some(SignerAddress(verf_key.address())),
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
         public_storage_prefix: Some(test.public_storage_prefix.to_string()),
-        extra_verification_keys: vec![verf_key2],
+        extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
     };
 
     if original_versionized != new_versionized {
@@ -889,6 +890,7 @@ fn test_internal_recovery_request(
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let (verification_key, _signing_key) = gen_sig_keys(&mut rng);
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.amount {
         let cur_role = Role::indexed_from_one(role_j as usize);
@@ -901,7 +903,7 @@ fn test_internal_recovery_request(
         };
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
-    let new_versionized = InternalRecoveryRequest::new(enc_key, cts).unwrap();
+    let new_versionized = InternalRecoveryRequest::new(enc_key, verification_key, cts).unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -915,12 +917,20 @@ fn test_internal_recovery_request(
     }
 }
 
+/// Fixed timestamp used by the v0.14.0 generator for the custodian fixtures. Must match
+/// `fixed_fixture_timestamp` in `backward-compatibility/generate-v0.14.0/src/data_0_14.rs`
+/// so that regenerated, deterministic fixtures compare equal to what we rebuild here.
+fn fixed_fixture_timestamp() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
+}
+
 fn test_internal_custodian_context(
     dir: &Path,
     test: &InternalCustodianContextTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: InternalCustodianContext = load_and_unversionize(dir, test, format)?;
+
     let enc_key: UnifiedPublicEncKey =
         load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
@@ -938,7 +948,7 @@ fn test_internal_custodian_context(
             custodian_role: cus_role,
             name: format!("role{role_j}"),
             random_value: rnd,
-            timestamp: 42,
+            timestamp: fixed_fixture_timestamp(),
             public_enc_key: cus_enc_key,
             public_verf_key: custodian_verf_key,
         };
@@ -1140,11 +1150,10 @@ fn test_internal_custodian_message(
     let (dec_key, enc_key) = enc.keygen().unwrap();
     let custodian =
         Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
-    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
-
-    // the timestamp will never match, so we modify it manually
-    // the timestamp also affects the signature, so modify it as well
-    new_custodian_setup_message.timestamp = original_custodian_setup_message.timestamp;
+    // Use the same fixed timestamp the generator uses so the rebuilt message matches the
+    // deterministic on-disk fixture exactly.
+    let new_custodian_setup_message =
+        custodian.generate_setup_message_with_timestamp(&mut rng, name, fixed_fixture_timestamp());
 
     if original_custodian_setup_message != new_custodian_setup_message {
         Err(test.failure(

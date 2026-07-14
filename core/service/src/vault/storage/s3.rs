@@ -3,17 +3,6 @@ use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
 use aws_sdk_s3::{Client as S3Client, error::ProvideErrorMetadata, primitives::ByteStream};
-use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
-use aws_smithy_runtime_api::{
-    box_error::BoxError,
-    client::{
-        interceptors::{Intercept, context::BeforeTransmitInterceptorContextMut},
-        runtime_components::RuntimeComponents,
-    },
-};
-use aws_smithy_types::config_bag::ConfigBag;
-use http_legacy::{HeaderValue, header::HOST};
-use hyper_rustls::HttpsConnectorBuilder;
 use kms_grpc::{RequestId, identifiers::EpochId};
 use serde::{Serialize, de::DeserializeOwned};
 #[cfg(test)]
@@ -149,7 +138,11 @@ impl S3Storage {
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
+        let size = buf.len() as f64;
         s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
+
+        // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
 
         Ok(())
     }
@@ -469,32 +462,6 @@ impl StorageExt for S3Storage {
     }
 }
 
-/// Accessing AWS S3 endpoints through a proxy might require rewriting the Host
-/// HTTP header. We use the AWS SDK interceptor mechanism to do that.
-#[derive(Debug)]
-struct HostHeaderInterceptor {
-    host: String,
-}
-
-impl Intercept for HostHeaderInterceptor {
-    fn name(&self) -> &'static str {
-        "HostHeaderInterceptor"
-    }
-
-    fn modify_before_signing(
-        &self,
-        context: &mut BeforeTransmitInterceptorContextMut<'_>,
-        _runtime_components: &RuntimeComponents,
-        _cfg: &mut ConfigBag,
-    ) -> Result<(), BoxError> {
-        context
-            .request_mut()
-            .headers_mut()
-            .insert(HOST, HeaderValue::from_str(self.host.as_str())?);
-        Ok(())
-    }
-}
-
 /// Split an S3 URL into its protocol, domain and bucket name.
 /// For example:
 /// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will be split into
@@ -606,52 +573,20 @@ pub async fn build_anonymous_s3_client(
     Ok(S3Client::from_conf(s3_config))
 }
 
-/// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
-/// enclave.
+/// Constructs an S3 client for use inside of a Nitro enclave.
 pub async fn build_s3_client(
     aws_sdk_config: &SdkConfig,
     aws_s3_endpoint: Option<Url>,
 ) -> anyhow::Result<S3Client> {
-    let region = aws_sdk_config.region().expect("AWS region must be set");
     let s3_config = match aws_s3_endpoint {
-        Some(p) => {
-            // Overrides the hostname checked by the AWS API endpoint
-            let host_header_interceptor = HostHeaderInterceptor {
-                host: format!("s3.{region}.amazonaws.com"),
-            };
-            match p.scheme() {
-                "https" => {
-                    let https_connector = HttpsConnectorBuilder::new()
-                        .with_native_roots()
-                        .https_only()
-                        // Overrides the hostname checked during the TLS handshake
-                        .with_server_name(format!("s3.{region}.amazonaws.com"))
-                        .enable_http1()
-                        .build();
-                    let http_client = HyperClientBuilder::new().build(https_connector);
-                    aws_sdk_s3::config::Builder::from(aws_sdk_config)
-                        // Overrides the hostname used for the TCP connection
-                        .endpoint_url(p)
-                        .interceptor(host_header_interceptor)
-                        .http_client(http_client)
-                        // Virtual-hosting style S3 URLs don't work well with endpoint overrides
-                        .force_path_style(true)
-                        .build()
-                }
-                "http" => {
-                    aws_sdk_s3::config::Builder::from(aws_sdk_config)
-                        // Overrides the hostname used for the TCP connection
-                        .endpoint_url(p)
-                        .interceptor(host_header_interceptor)
-                        // Virtual-hosting style S3 URLs don't work well with endpoint overrides
-                        .force_path_style(true)
-                        .build()
-                }
-                _ => {
-                    anyhow::bail!("Only HTTP and HTTPS URL schemes are supported for S3 endpoints")
-                }
-            }
-        }
+        Some(p) => match p.scheme() {
+            "https" | "http" => aws_sdk_s3::config::Builder::from(aws_sdk_config)
+                .endpoint_url(p)
+                // Virtual-hosting style S3 URLs don't work well with endpoint overrides.
+                .force_path_style(true)
+                .build(),
+            _ => anyhow::bail!("Only HTTP and HTTPS URL schemes are supported for S3 endpoints"),
+        },
         None => aws_sdk_s3::config::Builder::from(aws_sdk_config).build(),
     };
     Ok(S3Client::from_conf(s3_config))
@@ -802,7 +737,7 @@ mod tests {
     use crate::vault::storage::tests::{
         test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
         test_store_bytes_does_not_overwrite_existing_bytes,
-        test_store_data_does_not_overwrite_existing_data,
+        test_store_data_does_not_overwrite_existing_data, test_store_data_records_payload_size,
     };
 
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
@@ -825,6 +760,7 @@ mod tests {
             create_s3_storage(StorageType::PUB, std::stringify!(s3_storage_helper_methods)).await;
         test_storage_read_store_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
+        test_store_data_records_payload_size(&mut pub_storage).await;
     }
 
     #[tokio::test]

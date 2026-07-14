@@ -199,7 +199,7 @@ jobs:
       # nightly_* and nightly_full_gen_tests_* are intentionally included here
       # (they're skipped only in the regular-CI profile via --skip).
       args-tests: >-
-        --features threshold_tests -- --skip k8s_ --skip isolated_test_example
+        --features slow_tests -- --skip k8s_ --skip isolated_test_example
         --skip test_threshold_mpc_context_switch_6_docker
       nextest-profile: 'ci-nightly'
       runs-on: '64cpu-linux-x64'
@@ -310,6 +310,8 @@ jobs:
       - test-workspace-crates
       - test-wasm
     uses: ./.github/workflows/test-reporter.yml
+    with:
+      initial-workflow: 'main'
     permissions:
       checks: write # Required to create GitHub checks for test results
       packages: read # Required to read GitHub packages/container registry

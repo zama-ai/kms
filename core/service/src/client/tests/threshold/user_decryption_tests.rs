@@ -1,4 +1,5 @@
 use crate::client::client_wasm::{Client, ServerIdentities};
+use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
@@ -450,37 +451,19 @@ pub(crate) async fn user_decryption_threshold(
             if party_ids_to_crash.contains(&Role::indexed_from_one(i as usize)) {
                 continue;
             }
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let cur_client = kms_clients.get(&i).unwrap().clone();
             let req_id_clone = reqs.get(j).as_ref().unwrap().0.clone().request_id.unwrap();
-            let bits = msg.bits() as u64;
             resp_tasks.spawn(async move {
-                // Sleep to give the server some time to complete user decryption
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    100 * bits * parallelism as u64,
-                ))
+                let response = retrying_poll(
+                    cur_client,
+                    req_id_clone.clone(),
+                    "user decryption result",
+                    PollConfig::default(),
+                    |client, request| {
+                        Box::pin(async move { client.get_user_decryption_result(request).await })
+                    },
+                )
                 .await;
-                let mut response = cur_client
-                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-
-                let mut ctr = 0u64;
-                while response.is_err()
-                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                {
-                    // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        4 * bits.clamp(100, 1000),
-                    ))
-                    .await;
-                    // do at most 600 retries (stop after max. 10 minutes for large types)
-                    if ctr >= 600 {
-                        panic!("timeout while waiting for user decryption");
-                    }
-                    ctr += 1;
-                    response = cur_client
-                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                }
 
                 (req_id_clone, response)
             });

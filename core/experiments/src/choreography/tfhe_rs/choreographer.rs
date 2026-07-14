@@ -132,8 +132,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses
-                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_slice(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -185,8 +186,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses
-                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_slice(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -249,10 +251,10 @@ impl ChoreoRuntime {
         let pub_key = responses.pop().unwrap();
         // First try to deserialize into a compressed keyset
         // if it fails, try to deserialize into uncompressed keyset
-        let pub_key = match bc2wrap::deserialize_safe::<CompressedXofKeySet>(&pub_key) {
+        let pub_key = match bc2wrap::deserialize_slice::<CompressedXofKeySet>(&pub_key) {
             Ok(keyset) => KeySetMaybeCompressed::Compressed(keyset),
             Err(_) => {
-                let keyset = bc2wrap::deserialize_safe::<FhePubKeySet>(&pub_key)?;
+                let keyset = bc2wrap::deserialize_slice::<FhePubKeySet>(&pub_key)?;
                 KeySetMaybeCompressed::Uncompressed(keyset)
             }
         };
@@ -304,8 +306,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses
-                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_slice(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -366,8 +369,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses
-                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_slice(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -406,7 +410,7 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize_safe(
+                responses.push(bc2wrap::deserialize_slice(
                     &(response?.into_inner().plaintext),
                 )?);
             }
@@ -430,13 +434,8 @@ impl ChoreoRuntime {
         malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
-        let witness_dim = compute_witness_dim(
-            &dkg_params
-                .to_param()
-                .get_params_basics_handle()
-                .get_compact_pk_enc_params(),
-            None,
-        )? as u128;
+        let witness_dim =
+            compute_witness_dim(&dkg_params.to_param().compact_pk_enc_params(), None)? as u128;
         let crs_gen_params = bc2wrap::serialize(&CrsGenParams {
             session_id,
             witness_dim,
@@ -467,8 +466,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses
-                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_slice(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -507,7 +507,7 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize_safe(&(response?.into_inner()).crs).unwrap());
+                responses.push(bc2wrap::deserialize_slice(&(response?.into_inner()).crs).unwrap());
             }
         }
 
@@ -559,8 +559,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses
-                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_slice(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 

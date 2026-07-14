@@ -30,8 +30,11 @@ on:
         options:
           - 'threshold'
           - 'thresholdWithEnclave'
-          - 'centralized'
-          - 'centralizedWithEnclave'
+      client_logs:
+        description: 'Enable core-client tracing logs during perf tests (off by default; logging skews perf numbers)'
+        required: true
+        default: false
+        type: boolean
       fhe_params:
         description: 'FHE parameters for preprocessing and keygen'
         required: true
@@ -41,22 +44,19 @@ on:
           - 'Default'
           - 'Test'
       tls:
-        description: 'TLS enabled by default. Only available for thresholdWithEnclave'
+        description: 'TLS enabled. Only available for thresholdWithEnclave'
         required: true
-        default: true
+        default: false
         type: boolean
       kms_branch:
-        description: 'KMS branch (empty if you want to use a chart version)'
+        description: 'KMS chart source ref (optional; empty = Use workflow from ref)'
         required: false
         type: string
       kms_chart_version:
-        description: 'KMS chart version (use repository if you want to use a branch)'
+        description: 'KMS chart version (repository = use chart source ref)'
         required: true
-        type: choice
-        options:
-          - '1.4.17'
-          - 'repository'
-        default: '1.4.17'
+        type: string
+        default: 'repository'
       tkms_infra_chart_version:
         description: 'TKMS Infra chart version'
         required: true
@@ -115,6 +115,8 @@ jobs:
     needs: [docker-build]
     if: always() && !cancelled()
     name: performance-testing
+    permissions:
+      actions: read # Required to resolve the current job URL for Slack reports
     runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 1800
     steps:
@@ -142,10 +144,14 @@ jobs:
             echo "Using freshly built images from docker-build job"
             CORE_TAG="${DOCKER_BUILD_TAG}"
             CLIENT_TAG="${DOCKER_BUILD_TAG}"
+            TAG_SOURCE="docker-build output"
+            TAG_SOURCE_ENV="docker-build"
           else
             echo "Using provided image tags from inputs"
             CORE_TAG="${INPUT_CORE_TAG}"
             CLIENT_TAG="${INPUT_CLIENT_TAG}"
+            TAG_SOURCE="workflow inputs"
+            TAG_SOURCE_ENV="workflow-inputs"
           fi
 
           # Validate that we have image tags
@@ -153,13 +159,40 @@ jobs:
             echo "ERROR: No image tag available. Either build images or provide kms_core_image_tag"
             exit 1
           fi
+          if [[ -z "${CLIENT_TAG}" ]]; then
+            echo "ERROR: No client image tag available. Either build images or provide kms_core_client_image_tag"
+            exit 1
+          fi
 
-          echo "Core image tag: ${CORE_TAG}"
-          echo "Client image tag: ${CLIENT_TAG}"
+          echo "============================================================"
+          echo "KMS PERF IMAGE TAGS"
+          echo "============================================================"
+          echo "Source:                    ${TAG_SOURCE}"
+          echo "KMS Core image tag:        ${CORE_TAG}"
+          echo "KMS Core client image tag: ${CLIENT_TAG}"
+          echo ""
+          echo "Re-run without Docker build:"
+          echo "  Build new Docker images: unchecked"
+          echo "  KMS Core image tag: ${CORE_TAG}"
+          echo "  KMS Core client image tag: ${CLIENT_TAG}"
+          echo "============================================================"
+
+          {
+            echo "## KMS perf image tags"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source | \`${TAG_SOURCE}\` |"
+            echo "| KMS Core image tag | \`${CORE_TAG}\` |"
+            echo "| KMS Core client image tag | \`${CLIENT_TAG}\` |"
+            echo ""
+            echo "For a rerun without rebuilding, uncheck \`Build new Docker images\` and use the tags above."
+          } >> "$GITHUB_STEP_SUMMARY"
 
           {
             echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
+            echo "KMS_IMAGE_TAG_SOURCE=${TAG_SOURCE_ENV}"
           } >> "$GITHUB_ENV"
 
       # ======================================================================
@@ -169,6 +202,7 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
           TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
+          CLIENT_LOGS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.client_logs) || 'false' }}
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
@@ -178,6 +212,7 @@ jobs:
           {
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
             echo "TLS=${TLS}"
+            echo "CLIENT_LOGS=${CLIENT_LOGS}"
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
             echo "NAMESPACE=${NAMESPACE}"
@@ -197,7 +232,7 @@ jobs:
           ###################################################################
           # Set up path suffix based on deployment type
           ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Using enclave-enabled configuration..."
             echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
           else
@@ -205,9 +240,27 @@ jobs:
             echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
 
+      - name: Validate perf deployment selection
+        run: |
+          if [[ "${TLS}" == "true" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+            echo "ERROR: TLS is only supported for deployment_type=thresholdWithEnclave in performance-testing."
+            echo "Selected deployment_type=${DEPLOYMENT_TYPE}, tls=${TLS}."
+            echo "Set tls=false for non-enclave deployments, or choose thresholdWithEnclave."
+            exit 1
+          fi
+
+          if [[ "${DEPLOYMENT_TYPE}" != "threshold" && "${DEPLOYMENT_TYPE}" != "thresholdWithEnclave" ]]; then
+            echo "ERROR: performance-testing supports only threshold deployment types."
+            echo "Selected deployment_type=${DEPLOYMENT_TYPE}."
+            exit 1
+          fi
+          echo "Using user-decrypt rate KMS perf suite."
+
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
-      # helm pre-install hooks to time out on ImagePullBackOff.
+      # helm pre-install hooks to time out on ImagePullBackOff. Retry briefly
+      # because freshly-pushed GHCR images can take a moment to appear through
+      # the Harbor pull-through path used by the cluster.
       # ======================================================================
       - name: Verify image tags exist in registry
         env:
@@ -227,9 +280,21 @@ jobs:
           missing=0
           for img in "${images[@]}"; do
             echo "Checking ${img}..."
-            if docker manifest inspect "${img}" > /dev/null 2>&1; then
-              echo "  ✅ found"
-            else
+            found=0
+            for attempt in {1..12}; do
+              if docker manifest inspect "${img}" > /dev/null 2>&1; then
+                echo "  ✅ found"
+                found=1
+                break
+              fi
+
+              if [[ "${attempt}" -lt 12 ]]; then
+                echo "  not found yet (${attempt}/12); retrying in 5s..."
+                sleep 5
+              fi
+            done
+
+            if [[ "${found}" -ne 1 ]]; then
               echo "  ❌ not found in registry"
               missing=1
             fi
@@ -241,6 +306,17 @@ jobs:
             echo "image tags were actually pushed; otherwise re-run with build=true."
             exit 1
           fi
+
+          {
+            echo ""
+            echo "## Verified perf images"
+            echo ""
+            echo "| Image |"
+            echo "| --- |"
+            for img in "${images[@]}"; do
+              echo "| \`${img}\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ======================================================================
       # TOOLING SETUP
@@ -342,6 +418,11 @@ jobs:
             --kms-chart-version "${KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
+      - name: Capture network diagnostics before perf
+        if: always()
+        run: |
+          bash ci/scripts/collect_network_diagnostics.sh before-perf "${NAMESPACE}"
+
       # ======================================================================
       # PERFORMANCE TESTING
       # ======================================================================
@@ -350,6 +431,7 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           ###################################################################
           # Prepare and execute Argo workflow for performance testing
@@ -362,22 +444,68 @@ jobs:
           else
             TLS_STATUS="disabled"
           fi
+          if [[ "${CLIENT_LOGS}" == "true" ]]; then
+            CLIENT_LOGS_STATUS="enabled"
+          else
+            CLIENT_LOGS_STATUS="disabled"
+          fi
+
+          WORKFLOW_TEMPLATE="./ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml"
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            S3_CONFIG_MAP_NAME="kms-enclave-ci-1"
+          else
+            S3_CONFIG_MAP_NAME="kms-ci-1"
+          fi
+          EXTRA_SUBMIT_ARGS=(
+            -p "fhe-params=${FHE_PARAMS}"
+            -p "s3-config-map-name=${S3_CONFIG_MAP_NAME}"
+          )
+
           # Update the workflow template with the current image tag
-          echo "Updating workflow template with image tag: ${KMS_CORE_IMAGE_TAG}"
-          sed -i "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
-            ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml
+          echo "Using image tags: core=${KMS_CORE_IMAGE_TAG}, client=${KMS_CORE_CLIENT_IMAGE_TAG}"
+          echo "Updating workflow template ${WORKFLOW_TEMPLATE} — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
+          sed -i \
+            -e "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" \
+            -e "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
+            "${WORKFLOW_TEMPLATE}"
+
+          JOB_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+          JOB_LABEL="run ${RUN_ID}"
+          if command -v gh >/dev/null 2>&1; then
+            JOB_LINE="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs" --jq '.jobs[] | select(.name == "performance-testing") | "\(.id) \(.html_url)"' | head -n 1 || true)"
+            if [[ -n "${JOB_LINE}" ]]; then
+              JOB_ID="${JOB_LINE%% *}"
+              JOB_URL="${JOB_LINE#* }"
+              JOB_LABEL="job ${JOB_ID}"
+            fi
+          fi
+          echo "Slack report link: ${JOB_LABEL} (${JOB_URL})"
 
           echo "Submitting Argo workflow..."
           argo submit -n argo \
-            ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+            "${WORKFLOW_TEMPLATE}" \
             -p tls="${TLS_STATUS}" \
-            -p fhe-params="${FHE_PARAMS}" \
-            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+            -p client-logs="${CLIENT_LOGS_STATUS}" \
+            "${EXTRA_SUBMIT_ARGS[@]}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p job_url="${JOB_URL}" \
+            -p job_label="${JOB_LABEL}"
 
           echo "Streaming workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
 
+          workflow_phase=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '.status.phase')
+          echo "Argo workflow phase: ${workflow_phase}"
+          if [[ "${workflow_phase}" != "Succeeded" ]]; then
+            exit 1
+          fi
+
           echo "Workflow completed."
+
+      - name: Capture network diagnostics after perf
+        if: always()
+        run: |
+          bash ci/scripts/collect_network_diagnostics.sh after-perf "${NAMESPACE}"
 
       # ======================================================================
       # SAVE ARGO WORKFLOW LOGS
@@ -407,7 +535,7 @@ jobs:
 
             # Get pod logs and save to file
             if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" &> /dev/null; then
-              if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+              if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
                 kubectl logs "${POD_NAME}" -c kms-core-enclave-logger -n "${NAMESPACE}" > "${LOG_FILE}"
               else
                 kubectl logs "${POD_NAME}" -c kms-core -n "${NAMESPACE}" > "${LOG_FILE}"

@@ -23,10 +23,7 @@ use crate::{
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
-use sha3::{
-    Shake256,
-    digest::{ExtendableOutput, Update, XofReader},
-};
+use shake::{ExtendableOutput, Shake256, Update, XofReader};
 use std::marker::PhantomData;
 use std::num::Wrapping;
 use std::{
@@ -785,6 +782,15 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENS
     }
     fn from_i128(value: i128) -> Self {
         Self::from_scalar(Wrapping(value as u128))
+    }
+
+    fn mul_by_i128(self, scalar: i128) -> Self {
+        // from_i128(scalar) is a scalar poly (only coef[0] is nonzero),
+        // so the full multiply reduces to simply scaling each coefficient.
+        let zscalar = Wrapping(scalar as u128); // signed scalar interpreted modulo 2^128 (Z128's modulus)
+        Self {
+            coefs: self.coefs.map(|c| c * zscalar),
+        }
     }
 }
 

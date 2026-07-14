@@ -11,6 +11,12 @@ kmsCoreClient:
   image:
     tag: <version>
 
+kubeUtils:
+  image:
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.0
+    pullPolicy: Always
+
 kmsCore:
   image:
     name: hub.zama.org/ghcr/zama-ai/kms/core-service
@@ -38,6 +44,9 @@ kmsCore:
     maxInterval: 60
     initialIntervalMs: 100
     cleanupIntervalSecs: 2
+    # NOTE: these thread counts are also printed in the perf Slack report; they are hardcoded
+    # in the report's config line (ci/perf-testing/argo-workflow/*-workflow-*.yaml). Update them
+    # there too when changing these values, or the report will misstate the deployed config.
     tokioWorkerThreads: 10
     rayonNumThreads: 40
     # peersList is generated dynamically by deploy.sh and should not be set here
@@ -83,10 +92,11 @@ tracing:
   enabled: false
   endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
 
-socat:
-  image:
-    name: alpine/socat
-    tag: latest
+# NOTE: do NOT override socat.image with a stock image (e.g. alpine/socat). The
+# config init container (kms-core-init-load-env) runs `envsubst`, which
+# alpine/socat lacks — that silently emitted empty kms-*.toml and broke
+# non-enclave threshold deploys (gen-keys got no config). Inherit the chart
+# default (Zama socat, has envsubst), same as the enclave path.
 rustLog: info
 minio:
   enabled: false
@@ -121,7 +131,8 @@ kmsCoreClientTesting:
   # - fi
   # - key_id=$(cat /app/key-files/key-id.txt)
   # - crs_id=$(cat /app/key-files/crs-id.txt)
-  # - for i in 1 2 3 4 5; do echo "######################################################################"; echo "Launching public-decrypt with euint8"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint8 -k $key_id -e ff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint32"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint32 -k $key_id -e ffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint64"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint128"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint128 -k $key_id -e ffffffffffffffffffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint8"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint8 -k $key_id -e ff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint32"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint32 -k $key_id -e ffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint64"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint128"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint128 -k $key_id -e ffffffffffffffffffffffffffffffff --precompute-sns --num-requests 100; done
+  # - bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100
+  # - bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --rate 100 --duration 1 --max-in-flight 1000
 podSecurityContext:
   # To set when the image will support non root user
   runAsUser: 10003

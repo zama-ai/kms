@@ -122,32 +122,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Core client - aggressively sharded.
-          - job_name: core-client-threshold-p1
+          # Core client - threshold tests. Built with `slow_tests` so the heavy
+          # threshold tests (insecure, default preproc-keygen, 6-party context
+          # switch) run per-PR.
+          - job_name: core-client-threshold
             crate_names: '-p kms-core-client'
-            args_tests: '--features threshold_tests --partition count:1/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
-            run_minio: false
-            run_redis: false
-            skip_test_material: false
-            lfs: false
-            runs_on: '64cpu-linux-x64'
-            runner_volume: '200gb'
-            rust_log_level: 'error'
-            nextest_threads: '4'
-          - job_name: core-client-threshold-p2
-            crate_names: '-p kms-core-client'
-            args_tests: '--features threshold_tests --partition count:2/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
-            run_minio: false
-            run_redis: false
-            skip_test_material: false
-            lfs: false
-            runs_on: '64cpu-linux-x64'
-            runner_volume: '200gb'
-            rust_log_level: 'error'
-            nextest_threads: '4'
-          - job_name: core-client-threshold-p3
-            crate_names: '-p kms-core-client'
-            args_tests: '--features threshold_tests --partition count:3/3 -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_insecure'
+            args_tests: '--features slow_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker'
             run_minio: false
             run_redis: false
             skip_test_material: false
@@ -224,22 +204,6 @@ jobs:
             runner_volume: '200gb'
             rust_log_level: 'error'
             nextest_threads: '4'
-          #======================================================================
-          # `test_threshold_insecure_default_keygen` is intentionally NOT run
-          # per-PR (skipped here, and the threshold-* partitions skip the whole
-          # `test_threshold_insecure` group). It is still covered by the nightly
-          # `test-core-client-nightly` job in main.yml.
-          - job_name: core-client-insecure
-            crate_names: '-p kms-core-client'
-            args_tests: '--features threshold_tests --partition count:1/1 -- test_threshold_insecure --skip test_threshold_insecure_default_keygen --skip test_threshold_mpc_context_switch_6_docker'
-            run_minio: false
-            run_redis: false
-            skip_test_material: false
-            lfs: false
-            runs_on: '64cpu-linux-x64'
-            runner_volume: '200gb'
-            rust_log_level: 'error'
-            nextest_threads: '1'
           #======================================================================
           # Core service - aggressively sharded by family and partition.
           - job_name: core-service-lib-p1
@@ -547,6 +511,8 @@ jobs:
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs: [test-matrix]
     uses: ./.github/workflows/test-reporter.yml
+    with:
+      initial-workflow: 'parallel-testing'
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry

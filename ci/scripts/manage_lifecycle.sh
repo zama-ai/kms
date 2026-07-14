@@ -33,6 +33,14 @@ start_setup() {
         TLS_FLAG="--enable-tls"
     fi
 
+    # Build metrics flag if enabled (installs kube-prometheus-stack and remote-writes
+    # KMS metrics to Grafana Cloud). Grafana Cloud credentials are passed through the
+    # environment (GRAFANA_CLOUD_PROM_*) and consumed by deploy.sh, so no extra args.
+    local METRICS_FLAG=""
+    if [[ "${ENABLE_KIND_METRICS:-false}" == "true" ]]; then
+        METRICS_FLAG="--enable-metrics"
+    fi
+
     # Use the new Unified Deploy Script
     # Note: We use --block to ensure it keeps running (for port forwards)
     # We map old args to new args
@@ -43,7 +51,7 @@ start_setup() {
         --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
         --num-parties "${NUM_PARTIES:-4}" \
         --block \
-        ${TLS_FLAG} > "${SETUP_LOG}" 2>&1 &
+        ${TLS_FLAG} ${METRICS_FLAG} > "${SETUP_LOG}" 2>&1 &
 
     SETUP_PID=$!
 
@@ -60,7 +68,12 @@ start_setup() {
 
     # Wait for setup to complete
     echo "Waiting for KMS setup to complete..."
+    # Base 10 min budget; allow extra time when metrics are enabled because the
+    # kube-prometheus-stack install runs on the critical path before deploy_kms.
     TIMEOUT=600  # 10 minutes timeout
+    if [[ "${ENABLE_KIND_METRICS:-false}" == "true" ]]; then
+        TIMEOUT=900  # 15 minutes when kube-prometheus-stack is installed
+    fi
     ELAPSED=0
 
     while [ $ELAPSED -lt $TIMEOUT ]; do

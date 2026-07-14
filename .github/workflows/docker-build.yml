@@ -100,6 +100,45 @@ jobs:
       golden_tag: ${{ steps.compute.outputs.golden_tag }}
       cache_hit: ${{ steps.lookup.outputs.cache_hit }}
     steps:
+      - name: KMS Docker image tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            TAG="${REF_NAME}"
+          elif [[ "${EVENT_NAME}" == "schedule" ]]; then
+            TAG="nightly-${COMMIT_HASH:0:7}"
+          else
+            TAG="${COMMIT_HASH:0:7}"
+          fi
+
+          echo "::notice title=KMS Docker image tag::core=${TAG}, core-client=${TAG}"
+          echo ""
+          echo "============================================================"
+          echo "KMS DOCKER IMAGE TAG"
+          echo "============================================================"
+          echo "KMS Core image tag:        ${TAG}"
+          echo "KMS Core client image tag: ${TAG}"
+          echo ""
+          echo "Perf rerun fields:"
+          echo "  Build new Docker images: unchecked"
+          echo "  KMS Core image tag: ${TAG}"
+          echo "  KMS Core client image tag: ${TAG}"
+          echo "============================================================"
+
+          {
+            echo "## KMS Docker image tag"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| KMS Core image tag | \`${TAG}\` |"
+            echo "| KMS Core client image tag | \`${TAG}\` |"
+            echo ""
+            echo "For a perf rerun without rebuilding, uncheck \`Build new Docker images\` and use the tags above."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
       - name: Workaround CVE-2026-31431 (copy.fail)
         run: |
@@ -183,7 +222,7 @@ jobs:
     if: |
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -200,7 +239,6 @@ jobs:
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-      runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
       rust-toolchain-file-path: rust-toolchain.toml
       image-tag: ${{ needs.golden-image-tag.outputs.golden_tag }}
     secrets:
@@ -289,7 +327,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -310,7 +348,6 @@ jobs:
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-      runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
       rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -330,7 +367,7 @@ jobs:
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c763bfd499267cc33c2d68054e2d2b13f47ff6b0 # v1.0.10
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -351,7 +388,6 @@ jobs:
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-      runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
       rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -389,5 +425,3 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  ############################################################################

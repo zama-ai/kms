@@ -384,7 +384,7 @@ pub(crate) mod tests {
             let shamir_sharing_t = ShamirSharings::create(res_vec_t);
             let shamir_sharing_2t = ShamirSharings::create(res_vec_2t);
             //Expect at most 1 error from the dropout party
-            let res_t = shamir_sharing_t.err_reconstruct(threshold, 1);
+            let res_t = shamir_sharing_t.error_reconstruct(threshold, 1);
             //Here we needed to remove the corrupt party's share because of the pol. degree
             let res_2t = shamir_sharing_2t.reconstruct(2 * threshold);
             assert!(res_t.is_ok());

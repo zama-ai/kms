@@ -3,7 +3,10 @@ use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
+use crate::client::tests::common::{
+    PollConfig, keygen_config, retrying_poll, uncompressed_keygen_config,
+};
+use crate::client::tests::threshold::common::run_insecure_preproc;
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
@@ -19,8 +22,8 @@ use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
-use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY, INSECURE_PREPROCESSING_ID};
-use crate::engine::context::ContextInfo;
+use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY};
+use crate::engine::context::{ContextInfo, SignerAddress};
 use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
@@ -384,14 +387,21 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         "decrypt_after_recovery_threshold_key_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+    let preproc_id: RequestId = derive_request_id(&format!(
+        "decrypt_after_recovery_threshold_preproc_{n}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -545,14 +555,21 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         "decrypt_after_recovery_threshold_negative_key_{n}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+    let preproc_id: RequestId = derive_request_id(&format!(
+        "decrypt_after_recovery_threshold_negative_preproc_{n}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
 
     // Generate a key so we have FHE material to delete + recover.
     let (keyset_config, keyset_added_info) = keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -676,14 +693,19 @@ async fn test_keygen_backup_presence_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence_threshold", 3, 1).await;
     let req_key_id: RequestId =
         derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("test_keygen_backup_presence_threshold_preproc").unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -726,14 +748,19 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
         derive_request_id("test_custodian_reencryption_threshold_cus_b").unwrap();
     let req_key_id: RequestId =
         derive_request_id("test_custodian_reencryption_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("test_custodian_reencryption_threshold_preproc").unwrap();
 
     // Generate a key
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -832,7 +859,7 @@ async fn test_mpc_context_backup_threshold() {
             )
             .await
             .unwrap();
-            node.verification_key = Some(pk);
+            node.signer_address = Some(SignerAddress(pk.address()));
             node.external_url = format!("http://example.com:8080/party{}", node.party_id);
         }
         ctx
@@ -890,6 +917,8 @@ async fn test_backup_after_reshare_threshold() {
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
     let req_key_id: RequestId =
         derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("test_backup_after_reshare_threshold_preproc").unwrap();
     let crs_req: RequestId = derive_request_id("test_backup_after_reshare_threshold_crs").unwrap();
     let new_epoch_id: EpochId = derive_request_id("test_backup_after_reshare_threshold_epoch")
         .unwrap()
@@ -897,11 +926,14 @@ async fn test_backup_after_reshare_threshold() {
 
     // Generate a key (so we have material to reshare)
     let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
     let (keyset, _) = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
         env.internal_client(),
-        &INSECURE_PREPROCESSING_ID,
+        &preproc_id,
         &req_key_id,
         keyset_config,
         keyset_added_info,
@@ -953,7 +985,7 @@ async fn test_backup_after_reshare_threshold() {
         epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         keys_info: vec![KeyInfo {
             key_id: Some(req_key_id.into()),
-            preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
+            preproc_id: Some(preproc_id.into()),
             key_parameters: FheParameter::Test.into(),
             key_digests: vec![
                 kms_grpc::kms::v1::KeyDigest {
@@ -996,24 +1028,17 @@ async fn test_backup_after_reshare_threshold() {
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
     for client in env.kms_clients().values() {
-        let mut client = client.clone();
-        let req_id = new_epoch_req_id;
-        let mut ctr = 0_usize;
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            let response = client
-                .get_epoch_result(tonic::Request::new(req_id.into()))
-                .await;
-            match response {
-                Ok(_) => break,
-                Err(e) if e.code() == tonic::Code::Unavailable => {
-                    ctr += 1;
-                    if ctr >= 50 {
-                        panic!("Timeout waiting for reshare to complete");
-                    }
-                }
-                Err(e) => panic!("Unexpected error polling epoch result: {e:?}"),
-            }
+        // Poll every 500ms for up to 50 tries before giving up.
+        if let Err(e) = retrying_poll(
+            client.clone(),
+            new_epoch_req_id.into(),
+            "reshare epoch result",
+            PollConfig::default(),
+            |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
+        )
+        .await
+        {
+            panic!("Failed waiting for reshare to complete: {e:?}");
         }
     }
 

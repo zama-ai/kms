@@ -1,6 +1,5 @@
 //! gRPC-based choreography for experimental features
-//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
-//! as this is meant for testing and benchmarking, and definitely not for production use.
+//! This is meant for testing and benchmarking, and definitely not for production use.
 
 use aes_prng::AesRng;
 use async_trait::async_trait;
@@ -275,7 +274,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -284,7 +283,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let prss_params: PrssInitParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse prss params: {e:?}"),
@@ -378,7 +377,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -386,7 +385,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_safe(&request.params)
+        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -485,7 +484,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -493,8 +492,8 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let kg_params: ThresholdKeyGenParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+        let kg_params: ThresholdKeyGenParams = bc2wrap::deserialize_slice(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen params: {e:?}"),
@@ -597,7 +596,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         let request = request.into_inner();
 
         let kg_result_params: ThresholdKeyGenResultParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
@@ -609,7 +608,7 @@ impl Choreography for ExperimentalGrpcChoreography {
 
         if gen_params {
             let role_assignment: HashMap<Role, Identity> =
-                bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+                bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
@@ -718,7 +717,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -726,7 +725,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: ThresholdDecryptParams = bc2wrap::deserialize_safe(&request.params)
+        let preproc_params: ThresholdDecryptParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -866,7 +865,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         request: tonic::Request<ThresholdDecryptResultRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
         let request = request.into_inner();
-        let session_id = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+        let session_id = bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -902,7 +901,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         request: tonic::Request<StatusCheckRequest>,
     ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
         let request = request.into_inner();
-        let sid: SessionId = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+        let sid: SessionId = bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),

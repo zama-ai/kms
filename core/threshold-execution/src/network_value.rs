@@ -194,12 +194,12 @@ impl<Z: Ring> NetworkValue<Z> {
         serialization_runtime: DeSerializationRunTime,
     ) -> anyhow::Result<Self> {
         match serialization_runtime {
-            DeSerializationRunTime::Tokio => bc2wrap::deserialize_safe::<Self>(&serialized?)
+            DeSerializationRunTime::Tokio => bc2wrap::deserialize_slice::<Self>(&serialized?)
                 .map_err(|_e| anyhow_error_and_log("failed to parse value")),
             DeSerializationRunTime::Rayon => {
                 // offload to rayon threadpool
                 spawn_compute_bound(move || {
-                    bc2wrap::deserialize_safe::<Self>(&serialized?)
+                    bc2wrap::deserialize_slice::<Self>(&serialized?)
                         .map_err(|_e| anyhow_error_and_log("failed to parse value"))
                 })
                 .await?

@@ -87,6 +87,17 @@ prefix = "PRIV-p1"
 path = "./backup_vault"
 prefix = "BACKUP-p1"
 
+# If backup is to be actively used in a secure manner, either the AWS KMS or custodian 
+# backup approach must be selected. Note that at most ONE of these can be selected:
+# --- 1. Custodian backup ---
+# The following variable MUST be enabled.
+# [backup_vault.keychain.secret_sharing]
+# --- 2. AWS KMS backup ---
+# The following variables MUST be set:
+# [backup_vault.keychain.aws_kms]
+# root_key_id = "zama_kms_backup_root_key"
+# root_key_spec = "asymm"
+
 # Configuration for communicating with other KMS nodes.
 # Not needed when running in centralized mode.
 [threshold]
