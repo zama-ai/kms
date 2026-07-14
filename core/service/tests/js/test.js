@@ -18,6 +18,7 @@ const {
     ml_kem_pke_pk_len,
     ml_kem_pke_sk_len,
     process_user_decryption_resp_from_js,
+    process_user_decryption_resp_solana_from_js,
     u8vec_to_ml_kem_pke_pk,
     u8vec_to_ml_kem_pke_sk,
     new_client,
@@ -145,6 +146,37 @@ test('threshold user decryption response', (_t) => {
     const pt3 = process_user_decryption_resp_from_js(
         client, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, null, true);
     assertExpected(pt3, data.expected);
+});
+
+test('solana chain ID crosses the WASM boundary as an exact bigint', (_t) => {
+    const { data, enc_pk, enc_sk } = loadVector('test-central-wasm-transcript.8.json');
+    const solanaChainId = (1n << 63n) | 12345n;
+    const handle = new Uint8Array(32).fill(0xab);
+    for (let i = 0; i < 8; i++) {
+        handle[29 - i] = Number((solanaChainId >> BigInt(i * 8)) & 0xffn);
+    }
+    assert.equal(Buffer.from(handle.slice(22, 30)).toString('hex'), '8000000000003039');
+    const request = {
+        ...data.request,
+        ciphertext_handles: [Buffer.from(handle).toString('hex')],
+    };
+    const pubkey = new Uint8Array(32).fill(0x11);
+
+    assert.throws(
+        () => process_user_decryption_resp_solana_from_js(
+            request, pubkey, solanaChainId, [], enc_pk, enc_sk),
+        /Response does not exist/,
+    );
+    assert.throws(
+        () => process_user_decryption_resp_solana_from_js(
+            request, pubkey, solanaChainId + 1n, [], enc_pk, enc_sk),
+        /does not match handle chain ID/,
+    );
+    assert.throws(
+        () => process_user_decryption_resp_solana_from_js(
+            request, pubkey, Number(solanaChainId), [], enc_pk, enc_sk),
+        TypeError,
+    );
 });
 
 test('new client', (_t) => {

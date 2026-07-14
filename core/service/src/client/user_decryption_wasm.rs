@@ -25,8 +25,8 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::compute_link_solana;
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::rpc_types::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::FheTypes;
@@ -39,6 +39,21 @@ use threshold_execution::tfhe_internals::parameters::AugmentedCiphertextParamete
 use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
+
+fn compute_solana_user_decrypt_link(
+    request: &ParsedUserDecryptionRequest,
+    solana_user_pubkey: &[u8; 32],
+    declared_chain_id: u64,
+) -> Result<Vec<u8>, SolanaUserDecryptBindingError> {
+    let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
+        request
+            .ciphertext_handles
+            .iter()
+            .map(|handle| handle.0.as_slice()),
+    )?;
+    binding.validate_declared_chain_id(declared_chain_id)?;
+    Ok(binding.compute_link(&request.enc_key, solana_user_pubkey))
+}
 
 impl Client {
     /// Processes the aggregated user decryption responses to attempt to decrypt
@@ -230,7 +245,8 @@ impl Client {
     ///
     /// Server authenticity is checked via the internal ECDSA signature over the response payload;
     /// the external EIP-712 certificate is the on-chain-consumable artifact and is not needed to
-    /// recover the plaintext client-side.
+    /// recover the plaintext client-side. Every handle must embed the same high-bit Solana chain
+    /// ID, and that ID must equal `host_chain_id`, before the link is computed.
     pub fn process_user_decryption_resp_solana(
         &self,
         request: &ParsedUserDecryptionRequest,
@@ -240,27 +256,10 @@ impl Client {
         dec_key: &UnifiedPrivateEncKey,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let link = compute_solana_user_decrypt_link(request, solana_user_pubkey, host_chain_id)?;
+
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
-
-        // Handles are 32 bytes on Solana; left-pad defensively to mirror the EVM consistency check.
-        let handles: Vec<[u8; 32]> = request
-            .ciphertext_handles
-            .iter()
-            .map(|c| {
-                let mut h = [0u8; 32];
-                let src = &c.0;
-                let take = src.len().min(32);
-                h[32 - take..].copy_from_slice(&src[src.len() - take..]);
-                h
-            })
-            .collect();
-        let link = compute_link_solana(
-            &request.enc_key,
-            &handles,
-            solana_user_pubkey,
-            host_chain_id,
-        );
         if link != payload.digest {
             return Err(anyhow_error_and_log(format!(
                 "solana link mismatch ({} != {})",
@@ -1065,6 +1064,71 @@ impl ParsedUserDecryptionRequest {
 
     pub fn extra_data(&self) -> &[u8] {
         &self.extra_data
+    }
+}
+
+#[cfg(test)]
+mod solana_request_link_tests {
+    use super::{
+        CiphertextHandle, ParsedUserDecryptionRequest, SolanaUserDecryptBindingError,
+        compute_solana_user_decrypt_link,
+    };
+
+    const SOLANA_CHAIN_ID: u64 = (1 << 63) | 12_345;
+
+    fn handle(chain_id: u64) -> Vec<u8> {
+        let mut handle = vec![0xabu8; 32];
+        handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
+        handle
+    }
+
+    fn request(handles: Vec<Vec<u8>>) -> ParsedUserDecryptionRequest {
+        ParsedUserDecryptionRequest::new(
+            None,
+            alloy_primitives::Address::ZERO,
+            vec![0x33; 64],
+            handles.into_iter().map(CiphertextHandle::new).collect(),
+            alloy_primitives::Address::ZERO,
+            vec![],
+        )
+    }
+
+    #[test]
+    fn validates_the_declared_chain_id_before_processing_a_response() {
+        let request = request(vec![handle(SOLANA_CHAIN_ID)]);
+        let pubkey = [0x11; 32];
+        assert_eq!(
+            compute_solana_user_decrypt_link(&request, &pubkey, SOLANA_CHAIN_ID)
+                .unwrap()
+                .len(),
+            32
+        );
+        assert_eq!(
+            compute_solana_user_decrypt_link(&request, &pubkey, SOLANA_CHAIN_ID + 1),
+            Err(SolanaUserDecryptBindingError::DeclaredChainIdMismatch {
+                declared: SOLANA_CHAIN_ID + 1,
+                embedded: SOLANA_CHAIN_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_handle_chain_ids_and_widths() {
+        let pubkey = [0x11; 32];
+        assert_eq!(
+            compute_solana_user_decrypt_link(&request(vec![handle(12_345)]), &pubkey, 12_345),
+            Err(SolanaUserDecryptBindingError::InvalidHandleChainId {
+                index: 0,
+                chain_id: 12_345,
+            })
+        );
+        assert_eq!(
+            compute_solana_user_decrypt_link(&request(vec![vec![0; 31]]), &pubkey, SOLANA_CHAIN_ID),
+            Err(SolanaUserDecryptBindingError::InvalidHandleLength {
+                index: 0,
+                actual: 31,
+            })
+        );
     }
 }
 
