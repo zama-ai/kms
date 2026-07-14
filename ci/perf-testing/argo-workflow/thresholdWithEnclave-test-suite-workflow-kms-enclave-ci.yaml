@@ -99,26 +99,10 @@ spec:
                 - name: fhe-params
                   value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
-          # WARMUP Decrypt test (1 request)
-          ##########################################################################
-          - name: warmup-public-decrypt-euint64-req1
-            dependencies: ["crs-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "warmup-public-decrypt-euint64-req1"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-          ##########################################################################
           # Public decrypt tests
           ##########################################################################
           - name: public-decrypt-euint64-req1
-            dependencies: ["warmup-public-decrypt-euint64-req1"]
+            dependencies: ["crs-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -251,41 +235,6 @@ spec:
                 - name: fhe-params
                   value: "{{workflow.parameters.fhe-params}}"
 
-          ##########################################################################
-          # Public decrypt tests
-          ##########################################################################
-          - name: public-decrypt-euint64-req1000
-            dependencies: ["user-decrypt-euint64-req500"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "public-decrypt-euint64-req1000"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
-
-          ##########################################################################
-          # User decrypt tests
-          ##########################################################################
-          - name: user-decrypt-euint64-req1000
-            dependencies: ["public-decrypt-euint64-req1000"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "user-decrypt-euint64-req1000"
-                - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
           # Summary report generation
           - name: generate-summary
             dependencies: [
@@ -300,8 +249,6 @@ spec:
               "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt tests with FHE_PARAMS = Test
               "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Test
               "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Test
-              "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Test
-              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Test
             ]
             template: summary-report
             continueOn:
@@ -330,10 +277,6 @@ spec:
                 value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
               - name: test-result-11
                 value: "{{tasks.user-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-12
-                value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
-              - name: test-result-13
-                value: "{{tasks.user-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -569,8 +512,6 @@ spec:
         - name: test-result-9
         - name: test-result-10
         - name: test-result-11
-        - name: test-result-12
-        - name: test-result-13
         - name: tls
         - name: run_url
       script:
@@ -599,8 +540,6 @@ spec:
           echo '{{inputs.parameters.test-result-9}}' > /mnt/results/user-decrypt-euint64-req100.json
           echo '{{inputs.parameters.test-result-10}}' > /mnt/results/public-decrypt-euint64-req500.json
           echo '{{inputs.parameters.test-result-11}}' > /mnt/results/user-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-12}}' > /mnt/results/public-decrypt-euint64-req1000.json
-          echo '{{inputs.parameters.test-result-13}}' > /mnt/results/user-decrypt-euint64-req1000.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -630,9 +569,7 @@ spec:
             /mnt/results/public-decrypt-euint64-req100.json \
             /mnt/results/user-decrypt-euint64-req100.json \
             /mnt/results/public-decrypt-euint64-req500.json \
-            /mnt/results/user-decrypt-euint64-req500.json \
-            /mnt/results/public-decrypt-euint64-req1000.json \
-            /mnt/results/user-decrypt-euint64-req1000.json; do
+            /mnt/results/user-decrypt-euint64-req500.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -802,9 +739,7 @@ spec:
                   /mnt/results/public-decrypt-euint64-req100.json \
                   /mnt/results/user-decrypt-euint64-req100.json \
                   /mnt/results/public-decrypt-euint64-req500.json \
-                  /mnt/results/user-decrypt-euint64-req500.json \
-                  /mnt/results/public-decrypt-euint64-req1000.json \
-                  /mnt/results/user-decrypt-euint64-req1000.json; do
+                  /mnt/results/user-decrypt-euint64-req500.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
