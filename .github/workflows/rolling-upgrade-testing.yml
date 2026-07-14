@@ -488,7 +488,11 @@ jobs:
             -p old_version="${OLD_IMAGE_TAG}" \
             -p new_version="${NEW_IMAGE_TAG}" \
             -p num_upgraded="${NUM_UPGRADED}" \
-            -p num_total="13"
+            -p num_total="13" \
+            -p pdec-below-id=000000000000000000000000000000000000000000000000000000000000005a \
+            -p pdec-above-id=000000000000000000000000000000000000000000000000000000000000006e \
+            -p udec-below-id=000000000000000000000000000000000000000000000000000000000000005b \
+            -p udec-above-id=000000000000000000000000000000000000000000000000000000000000006f
 
           echo "Streaming mixed-5/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
@@ -567,7 +571,11 @@ jobs:
             -p old_version="${OLD_IMAGE_TAG}" \
             -p new_version="${NEW_IMAGE_TAG}" \
             -p num_upgraded="${NUM_UPGRADED}" \
-            -p num_total="13"
+            -p num_total="13" \
+            -p pdec-below-id=000000000000000000000000000000000000000000000000000000000000005c \
+            -p pdec-above-id=0000000000000000000000000000000000000000000000000000000000000070 \
+            -p udec-below-id=000000000000000000000000000000000000000000000000000000000000005d \
+            -p udec-above-id=0000000000000000000000000000000000000000000000000000000000000071
 
           echo "Streaming mixed-9/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
