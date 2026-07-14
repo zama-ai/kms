@@ -727,7 +727,7 @@ fn handle_chain_id(handle: &[u8; 32]) -> u64 {
 /// width, chain kind, a common embedded chain ID, or equality with `host_chain_id`. New request
 /// boundaries must construct [`SolanaUserDecryptBinding`] and call its checked `compute_link`
 /// method instead.
-pub fn compute_link_solana(
+pub(crate) fn compute_link_solana(
     enc_key: &[u8],
     handles: &[[u8; 32]],
     solana_user_pubkey: &[u8; 32],
