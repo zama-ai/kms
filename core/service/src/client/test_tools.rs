@@ -140,6 +140,8 @@ pub async fn setup_threshold_no_client<
                 .as_ref()
                 .and_then(|t| t.core_to_core_net),
             decryption_mode,
+            legacy_prss_mask_before_public_decrypt_id: None,
+            legacy_prss_mask_before_user_decrypt_id: None,
         };
         core_config.threshold = Some(threshold_party_config);
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
@@ -367,6 +369,8 @@ pub async fn setup_threshold_with_custom_peers<
                 .as_ref()
                 .and_then(|t| t.core_to_core_net),
             decryption_mode,
+            legacy_prss_mask_before_public_decrypt_id: None,
+            legacy_prss_mask_before_user_decrypt_id: None,
         };
         core_config.threshold = Some(threshold_party_config);
         core_config.rate_limiter_conf = rate_limiter_conf.clone();

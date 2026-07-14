@@ -1,4 +1,4 @@
-use crate::engine::base::derive_request_id;
+use crate::engine::{base::derive_request_id, threshold::service::prss_compat::parse_threshold};
 use alloy_primitives::Address;
 use kms_grpc::RequestId;
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,20 @@ pub struct ThresholdPartyConf {
     pub peers: Option<Vec<PeerConf>>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
     pub decryption_mode: DecryptionMode,
+
+    /// Issue#3089: temporary request-ID activation thresholds for the PRSS-Mask
+    /// counter-schedule fix (#663). Requests whose raw request ID, interpreted as a
+    /// big-endian integer, is strictly below the configured value run the legacy PRSS.
+    /// Values are decimal or 0x-prefixed hex integers of up to 256 bits, given as
+    /// strings. All MPC parties MUST configure identical values.
+    /// Absent means the fixed schedule is always used. Public and user decryption
+    /// request IDs come from separate counters, hence one threshold each.
+    /// Remove once the migration is complete.
+    #[serde(default)]
+    pub legacy_prss_mask_before_public_decrypt_id: Option<String>,
+    /// See [`Self::legacy_prss_mask_before_public_decrypt_id`].
+    #[serde(default)]
+    pub legacy_prss_mask_before_user_decrypt_id: Option<String>,
 }
 
 fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
@@ -81,6 +95,27 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
         }
     } else {
         tracing::info!("No peer list provided; skipping threshold and party ID validation");
+    }
+
+    // Issue#3089: fail at config load on malformed PRSS-Mask schedule activation thresholds.
+    for (name, value) in [
+        (
+            "legacy_prss_mask_before_public_decrypt_id",
+            &conf.legacy_prss_mask_before_public_decrypt_id,
+        ),
+        (
+            "legacy_prss_mask_before_user_decrypt_id",
+            &conf.legacy_prss_mask_before_user_decrypt_id,
+        ),
+    ] {
+        if let Some(raw) = value
+            && let Err(e) = parse_threshold(raw)
+        {
+            return Err(
+                ValidationError::new("Invalid PRSS-Mask schedule activation threshold")
+                    .with_message(format!("{name}: {e}").into()),
+            );
+        }
     }
     Ok(())
 }

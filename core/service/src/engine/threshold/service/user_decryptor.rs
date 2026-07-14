@@ -204,7 +204,7 @@ impl<
         // Issue#3089: decide once per request whether the legacy (pre-#663) PRSS-Mask
         // schedule must be used, based on the raw request ID (session IDs are hashes of it
         // and carry no order).
-        let use_legacy_prss = use_legacy_prss_mask(req_id, DecryptKind::User)?;
+        let use_legacy_prss = use_legacy_prss_mask(req_id, DecryptKind::User);
 
         let mut all_signcrypted_cts = vec![];
 

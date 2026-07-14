@@ -351,15 +351,7 @@ impl<
         // Issue#3089: decide once per request whether the legacy (pre-#663) PRSS-Mask
         // schedule must be used, based on the raw request ID (session IDs are hashes of it
         // and carry no order).
-        let use_legacy_prss =
-            use_legacy_prss_mask(&req_id, DecryptKind::Public).map_err(|e| {
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    e,
-                    tonic::Code::FailedPrecondition,
-                )
-            })?;
+        let use_legacy_prss = use_legacy_prss_mask(&req_id, DecryptKind::Public);
 
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {

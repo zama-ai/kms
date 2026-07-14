@@ -10,34 +10,32 @@
 //! raw request ID ("activation height" pattern): requests with an ID strictly below the
 //! configured threshold run the legacy schedule (interoperable with unpatched peers), requests
 //! at or above it run the fixed one. Public and user decryption request IDs come from separate
-//! (monotonically increasing) gateway counters, hence one threshold per stream:
+//! (monotonically increasing) gateway counters, hence one threshold per stream, configured in
+//! the `[threshold]` section of the server configuration:
 //!
-//! - [`LEGACY_PRSS_BEFORE_PUBLIC_DECRYPT_ID_ENV`]
-//! - [`LEGACY_PRSS_BEFORE_USER_DECRYPT_ID_ENV`]
+//! - `legacy_prss_mask_before_public_decrypt_id`
+//! - `legacy_prss_mask_before_user_decrypt_id`
+//!
+//! (see [`crate::conf::threshold::ThresholdPartyConf`]). Going through the configuration file
+//! rather than dedicated env vars means the values also reach Nitro-enclave deployments, where
+//! the pod environment does not propagate into the enclave but the TOML does (over vsock). On
+//! non-enclave deployments they can still be overridden through the configuration env layer
+//! (`KMS_CORE__THRESHOLD__LEGACY_PRSS_MASK_BEFORE_PUBLIC_DECRYPT_ID`, etc.).
 //!
 //! Values are decimal or 0x-prefixed hex integers (up to 256 bits), and are consensus
-//! constants: all parties MUST configure identical values. Unset means the fixed PRSS schedule is
-//! always used. A malformed value fails every gated request (loudly) rather than silently
-//! picking a schedule.
+//! constants: all parties MUST configure identical values. Unset means the fixed PRSS schedule
+//! is always used. Malformed values fail at config load / server startup, never silently.
 //!
 //! NOTE: the comparison must be done on the raw request ID interpreted as a big-endian
 //! integer. Derived session IDs are hashes of it and carry no order.
 //!
-//! This module, the env vars and the legacy code path are temporary and should be removed
+//! This module, the config fields and the legacy code path are temporary and should be removed
 //! once both gateway counters have passed their thresholds fleet-wide.
 
+use crate::conf::threshold::ThresholdPartyConf;
 use alloy_primitives::U256;
 use kms_grpc::RequestId;
 use std::sync::OnceLock;
-
-/// Public decryption requests with an ID strictly below this value run the legacy PRSS-Mask
-/// schedule.
-pub const LEGACY_PRSS_BEFORE_PUBLIC_DECRYPT_ID_ENV: &str =
-    "KMS_PRSS_LEGACY_MASK_BEFORE_PUBLIC_DECRYPT_ID";
-/// User decryption requests with an ID strictly below this value run the legacy PRSS-Mask
-/// schedule.
-pub const LEGACY_PRSS_BEFORE_USER_DECRYPT_ID_ENV: &str =
-    "KMS_PRSS_LEGACY_MASK_BEFORE_USER_DECRYPT_ID";
 
 /// The two request streams gated by this module. They use separate gateway counters, so each
 /// has its own activation threshold.
@@ -47,11 +45,11 @@ pub(crate) enum DecryptKind {
     User,
 }
 
-static LEGACY_BEFORE_PUBLIC: OnceLock<Result<Option<U256>, String>> = OnceLock::new();
-static LEGACY_BEFORE_USER: OnceLock<Result<Option<U256>, String>> = OnceLock::new();
+static LEGACY_BEFORE_PUBLIC: OnceLock<Option<U256>> = OnceLock::new();
+static LEGACY_BEFORE_USER: OnceLock<Option<U256>> = OnceLock::new();
 
 /// Parse a threshold value as decimal or 0x-prefixed hex.
-fn parse_threshold(raw: &str) -> Result<U256, String> {
+pub(crate) fn parse_threshold(raw: &str) -> Result<U256, String> {
     let raw = raw.trim();
     let digits = raw
         .strip_prefix("0x")
@@ -59,8 +57,8 @@ fn parse_threshold(raw: &str) -> Result<U256, String> {
         .map(|hex| (hex, 16))
         .unwrap_or((raw, 10));
     // U256::from_str_radix parses an empty string as 0; reject it explicitly instead, so that
-    // an env var set to an empty value (e.g. by a templating mishap) fails loudly rather than
-    // silently configuring a threshold of 0.
+    // a value emptied by a templating mishap fails loudly rather than silently configuring a
+    // threshold of 0.
     if digits.0.is_empty() {
         return Err(format!(
             "expected a decimal or 0x-prefixed hex integer, got empty value {raw:?}"
@@ -70,16 +68,64 @@ fn parse_threshold(raw: &str) -> Result<U256, String> {
         .map_err(|e| format!("expected a decimal or 0x-prefixed hex integer, got {raw:?}: {e}"))
 }
 
-fn read_env_threshold(var: &str) -> Result<Option<U256>, String> {
-    match std::env::var(var) {
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(e) => Err(format!("could not read {var}: {e}")),
-        Ok(raw) => {
-            let threshold = parse_threshold(&raw).map_err(|e| format!("invalid {var}: {e}"))?;
-            tracing::info!(
-                "{var} is set: requests with ID < {threshold} will use the legacy (pre-#663) PRSS-Mask schedule"
-            );
-            Ok(Some(threshold))
+/// Initialize the activation thresholds from the threshold party configuration. Must be called
+/// during threshold server startup, before any decryption request is served. Fails on
+/// malformed values (also caught earlier by config validation) and on re-initialization with
+/// conflicting values (which can only happen with multiple in-process servers, e.g. in tests —
+/// those must all agree since the values are consensus constants anyway).
+///
+/// If never called (e.g. centralized KMS), the fixed schedule is always used.
+pub(crate) fn init_from_conf(conf: &ThresholdPartyConf) -> anyhow::Result<()> {
+    let parse = |name: &str, raw: &Option<String>| -> anyhow::Result<Option<U256>> {
+        raw.as_ref()
+            .map(|raw| {
+                parse_threshold(raw).map_err(|e| anyhow::anyhow!("invalid [threshold].{name}: {e}"))
+            })
+            .transpose()
+    };
+    let public = parse(
+        "legacy_prss_mask_before_public_decrypt_id",
+        &conf.legacy_prss_mask_before_public_decrypt_id,
+    )?;
+    let user = parse(
+        "legacy_prss_mask_before_user_decrypt_id",
+        &conf.legacy_prss_mask_before_user_decrypt_id,
+    )?;
+
+    set_or_check(&LEGACY_BEFORE_PUBLIC, public, "public decryption")?;
+    set_or_check(&LEGACY_BEFORE_USER, user, "user decryption")?;
+
+    if public.is_some() || user.is_some() {
+        tracing::info!(
+            "PRSS-Mask legacy schedule activation thresholds configured: requests with ID strictly below public={public:?} / user={user:?} will use the legacy (pre-#663) schedule"
+        );
+    }
+    Ok(())
+}
+
+fn set_or_check(
+    cell: &OnceLock<Option<U256>>,
+    value: Option<U256>,
+    name: &str,
+) -> anyhow::Result<()> {
+    match cell.set(value) {
+        Ok(()) => Ok(()),
+        // Already initialized: tolerate idempotent re-initialization with the identical value.
+        // This happens whenever several threshold servers run in one process (the integration
+        // test harness boots all parties in-process, so each party's startup calls
+        // init_from_conf against the same process-global cell). Only a *different* value is a
+        // real conflict — the thresholds are consensus constants.
+        Err(rejected) => {
+            let existing = cell
+                .get()
+                .expect("OnceLock::set failed, so it must be initialized");
+            if *existing == rejected {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "conflicting re-initialization of the {name} PRSS-Mask schedule threshold: already set to {existing:?}, refusing {rejected:?}"
+                ))
+            }
         }
     }
 }
@@ -94,36 +140,25 @@ fn is_before(req_id: &RequestId, threshold: &U256) -> bool {
 }
 
 /// Returns true iff the given request must use the legacy (pre-#663) overlapping PRSS-Mask
-/// counter schedule, i.e. iff the env var for `kind` is set and the raw request ID is strictly
-/// below it. Errors if the env var is set but malformed, failing the request rather than
-/// silently choosing a schedule.
-pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> anyhow::Result<bool> {
-    let (cell, var) = match kind {
-        DecryptKind::Public => (
-            &LEGACY_BEFORE_PUBLIC,
-            LEGACY_PRSS_BEFORE_PUBLIC_DECRYPT_ID_ENV,
-        ),
-        DecryptKind::User => (&LEGACY_BEFORE_USER, LEGACY_PRSS_BEFORE_USER_DECRYPT_ID_ENV),
+/// counter schedule, i.e. iff an activation threshold is configured for `kind` and the raw
+/// request ID is strictly below it.
+pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> bool {
+    let cell = match kind {
+        DecryptKind::Public => &LEGACY_BEFORE_PUBLIC,
+        DecryptKind::User => &LEGACY_BEFORE_USER,
     };
-    // In production the env var is read and parsed once and cached. Test builds first check
-    // the scoped override (see [`test_override`]), which avoids mutating process environment
-    // variables at runtime — that is unsafe with concurrently running threads and could
-    // corrupt tests running in parallel.
+    // Test builds first check the scoped override (see [`test_prs_compat`]), so integration
+    // tests can vary the threshold at runtime without touching the global configuration.
     #[cfg(test)]
     let threshold = match test_prs_compat::get(kind) {
         Some(overridden) => overridden,
-        None => cell
-            .get_or_init(|| read_env_threshold(var))
-            .clone()
-            .map_err(|e| anyhow::anyhow!("{e}"))?,
+        None => cell.get().copied().flatten(),
     };
+    // Uninitialized (centralized KMS) or configured-absent both mean: fixed schedule.
     #[cfg(not(test))]
-    let threshold = cell
-        .get_or_init(|| read_env_threshold(var))
-        .clone()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let threshold = cell.get().copied().flatten();
 
-    Ok(match threshold {
+    match threshold {
         None => false,
         Some(threshold) => {
             let legacy = is_before(req_id, &threshold);
@@ -132,20 +167,19 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> any
                 test_prs_compat::LEGACY_PRSS_DECISIONS
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 tracing::info!(
-                    "Using legacy (pre-#663) PRSS-Mask schedule for {kind:?} decryption request {req_id} (ID < {var}={threshold})"
+                    "Using legacy (pre-#663) PRSS-Mask schedule for {kind:?} decryption request {req_id} (ID < {threshold})"
                 );
             }
             legacy
         }
-    })
+    }
 }
 
-/// Scoped, test-only override of the activation thresholds. This replaces mutating the
-/// process environment in tests: `std::env::set_var` is unsafe with concurrently running
-/// threads (the tokio servers spawned by integration tests read the env), and a leaked env
-/// var would corrupt other tests. The override only substitutes the *source* of the
-/// threshold; everything downstream (comparison, counting, wiring) is the production code
-/// path, and env parsing itself is covered by the unit tests below.
+/// Scoped, test-only override of the activation thresholds. This substitutes only the *source*
+/// of the threshold; everything downstream (comparison, counting, wiring) is the production
+/// code path, and config parsing itself is covered by the unit tests below. The override takes
+/// precedence over values set by [`init_from_conf`] (in-process test servers initialize with
+/// absent thresholds).
 #[cfg(test)]
 pub(crate) mod test_prs_compat {
     use super::DecryptKind;
@@ -174,8 +208,8 @@ pub(crate) mod test_prs_compat {
 
     /// RAII guard that overrides the legacy-schedule activation threshold for one stream for
     /// the duration of a test and clears it on drop (including on panic/unwind).
-    /// `Some(threshold)` behaves as if the env var were set to that value, `None` as unset.
-    /// The override is process-global state: only use it in `#[serial]` tests.
+    /// `Some(threshold)` behaves as if the config field were set to that value, `None` as
+    /// absent. The override is process-global state: only use it in `#[serial]` tests.
     pub(crate) struct LegacyThresholdGuard {
         kind: DecryptKind,
     }

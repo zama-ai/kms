@@ -112,6 +112,15 @@ data:
     num_sessions_preproc = {{ int .Values.kmsCore.thresholdMode.numSessionsPreproc }}
     decryption_mode = {{ .Values.kmsCore.thresholdMode.decryptionMode | quote }}
 
+    {{- /* Issue#3089: temporary PRSS-Mask schedule activation thresholds, see values.yaml.
+    Part of the TOML (not pod env) so the values also reach Nitro-enclave deployments. */}}
+    {{- with .Values.kmsCore.legacyPrssMask.beforePublicDecryptId }}
+    legacy_prss_mask_before_public_decrypt_id = {{ . | quote }}
+    {{- end }}
+    {{- with .Values.kmsCore.legacyPrssMask.beforeUserDecryptId }}
+    legacy_prss_mask_before_user_decrypt_id = {{ . | quote }}
+    {{- end }}
+
     [threshold.core_to_core_net]
     message_limit = 70
     multiplier = {{ float64 .Values.kmsCore.thresholdMode.multiplier }}
