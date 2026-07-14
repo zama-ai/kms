@@ -100,6 +100,7 @@ fn check_external_decryption_signature(
 pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     rng: &mut R,
     num_requests: usize,
+    request_id: Option<RequestId>,
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
@@ -130,7 +131,9 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             );
             tokio::time::sleep(inter_request_delay).await;
         }
-        let req_id = RequestId::new_random(rng);
+        // Use the explicitly provided request ID if there is one (only allowed for a single
+        // request, enforced at CLI validation), otherwise sample a random one.
+        let req_id = request_id.unwrap_or_else(|| RequestId::new_random(rng));
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
         let core_endpoints_req = core_endpoints_req.clone();
@@ -236,6 +239,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
 pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     rng: &mut R,
     num_requests: usize,
+    request_id: Option<RequestId>,
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
@@ -265,7 +269,9 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
             );
             tokio::time::sleep(inter_request_delay).await;
         }
-        let req_id = RequestId::new_random(rng);
+        // Use the explicitly provided request ID if there is one (only allowed for a single
+        // request, enforced at CLI validation), otherwise sample a random one.
+        let req_id = request_id.unwrap_or_else(|| RequestId::new_random(rng));
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
         let core_endpoints_req = core_endpoints_req.clone();

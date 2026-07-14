@@ -249,6 +249,13 @@ fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
         ));
     }
 
+    if cf.get_request_id().is_some() && cf.get_num_requests() > 1 {
+        return Err(anyhow::anyhow!(
+            "An explicit request ID can only be used with a single request (got --num-requests {}), since request IDs must be unique.",
+            cf.get_num_requests()
+        ));
+    }
+
     Ok(())
 }
 
@@ -502,6 +509,13 @@ impl CipherArguments {
         };
         parse_extra_data(hex_str)
     }
+
+    pub fn get_request_id(&self) -> Option<RequestId> {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.request_id,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.request_id,
+        }
+    }
 }
 
 // Helper function to parse the extra data from the CLI arguments, with the same logic for both CipherParameters and CipherFile.
@@ -572,6 +586,14 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub extra_data: Option<String>,
+    /// Optionally specify the request ID to use for the public/user decryption request
+    /// (hex string of 32 bytes, optionally 0x-prefixed).
+    /// If not specified, a random request ID is sampled for each request.
+    /// Only allowed together with `--num-requests 1`, since request IDs must be unique.
+    /// This is ignored for the encryption command.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long)]
+    pub request_id: Option<RequestId>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -596,6 +618,12 @@ pub struct CipherFile {
     /// Can optionally have a "0x" prefix.
     #[clap(long)]
     pub extra_data: Option<String>,
+    /// Optionally specify the request ID to use for the public/user decryption request
+    /// (hex string of 32 bytes, optionally 0x-prefixed).
+    /// If not specified, a random request ID is sampled for each request.
+    /// Only allowed together with `--num-requests 1`, since request IDs must be unique.
+    #[clap(long)]
+    pub request_id: Option<RequestId>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1695,6 +1723,7 @@ pub async fn execute_cmd(
             do_public_decrypt(
                 &mut rng,
                 cipher_args.get_num_requests(),
+                cipher_args.get_request_id(),
                 internal_client,
                 ct_batch,
                 key_id,
@@ -1772,6 +1801,7 @@ pub async fn execute_cmd(
             do_user_decrypt(
                 &mut rng,
                 cipher_args.get_num_requests(),
+                cipher_args.get_request_id(),
                 internal_client,
                 ct_batch,
                 key_id,
