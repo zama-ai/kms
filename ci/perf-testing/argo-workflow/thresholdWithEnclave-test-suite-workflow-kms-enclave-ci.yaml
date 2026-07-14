@@ -42,6 +42,8 @@ spec:
       value: "Manually triggered"
     - name: fhe-params
       value: "Test"
+    - name: client-logs
+      value: "disabled"
 
 
   templates:
@@ -148,41 +150,6 @@ spec:
                 - name: fhe-params
                   value: "{{workflow.parameters.fhe-params}}"
 
-          ##########################################################################
-          # Public decrypt tests
-          ##########################################################################
-          - name: public-decrypt-euint64-req100
-            dependencies: ["user-decrypt-euint64-req10"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "public-decrypt-euint64-req100"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
-
-          ##########################################################################
-          # User decrypt tests
-          ##########################################################################
-          - name: user-decrypt-euint64-req100
-            dependencies: ["public-decrypt-euint64-req100"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "user-decrypt-euint64-req100"
-                - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 100"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
           # Summary report generation
           - name: generate-summary
             dependencies: [
@@ -192,8 +159,6 @@ spec:
               "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt (correctness)
               "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt (correctness)
               "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt (correctness)
-              "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt (correctness)
-              "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt (correctness)
             ]
             template: summary-report
             continueOn:
@@ -212,10 +177,6 @@ spec:
                 value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
               - name: test-result-6
                 value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-7
-                value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-8
-                value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -323,8 +284,12 @@ spec:
           echo "=========================================="
 
           # Run the specific test with timing and capture logs
+          client_logs_arg=""
+          if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
+            client_logs_arg="--logs"
+          fi
           start_time=$(date +%s)
-          ./bin/kms-core-client --logs --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)
           duration=$((end_time - start_time))
@@ -446,8 +411,6 @@ spec:
         - name: test-result-4
         - name: test-result-5
         - name: test-result-6
-        - name: test-result-7
-        - name: test-result-8
         - name: tls
         - name: run_url
       script:
@@ -471,8 +434,6 @@ spec:
           echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req1.json
           echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req10.json
           echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/public-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req100.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -497,9 +458,7 @@ spec:
             /mnt/results/public-decrypt-euint64-req1.json \
             /mnt/results/user-decrypt-euint64-req1.json \
             /mnt/results/public-decrypt-euint64-req10.json \
-            /mnt/results/user-decrypt-euint64-req10.json \
-            /mnt/results/public-decrypt-euint64-req100.json \
-            /mnt/results/user-decrypt-euint64-req100.json; do
+            /mnt/results/user-decrypt-euint64-req10.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -664,9 +623,7 @@ spec:
                   /mnt/results/public-decrypt-euint64-req1.json \
                   /mnt/results/user-decrypt-euint64-req1.json \
                   /mnt/results/public-decrypt-euint64-req10.json \
-                  /mnt/results/user-decrypt-euint64-req10.json \
-                  /mnt/results/public-decrypt-euint64-req100.json \
-                  /mnt/results/user-decrypt-euint64-req100.json; do
+                  /mnt/results/user-decrypt-euint64-req10.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)

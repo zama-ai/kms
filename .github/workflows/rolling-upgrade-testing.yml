@@ -94,6 +94,11 @@ on:
         description: 'Core-client (test harness) image tag; independent of the core versions under test. Defaults to new_image_tag if empty.'
         required: false
         type: string
+      client_logs:
+        description: 'Enable core-client tracing logs (default off, matching perf runs; turn on to capture decrypt/reconstruction errors)'
+        required: true
+        default: false
+        type: boolean
       build:
         description: 'Build new Docker image from branch (overrides new_image_tag)'
         required: true
@@ -240,7 +245,15 @@ jobs:
           FIRST_BATCH: ${{ inputs.first_batch_parties }}
           SECOND_BATCH: ${{ inputs.second_batch_parties }}
           SYNC_SECRETS_CHART_VERSION: '0.2.1'
+          CLIENT_LOGS: ${{ inputs.client_logs }}
         run: |
+          # Map the boolean client_logs input to the argo enabled/disabled value
+          # (same convention as performance-testing.yml).
+          if [[ "${CLIENT_LOGS}" == "true" ]]; then
+            CLIENT_LOGS_STATUS="enabled"
+          else
+            CLIENT_LOGS_STATUS="disabled"
+          fi
           {
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
@@ -250,6 +263,7 @@ jobs:
             echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
             echo "FIRST_BATCH=${FIRST_BATCH}"
             echo "SECOND_BATCH=${SECOND_BATCH}"
+            echo "CLIENT_LOGS_STATUS=${CLIENT_LOGS_STATUS}"
           } >> "$GITHUB_ENV"
 
       # ====================================================================
@@ -376,6 +390,7 @@ jobs:
 
           argo submit -n argo /tmp/baseline-workflow.yaml \
             -p tls="${TLS_STATUS}" \
+            -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
             -p run_url="${RUN_URL}"
 
@@ -465,6 +480,7 @@ jobs:
 
           argo submit -n argo /tmp/mixed-5-workflow.yaml \
             -p tls="${TLS_STATUS}" \
+            -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
             -p run_url="${RUN_URL}" \
             -p key-id="${BASELINE_KEY_ID}" \
@@ -543,6 +559,7 @@ jobs:
 
           argo submit -n argo /tmp/mixed-9-workflow.yaml \
             -p tls="${TLS_STATUS}" \
+            -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
             -p run_url="${RUN_URL}" \
             -p key-id="${BASELINE_KEY_ID}" \
