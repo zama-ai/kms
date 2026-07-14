@@ -963,7 +963,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 {
                     Ok(res) => {
                         // reliable broadcast finished, we need to check the proof
-                        // check that it is from the correct sender an verify the proof
+                        // check that it is from the correct sender and verify the proof
                         for (sender, msg) in res {
                             if sender == *role {
                                 if let BroadcastValue::PartialProof(partial_proof_rcvd) = msg {
