@@ -52,9 +52,11 @@ kmsCore:
   # with enough margin for the slowest party to upgrade before the counters reach
   # them. ALWAYS quote the values (they are 256-bit integers, decimal or 0x-prefixed hex;
   # unquoted large YAML numbers get mangled). Remove once the migration is complete.
+  # Default to "100" for testing purpose and because we've already had more requests on mainnet so
+  # that's a safe value to use for now. Needs to be revisited for deployment!!.
   legacyPrssMask:
-    beforePublicDecryptId: "0"
-    beforeUserDecryptId: "0"
+    beforePublicDecryptId: "100"
+    beforeUserDecryptId: "100"
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
