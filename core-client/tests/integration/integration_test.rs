@@ -139,6 +139,8 @@ fn build_test_core_config(
             peers: Some(peers),
             core_to_core_net: None,
             decryption_mode: DecryptionMode::NoiseFloodSmall,
+            legacy_prss_mask_before_public_decrypt_id: "0".to_string(),
+            legacy_prss_mask_before_user_decrypt_id: "0".to_string(),
         }),
         internal_config: None,
         mock_enclave: Some(true),
