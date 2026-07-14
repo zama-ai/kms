@@ -466,8 +466,9 @@ pub fn process_user_decryption_resp_solana_from_js(
             .map_err(|e| JsError::new(&format!("verification key parse failed: {e}")))?;
         server_pks.insert((i + 1) as u32, vk);
     }
-    let client_address =
-        alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_user_pubkey)[12..]);
+    let client_address = alloy_primitives::Address::from_slice(
+        &alloy_primitives::keccak256(solana_user_pubkey)[12..],
+    );
     let client = Client {
         server_identities: ServerIdentities::Pks(server_pks),
         client_address,

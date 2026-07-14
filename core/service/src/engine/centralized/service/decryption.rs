@@ -786,6 +786,7 @@ mod test_user_decryption {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            client_identity: None,
         };
 
         let _ = user_decrypt_impl(&kms, tonic::Request::new(request))
@@ -838,6 +839,7 @@ mod test_user_decryption {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
 
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
@@ -861,6 +863,7 @@ mod test_user_decryption {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -880,6 +883,7 @@ mod test_user_decryption {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -899,6 +903,7 @@ mod test_user_decryption {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -931,6 +936,7 @@ mod test_user_decryption {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
 
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
@@ -975,6 +981,7 @@ mod test_user_decryption {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -1004,6 +1011,7 @@ mod test_user_decryption {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            client_identity: None,
         };
 
         // first request should succeed
