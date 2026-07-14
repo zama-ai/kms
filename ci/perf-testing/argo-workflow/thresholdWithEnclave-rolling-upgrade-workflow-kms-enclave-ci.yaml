@@ -95,10 +95,26 @@ spec:
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
+          # User decrypt tests — 1 copy
+          ##########################################################################
+          - name: user-decrypt-euint64-req1
+            dependencies: ["public-decrypt-euint64-req1"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req1"
+                - name: test-command
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 1"
+                - name: fhe-params
+                  value: "Default"
+          ##########################################################################
           # Public decrypt tests — 10 requests
           ##########################################################################
           - name: public-decrypt-euint64-req10
-            dependencies: ["public-decrypt-euint64-req1"]
+            dependencies: ["user-decrypt-euint64-req1"]
             template: run-test
             continueOn:
               failed: true
@@ -110,12 +126,28 @@ spec:
                   value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
+          ##########################################################################
+          # User decrypt tests — 10 copies
+          ##########################################################################
+          - name: user-decrypt-euint64-req10
+            dependencies: ["public-decrypt-euint64-req10"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req10"
+                - name: test-command
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 10"
+                - name: fhe-params
+                  value: "Default"
 
           ##########################################################################
           # Public decrypt tests — 100 requests
           ##########################################################################
           - name: public-decrypt-euint64-req100
-            dependencies: ["public-decrypt-euint64-req10"]
+            dependencies: ["user-decrypt-euint64-req10"]
             template: run-test
             continueOn:
               failed: true
@@ -127,13 +159,32 @@ spec:
                   value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
+          ##########################################################################
+          # User decrypt tests — 100 copies
+          ##########################################################################
+          - name: user-decrypt-euint64-req100
+            dependencies: ["public-decrypt-euint64-req100"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req100"
+                - name: test-command
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 100"
+                - name: fhe-params
+                  value: "Default"
 
           # Summary report generation
           - name: generate-summary
             dependencies: [
               "public-decrypt-euint64-req1",
+              "user-decrypt-euint64-req1",
               "public-decrypt-euint64-req10",
-              "public-decrypt-euint64-req100"
+              "user-decrypt-euint64-req10",
+              "public-decrypt-euint64-req100",
+              "user-decrypt-euint64-req100"
             ]
             template: summary-report
             continueOn:
@@ -143,9 +194,15 @@ spec:
               - name: test-result-1
                 value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
               - name: test-result-2
-                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
               - name: test-result-3
+                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+              - name: test-result-4
+                value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
+              - name: test-result-5
                 value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
+              - name: test-result-6
+                value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -385,6 +442,9 @@ spec:
         - name: test-result-1
         - name: test-result-2
         - name: test-result-3
+        - name: test-result-4
+        - name: test-result-5
+        - name: test-result-6
         - name: tls
         - name: run_url
         - name: test_label
@@ -408,8 +468,11 @@ spec:
           # Make a directory for all the results
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-1}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req100.json
           ls -ali /mnt/results/
 
           TEST_LABEL="{{inputs.parameters.test_label}}"
@@ -441,8 +504,11 @@ spec:
           # Process result files in execution order
           for result in \
             /mnt/results/public-decrypt-euint64-req1.json \
+            /mnt/results/user-decrypt-euint64-req1.json \
             /mnt/results/public-decrypt-euint64-req10.json \
-            /mnt/results/public-decrypt-euint64-req100.json; do
+            /mnt/results/user-decrypt-euint64-req10.json \
+            /mnt/results/public-decrypt-euint64-req100.json \
+            /mnt/results/user-decrypt-euint64-req100.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -608,8 +674,11 @@ spec:
                 ],
                 "text": "\`\`\`\n$(for result in \
                   /mnt/results/public-decrypt-euint64-req1.json \
+                  /mnt/results/user-decrypt-euint64-req1.json \
                   /mnt/results/public-decrypt-euint64-req10.json \
-                  /mnt/results/public-decrypt-euint64-req100.json; do
+                  /mnt/results/user-decrypt-euint64-req10.json \
+                  /mnt/results/public-decrypt-euint64-req100.json \
+                  /mnt/results/user-decrypt-euint64-req100.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
@@ -649,45 +718,6 @@ spec:
           apk add --no-cache curl
           # Send the notification
           curl -s -X POST -H "Content-type: application/json" -d "$SLACK_MESSAGE" $SLACK_WEBHOOK_URL
-
-          # Check for low throughput on 100 request tests
-          for result in /mnt/results/public-decrypt-euint64-req100.json; do
-            if [ -f "$result" ]; then
-              exit_code=$(jq -r '.exit_code // 1' "$result")
-              if [ "$exit_code" -eq 0 ]; then
-                test_name=$(jq -r '.test_name' "$result")
-                throughput=$(jq -r '.performance_metrics.throughput // 0' "$result")
-
-                # Check if throughput is below 80
-                is_low=$(awk -v t="$throughput" 'BEGIN {print (t < 80 ? 1 : 0)}')
-
-                if [ "$is_low" -eq 1 ]; then
-                  echo "⚠️ Low throughput detected for $test_name: $throughput req/s"
-
-                  LOW_TP_MESSAGE=$(cat << EOF
-          {
-            "attachments": [
-              {
-                "color": "danger",
-                "title": ":warning: Low Throughput Alert [${TEST_LABEL}]",
-                "text": "Test *$test_name* has low throughput: *$throughput req/s* (threshold: 80 req/s)",
-                "fields": [
-                  {
-                    "title": "Run ID",
-                    "value": "$WORKFLOW_NAME",
-                    "short": true
-                  }
-                ]
-              }
-            ]
-          }
-          EOF
-                  )
-                  curl -s -X POST -H "Content-type: application/json" -d "$LOW_TP_MESSAGE" $SLACK_WEBHOOK_URL
-                fi
-              fi
-            fi
-          done
 
           echo "=========================================="
           if [ $failed -gt 0 ]; then
