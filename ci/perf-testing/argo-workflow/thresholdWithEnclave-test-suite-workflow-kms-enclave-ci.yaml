@@ -50,26 +50,9 @@ spec:
       dag:
         tasks:
           ##########################################################################
-          # Preprocessing
-          ##########################################################################
-          - name: insecure-preproc-key-gen
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "insecure-preproc-key-gen"
-                - name: test-command
-                  value: "insecure-preproc-key-gen"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
-          ##########################################################################
-          # insecure Keygen
+          # insecure Keygen (v0.13.x: single step, no preprocessing, no -i)
           ##########################################################################
           - name: insecure-key-gen
-            dependencies: ["insecure-preproc-key-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -78,7 +61,7 @@ spec:
                 - name: test-name
                   value: "insecure-key-gen"
                 - name: test-command
-                  value: "insecure-key-gen -i {{tasks.insecure-preproc-key-gen.outputs.parameters.request-id}}"
+                  value: "insecure-key-gen"
                 - name: fhe-params
                   value: "{{workflow.parameters.fhe-params}}"
 
@@ -203,7 +186,6 @@ spec:
           # Summary report generation
           - name: generate-summary
             dependencies: [
-              "insecure-preproc-key-gen",       # Insecure preprocessing keygen
               "insecure-key-gen",               # Insecure keygen
               "crs-gen",                        # CRS gen
               "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt (correctness)
@@ -219,22 +201,20 @@ spec:
             arguments:
               parameters:
               - name: test-result-1
-                value: "{{tasks.insecure-preproc-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-2
                 value: "{{tasks.insecure-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-3
+              - name: test-result-2
                 value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-4
+              - name: test-result-3
                 value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-5
+              - name: test-result-4
                 value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-6
+              - name: test-result-5
                 value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-7
+              - name: test-result-6
                 value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-8
+              - name: test-result-7
                 value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-9
+              - name: test-result-8
                 value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
@@ -468,7 +448,6 @@ spec:
         - name: test-result-6
         - name: test-result-7
         - name: test-result-8
-        - name: test-result-9
         - name: tls
         - name: run_url
       script:
@@ -486,15 +465,14 @@ spec:
           apk add --no-cache jq
           # Make a directory for all the results
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/insecure-preproc-key-gen.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/insecure-key-gen.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/user-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/user-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/public-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-9}}' > /mnt/results/user-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/insecure-key-gen.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/crs-gen.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/public-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req100.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -514,7 +492,6 @@ spec:
 
           # Process result files in execution order
           for result in \
-            /mnt/results/insecure-preproc-key-gen.json \
             /mnt/results/insecure-key-gen.json \
             /mnt/results/crs-gen.json \
             /mnt/results/public-decrypt-euint64-req1.json \
@@ -682,7 +659,6 @@ spec:
                   }
                 ],
                 "text": "\`\`\`\n$(for result in \
-                  /mnt/results/insecure-preproc-key-gen.json \
                   /mnt/results/insecure-key-gen.json \
                   /mnt/results/crs-gen.json \
                   /mnt/results/public-decrypt-euint64-req1.json \
