@@ -27,7 +27,7 @@ use kms_grpc::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
         TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
-    rpc_types::{compute_link_solana, optional_protobuf_to_alloy_domain},
+    rpc_types::{SolanaUserDecryptBinding, optional_protobuf_to_alloy_domain},
 };
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
@@ -294,38 +294,24 @@ fn unpack_user_decrypt_req(
     // address. Legacy clients leave it unset and fall back to the `client_address` string overload.
     use kms_grpc::kms::v1::user_decryption_request::ClientIdentity;
     let solana_pubkey_opt: Option<[u8; 32]> = match &req.client_identity {
-        Some(ClientIdentity::SolanaPubkey(pk)) => Some(<[u8; 32]>::try_from(pk.as_slice()).map_err(
-            |_| {
+        Some(ClientIdentity::SolanaPubkey(pk)) => {
+            Some(<[u8; 32]>::try_from(pk.as_slice()).map_err(|_| {
                 anyhow::anyhow!(
                     "Solana client identity must be a 32-byte pubkey, got {} bytes",
                     pk.len()
                 )
-            },
-        )?),
+            })?)
+        }
         Some(ClientIdentity::EvmAddress(_)) => None,
         None => parse_solana_user_decrypt_pubkey(&req.client_address),
     };
     if let Some(solana_pubkey) = solana_pubkey_opt {
-        let mut handles = Vec::with_capacity(req.typed_ciphertexts.len());
-        for c in &req.typed_ciphertexts {
-            if c.external_handle.len() > 32 {
-                return Err(anyhow::anyhow!(
-                    "Solana user-decrypt external_handle too long: {} bytes (max 32)",
-                    c.external_handle.len()
-                )
-                .into());
-            }
-            let mut handle = [0u8; 32];
-            handle[32 - c.external_handle.len()..].copy_from_slice(&c.external_handle);
-            handles.push(handle);
-        }
-        // Handle byte-layout (canonical fhevm): chain id at bytes [22..30], big-endian.
-        let first = &handles[0];
-        let mut chain_id_bytes = [0u8; 8];
-        chain_id_bytes.copy_from_slice(&first[22..30]);
-        let host_chain_id = u64::from_be_bytes(chain_id_bytes);
-
-        let link = compute_link_solana(&req.enc_key, &handles, &solana_pubkey, host_chain_id);
+        let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
+            req.typed_ciphertexts
+                .iter()
+                .map(|ciphertext| ciphertext.external_handle.as_slice()),
+        )?;
+        let link = binding.compute_link(&req.enc_key, &solana_pubkey);
         let client_verf_key = solana_user_decrypt_client_id(&solana_pubkey);
         let _client_enc_key =
             UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
@@ -366,12 +352,14 @@ fn unpack_user_decrypt_req(
             })?;
             alloy_primitives::Address::from(bytes)
         }
-        _ => alloy_primitives::Address::parse_checksummed(&req.client_address, None).map_err(|e| {
-            anyhow::anyhow!(
-                "Error parsing checksummed client address: {} - {e}",
-                req.client_address
-            )
-        })?,
+        _ => alloy_primitives::Address::parse_checksummed(&req.client_address, None).map_err(
+            |e| {
+                anyhow::anyhow!(
+                    "Error parsing checksummed client address: {} - {e}",
+                    req.client_address
+                )
+            },
+        )?,
     };
 
     let domain = match verify_user_decrypt_eip712(req) {
@@ -1168,7 +1156,7 @@ mod tests {
             PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
             TypedPlaintext, UserDecryptionRequest,
         },
-        rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
+        rpc_types::{ID_LENGTH, SolanaUserDecryptBindingError, alloy_to_protobuf_domain},
     };
 
     use rand::SeedableRng;
@@ -1351,6 +1339,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1372,6 +1361,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1396,6 +1386,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1417,6 +1408,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1438,6 +1430,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -1464,6 +1457,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1485,8 +1479,121 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                client_identity: None,
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
+        }
+
+        // EVM routing rejects handles that carry the Solana chain-kind bit while preserving the
+        // existing EVM handle-padding behavior.
+        {
+            let mut evm_handle = [0xabu8; 32];
+            let solana_chain_id = (1u64 << 63) | 12_345;
+            evm_handle[22..30].copy_from_slice(&solana_chain_id.to_be_bytes());
+            let evm_req = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: vec![],
+                    fhe_type: 0,
+                    external_handle: evm_handle.to_vec(),
+                    ciphertext_format: 0,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain.clone()),
+                client_address: client_address.to_checksum(None),
+                enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+                client_identity: None,
+            };
+            assert!(
+                unpack_user_decrypt_req(&evm_req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("embeds Solana chain ID")
+            );
+
+            let mut typed_evm_req = evm_req;
+            typed_evm_req.client_identity =
+                Some(v1::user_decryption_request::ClientIdentity::EvmAddress(
+                    client_address.as_slice().to_vec(),
+                ));
+            assert!(
+                unpack_user_decrypt_req(&typed_evm_req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("embeds Solana chain ID")
+            );
+        }
+
+        // Typed Solana requests require exact 32-byte handles with one common high-bit chain ID.
+        {
+            const SOLANA_CHAIN_ID: u64 = (1 << 63) | 12_345;
+            let mut handle = [0xabu8; 32];
+            handle[22..30].copy_from_slice(&SOLANA_CHAIN_ID.to_be_bytes());
+            let solana_req = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: vec![],
+                    fhe_type: 0,
+                    external_handle: handle.to_vec(),
+                    ciphertext_format: 0,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain.clone()),
+                client_address: String::new(),
+                enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+                client_identity: Some(v1::user_decryption_request::ClientIdentity::SolanaPubkey(
+                    vec![0x11; 32],
+                )),
+            };
+            assert!(unpack_user_decrypt_req(&solana_req).is_ok());
+
+            let mut low_bit = solana_req.clone();
+            low_bit.typed_ciphertexts[0].external_handle[22..30]
+                .copy_from_slice(&12_345u64.to_be_bytes());
+            let error = unpack_user_decrypt_req(&low_bit).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<SolanaUserDecryptBindingError>(),
+                Some(&SolanaUserDecryptBindingError::InvalidHandleChainId {
+                    index: 0,
+                    chain_id: 12_345,
+                })
+            );
+
+            let mut mixed = solana_req.clone();
+            let mut other_handle = handle;
+            other_handle[22..30].copy_from_slice(&(SOLANA_CHAIN_ID + 1).to_be_bytes());
+            mixed.typed_ciphertexts.push(TypedCiphertext {
+                ciphertext: vec![],
+                fhe_type: 0,
+                external_handle: other_handle.to_vec(),
+                ciphertext_format: 0,
+            });
+            let error = unpack_user_decrypt_req(&mixed).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<SolanaUserDecryptBindingError>(),
+                Some(&SolanaUserDecryptBindingError::MixedChainIds {
+                    index: 1,
+                    expected: SOLANA_CHAIN_ID,
+                    actual: SOLANA_CHAIN_ID + 1,
+                })
+            );
+
+            let mut short = solana_req;
+            short.typed_ciphertexts[0].external_handle.pop();
+            let error = unpack_user_decrypt_req(&short).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<SolanaUserDecryptBindingError>(),
+                Some(&SolanaUserDecryptBindingError::InvalidHandleLength {
+                    index: 0,
+                    actual: 31,
+                })
+            );
         }
     }
 
@@ -1551,6 +1658,7 @@ mod tests {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            client_identity: None,
         };
 
         {
