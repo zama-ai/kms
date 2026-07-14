@@ -209,29 +209,28 @@ fn solana_user_decrypt_client_id(solana_pubkey: &[u8; 32]) -> alloy_primitives::
     alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_pubkey)[12..])
 }
 
-/// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
-/// encryption key, client verification key, key_id and request_id if valid.
+/// Validated fields required to execute a user-decryption request.
+#[derive(Debug)]
+pub(crate) struct ValidatedUserDecryptRequest {
+    pub(crate) typed_ciphertexts: Vec<TypedCiphertext>,
+    pub(crate) link: Vec<u8>,
+    pub(crate) client_enc_key_bytes: Vec<u8>,
+    pub(crate) client_id: alloy_primitives::Address,
+    pub(crate) request_id: RequestId,
+    pub(crate) key_id: KeyId,
+    pub(crate) context_id: ContextId,
+    pub(crate) epoch_id: EpochId,
+    pub(crate) domain: alloy_sol_types::Eip712Domain,
+    pub(crate) extra_data: Vec<u8>,
+}
+
+/// Validates and unpacks a user-decryption request into the fields required for execution.
 ///
 /// Observe that the validation is limited to checking the structure of the request and parsing data into the correct types,
 /// and does not check the existence of any of the referenced IDs (like request_id or key_id) or the consistency between them.
-#[expect(clippy::type_complexity)]
 pub(crate) fn validate_user_decrypt_req(
     req: &UserDecryptionRequest,
-) -> Result<
-    (
-        Vec<TypedCiphertext>,
-        Vec<u8>,
-        Vec<u8>,
-        alloy_primitives::Address,
-        RequestId,
-        KeyId,
-        ContextId,
-        EpochId,
-        alloy_sol_types::Eip712Domain,
-        Vec<u8>,
-    ),
-    MetricedError,
-> {
+) -> Result<ValidatedUserDecryptRequest, MetricedError> {
     unpack_user_decrypt_req(req).map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -242,24 +241,9 @@ pub(crate) fn validate_user_decrypt_req(
     })
 }
 
-#[expect(clippy::type_complexity)]
 fn unpack_user_decrypt_req(
     req: &UserDecryptionRequest,
-) -> Result<
-    (
-        Vec<TypedCiphertext>,
-        Vec<u8>,
-        Vec<u8>,
-        alloy_primitives::Address,
-        RequestId,
-        KeyId,
-        ContextId,
-        EpochId,
-        alloy_sol_types::Eip712Domain,
-        Vec<u8>,
-    ),
-    Box<dyn std::error::Error + Send + Sync>,
-> {
+) -> Result<ValidatedUserDecryptRequest, Box<dyn std::error::Error + Send + Sync>> {
     let request_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
     let key_id =
@@ -326,18 +310,18 @@ fn unpack_user_decrypt_req(
         // *authorization* seam differs (ed25519, already enforced by the connector), so there is
         // no user EIP-712 to verify here.
         let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
-        return Ok((
-            req.typed_ciphertexts.clone(),
+        return Ok(ValidatedUserDecryptRequest {
+            typed_ciphertexts: req.typed_ciphertexts.clone(),
             link,
-            req.enc_key.clone(),
-            client_verf_key,
+            client_enc_key_bytes: req.enc_key.clone(),
+            client_id: client_verf_key,
             request_id,
             key_id,
             context_id,
             epoch_id,
-            response_domain,
-            req.extra_data.clone(),
-        ));
+            domain: response_domain,
+            extra_data: req.extra_data.clone(),
+        });
     }
 
     // EVM path: a typed `evm_address` (oneof) takes precedence and fails closed on a wrong length;
@@ -379,18 +363,18 @@ fn unpack_user_decrypt_req(
                 "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
             )
         })?;
-    Ok((
-        req.typed_ciphertexts.clone(),
+    Ok(ValidatedUserDecryptRequest {
+        typed_ciphertexts: req.typed_ciphertexts.clone(),
         link,
-        req.enc_key.clone(),
-        client_verf_key,
+        client_enc_key_bytes: req.enc_key.clone(),
+        client_id: client_verf_key,
         request_id,
         key_id,
         context_id,
         epoch_id,
         domain,
-        req.extra_data.clone(),
-    ))
+        extra_data: req.extra_data.clone(),
+    })
 }
 
 /// Validates and unpacks a public decryption request and returns

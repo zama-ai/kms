@@ -67,8 +67,8 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-            validate_user_decrypt_req,
+            DSEP_USER_DECRYPTION, RequestIdParsingErr, ValidatedUserDecryptRequest,
+            parse_grpc_request_id, validate_user_decrypt_req,
         },
     },
     util::{
@@ -459,18 +459,18 @@ impl<
         let inner = Arc::new(request.into_inner());
         tracing::info!("{}", format_user_request(&inner));
 
-        let (
+        let ValidatedUserDecryptRequest {
             typed_ciphertexts,
             link,
-            client_enc_key_bytes_orig, // the original bytes for the encryption key
-            client_address,
-            req_id,
+            client_enc_key_bytes: client_enc_key_bytes_orig, // the original bytes for the encryption key
+            client_id: client_address,
+            request_id: req_id,
             key_id,
             context_id,
             epoch_id,
             domain,
             extra_data,
-        ) = validate_user_decrypt_req(inner.as_ref())?;
+        } = validate_user_decrypt_req(inner.as_ref())?;
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
             &self.session_maker,

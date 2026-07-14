@@ -7,8 +7,8 @@ use crate::engine::centralized::central_kms::{
 use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-    validate_public_decrypt_req, validate_user_decrypt_req,
+    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, ValidatedUserDecryptRequest,
+    parse_grpc_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
     add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
@@ -45,18 +45,18 @@ pub async fn user_decrypt_impl<
         .start();
 
     let inner = request.into_inner();
-    let (
+    let ValidatedUserDecryptRequest {
         typed_ciphertexts,
         link,
         client_enc_key_bytes,
-        client_address,
+        client_id: client_address,
         request_id,
         key_id,
         context_id,
         epoch_id,
         domain,
         extra_data,
-    ) = validate_user_decrypt_req(&inner)?;
+    } = validate_user_decrypt_req(&inner)?;
     if !service
         .context_manager
         .mpc_context_exists_in_cache(&context_id)
