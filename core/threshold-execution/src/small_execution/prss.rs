@@ -542,6 +542,21 @@ pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
     /// the initialized PRFs for each set
     pub(crate) prfs: Arc<Vec<PrfAes>>,
     pub(crate) broadcast: B,
+    /// Issue#3089: Temporary flag to run PRSS pre-fix during a transition period.
+    pub(crate) run_legacy_prss: bool,
+}
+
+impl<Z: Default + Clone + Serialize, B: Broadcast> PRSSState<Z, B> {
+    /// Issue#3089: Enable (or disable) the legacy, pre-#663 overlapping counter schedule for
+    /// PRSS-Mask in this session, for interoperability with unpatched peers during the
+    /// transition period. The counter advance is identical in both schedules, so switching
+    /// per session is safe and requires no state migration.
+    ///
+    /// Defaults to `false` (the fixed, disjoint schedule). Must be set to the same value by
+    /// all parties of a session, before the first call to `mask_next`/`mask_next_vec`.
+    pub fn set_run_legacy_prss(&mut self, run_legacy: bool) {
+        self.run_legacy_prss = run_legacy;
+    }
 }
 
 impl<Z: Default + Clone + Serialize, B: Broadcast> ProtocolDescription for PRSSState<Z, B> {
@@ -632,13 +647,22 @@ where
         let prss_setup = self.prss_setup.clone();
         let mask_ctr = self.counters.mask_ctr;
 
+        let run_legacy = self.run_legacy_prss;
         let res = spawn_compute_bound(move || {
         // Element `idx` consumes a disjoint counter pair (mask_ctr + 2*idx, +1), matching one
         // scalar mask_next() call. The pairs must NOT overlap: iterating the counter by 1 would
         // make adjacent elements share a phi value, diverging from repeated scalar calls and
         // reducing the independence of the noise-flooding masks.
+        // Issue#3089: the legacy branch deliberately reproduces the pre-#663 overlapping
+        // schedule (element `idx` uses counters mask_ctr + idx and mask_ctr + idx + 1) for
+        // interop with unpatched peers during the transition period. Both schedules advance
+        // `mask_ctr` by 2 per element below, so state stays aligned across versions.
         (0..amount as u128).map(|idx| {
-        let ctr = mask_ctr + 2 * idx;
+        let ctr = if run_legacy {
+            mask_ctr + idx
+        } else {
+            mask_ctr + 2 * idx
+        };
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
@@ -1116,6 +1140,7 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
             prss_setup: self.clone(),
             prfs: Arc::new(prfs),
             broadcast: SyncReliableBroadcast::default(),
+            run_legacy_prss: false,
         }
     }
 }
@@ -1481,6 +1506,80 @@ mod tests {
         assert_eq!(
             batch_state.counters.przs_ctr,
             scalar_state.counters.przs_ctr
+        );
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(1)]
+    #[case(2)]
+    #[case(23)]
+    #[case(1025)]
+    // Issue#3089: with `run_legacy_prss` enabled, mask_next_vec() must reproduce the pre-#663
+    // overlapping counter schedule exactly: element `idx` uses counters (mask_ctr + idx,
+    // mask_ctr + idx + 1), so that patched parties can interoperate with unpatched v0.13.x
+    // peers during the transition period. The counter advance must remain identical to the
+    // fixed schedule so per-session state stays aligned across versions.
+    async fn test_prss_mask_next_vec_legacy_schedule(#[case] amount: usize) {
+        let num_parties = 4;
+        let threshold = 1;
+
+        let sid = SessionId::from(23425);
+
+        let role_one = Role::indexed_from_one(1);
+        let prss: PRSSSetup<ResiduePolyF4Z128> =
+            PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+                .await
+                .unwrap();
+
+        let mut legacy_state = prss.new_prss_session_state(sid);
+        legacy_state.set_run_legacy_prss(true);
+        let mut fixed_state = prss.new_prss_session_state(sid);
+
+        let legacy_values = legacy_state
+            .mask_next_vec(role_one, B_SWITCH_SQUASH, amount)
+            .await
+            .unwrap();
+
+        // Recompute the expected values with the pre-#663 formula, directly from the session
+        // PRFs: element `idx` = sum over sets A containing the party of
+        // f_A(alpha) * (phi(idx) + phi(idx + 1)), i.e. counter pairs overlap between
+        // adjacent elements (initial mask_ctr is 0 in a fresh session state).
+        let bd1 = B_SWITCH_SQUASH << STATSEC;
+        for (idx, value) in legacy_values.iter().enumerate() {
+            let mut expected = ResiduePolyF4Z128::ZERO;
+            for (i, set) in legacy_state.prss_setup.sets.iter().enumerate() {
+                let aes_prf = legacy_state.prfs.get(i).unwrap();
+                let phi0 = phi(&aes_prf.phi_aes, idx as u128, bd1).unwrap();
+                let phi1 = phi(&aes_prf.phi_aes, idx as u128 + 1, bd1).unwrap();
+                let f_a = set.f_a_points[&role_one];
+                expected += f_a * ResiduePolyF4Z128::from_i128(phi0 + phi1);
+            }
+            assert_eq!(
+                *value, expected,
+                "legacy schedule mismatch at element {idx}"
+            );
+        }
+
+        // The fixed schedule must agree on the first element and (for phi != 0) diverge
+        // afterwards, and both schedules must advance the counters identically.
+        let fixed_values = fixed_state
+            .mask_next_vec(role_one, B_SWITCH_SQUASH, amount)
+            .await
+            .unwrap();
+        assert_eq!(fixed_values[0], legacy_values[0]);
+        assert_eq!(
+            legacy_state.counters.mask_ctr,
+            fixed_state.counters.mask_ctr
+        );
+        assert_eq!(legacy_state.counters.mask_ctr, 2 * amount as u128);
+        assert_eq!(
+            legacy_state.counters.prss_ctr,
+            fixed_state.counters.prss_ctr
+        );
+        assert_eq!(
+            legacy_state.counters.przs_ctr,
+            fixed_state.counters.przs_ctr
         );
     }
 

@@ -60,7 +60,10 @@ use crate::{
     engine::{
         base::{BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level},
         threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+            service::{
+                prss_compat::{DecryptKind, use_legacy_prss_mask},
+                session::{ImmutableSessionMaker, validate_context_and_epoch},
+            },
             traits::UserDecryptor,
         },
         traits::BaseKms,
@@ -198,6 +201,11 @@ impl<
     ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
         let keys = fhe_keys;
 
+        // Issue#3089: decide once per request whether the legacy (pre-#663) PRSS-Mask
+        // schedule must be used, based on the raw request ID (session IDs are hashes of it
+        // and carry no order).
+        let use_legacy_prss = use_legacy_prss_mask(req_id, DecryptKind::User)?;
+
         let mut all_signcrypted_cts = vec![];
 
         let rng = Arc::new(Mutex::new(rng));
@@ -237,7 +245,7 @@ impl<
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let session = session_maker
+                    let mut session = session_maker
                         .make_small_async_session_z128(session_id, context_id, epoch_id)
                         .await
                         .map_err(|e| {
@@ -245,6 +253,9 @@ impl<
                                 "Could not prepare ddec data for noiseflood decryption: {e}",
                             )
                         })?;
+                    // Issue#3089: masks for this session must follow the schedule agreed for
+                    // this request ID, identically across all parties.
+                    session.prss_state.set_run_legacy_prss(use_legacy_prss);
                     let mut noiseflood_session = Dec::Prep::new(session);
 
                     let pdec = Dec::partial_decrypt(
