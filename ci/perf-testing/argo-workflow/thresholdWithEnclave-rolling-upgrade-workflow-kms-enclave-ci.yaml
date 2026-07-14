@@ -64,92 +64,101 @@ spec:
       dag:
         tasks:
           ##########################################################################
-          # WARMUP Decrypt test (1 request)
+          # Legacy-PRSS-mask boundary probe (threshold RequestID = 100).
+          # -a forces all 13 cores to answer; --request-id pins the decrypt ID so
+          # it lands below/at/above the threshold. Expected vs a legacy old side:
+          #   99  (< 100) -> legacy mask on both -> reconstructs
+          #   101 (> 100) -> new mask on upgraded nodes -> Gao decode fails
+          #   100         -> the exact switchover (reveals < vs <=)
+          # 99=0x63, 100=0x64, 101=0x65 as 32-byte big-endian RequestIDs.
           ##########################################################################
-          - name: warmup-public-decrypt-euint64-req1
+          - name: public-decrypt-euint64-reqid99
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "warmup-public-decrypt-euint64-req1"
+                  value: "public-decrypt-euint64-reqid99"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id 0000000000000000000000000000000000000000000000000000000000000063"
                 - name: fhe-params
                   value: "Default"
-          ##########################################################################
-          # Public decrypt tests — 1 request
-          ##########################################################################
-          - name: public-decrypt-euint64-req1
-            dependencies: ["warmup-public-decrypt-euint64-req1"]
+          - name: public-decrypt-euint64-reqid100
+            dependencies: ["public-decrypt-euint64-reqid99"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-req1"
+                  value: "public-decrypt-euint64-reqid100"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id 0000000000000000000000000000000000000000000000000000000000000064"
                 - name: fhe-params
                   value: "Default"
-          ##########################################################################
-          # User decrypt tests — 1 copy
-          ##########################################################################
-          - name: user-decrypt-euint64-req1
-            dependencies: ["public-decrypt-euint64-req1"]
+          - name: public-decrypt-euint64-reqid101
+            dependencies: ["public-decrypt-euint64-reqid100"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-req1"
+                  value: "public-decrypt-euint64-reqid101"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id 0000000000000000000000000000000000000000000000000000000000000065"
                 - name: fhe-params
                   value: "Default"
-          ##########################################################################
-          # Public decrypt tests — 10 requests
-          ##########################################################################
-          - name: public-decrypt-euint64-req10
-            dependencies: ["user-decrypt-euint64-req1"]
+          - name: user-decrypt-euint64-reqid99
+            dependencies: ["public-decrypt-euint64-reqid101"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-req10"
+                  value: "user-decrypt-euint64-reqid99"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id 0000000000000000000000000000000000000000000000000000000000000063"
                 - name: fhe-params
                   value: "Default"
-          ##########################################################################
-          # User decrypt tests — 10 copies
-          ##########################################################################
-          - name: user-decrypt-euint64-req10
-            dependencies: ["public-decrypt-euint64-req10"]
+          - name: user-decrypt-euint64-reqid100
+            dependencies: ["user-decrypt-euint64-reqid99"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-req10"
+                  value: "user-decrypt-euint64-reqid100"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --batch-size 10"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id 0000000000000000000000000000000000000000000000000000000000000064"
+                - name: fhe-params
+                  value: "Default"
+          - name: user-decrypt-euint64-reqid101
+            dependencies: ["user-decrypt-euint64-reqid100"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-reqid101"
+                - name: test-command
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id 0000000000000000000000000000000000000000000000000000000000000065"
                 - name: fhe-params
                   value: "Default"
 
           # Summary report generation
           - name: generate-summary
             dependencies: [
-              "public-decrypt-euint64-req1",
-              "user-decrypt-euint64-req1",
-              "public-decrypt-euint64-req10",
-              "user-decrypt-euint64-req10"
+              "public-decrypt-euint64-reqid99",
+              "public-decrypt-euint64-reqid100",
+              "public-decrypt-euint64-reqid101",
+              "user-decrypt-euint64-reqid99",
+              "user-decrypt-euint64-reqid100",
+              "user-decrypt-euint64-reqid101"
             ]
             template: summary-report
             continueOn:
@@ -157,13 +166,17 @@ spec:
             arguments:
               parameters:
               - name: test-result-1
-                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-reqid99.outputs.parameters.test-result}}"
               - name: test-result-2
-                value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-reqid100.outputs.parameters.test-result}}"
               - name: test-result-3
-                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-reqid101.outputs.parameters.test-result}}"
               - name: test-result-4
-                value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-reqid99.outputs.parameters.test-result}}"
+              - name: test-result-5
+                value: "{{tasks.user-decrypt-euint64-reqid100.outputs.parameters.test-result}}"
+              - name: test-result-6
+                value: "{{tasks.user-decrypt-euint64-reqid101.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -404,6 +417,8 @@ spec:
         - name: test-result-2
         - name: test-result-3
         - name: test-result-4
+        - name: test-result-5
+        - name: test-result-6
         - name: tls
         - name: run_url
         - name: test_label
@@ -426,10 +441,12 @@ spec:
           apk add --no-cache jq
           # Make a directory for all the results
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/user-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/public-decrypt-euint64-reqid99.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/public-decrypt-euint64-reqid100.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-reqid101.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-reqid99.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/user-decrypt-euint64-reqid100.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-reqid101.json
           ls -ali /mnt/results/
 
           TEST_LABEL="{{inputs.parameters.test_label}}"
@@ -460,10 +477,12 @@ spec:
 
           # Process result files in execution order
           for result in \
-            /mnt/results/public-decrypt-euint64-req1.json \
-            /mnt/results/user-decrypt-euint64-req1.json \
-            /mnt/results/public-decrypt-euint64-req10.json \
-            /mnt/results/user-decrypt-euint64-req10.json; do
+            /mnt/results/public-decrypt-euint64-reqid99.json \
+            /mnt/results/public-decrypt-euint64-reqid100.json \
+            /mnt/results/public-decrypt-euint64-reqid101.json \
+            /mnt/results/user-decrypt-euint64-reqid99.json \
+            /mnt/results/user-decrypt-euint64-reqid100.json \
+            /mnt/results/user-decrypt-euint64-reqid101.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -628,10 +647,12 @@ spec:
                   }
                 ],
                 "text": "\`\`\`\n$(for result in \
-                  /mnt/results/public-decrypt-euint64-req1.json \
-                  /mnt/results/user-decrypt-euint64-req1.json \
-                  /mnt/results/public-decrypt-euint64-req10.json \
-                  /mnt/results/user-decrypt-euint64-req10.json; do
+                  /mnt/results/public-decrypt-euint64-reqid99.json \
+                  /mnt/results/public-decrypt-euint64-reqid100.json \
+                  /mnt/results/public-decrypt-euint64-reqid101.json \
+                  /mnt/results/user-decrypt-euint64-reqid99.json \
+                  /mnt/results/user-decrypt-euint64-reqid100.json \
+                  /mnt/results/user-decrypt-euint64-reqid101.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
