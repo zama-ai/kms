@@ -182,25 +182,6 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
-/// Parses a Solana-native user-decryption client identity carried as
-/// `"solana:<64 lowercase hex chars>"` in [`UserDecryptionRequest::client_address`].
-///
-/// Solana users authenticate with an ed25519 `signMessage` over a 32-byte pubkey rather
-/// than an EVM EIP-712 wallet signature over a 20-byte address, so the standard checksummed
-/// `Address` parse cannot represent them. Returns `None` for an ordinary EVM client address,
-/// which takes the unchanged EIP-712 path.
-fn parse_solana_user_decrypt_pubkey(client_address: &str) -> Option<[u8; 32]> {
-    let hex = client_address.strip_prefix("solana:")?;
-    // Canonical form: exactly 64 LOWERCASE hex chars. The kms-connector sets this field with
-    // `hex::encode` (lowercase) over the 32-byte ed25519 pubkey, so requiring that exact encoding
-    // keeps one identity ↔ one client_address ↔ one derived client_id (no upper/mixed-case aliasing).
-    if hex.len() != 64 || !hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
-        return None;
-    }
-    let bytes = alloy_primitives::hex::decode(hex).ok()?;
-    <[u8; 32]>::try_from(bytes.as_slice()).ok()
-}
-
 /// Derives the stable 20-byte signcryption `client_id` from a 32-byte Solana pubkey as
 /// `keccak256(pubkey)[12..]`, mirroring EVM address derivation. The client reproduces this
 /// to de-signcrypt the response; it is a deterministic label, not an authorization input
@@ -280,8 +261,8 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    // Solana-native user decryption: the client identity is a 32-byte ed25519 pubkey carried
-    // as "solana:<hex>" (the EVM checksum parse below cannot represent it) and there is no EVM
+    // Solana-native user decryption: the client identity is a typed 32-byte ed25519 pubkey and
+    // there is no EVM
     // verifying contract. Authorization (RPC-verified on-chain ACL + ed25519 signMessage) is
     // enforced by the kms-connector before this call — exactly as the gateway enforces the EVM
     // ACL before the EVM path — so here we only bind the response to the request via the Solana
@@ -289,22 +270,20 @@ fn unpack_user_decrypt_req(
     // binding is sound as long as the client recomputes the same link. The response cert is the
     // standard secp256k1 EIP-712 the gateway verifies, signed under the gateway's `Decryption`
     // domain (`req.domain`) — see the domain note at the return below.
-    // Typed-identity routing (fails CLOSED): when the `client_identity` oneof is set, route
-    // STRICTLY by variant — a Solana request is handled as Solana and NEVER reparsed as an EVM
-    // address. Legacy clients leave it unset and fall back to the `client_address` string overload.
-    use kms_grpc::kms::v1::user_decryption_request::ClientIdentity;
-    let solana_pubkey_opt: Option<[u8; 32]> = match &req.client_identity {
-        Some(ClientIdentity::SolanaPubkey(pk)) => {
-            Some(<[u8; 32]>::try_from(pk.as_slice()).map_err(|_| {
+    // Only the typed pubkey selects Solana. An unset pubkey follows the unchanged EVM route;
+    // `client_address` is never inspected for a Solana prefix.
+    let solana_pubkey_opt: Option<[u8; 32]> = req
+        .solana_pubkey
+        .as_deref()
+        .map(|pubkey| {
+            <[u8; 32]>::try_from(pubkey).map_err(|_| {
                 anyhow::anyhow!(
                     "Solana client identity must be a 32-byte pubkey, got {} bytes",
-                    pk.len()
+                    pubkey.len()
                 )
-            })?)
-        }
-        Some(ClientIdentity::EvmAddress(_)) => None,
-        None => parse_solana_user_decrypt_pubkey(&req.client_address),
-    };
+            })
+        })
+        .transpose()?;
     if let Some(solana_pubkey) = solana_pubkey_opt {
         let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
             req.typed_ciphertexts
@@ -340,27 +319,13 @@ fn unpack_user_decrypt_req(
         ));
     }
 
-    // EVM path: a typed `evm_address` (oneof) takes precedence and fails closed on a wrong length;
-    // otherwise fall back to the legacy EIP-55 `client_address` string.
-    let client_verf_key = match &req.client_identity {
-        Some(ClientIdentity::EvmAddress(addr)) => {
-            let bytes: [u8; 20] = addr.as_slice().try_into().map_err(|_| {
-                anyhow::anyhow!(
-                    "EVM client identity must be a 20-byte address, got {} bytes",
-                    addr.len()
-                )
-            })?;
-            alloy_primitives::Address::from(bytes)
-        }
-        _ => alloy_primitives::Address::parse_checksummed(&req.client_address, None).map_err(
-            |e| {
-                anyhow::anyhow!(
-                    "Error parsing checksummed client address: {} - {e}",
-                    req.client_address
-                )
-            },
-        )?,
-    };
+    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None);
+    let client_verf_key = client_verf_key.map_err(|e| {
+        anyhow::anyhow!(
+            "Error parsing checksummed client address: {} - {e}",
+            req.client_address
+        )
+    })?;
 
     let domain = match verify_user_decrypt_eip712(req) {
         Ok(domain) => {
@@ -1096,47 +1061,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 
 #[cfg(test)]
 mod solana_user_decrypt_tests {
-    use super::{parse_solana_user_decrypt_pubkey, solana_user_decrypt_client_id};
-
-    #[test]
-    fn parses_solana_client_address_and_rejects_evm() {
-        let pubkey = [0x11u8; 32];
-        let addr = format!("solana:{}", alloy_primitives::hex::encode(pubkey));
-        assert_eq!(parse_solana_user_decrypt_pubkey(&addr), Some(pubkey));
-
-        // Ordinary EVM checksummed address → None (takes the unchanged EIP-712 path).
-        assert_eq!(
-            parse_solana_user_decrypt_pubkey("0x66f9664f97F2b50F62D13eA064982f936dE76657"),
-            None
-        );
-        // Malformed Solana payloads → None.
-        assert_eq!(parse_solana_user_decrypt_pubkey("solana:zz"), None);
-        assert_eq!(parse_solana_user_decrypt_pubkey("solana:1122"), None); // too short
-        // A bare 64-hex string WITHOUT the `solana:` prefix is NOT treated as Solana; it falls to
-        // the EVM path (which rejects it as a non-checksummed address). No silent mis-dispatch.
-        assert_eq!(
-            parse_solana_user_decrypt_pubkey(&alloy_primitives::hex::encode(pubkey)),
-            None
-        );
-        // Uppercase / mixed-case hex is rejected — canonical client_address form is lowercase.
-        // Use a pubkey whose hex contains letters so uppercasing actually changes it.
-        let letters = [0xabu8; 32];
-        assert_eq!(
-            parse_solana_user_decrypt_pubkey(&format!(
-                "solana:{}",
-                alloy_primitives::hex::encode(letters).to_uppercase()
-            )),
-            None
-        );
-        // The same identity in canonical lowercase still parses.
-        assert_eq!(
-            parse_solana_user_decrypt_pubkey(&format!(
-                "solana:{}",
-                alloy_primitives::hex::encode(letters)
-            )),
-            Some(letters)
-        );
-    }
+    use super::solana_user_decrypt_client_id;
 
     #[test]
     fn client_id_is_keccak_derived_and_deterministic() {
@@ -1346,7 +1271,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1368,7 +1293,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1393,7 +1318,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1415,7 +1340,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1437,7 +1362,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -1464,7 +1389,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1486,7 +1411,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
@@ -1512,22 +1437,10 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 unpack_user_decrypt_req(&evm_req)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("embeds Solana chain ID")
-            );
-
-            let mut typed_evm_req = evm_req;
-            typed_evm_req.client_identity =
-                Some(v1::user_decryption_request::ClientIdentity::EvmAddress(
-                    client_address.as_slice().to_vec(),
-                ));
-            assert!(
-                unpack_user_decrypt_req(&typed_evm_req)
                     .unwrap_err()
                     .to_string()
                     .contains("embeds Solana chain ID")
@@ -1554,11 +1467,31 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                client_identity: Some(v1::user_decryption_request::ClientIdentity::SolanaPubkey(
-                    vec![0x11; 32],
-                )),
+                solana_pubkey: Some(vec![0x11; 32]),
             };
             assert!(unpack_user_decrypt_req(&solana_req).is_ok());
+
+            for actual in [31, 33] {
+                let mut invalid_identity = solana_req.clone();
+                invalid_identity.solana_pubkey = Some(vec![0x11; actual]);
+                assert_eq!(
+                    unpack_user_decrypt_req(&invalid_identity)
+                        .unwrap_err()
+                        .to_string(),
+                    format!("Solana client identity must be a 32-byte pubkey, got {actual} bytes")
+                );
+            }
+
+            let mut legacy_string = solana_req.clone();
+            legacy_string.solana_pubkey = None;
+            legacy_string.client_address =
+                format!("solana:{}", alloy_primitives::hex::encode([0x11; 32]));
+            assert!(
+                unpack_user_decrypt_req(&legacy_string)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Error parsing checksummed client address")
+            );
 
             let mut low_bit = solana_req.clone();
             low_bit.typed_ciphertexts[0].external_handle[22..30]
@@ -1665,7 +1598,7 @@ mod tests {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
-            client_identity: None,
+            solana_pubkey: None,
         };
 
         {

@@ -12,7 +12,6 @@ fn default_builder() -> Builder {
         .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
         .type_attribute("UserDecryptionRequest", DERIVES)
-        .type_attribute("UserDecryptionRequest.client_identity", DERIVES)
         .type_attribute("UserDecryptionResponse", DERIVES)
         .type_attribute("UserDecryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
@@ -55,11 +54,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "UserDecryptionRequest",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
-        // The client_identity oneof compiles to a Rust enum; Option<enum> can't cross the
-        // WASM ABI, so skip its JS getter. Wasm build only — the non-wasm server build never
-        // applies wasm_bindgen, so this attribute must not leak into default_builder().
+        // Solana request routing is server-side; do not expose the optional byte vector through
+        // the EVM-oriented WASM request type.
         .field_attribute(
-            "UserDecryptionRequest.client_identity",
+            "UserDecryptionRequest.solana_pubkey",
             "#[wasm_bindgen(skip)]",
         )
         .type_attribute(

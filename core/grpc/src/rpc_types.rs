@@ -1704,7 +1704,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 req.compute_link_checked()
@@ -1726,7 +1726,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(
                 req.compute_link_checked()
@@ -1751,7 +1751,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
 
             assert!(
@@ -1774,7 +1774,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                client_identity: None,
+                solana_pubkey: None,
             };
             assert!(req.compute_link_checked().is_ok());
         }
