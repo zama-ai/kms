@@ -1092,6 +1092,40 @@ mod tests {
         test_honest_crs_ceremony(InsecureCeremony::default)
     }
 
+    #[test]
+    fn test_ceremony_rejects_small_witness_dim() {
+        // The well-formedness check indexes up to `witness_dim + 1`, so `execute` requires
+        // witness_dim >= 2 and must reject a smaller value up front with a clear error
+        // rather than panicking on an out-of-bounds access later. The guard runs before any
+        // networking, so a single session is enough to exercise it.
+        let roles = generate_fixed_roles(4);
+        let runtime: DistributedTestRuntime<
+            ResiduePolyF4Z64,
+            _,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+        > = DistributedTestRuntime::new(roles, 1, NetworkMode::Sync, None);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let role = *runtime.roles.iter().next().unwrap();
+        let mut session = runtime.large_session_for_party(SessionId::from(2), role);
+
+        for bad_dim in [0usize, 1usize] {
+            let err = rt
+                .block_on(SecureCeremony::default().execute::<ResiduePolyF4Z64, _>(
+                    &mut session,
+                    bad_dim,
+                    Some(1),
+                ))
+                .err()
+                .unwrap();
+            assert!(
+                err.to_string().contains("witness_dim >= 2"),
+                "witness_dim={bad_dim} should be rejected, got: {err}"
+            );
+        }
+    }
+
     fn test_honest_crs_ceremony<F, C>(ceremony_f: F)
     where
         F: Fn() -> C,
