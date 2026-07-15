@@ -1590,6 +1590,147 @@ mod tests {
         );
     }
 
+    /// Issue#3089 test helper: every party derives its batched PRSS-Mask shares for one session
+    /// under the given schedule. Returns `per_party[party_index][block]`.
+    async fn party_mask_vectors(
+        num_parties: usize,
+        threshold: usize,
+        sid: SessionId,
+        amount: usize,
+        run_legacy: bool,
+    ) -> Vec<Vec<ResiduePolyF4Z128>> {
+        let all_roles = (1..=num_parties)
+            .map(Role::indexed_from_one)
+            .collect::<Vec<_>>();
+        join_all(all_roles.iter().map(|p| async {
+            let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
+                num_parties,
+                threshold,
+                *p,
+            )
+            .await
+            .unwrap();
+            let mut state = prss_setup.new_prss_session_state(sid);
+            state.set_run_legacy_prss(run_legacy);
+            state
+                .mask_next_vec(*p, B_SWITCH_SQUASH, amount)
+                .await
+                .unwrap()
+        }))
+        .await
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(2)]
+    #[case(8)]
+    // Issue#3089: cluster-level proof that the request-ID gate changes the *reconstructed*
+    // PRSS-Mask, not merely which branch each party takes. Reconstruct the batched masks across
+    // ALL parties under the legacy and the fixed schedule: the two agree only on the first block
+    // (element 0 uses the same counter pair in both) and diverge on every subsequent block, so a
+    // cluster split across schedules masks genuinely different values — the root of the drift bug.
+    async fn test_prss_mask_next_vec_schedule_diverges(#[case] amount: usize) {
+        let num_parties = 4;
+        let threshold = 1;
+        let sid = SessionId::from(23425);
+        let all_roles = (1..=num_parties)
+            .map(Role::indexed_from_one)
+            .collect::<Vec<_>>();
+
+        let legacy = party_mask_vectors(num_parties, threshold, sid, amount, true).await;
+        let fixed = party_mask_vectors(num_parties, threshold, sid, amount, false).await;
+
+        // Reconstruct one block's mask from every party's share (all parties on one schedule, so
+        // the shares are consistent and reconstruction with zero error tolerance succeeds).
+        let reconstruct_block = |per_party: &[Vec<ResiduePolyF4Z128>], block: usize| {
+            let shares = all_roles
+                .iter()
+                .enumerate()
+                .map(|(i, r)| Share::new(*r, per_party[i][block]))
+                .collect::<Vec<_>>();
+            ShamirSharings::create(shares).reconstruct(threshold).unwrap()
+        };
+
+        // Block 0 is identical under both schedules (same counter pair mask_ctr, mask_ctr+1).
+        assert_eq!(
+            reconstruct_block(&legacy, 0),
+            reconstruct_block(&fixed, 0),
+            "the two schedules must reconstruct the same mask for the first block"
+        );
+        // Every later block diverges: the schedules mask different values.
+        for block in 1..amount {
+            assert_ne!(
+                reconstruct_block(&legacy, block),
+                reconstruct_block(&fixed, block),
+                "legacy and fixed schedules must reconstruct different masks for block {block}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    // Issue#3089: share-level analogue of the mixed-version drift failure. On a 4-party / t=1
+    // cluster, mixing schedules across parties for a diverging block yields shares that no longer
+    // lie on one degree-t polynomial. Gao reconstruction (err_reconstruct with max_errs = t) then
+    // behaves exactly as observed end-to-end (rolling-upgrade run 29369227341):
+    //   - a single divergent party (minority == t) is silently error-corrected to the majority
+    //     schedule's mask, consuming the whole fault budget;
+    //   - two divergent parties (minority == t+1 > t) exceed the budget and reconstruction fails.
+    async fn test_prss_mask_mixed_schedule_reconstruction() {
+        let num_parties = 4;
+        let threshold = 1;
+        let amount = 2; // need a diverging block (block index >= 1)
+        let block = 1;
+        let sid = SessionId::from(99);
+        let all_roles = (1..=num_parties)
+            .map(Role::indexed_from_one)
+            .collect::<Vec<_>>();
+
+        let legacy = party_mask_vectors(num_parties, threshold, sid, amount, true).await;
+        let fixed = party_mask_vectors(num_parties, threshold, sid, amount, false).await;
+
+        // The all-fixed reconstruction is the reference "correct" mask for this block.
+        let fixed_mask = {
+            let shares = all_roles
+                .iter()
+                .enumerate()
+                .map(|(i, r)| Share::new(*r, fixed[i][block]))
+                .collect::<Vec<_>>();
+            ShamirSharings::create(shares).reconstruct(threshold).unwrap()
+        };
+
+        // Reconstruct `block` with the first `num_legacy` parties on the legacy schedule and the
+        // rest on the fixed one, using Gao error-correction that tolerates up to t errors (the
+        // honest decryption path).
+        let mixed = |num_legacy: usize| {
+            let shares = all_roles
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let v = if i < num_legacy {
+                        legacy[i][block]
+                    } else {
+                        fixed[i][block]
+                    };
+                    Share::new(*r, v)
+                })
+                .collect::<Vec<_>>();
+            ShamirSharings::create(shares).err_reconstruct(threshold, threshold)
+        };
+
+        // Minority == t (1 legacy vs 3 fixed): error-corrected to the fixed majority.
+        assert_eq!(
+            mixed(1).unwrap(),
+            fixed_mask,
+            "a single divergent party (== t) must be error-corrected to the majority mask"
+        );
+        // Minority == t+1 (2 vs 2): exceeds the fault budget → decode fails (the Gao failure a
+        // mixed-version cluster hits on multi-block ciphertexts).
+        assert!(
+            mixed(2).is_err(),
+            "two divergent parties (> t) must exceed the correction budget and fail to reconstruct"
+        );
+    }
+
     #[tokio::test]
     #[rstest]
     #[case(4, 1)]

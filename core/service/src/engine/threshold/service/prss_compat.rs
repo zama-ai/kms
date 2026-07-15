@@ -260,5 +260,35 @@ mod tests {
         // Random/hash-style (huge) IDs always get the fixed schedule.
         let huge = RequestId::from_str(&"ff".repeat(32)).unwrap();
         assert!(!is_before(&huge, &threshold));
+
+        // A threshold of 0 (the config default) means the fixed schedule always: no request
+        // ID is strictly below 0, including the all-zero ID.
+        let zero = U256::ZERO;
+        assert!(!is_before(&req_id_from(0), &zero));
+        assert!(!is_before(&req_id_from(1), &zero));
+        assert!(!is_before(&huge, &zero));
+    }
+
+    #[test]
+    fn set_or_check_idempotent_and_conflict() {
+        // A fresh cell accepts its first value.
+        let cell = OnceLock::new();
+        assert!(set_or_check(&cell, U256::from(5u64), "public decryption").is_ok());
+        assert_eq!(cell.get(), Some(&U256::from(5u64)));
+
+        // Re-initializing with the identical value is tolerated (in-process test servers each
+        // call init_from_conf against the same process-global cell).
+        assert!(set_or_check(&cell, U256::from(5u64), "public decryption").is_ok());
+        assert_eq!(cell.get(), Some(&U256::from(5u64)));
+
+        // Re-initializing with a different value is a real conflict (consensus constant) and
+        // must be rejected, leaving the original value untouched.
+        let err = set_or_check(&cell, U256::from(6u64), "public decryption")
+            .expect_err("a conflicting re-initialization must be rejected");
+        assert!(
+            err.to_string().contains("conflicting"),
+            "unexpected error message: {err}"
+        );
+        assert_eq!(cell.get(), Some(&U256::from(5u64)));
     }
 }

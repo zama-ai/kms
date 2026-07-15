@@ -317,3 +317,53 @@ MEUCIEfh23uIR76K+tv+s5pi0uksEeleDonWm+tqStxeRFR5AiEAs4mw/Yi6aoDg
     // `into_pem` will deserialize the string inside `tls_cert`
     let _ = tls_cert.into_pem_with_sanity_check(1, &peers).unwrap();
 }
+
+/// Issue#3089: `validate_threshold_party_conf` must reject malformed PRSS-Mask schedule activation thresholds at config
+/// load. Complements the `parse_threshold` unit tests in `prss_compat` by covering the config-validation wiring (both
+/// fields), including the empty-string case that a templating mishap could produce.
+#[test]
+fn rejects_malformed_legacy_prss_mask_threshold() {
+    // Minimal conf with no peers (skips the peer/threshold checks), so only the PRSS-Mask
+    // threshold validation runs.
+    let conf_with = |public: &str, user: &str| ThresholdPartyConf {
+        listen_address: "0.0.0.0".to_string(),
+        listen_port: 5000,
+        tls: None,
+        threshold: 1,
+        my_id: None,
+        dec_capacity: 1,
+        min_dec_cache: 1,
+        preproc_redis: None,
+        num_sessions_preproc: None,
+        peers: None,
+        core_to_core_net: None,
+        decryption_mode: DecryptionMode::NoiseFloodSmall,
+        legacy_prss_mask_before_public_decrypt_id: public.to_string(),
+        legacy_prss_mask_before_user_decrypt_id: user.to_string(),
+    };
+
+    // Well-formed values (default "0", decimal, and 0x-hex) pass.
+    assert!(validate_threshold_party_conf(&conf_with("0", "0")).is_ok());
+    assert!(validate_threshold_party_conf(&conf_with("1234", "0x1f")).is_ok());
+
+    // A malformed value in either field is rejected, and the error names the offending field.
+    let err = validate_threshold_party_conf(&conf_with("nonsense", "0"))
+        .expect_err("a malformed public threshold must be rejected");
+    assert!(
+        err.message
+            .as_ref()
+            .is_some_and(|m| m.contains("legacy_prss_mask_before_public_decrypt_id")),
+        "unexpected error: {err:?}"
+    );
+    let err = validate_threshold_party_conf(&conf_with("0", "0xzz"))
+        .expect_err("a malformed user threshold must be rejected");
+    assert!(
+        err.message
+            .as_ref()
+            .is_some_and(|m| m.contains("legacy_prss_mask_before_user_decrypt_id")),
+        "unexpected error: {err:?}"
+    );
+
+    // An empty string (e.g. from a templating mishap) fails loudly rather than defaulting to 0.
+    assert!(validate_threshold_party_conf(&conf_with("", "0")).is_err());
+}
