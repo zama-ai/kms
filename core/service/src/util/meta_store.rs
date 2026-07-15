@@ -41,7 +41,7 @@ use kms_grpc::RequestId;
 use std::fmt::{self};
 use std::sync::Weak;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     marker::PhantomData,
     sync::Arc,
 };
@@ -328,8 +328,10 @@ pub struct MetaStore<T> {
     min_cache: usize,
     /// Storage of all elements in the system
     storage: HashMap<RequestId, StoredEntry<T>>,
-    /// Queue of all elements that have been completed, i.e. `Done(Ok(...)` or `Done(Err(...)`. That is, `Deleted` elements are NOT included in this queue.
-    complete_queue: Vec<RequestId>,
+    /// Queue of all elements that have been completed, i.e. `Done(Ok(...)` or
+    /// `Done(Err(...)`. The oldest completion is at the front for efficient eviction.
+    /// `Deleted` elements are NOT included in this queue.
+    complete_queue: VecDeque<RequestId>,
     /// The set of entries that has been `Deleted` (i.e. tombstoned).
     deleted_set: HashSet<RequestId>,
     /// Sender cloned into every minted [`MetaStorePermit`].
@@ -340,7 +342,7 @@ impl<T> MetaStore<T> {
     fn inner_new(
         capacity: usize,
         min_cache: usize,
-        complete_queue: Vec<RequestId>,
+        complete_queue: VecDeque<RequestId>,
         storage: HashMap<RequestId, StoredEntry<T>>,
     ) -> (Self, mpsc::UnboundedReceiver<(RequestId, &'static str)>) {
         let (reaper_tx, reaper_rx) = mpsc::unbounded_channel();
@@ -369,7 +371,7 @@ impl<T> MetaStore<T> {
         let (store, rx) = Self::inner_new(
             capacity,
             min_cache,
-            Vec::with_capacity(min_cache),
+            VecDeque::with_capacity(min_cache),
             HashMap::with_capacity(capacity),
         );
         Self::spawn_reaper(store, rx)
@@ -382,7 +384,7 @@ impl<T> MetaStore<T> {
     where
         T: Send + Sync + 'static,
     {
-        let (store, rx) = Self::inner_new(usize::MAX, usize::MAX, Vec::new(), HashMap::new());
+        let (store, rx) = Self::inner_new(usize::MAX, usize::MAX, VecDeque::new(), HashMap::new());
         Self::spawn_reaper(store, rx)
     }
 
@@ -391,11 +393,11 @@ impl<T> MetaStore<T> {
     where
         T: Send + Sync + 'static,
     {
-        let mut completed_queue = Vec::new();
+        let mut completed_queue = VecDeque::new();
         let storage = map
             .into_iter()
             .map(|(key, value)| {
-                completed_queue.push(key);
+                completed_queue.push_back(key);
                 (key, StoredEntry::new_done(Ok(Arc::new(value))))
             })
             .collect();
@@ -492,13 +494,12 @@ impl<T> MetaStore<T> {
                         req_id: *request_id,
                     });
                 };
-                if pos >= self.complete_queue.len() {
+                let Some(old_request_id) = self.complete_queue.remove(pos) else {
                     let msg =
                         format!("complete_queue index {pos} vanished while inserting {request_id}");
                     tracing::error!(msg);
                     return Err(MetaStoreError::Invariant(msg));
-                }
-                let old_request_id = self.complete_queue.remove(pos);
+                };
                 if self.storage.remove(&old_request_id).is_none() {
                     self.complete_queue.insert(pos, old_request_id);
                     let msg = format!(
@@ -578,7 +579,7 @@ impl<T> MetaStore<T> {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
         entry.set_complete(update.map(Arc::new));
-        self.complete_queue.push(req_id);
+        self.complete_queue.push_back(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
     }
@@ -610,7 +611,7 @@ impl<T> MetaStore<T> {
             EntryStatus::Deleted => return Err(MetaStoreError::CannotUpdate { req_id }),
             EntryStatus::Pending => {
                 entry.set_complete(Ok(value));
-                self.complete_queue.push(req_id);
+                self.complete_queue.push_back(req_id);
             }
             EntryStatus::Done => {
                 entry.set_complete(Ok(value));
@@ -752,7 +753,7 @@ impl<T> MetaStore<T> {
             .expect("entry observed as Pending under this lock cannot vanish");
         // `set_complete` records the failure and wakes any waiter via the channel.
         entry.set_complete(Err(reason));
-        self.complete_queue.push(*req_id);
+        self.complete_queue.push_back(*req_id);
         true
     }
 
@@ -1294,22 +1295,22 @@ impl<T> MetaStore<T> {
         Self::inner_new(
             capacity,
             min_cache,
-            Vec::with_capacity(min_cache),
+            VecDeque::with_capacity(min_cache),
             HashMap::with_capacity(capacity),
         )
         .0
     }
 
     fn new_unlimited_inner() -> Self {
-        Self::inner_new(usize::MAX, usize::MAX, Vec::new(), HashMap::new()).0
+        Self::inner_new(usize::MAX, usize::MAX, VecDeque::new(), HashMap::new()).0
     }
 
     fn new_from_map_inner(map: HashMap<RequestId, T>) -> Self {
-        let mut complete_queue = Vec::new();
+        let mut complete_queue = VecDeque::new();
         let storage = map
             .into_iter()
             .map(|(key, value)| {
-                complete_queue.push(key);
+                complete_queue.push_back(key);
                 (key, StoredEntry::new_done(Ok(Arc::new(value))))
             })
             .collect();
