@@ -1648,7 +1648,9 @@ mod tests {
                 .enumerate()
                 .map(|(i, r)| Share::new(*r, per_party[i][block]))
                 .collect::<Vec<_>>();
-            ShamirSharings::create(shares).reconstruct(threshold).unwrap()
+            ShamirSharings::create(shares)
+                .reconstruct(threshold)
+                .unwrap()
         };
 
         // Block 0 is identical under both schedules (same counter pair mask_ctr, mask_ctr+1).
@@ -1695,7 +1697,9 @@ mod tests {
                 .enumerate()
                 .map(|(i, r)| Share::new(*r, fixed[i][block]))
                 .collect::<Vec<_>>();
-            ShamirSharings::create(shares).reconstruct(threshold).unwrap()
+            ShamirSharings::create(shares)
+                .reconstruct(threshold)
+                .unwrap()
         };
 
         // Reconstruct `block` with the first `num_legacy` parties on the legacy schedule and the
