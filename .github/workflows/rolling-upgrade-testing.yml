@@ -661,12 +661,14 @@ jobs:
         run: |
           echo "Collecting logs from all KMS Core pods..."
           for i in {1..13}; do
-            POD_NAME="kms-service-threshold-${i}-${PATH_SUFFIX}-core-${i}"
+            POD_NAME="kms-core-${i}-core-${i}"
             LOG_FILE="kms-core-${i}-logs.txt"
 
             if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" &> /dev/null; then
+              # The enclave's stdout is tailed by the logger sidecar; fall back to
+              # the enclave container itself if the sidecar isn't present.
               kubectl logs "${POD_NAME}" -c kms-core-enclave-logger -n "${NAMESPACE}" > "${LOG_FILE}" 2>/dev/null || \
-              kubectl logs "${POD_NAME}" -c kms-core -n "${NAMESPACE}" > "${LOG_FILE}" 2>/dev/null || \
+              kubectl logs "${POD_NAME}" -c kms-core-enclave -n "${NAMESPACE}" > "${LOG_FILE}" 2>/dev/null || \
               echo "Failed to get logs" > "${LOG_FILE}"
               echo "Logs saved for pod ${POD_NAME}"
             else
