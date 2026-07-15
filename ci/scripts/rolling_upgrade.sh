@@ -250,6 +250,21 @@ main() {
         new_version_args=(--version "${NEW_KMS_CHART_VERSION}")
     fi
 
+    # PRSS-threshold needs a chart that templates the kmsCore.legacyPrssMask.*
+    # fields into kms-server.toml; otherwise the --set below is silently dropped
+    # and the threshold never takes effect (a meaningless probe). The in-repo
+    # chart on main deliberately does NOT carry those fields — they live on the
+    # #712 / v0.13.2x release line — so fail fast rather than run a silent no-op.
+    # Only the local repository chart is checked (we can read it); released OCI
+    # charts selected via --new-kms-chart-version are trusted to support it.
+    if [[ "${NEW_KMS_CHART_VERSION}" == "repository" ]]; then
+        local _configmap="${new_chart_loc}/templates/kms-core-configmap.yaml"
+        if ! grep -q "legacyPrssMask" "${_configmap}" 2>/dev/null; then
+            log_error "PRSS-Mask threshold requested but the repository chart does not template kmsCore.legacyPrssMask (${_configmap}); the --set would be a no-op. Use a chart that supports the field: a v0.13.2x release chart via --new-kms-chart-version, or a branch carrying the #712 chart."
+            exit 1
+        fi
+    fi
+
     # Run the upgrades in parallel but track each PID → party, and fail the step
     # if ANY of them fails (a bare `wait` only returns the last job's status).
     IFS=',' read -ra _prss_ids <<< "${ALL_UPGRADED_PARTIES}"
