@@ -1399,9 +1399,9 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         use crate::malicious_execution::zk::ceremony::DroppingCeremony;
 
@@ -1414,9 +1414,9 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
@@ -1436,9 +1436,9 @@ mod tests {
     // point vectors) must not stall or crash the ceremony. The honest parties
     // reject it and still agree on a valid CRS built from the honest rounds.
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_malformed_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
@@ -1455,9 +1455,9 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
