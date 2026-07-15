@@ -328,8 +328,8 @@ pub struct MetaStore<T> {
     min_cache: usize,
     /// Storage of all elements in the system
     storage: HashMap<RequestId, StoredEntry<T>>,
-    /// Queue of all elements that have been completed, i.e. `Done(Ok(...)` or
-    /// `Done(Err(...)`. The oldest completion is at the front for efficient eviction.
+    /// Queue of all elements that have been completed, i.e. `Done(Ok(..))` or
+    /// `Done(Err(..))`. The oldest completion is at the front for efficient eviction.
     /// `Deleted` elements are NOT included in this queue.
     complete_queue: VecDeque<RequestId>,
     /// The set of entries that has been `Deleted` (i.e. tombstoned).
