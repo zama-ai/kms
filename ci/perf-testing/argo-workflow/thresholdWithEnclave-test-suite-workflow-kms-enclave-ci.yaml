@@ -499,10 +499,10 @@ spec:
               max_latency=$(jq -r '.performance_metrics.latency.max // empty' "$result" 2>/dev/null || echo "")
               throughput=$(jq -r '.performance_metrics.throughput // empty' "$result" 2>/dev/null || echo "")
 
-              # Ensure duration is numeric
-              if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
-                duration=0
-              fi
+              # Ensure duration is numeric (POSIX sh — Alpine ash lacks bash regex tests)
+              case "$duration" in
+                ""|*[!0-9]*) duration=0 ;;
+              esac
               total_time=$((total_time + duration))
 
               # Format result line

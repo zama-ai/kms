@@ -433,7 +433,7 @@ jobs:
           FAILED_NODES=$(echo "${BASELINE_JSON}" | jq -r '
             .status.nodes[]?
             | select(.type == "Pod" and .phase != "Succeeded"
-                     and (.displayName | test("warmup|reqid") | not))
+                     and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
             echo "ERROR: baseline test pods did not succeed:"
@@ -540,7 +540,7 @@ jobs:
           FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
             .status.nodes[]?
             | select(.type == "Pod" and .phase != "Succeeded"
-                     and (.displayName | test("warmup|reqid") | not))
+                     and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
             echo "ERROR: mixed-5/13 test pods did not succeed:"
@@ -634,7 +634,7 @@ jobs:
           FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
             .status.nodes[]?
             | select(.type == "Pod" and .phase != "Succeeded"
-                     and (.displayName | test("warmup|reqid") | not))
+                     and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
             echo "ERROR: mixed-9/13 test pods did not succeed:"
