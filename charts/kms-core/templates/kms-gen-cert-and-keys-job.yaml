@@ -1,4 +1,4 @@
-{{- if and .Values.kmsCore.thresholdMode.enabled .Values.kmsGenCertAndKeys.enabled -}}
+{{- if and .Values.kmsGenCertAndKeys.enabled (or .Values.kmsCore.thresholdMode.enabled .Values.kmsCore.nitroEnclave.enabled) -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
@@ -31,14 +31,18 @@ spec:
       restartPolicy: Never
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
       initContainers:
-        - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
-          imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
+        - image: {{ .Values.socat.image.name }}:{{ .Values.socat.image.tag }}
+          imagePullPolicy: {{ .Values.socat.image.pullPolicy }}
           name: kms-core-init-load-env
           command:
             - /bin/sh
           args:
             - -c
             - |
+              # Fail loudly on any assembly error (e.g. a socat image without
+              # `envsubst`) instead of silently writing empty kms-*.toml and
+              # letting the core/gen-keys start with no config.
+              set -e
               {{ include "kmsCoreInitEnvVars" . | indent 14 | trim }}
               envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
               envsubst < /var/lib/kms-core/config/aws.toml >> kms-gen-keys.toml
@@ -92,7 +96,7 @@ spec:
         {{- /* Init Enclave Config Socket, hardcoded to 4000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-config"
-                     "image" .Values.kubeUtils.image
+                     "image" .Values.socat.image
                      "vsockPort" 4000
                      "to" (printf "OPEN:kms-gen-keys.toml,rdonly")
                 ) | indent 10 | trim }}
@@ -103,49 +107,29 @@ spec:
         {{- /* Init Enclave Logger Socket, hardcoded to 3000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "kms-core-enclave-logger"
-                     "image" .Values.kubeUtils.image
+                     "image" .Values.socat.image
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
-        {{- /* Init AWS IMDS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-imds-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.imds
-                     "address" "169.254.169.254"
-                     "port" 80
-                ) | indent 10 | trim }}
-        {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        {{- /* Init Enclave Web Identity Token Socket */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-web-identity-token"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" 4100
-          "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
-          ) | indent 10 | trim }}
-        {{- /* Init AWS STS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-sts-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.sts
-                     "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
-        {{- /* Init AWS S3 Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-s3-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.s3
-                     "address" (printf "s3.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
-        {{- /* Init AWS KMS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-kms-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.awskms
-                     "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
+                     "image" .Values.socat.image
+                     "vsockPort" .Values.kmsCore.nitroEnclave.webIdentityTokenPort
+            "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+            ) | indent 10 | trim }}
+        {{- if .Values.kmsCore.nitroEnclave.networkTunnel.enabled }}
+        {{- $queueCount := include "kmsNetworkTunnelQueueCount" . | int }}
+        {{- $workerThreads := include "kmsNetworkTunnelTokioWorkerThreads" . | int }}
+        - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" (list) "queueCount" $queueCount "workerThreads" $workerThreads) | indent 10 | trim }}
+          volumeMounts:
+            - name: tun-device
+              mountPath: /dev/net/tun
+          {{- with .Values.kmsCore.nitroEnclave.networkTunnel.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
       {{- end }}
       {{- /* initContainers section for non-enclave */}}
       {{- if not .Values.kmsCore.nitroEnclave.enabled }}
@@ -160,10 +144,10 @@ spec:
             - |
               set -e
               echo "Generating TLS certificates for threshold parties..."
-              
+
               # Generate certificate for current party only
               echo "Party ID: {{ $currentPeerID }}"
-              
+
               {{- /* Find the current party's hostname from peersList */}}
               {{- $currentHostname := "" }}
               {{- if .Values.kmsCore.thresholdMode.peersList }}
@@ -173,23 +157,25 @@ spec:
               {{- end }}
               {{- end }}
               {{- end }}
-              
+
               {{- if not $currentHostname }}
               {{- /* Fallback if hostname not found in peersList */}}
               {{- $currentHostname = printf "kms-core-%d-core-%d" $currentPeerID $currentPeerID }}
               {{- end }}
-              
+
               echo "Generating certificate for hostname: {{ $currentHostname }}"
-              
+
               # Generate certificate using kms-gen-tls-certs binary (only for this party)
               /app/kms/core/service/bin/kms-gen-tls-certs \
                 --ca-names {{ $currentHostname }} \
                 --output-dir /tmp/certs \
+                --num-cores 0 \
+                --force-self-signed-non-ca \
                 --wildcard
-              
+
               echo "Certificates generated successfully"
               ls -la /tmp/certs/
-              
+
               # Verify cert/key pairs match (for debugging - non-fatal)
               echo "========================================="
               echo "Verifying certificate and key pairs..."
@@ -308,7 +294,7 @@ spec:
             - |
               set -e
               echo "Uploading certificate for party {{ $currentPeerID }} to S3..."
-              
+
               {{- /* Find the current party's hostname from peersList */}}
               {{- $currentHostname := "" }}
               {{- if .Values.kmsCore.thresholdMode.peersList }}
@@ -318,19 +304,19 @@ spec:
               {{- end }}
               {{- end }}
               {{- end }}
-              
+
               {{- if not $currentHostname }}
               {{- /* Fallback if hostname not found in peersList */}}
               {{- $currentHostname = printf "kms-core-%d-core-%d" $currentPeerID $currentPeerID }}
               {{- end }}
-              
+
               # Clean up any existing certificates to avoid mismatches
               echo "Cleaning up old certificates for party {{ $currentPeerID }}..."
               aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/CACert/ \
                 --recursive --region {{ .Values.kmsCore.aws.region }} || true
               aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/PrivateKey/ \
                 --recursive --region {{ .Values.kmsCore.aws.region }} || true
-              
+
               # Upload certificate for party {{ $currentPeerID }}
               echo "Uploading certificate for party {{ $currentPeerID }}..."
               if ! aws s3 cp /tmp/certs/cert_{{ $currentHostname }}.pem \
@@ -340,7 +326,7 @@ spec:
                 exit 1
               fi
               echo "✓ Uploaded certificate for party {{ $currentPeerID }}"
-              
+
               # Upload private key for party {{ $currentPeerID }}
               echo "Uploading private key for party {{ $currentPeerID }}..."
               if ! aws s3 cp /tmp/certs/key_{{ $currentHostname }}.pem \
@@ -350,7 +336,7 @@ spec:
                 exit 1
               fi
               echo "✓ Uploaded private key for party {{ $currentPeerID }}"
-              
+
               echo "Certificate and key uploaded successfully for party {{ $currentPeerID }}"
           env:
             - name: HOME
@@ -407,6 +393,12 @@ spec:
           hostPath:
             path: /dev/nitro_enclaves
             type: CharDevice
+        {{- if .Values.kmsCore.nitroEnclave.networkTunnel.enabled }}
+        - name: tun-device
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        {{- end }}
         {{- else }}
         - name: certs
           emptyDir: {}

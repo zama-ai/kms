@@ -16,6 +16,17 @@ To pull and install the OCI Helm chart from hub.zama.ai:
     helm registry login hub.zama.ai
     helm install kms oci://hub.zama.ai/zama-protocol/zama-ai/kms/charts/kms-core
 
+### Why default to `imagePullPolicy: Always` for the sidecar images?
+
+The sidecar containers in this chart use [Chainguard](https://www.chainguard.dev/) base images.
+Chainguard images are continuously rebuilt to include the latest security patches. Importantly, these rebuilds are published under the **same tag** — the tag name stays constant, but the image it points to is updated over time (a "mutable" tag). This means a given tag today may contain newer patches than the same tag did last week.
+To benefit from these patches, we set `imagePullPolicy: Always` on the sidecars. This tells the kubelet to re-check the registry every time a sidecar container starts. As a result, whenever a pod restarts, it automatically pulls the most recently patched image — with no need to modify this chart or bump a version.
+If we used `IfNotPresent` instead, a node would keep running whatever image it had already cached and would silently miss all subsequent security patches.
+
+A couple of things worth noting:
+- **This is cheap.** If the image hasn't actually changed since the last pull, nothing is re-downloaded — the kubelet only verifies the current image against the registry and reuses the cached layers.
+- **The only trade-off** is that the registry must be reachable when a sidecar container starts. Already-running pods are never affected; the check happens only at container start (restart, reschedule, or node scale-up).
+
 ## Local testing
 
 When `minio.enabled=true`, connect to minio UI on http://localhost:9001:
