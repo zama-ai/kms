@@ -7,7 +7,7 @@ metadata:
     app: rolling-upgrade-kms-enclave-ci-test-suite
 spec:
   serviceAccountName: workflow-runner
-  activeDeadlineSeconds: 691200  # 96 hours total timeout
+  activeDeadlineSeconds: 345600  # 96 hours total timeout
   ttlStrategy:
     secondsAfterCompletion: 86400  # Keep for 1 day after completion
   tolerations:

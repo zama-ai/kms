@@ -34,7 +34,9 @@
 # Correctness signal: each decrypt encrypts a known value client-side (-e) and
 # fails on mismatch; runs use -a (expect a response from ALL 13 cores) so the
 # upgraded nodes can't be masked by an old-node quorum. A step fails the job if
-# any non-warmup test pod does not reach phase Succeeded.
+# any test pod does not reach phase Succeeded, excluding warmup tasks and the
+# prss-threshold profile's `reqid-above` probes (whose failure is expected at
+# some mixed states — read their per-request outcome from the summary instead).
 #
 # Triggers
 # --------
