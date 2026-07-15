@@ -498,7 +498,7 @@ pub async fn run_decryption_threshold_optionally_fail(
 async fn test_decryption_threshold_legacy_prss_switch() {
     use crate::engine::threshold::service::prss_compat::{
         DecryptKind,
-        test_prs_compat::{LEGACY_PRSS_DECISIONS, LegacyThresholdGuard},
+        test_prss_compat::{LEGACY_PRSS_DECISIONS, LegacyThresholdGuard},
     };
     use alloy_primitives::U256;
     use std::sync::atomic::Ordering;

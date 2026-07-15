@@ -146,10 +146,10 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> boo
         DecryptKind::Public => &LEGACY_BEFORE_PUBLIC,
         DecryptKind::User => &LEGACY_BEFORE_USER,
     };
-    // Test builds first check the scoped override (see [`test_prs_compat`]), so integration
+    // Test builds first check the scoped override (see [`test_prss_compat`]), so integration
     // tests can vary the threshold at runtime without touching the global configuration.
     #[cfg(test)]
-    let threshold = test_prs_compat::get(kind).or_else(|| cell.get().copied());
+    let threshold = test_prss_compat::get(kind).or_else(|| cell.get().copied());
     // Uninitialized (centralized KMS) means: fixed schedule (as does the config default of 0,
     // handled naturally by the strictly-below comparison).
     #[cfg(not(test))]
@@ -161,7 +161,7 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> boo
             let legacy = is_before(req_id, &threshold);
             if legacy {
                 #[cfg(test)]
-                test_prs_compat::LEGACY_PRSS_DECISIONS
+                test_prss_compat::LEGACY_PRSS_DECISIONS
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 tracing::info!(
                     "Using legacy (pre-#663) PRSS-Mask schedule for {kind:?} decryption request {req_id} (ID < {threshold})"
@@ -178,7 +178,7 @@ pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> boo
 /// precedence over values set by [`init_from_conf`] (in-process test servers initialize with
 /// the default threshold of 0).
 #[cfg(test)]
-pub(crate) mod test_prs_compat {
+pub(crate) mod test_prss_compat {
     use super::DecryptKind;
     use alloy_primitives::U256;
     use std::sync::RwLock;

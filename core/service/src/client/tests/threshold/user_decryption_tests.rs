@@ -751,7 +751,7 @@ async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateS
 async fn test_user_decryption_threshold_legacy_prss_switch() {
     use crate::engine::threshold::service::prss_compat::{
         DecryptKind,
-        test_prs_compat::{LEGACY_PRSS_DECISIONS, LegacyThresholdGuard},
+        test_prss_compat::{LEGACY_PRSS_DECISIONS, LegacyThresholdGuard},
     };
     use alloy_primitives::U256;
     use std::sync::atomic::Ordering;
