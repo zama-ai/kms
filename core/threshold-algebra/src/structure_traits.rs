@@ -1,3 +1,4 @@
+use super::error_correction::ReconstructionHints;
 use super::poly::Poly;
 use super::sharing::shamir::ShamirSharings;
 use hashing::DomainSep;
@@ -145,16 +146,36 @@ pub trait RingWithExceptionalSequence: Ring + Sized {
 }
 
 pub trait ErrorCorrect: RingWithExceptionalSequence {
+    /// The field over which Lagrange interpolation and Gao decoding operate.
+    ///
+    /// For Galois rings this is `<Self as QuotientMaximalIdeal>::QuotientOutput`
+    /// (e.g. `GF16` for `ResiduePolyF4`).
+    /// For types that are already a `Field` (e.g. BGV levels), this is `Self`.
+    type ReconstructionField: Field;
+
     ///Perform error correction.
     /// degree is the degree of the sharing polynomial (either threshold or 2*threshold)
-    /// max_errs is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
+    /// max_errors is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
     ///
     /// __NOTE__ : We assume values coming from known malicious parties have been excluded by the caller (i.e. values denoted Bot in NIST doc)
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         degree: usize,
-        max_errs: usize,
+        max_errors: usize,
     ) -> anyhow::Result<Poly<Self>>;
+
+    /// Like [`Self::error_correct`] but accepts precomputed [`ReconstructionHints`] to avoid
+    /// redundant work when reconstructing many sharings with the same owner set and degree.
+    ///
+    /// The default implementation ignores the hints and falls back to [`Self::error_correct`].
+    fn error_correct_with_hints(
+        sharing: &ShamirSharings<Self>,
+        degree: usize,
+        max_errors: usize,
+        _hints: &ReconstructionHints<Self>,
+    ) -> anyhow::Result<Poly<Self>> {
+        Self::error_correct(sharing, degree, max_errors)
+    }
 }
 
 pub trait Derive: Sized {

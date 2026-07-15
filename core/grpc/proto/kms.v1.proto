@@ -543,13 +543,14 @@ message MpcNode {
   // every party in an MPC protocol must have a unique ID.
   int32 party_id = 2;
 
-  // The verification key of the KMS node operator,
-  // this is the public key used to verify the signatures produced by the KMS node.
+  // The 20-byte Ethereum address of the KMS node operator's signing key, used to verify
+  // signatures produced by the KMS node and to identify the node.
+  // Stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
   //
   // This is optional to be compatible with configuration files that's used in
-  // older KMS versions, which are not aware of the verification key of the other parties.
+  // older KMS versions, which are not aware of the signing keys of the other parties.
   // But any new context must set this field.
-  optional bytes verification_key = 3;
+  optional bytes signer_address = 3;
 
   // The external port and host of the KMS node,
   // this is used for connecting to the KMS node from other KMS parties.
@@ -567,10 +568,10 @@ message MpcNode {
   // When not given, this defaults to "PUB".
   optional string public_storage_prefix = 7;
 
-  // A list of public keys that are permitted to make transactions to the public chain on behalf this node.
-  // I.e. the signing keys of this entity which they will use to make transactions to the Gateway.
-  // It may be empty if the node does not have any such keys, in this case the verification_key will be used.
-  repeated bytes extra_verification_keys = 8;
+  // A list of 20-byte Ethereum addresses of additional signing keys that are permitted to make
+  // transactions on behalf of this node.
+  // Each entry is stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
+  repeated bytes extra_signer_addresses = 8;
 }
 
 // The context of the MPC, containing the list of MPC nodes and other metadata.
@@ -643,6 +644,10 @@ message NewMpcContextRequest {
 // Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
   RequestId context_id = 1;
+  // The epochs associated with this context that must be destroyed together with it. The caller (kms-connector) is the
+  // source of truth for which epochs belong to the context and is responsible for supplying the complete set; the KMS
+  // destroys exactly the epochs listed here. May be empty when the context has no associated epochs.
+  repeated RequestId epoch_ids = 2;
 }
 
 message NewCustodianContextRequest {
@@ -704,8 +709,10 @@ enum SigningSchemeType {
 message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes ephem_op_enc_key = 1;
+  // The public verification key of the KMS server. MUST be manually validated by custodian
+  bytes operator_verf_key = 2; 
   /// The ciphertexts that are the backup. Indexed by the custodian role.
-  map<uint64, OperatorBackupOutput> cts = 2;
+  map<uint64, OperatorBackupOutput> cts = 3;
 }
 
 // Response containing available key material information
@@ -840,4 +847,50 @@ message EpochResultResponse {
 
 message DestroyMpcEpochRequest {
   RequestId epoch_id = 1;
+}
+
+enum BandwidthKind {
+  Duration = 0;
+  Once = 1;
+}
+
+message BandwidthBenchmarkRequest {
+  // The KMS context for which to perform the benchmark
+  RequestId context_id = 1;
+  // How long we keep sending bytes (s)
+  uint64 duration = 2;
+  // Number of sessions trying to send bytes in parallel
+  uint32 number_sessions = 3;
+  // Size of the payload each session will send at a time
+  uint32 payload_size_per_session = 4;
+  BandwidthKind kind = 5;
+}
+
+// All latency info are in ms
+message LatencyInfo {
+  uint64 average = 1;
+  uint64 p50 = 2;
+  uint64 p90 = 3;
+  uint64 p99 = 4;
+  uint64 slowest = 5;
+  uint64 fastest = 6;
+}
+
+message PeerBandwidthInfo {
+  // Peer party ID
+  uint32 peer_id = 1;
+  // Peer endpoint address
+  string endpoint = 2;
+  // Number of bytes sent to this peer
+  uint64 bytes_sent = 3;
+  // Effective time spent averaged over all sessions
+  // (may differ from requested duration because we don't stop the experiment abruptly)
+  uint64 duration = 4;
+  // Some measure of latency over all messages sent
+  LatencyInfo latency = 5;
+}
+
+message BandwidthBenchmarkResponse {
+  // Benchmark result for each of the peers
+  repeated PeerBandwidthInfo peers_info = 1;
 }

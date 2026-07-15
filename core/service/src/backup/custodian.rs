@@ -17,7 +17,7 @@ use kms_grpc::kms::v1::{
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{Versionize, named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::VersionsDispatch;
@@ -99,7 +99,7 @@ pub enum CustodianSetupMessagePayloadVersions {
 pub struct CustodianSetupMessagePayload {
     pub header: String,
     pub random_value: [u8; 32],
-    pub timestamp: u64,
+    pub timestamp: SystemTime,
     pub public_enc_key: UnifiedPublicEncKey,
     pub verification_key: PublicSigKey,
 }
@@ -126,7 +126,7 @@ pub struct InternalCustodianSetupMessage {
     pub custodian_role: Role,
     pub name: String, // This is the human readable name of the custodian
     pub random_value: [u8; 32],
-    pub timestamp: u64,
+    pub timestamp: SystemTime,
     pub public_enc_key: UnifiedPublicEncKey, // The public encrypt key of the custodian
     pub public_verf_key: PublicSigKey,       // The custodian's verification key
 }
@@ -393,8 +393,7 @@ impl Custodian {
         rng: &mut R,
         custodian_name: String, // This is the human readable name of the custodian to be used in the setup message
     ) -> Result<InternalCustodianSetupMessage, BackupError> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        Ok(self.generate_setup_message_with_timestamp(rng, custodian_name, timestamp))
+        Ok(self.generate_setup_message_with_timestamp(rng, custodian_name, SystemTime::now()))
     }
 
     // The timestamp is taken as an explicit argument so that callers needing deterministic
@@ -403,7 +402,7 @@ impl Custodian {
         &self,
         rng: &mut R,
         custodian_name: String,
-        timestamp: u64,
+        timestamp: SystemTime,
     ) -> InternalCustodianSetupMessage {
         let mut random_value = [0u8; 32];
         rng.fill_bytes(&mut random_value);
@@ -522,7 +521,7 @@ mod tests {
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [0u8; 32],
-            timestamp: 0,
+            timestamp: SystemTime::now(),
             public_enc_key: payload_pk,
             verification_key: payload_verf_key,
         };

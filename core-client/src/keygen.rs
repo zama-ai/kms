@@ -1,7 +1,7 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
+    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, SigVerificationMaterial, dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -9,7 +9,7 @@ use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
+use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
@@ -91,8 +91,10 @@ pub(crate) async fn do_keygen(
         cc_conf.num_majority
     };
 
-    // NOTE: If we do not use dummy_domain here, then
-    // this needs changing too in the KeyGenResult command.
+    // The EIP-712 domain comes from the config (falling back to `dummy_domain`),
+    // so the request built here and a later (Insecure)KeyGenResult fetch verify
+    // against the same domain.
+    let domain = cc_conf.default_domain()?;
     let use_existing = shared_config.existing_keyset_id.is_some();
     let keyset_config = Some(build_standard_keyset_config(
         if shared_config.uncompressed {
@@ -123,17 +125,9 @@ pub(crate) async fn do_keygen(
         Some(param),
         keyset_config,
         keyset_added_info,
-        dummy_domain(),
+        domain.clone(),
     )?;
     let extra_data = dkg_req.extra_data.clone();
-
-    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
-    //we have an issue in the (Insecure)KeyGenResult commands
-    let domain = if let Some(domain) = &dkg_req.domain {
-        protobuf_to_alloy_domain(domain)?
-    } else {
-        return Err(anyhow::anyhow!("No domain provided in crsgen request"));
-    };
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -153,23 +147,27 @@ pub(crate) async fn do_keygen(
     }
 
     let mut req_response_vec = Vec::new();
+    let mut req_errors = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
         match inner {
             Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
             Ok(Err(e)) => {
                 tracing::warn!("Keygen request to a core failed: {e}");
+                req_errors.push(format!("request failed: {e}"));
             }
             Err(e) => {
                 tracing::warn!("Keygen request task panicked: {e}");
+                req_errors.push(format!("task panicked: {e}"));
             }
         }
     }
     if req_response_vec.len() < num_expected_responses {
         anyhow::bail!(
-            "Only {}/{} keygen requests succeeded, need at least {}",
+            "Only {}/{} keygen requests succeeded, need at least {}. Errors: {}",
             req_response_vec.len(),
             num_parties,
-            num_expected_responses
+            num_expected_responses,
+            req_errors.join("; ")
         );
     }
 
@@ -189,8 +187,7 @@ pub(crate) async fn do_keygen(
         kms_addrs,
         destination_prefix,
         req_id,
-        domain,
-        extra_data,
+        Some(SigVerificationMaterial { domain, extra_data }),
         resp_response_vec,
         cmd_conf.download_all,
         shared_config.uncompressed,
@@ -207,8 +204,10 @@ pub(crate) async fn fetch_and_check_keygen(
     kms_addrs: &[alloy_primitives::Address],
     destination_prefix: &Path,
     request_id: RequestId,
-    domain: Eip712Domain,
-    extra_data: Vec<u8>,
+    // EIP-712 domain + extra_data to verify the external signature against. When
+    // `None`, the keys are still downloaded and request IDs checked, but the
+    // external signature is not verified (an error is logged).
+    verify: Option<SigVerificationMaterial>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
     uncompressed: bool,
@@ -270,25 +269,36 @@ pub(crate) async fn fetch_and_check_keygen(
                 );
             }
 
-            let external_signature = response.external_signature;
-            let prep_id = response.preprocessing_id.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No preprocessing ID in keygen response, cannot verify external signature"
-                )
-            })?;
-            check_compressed_keyset_ext_signature(
-                &compressed_keyset,
-                &compact_public_key,
-                &prep_id.try_into()?,
-                &request_id,
-                &external_signature,
-                &domain,
-                extra_data.clone(),
-                kms_addrs,
-            )
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+            match verify.as_ref() {
+                Some(material) => {
+                    let external_signature = response.external_signature;
+                    let prep_id = response.preprocessing_id.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No preprocessing ID in keygen response, cannot verify external signature"
+                        )
+                    })?;
+                    check_compressed_keyset_ext_signature(
+                        &compressed_keyset,
+                        &compact_public_key,
+                        &prep_id.try_into()?,
+                        &request_id,
+                        &external_signature,
+                        &material.domain,
+                        material.extra_data.clone(),
+                        kms_addrs,
+                    )
+                    .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
-            tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+                    tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+                }
+                None => {
+                    tracing::error!(
+                        "KeyGen result for request {} fetched WITHOUT signature verification \
+                         (no EIP-712 domain supplied).",
+                        request_id
+                    );
+                }
+            }
         }
     } else {
         let public_key =
@@ -314,25 +324,36 @@ pub(crate) async fn fetch_and_check_keygen(
                 );
             }
 
-            let external_signature = response.external_signature;
-            let prep_id = response.preprocessing_id.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No preprocessing ID in keygen response, cannot verify external signature"
-                )
-            })?;
-            check_uncompressed_keyset_ext_signature(
-                &public_key,
-                &server_key,
-                &prep_id.try_into()?,
-                &request_id,
-                &external_signature,
-                &domain,
-                extra_data.clone(),
-                kms_addrs,
-            )
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+            match verify.as_ref() {
+                Some(material) => {
+                    let external_signature = response.external_signature;
+                    let prep_id = response.preprocessing_id.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No preprocessing ID in keygen response, cannot verify external signature"
+                        )
+                    })?;
+                    check_uncompressed_keyset_ext_signature(
+                        &public_key,
+                        &server_key,
+                        &prep_id.try_into()?,
+                        &request_id,
+                        &external_signature,
+                        &material.domain,
+                        material.extra_data.clone(),
+                        kms_addrs,
+                    )
+                    .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
-            tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+                    tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+                }
+                None => {
+                    tracing::error!(
+                        "KeyGen result for request {} fetched WITHOUT signature verification \
+                         (no EIP-712 domain supplied).",
+                        request_id
+                    );
+                }
+            }
         }
     }
     Ok(())
@@ -604,6 +625,7 @@ pub(crate) async fn do_preproc(
     context_id: Option<&ContextId>,
     epoch_id: Option<&EpochId>,
     keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
+    insecure: bool,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -621,16 +643,22 @@ pub(crate) async fn do_preproc(
     )?;
     let extra_data = pp_req.extra_data.clone();
 
-    // make parallel requests by calling insecure keygen in a thread
+    // make parallel requests by calling preprocessing in a thread
     let mut req_tasks = JoinSet::new();
 
     for ce in core_endpoints.values() {
         let req_cloned = pp_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
-            cur_client
-                .key_gen_preproc(tonic::Request::new(req_cloned))
-                .await
+            if insecure {
+                cur_client
+                    .insecure_key_gen_preproc(tonic::Request::new(req_cloned))
+                    .await
+            } else {
+                cur_client
+                    .key_gen_preproc(tonic::Request::new(req_cloned))
+                    .await
+            }
         });
     }
 
@@ -654,7 +682,8 @@ pub(crate) async fn do_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses =
+        get_preproc_keygen_responses(core_endpoints, req_id, max_iter, insecure).await?;
     for response in responses {
         // this part also verifies the signature
         internal_client.process_preproc_response(
@@ -734,7 +763,7 @@ pub(crate) async fn do_partial_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter, false).await?;
     for response in responses {
         internal_client.process_preproc_response(
             &req_id,
@@ -751,7 +780,21 @@ pub(crate) async fn get_preproc_keygen_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
+    insecure: bool,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
+    async fn fetch_result(
+        client: &mut CoreServiceEndpointClient<Channel>,
+        request_id: RequestId,
+        insecure: bool,
+    ) -> Result<tonic::Response<KeyGenPreprocResult>, tonic::Status> {
+        let req = tonic::Request::new(request_id.into());
+        if insecure {
+            client.get_insecure_key_gen_preproc_result(req).await
+        } else {
+            client.get_key_gen_preproc_result(req).await
+        }
+    }
+
     let mut resp_tasks = JoinSet::new();
     for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
@@ -767,9 +810,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                 "Polling preproc result for request {} from party {}",
                 request_id, core_conf.party_id
             );
-            let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                .await;
+            let mut response = fetch_result(&mut client, request_id, insecure).await;
             let mut ctr = 0_usize;
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
@@ -790,9 +831,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                     "Preproc result not ready yet for request {} from party {} (retry {}/{})",
                     request_id, core_conf.party_id, ctr, max_iter
                 );
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                    .await;
+                response = fetch_result(&mut client, request_id, insecure).await;
             }
 
             let resp = response.map_err(|e| {

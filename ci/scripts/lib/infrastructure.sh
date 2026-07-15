@@ -21,6 +21,14 @@ setup_infrastructure() {
         deploy_localstack           # S3-compatible storage
         deploy_registry_credentials # GHCR access
 
+        # Optional: install kube-prometheus-stack (Prometheus Operator) so the
+        # KMS ServiceMonitor is scraped and metrics are remote-written to
+        # Grafana Cloud. Must run BEFORE deploy_kms so the ServiceMonitor CRD
+        # exists when the kms-core chart renders it.
+        if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+            deploy_kube_prometheus_stack
+        fi
+
     elif [[ "${TARGET}" == "aws-ci" || "${TARGET}" == "aws-perf" ]]; then
         #---------------------------------------------------------------------
         # AWS deployments: Real infrastructure via Crossplane
@@ -33,6 +41,13 @@ setup_infrastructure() {
 
         deploy_tkms_infra           # S3 buckets, IAM roles, service accounts
         deploy_registry_credentials # GHCR access via sync-secrets
+
+        # Metrics are kind-only: without the kube-prometheus-stack installed above
+        # there is no ServiceMonitor CRD and deploy_kms would fail rendering one.
+        if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
+            log_warn "--enable-metrics is only supported on kind targets; disabling for TARGET=${TARGET}."
+            export ENABLE_METRICS="false"
+        fi
     fi
 }
 
@@ -74,6 +89,78 @@ deploy_localstack() {
         --create-namespace \
         -f "${REPO_ROOT}/ci/kube-testing/infra/localstack-s3-values.yaml" \
         --wait
+}
+
+#=============================================================================
+# Deploy kube-prometheus-stack (Prometheus Operator)
+#
+# Installs a lean, operator-only kube-prometheus-stack in the `monitoring`
+# namespace and configures Prometheus to remote-write to Grafana Cloud.
+# The `ci_` metric-name prefix is applied at scrape time by the KMS
+# ServiceMonitor (see charts/kms-core), so remote-write stays plain here.
+#
+# Credentials are read from the environment (never echoed):
+#   - GRAFANA_CLOUD_PROM_URL       remote-write endpoint
+#   - GRAFANA_CLOUD_PROM_USERNAME  Prometheus instance / user id
+#   - GRAFANA_CLOUD_PROM_PASSWORD  Cloud Access Policy token (metrics:write)
+#=============================================================================
+# Pin the chart version for reproducible CI runs.
+KUBE_PROMETHEUS_STACK_VERSION="${KUBE_PROMETHEUS_STACK_VERSION:-77.6.2}"
+
+deploy_kube_prometheus_stack() {
+    log_info "Deploying kube-prometheus-stack (metrics enabled)..."
+
+    # Require the full credential set; a partial one would only fail later, at
+    # remote-write time.
+    if [[ -z "${GRAFANA_CLOUD_PROM_URL:-}" || -z "${GRAFANA_CLOUD_PROM_USERNAME:-}" || -z "${GRAFANA_CLOUD_PROM_PASSWORD:-}" ]]; then
+        log_warn "GRAFANA_CLOUD_PROM_URL/USERNAME/PASSWORD not all set; skipping kube-prometheus-stack install."
+        log_warn "Metrics will not be remote-written. Set all GRAFANA_CLOUD_PROM_* secrets to enable."
+        # Force metrics off for the rest of the deploy so deploy_kms (same shell, runs after)
+        # does not enable the kms-core ServiceMonitor — its CRD ships with the
+        # kube-prometheus-stack we just skipped, so the Helm deploy would fail without it.
+        export ENABLE_METRICS="false"
+        return 0
+    fi
+
+    # Dedicated namespace for the monitoring stack.
+    kubectl create namespace monitoring \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # Basic-auth secret referenced by Prometheus remoteWrite[].basicAuth. Feed the
+    # credentials via stdin (env-file) instead of --from-literal so they never appear
+    # in argv (/proc/<pid>/cmdline is world-readable and shows up in `ps`).
+    printf 'username=%s\npassword=%s\n' \
+        "${GRAFANA_CLOUD_PROM_USERNAME:-}" "${GRAFANA_CLOUD_PROM_PASSWORD:-}" |
+        kubectl create secret generic grafana-cloud-prom-auth \
+            --namespace monitoring \
+            --from-env-file=/dev/stdin \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+    helm repo update prometheus-community
+
+    # --set-file keeps the URL (a secret, like the credentials above) out of
+    # helm's argv. It still lands in the in-cluster release values, which is
+    # fine for ephemeral kind.
+    local REMOTE_WRITE_URL_FILE
+    REMOTE_WRITE_URL_FILE="$(mktemp)"
+    chmod 600 "${REMOTE_WRITE_URL_FILE}"
+    printf '%s' "${GRAFANA_CLOUD_PROM_URL}" > "${REMOTE_WRITE_URL_FILE}"
+
+    # Capture helm's status so the URL file is removed on failure too. No RETURN
+    # trap here: it would re-fire on the caller's return, where the local var is
+    # gone — fatal under set -u.
+    local HELM_STATUS=0
+    helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+        --version "${KUBE_PROMETHEUS_STACK_VERSION}" \
+        --namespace monitoring \
+        --create-namespace \
+        -f "${REPO_ROOT}/ci/kube-testing/infra/kube-prometheus-stack-values.yaml" \
+        --set-file "prometheus.prometheusSpec.remoteWrite[0].url=${REMOTE_WRITE_URL_FILE}" \
+        --set-string "prometheus.prometheusSpec.externalLabels.ci_run_id=${GITHUB_RUN_ID:-local}" \
+        --wait --timeout 5m || HELM_STATUS=$?
+    rm -f "${REMOTE_WRITE_URL_FILE}"
+    return "${HELM_STATUS}"
 }
 
 #=============================================================================
@@ -119,6 +206,45 @@ wait_crossplane_resources_ready() {
 # Wait for TKMS infrastructure components to be ready
 # This includes: S3 buckets, IAM roles, Kmsparties, and enclave nodegroups
 #=============================================================================
+dump_tkms_infra_status() {
+    local resource_name="${1:-}"
+
+    log_warn "Dumping TKMS infrastructure status for namespace ${NAMESPACE}"
+    kubectl get s3 -n "${NAMESPACE}" -o wide || true
+    kubectl get Kmsparties -n "${NAMESPACE}" -o wide || true
+    kubectl get enclavenodegroup -n "${NAMESPACE}" -o wide || true
+    kubectl describe enclavenodegroup -n "${NAMESPACE}" || true
+
+    if [[ -n "${resource_name}" ]]; then
+        kubectl describe Kmsparties "${resource_name}" -n "${NAMESPACE}" || true
+        kubectl get Kmsparties "${resource_name}" -n "${NAMESPACE}" -o yaml || true
+    fi
+}
+
+wait_kmsparty_ready() {
+    local resource_name="$1"
+    local wait_output
+    local ready_status
+
+    log_info "Waiting for Kmsparties/${resource_name} to become ready..."
+    if ! wait_output=$(kubectl wait --for=condition=ready Kmsparties "${resource_name}" \
+        -n "${NAMESPACE}" --timeout=120s 2>&1); then
+        echo "${wait_output}"
+        log_error "Timed out waiting for Kmsparties/${resource_name}"
+        dump_tkms_infra_status "${resource_name}"
+        return 1
+    fi
+    echo "${wait_output}"
+
+    ready_status=$(kubectl get Kmsparties "${resource_name}" -n "${NAMESPACE}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+    if [[ "${ready_status}" != *"True"* ]]; then
+        log_error "Kmsparties/${resource_name} is not Ready after kubectl wait; status=${ready_status:-missing}"
+        dump_tkms_infra_status "${resource_name}"
+        return 1
+    fi
+}
+
 wait_tkms_infra_ready() {
     # Determine party prefix based on target
     local party_prefix="kms-party-${NAMESPACE}"
@@ -140,16 +266,24 @@ wait_tkms_infra_ready() {
     local max_wait=120
     local elapsed=0
     local check_interval=5
+    local kmsparties_found="false"
 
     while [[ $elapsed -lt $max_wait ]]; do
         if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -qF "${party_prefix}"; then
             log_info "Kmsparties resources found"
+            kmsparties_found="true"
             break
         fi
         log_info "Waiting for Kmsparties to be created... ($elapsed/$max_wait seconds)"
         sleep $check_interval
         elapsed=$((elapsed + check_interval))
     done
+
+    if [[ "${kmsparties_found}" != "true" ]]; then
+        log_error "Timed out waiting for Kmsparties resources matching ${party_prefix}"
+        dump_tkms_infra_status
+        return 1
+    fi
 
     #-------------------------------------------------------------------------
     # Phase 3: Wait for Kmsparties to become ready
@@ -159,21 +293,19 @@ wait_tkms_infra_ready() {
     if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
         # Centralized: Try both possible naming patterns
         if kubectl get Kmsparties "${party_prefix}-1" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
-                -n "${NAMESPACE}" --timeout=120s
+            wait_kmsparty_ready "${party_prefix}-1" || return 1
         elif kubectl get Kmsparties "${party_prefix}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            kubectl wait --for=condition=ready Kmsparties "${party_prefix}" \
-                -n "${NAMESPACE}" --timeout=120s
+            wait_kmsparty_ready "${party_prefix}" || return 1
         else
             log_warn "No KMS party found with name ${party_prefix} or ${party_prefix}-1"
-            kubectl get Kmsparties -n "${NAMESPACE}" -o name || true
+            dump_tkms_infra_status
             return 1
         fi
     elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         # Threshold: Wait for all parties
         for i in $(seq 1 "${NUM_PARTIES}"); do
-            kubectl wait --for=condition=ready Kmsparties "${party_prefix}-${i}" \
-                -n "${NAMESPACE}" --timeout=120s
+            local resource_name="${party_prefix}-${i}"
+            wait_kmsparty_ready "${resource_name}" || return 1
         done
     fi
 
@@ -182,9 +314,13 @@ wait_tkms_infra_ready() {
     #-------------------------------------------------------------------------
     if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
         log_info "Waiting for enclave nodegroups to be ready..."
-        kubectl wait --for=condition=ready enclavenodegroup \
+        if ! kubectl wait --for=condition=ready enclavenodegroup \
             "${party_prefix}" \
-            -n "${NAMESPACE}" --timeout=1200s
+            -n "${NAMESPACE}" --timeout=1200s; then
+            log_error "Timed out waiting for enclavenodegroup/${party_prefix}"
+            dump_tkms_infra_status
+            return 1
+        fi
     fi
 }
 
@@ -343,10 +479,12 @@ deploy_registry_credentials() {
             return 0
         fi
 
-        # kind-ci: build a dockerconfigjson secret for hub.zama.org
-        if [[ -z "${HARBOR_READ_TOKEN:-}" ]]; then
-            log_warn "HARBOR_READ_TOKEN not set, skipping registry credentials setup"
-            log_warn "Set HARBOR_READ_TOKEN to enable private image pulls"
+        # kind-ci: build a dockerconfigjson secret for hub.zama.org.
+        # Both vars are needed; guarding only the token would let an unset
+        # HARBOR_READ_LOGIN abort the script under `set -u` a few lines down.
+        if [[ -z "${HARBOR_READ_LOGIN:-}" || -z "${HARBOR_READ_TOKEN:-}" ]]; then
+            log_warn "HARBOR_READ_LOGIN/HARBOR_READ_TOKEN not both set, skipping registry credentials setup"
+            log_warn "Set HARBOR_READ_LOGIN and HARBOR_READ_TOKEN to enable private image pulls"
             return 0
         fi
 

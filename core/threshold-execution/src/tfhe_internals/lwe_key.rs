@@ -14,6 +14,10 @@ use tfhe::{
 };
 use tfhe_versionable::VersionsDispatch;
 
+use super::{
+    glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator, utils::negacyclic_mul_reduce_acc,
+};
 use crate::{
     online::{
         preprocessing::{BitPreprocessing, DKGPreprocessing},
@@ -28,14 +32,9 @@ use crate::{
 use algebra::{
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
-    structure_traits::{BaseRing, ErrorCorrect},
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 use error_utils::anyhow_error_and_log;
-
-use super::{
-    glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType,
-    randomness::MPCEncryptionRandomGenerator, utils::slice_semi_reverse_negacyclic_convolution,
-};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum LweSecretKeyShareVersions<Z: Clone, const EXTENSION_DEGREE: usize> {
@@ -231,11 +230,7 @@ where
         LweDimension(self.data.len())
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
-        self.data.iter().map(|share| share.value()).collect_vec()
-    }
-
-    pub fn data_as_raw_iter(&self) -> impl Iterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> + '_ {
+    pub fn data_iter(&self) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value())
     }
 }
@@ -269,7 +264,11 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     let (mask, body) = output.get_mut_mask_and_body();
     generator.fill_slice_with_random_mask_custom_mod(mask, encryption_type);
 
-    slice_semi_reverse_negacyclic_convolution(body, mask, &lwe_secret_key_share.data_as_raw_vec());
+    let mut rev_keyshares = lwe_secret_key_share.data_iter().collect_vec();
+    rev_keyshares.reverse();
+    // `body` is overwritten with the product (not accumulated into), so zero it before accumulating in place.
+    body.fill(ResiduePoly::ZERO);
+    negacyclic_mul_reduce_acc(body, mask, &rev_keyshares);
 
     generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(body);
 }
@@ -279,7 +278,9 @@ pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize
     (lwe_dimension.0, lwe_dimension.0)
 }
 
-/// Generates the lwe public key share from an existing secret key share
+/// Generates the (encryption) lwe public key share from an existing secret key
+/// share, using the standard public-key noise budget
+/// ([`DKGParams::num_needed_noise_pk`]).
 pub(crate) async fn generate_lwe_public_key_shared<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -296,11 +297,41 @@ pub(crate) async fn generate_lwe_public_key_shared<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let basic_handle = params.get_params_basics_handle();
+    generate_lwe_public_key_shared_with_noise(
+        params.num_needed_noise_pk(),
+        mpc_encryption_rng,
+        lwe_secret_key_share,
+        session,
+        preprocessing,
+    )
+    .await
+}
+
+/// Generates an lwe compact public key share over `lwe_secret_key_share`, drawing
+/// exactly `noise` from preprocessing. Used both for the encryption public key
+/// (via [`generate_lwe_public_key_shared`]) and for the *derived* re-randomization
+/// public key, which is generated over the compute (`Big`) key with the
+/// [`DKGParams::num_needed_noise_rerand_pk`] budget.
+pub(crate) async fn generate_lwe_public_key_shared_with_noise<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ParallelByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    noise: NoiseInfo,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
     let my_role = session.my_role();
 
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
-    let NoiseInfo { amount, bound } = basic_handle.num_needed_noise_pk();
+    let NoiseInfo { amount, bound } = noise;
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(amount, bound)?
         .iter()

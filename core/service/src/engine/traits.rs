@@ -1,6 +1,6 @@
 use hashing::DomainSep;
-use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
+use kms_grpc::{ContextId, EpochId};
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
@@ -89,6 +89,14 @@ pub trait EpochManager {
         &self,
         request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError>;
+
+    /// Destroy every epoch in `epoch_ids` as part of a context destruction.
+    ///
+    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
+    /// created on this party) is skipped; every listed epoch is attempted even if an earlier one
+    /// fails; the first deletion error is returned only after all attempts, so a failed run can be
+    /// retried until no shares remain.
+    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError>;
 
     async fn get_epoch_result(
         &self,

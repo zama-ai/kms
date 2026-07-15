@@ -1,0 +1,13 @@
+# Key-generation config for docker-compose-core-centralized.yml.
+
+[keygen]
+
+[aws]
+region = "us-east-1"
+s3_endpoint = "http://dev-s3-mock:9000"
+
+[public_vault.storage.s3]
+bucket = "kms"
+
+[private_vault.storage.file]
+path = "./keys"

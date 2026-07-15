@@ -148,7 +148,6 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 base_kms,
                 None,
-                false,
                 ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
@@ -381,7 +380,6 @@ pub async fn setup_threshold_with_custom_peers<
                 mpc_listener,
                 base_kms,
                 None,
-                false,
                 ensure_default_prss,
                 mpc_core_rx.map(drop),
             )

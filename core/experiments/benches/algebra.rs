@@ -7,8 +7,6 @@ use algebra::sharing::shamir::ShamirSharings;
 use algebra::structure_traits::FromU128;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
-use pprof::criterion::Output;
-use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 
 fn bench_lagrange_poly(c: &mut Criterion) {
@@ -59,7 +57,7 @@ fn bench_lagrange_poly(c: &mut Criterion) {
 
 criterion_group! {
     name = algebra;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default();
     targets = bench_lagrange_poly
 }
 

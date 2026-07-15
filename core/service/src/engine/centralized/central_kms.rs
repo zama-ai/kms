@@ -255,16 +255,12 @@ pub(crate) fn generate_fhe_keys(
             seeder.seed().0.to_le_bytes().to_vec()
         }
     };
-    let security_bits = params.get_params_basics_handle().get_sec() as u32;
+    let security_bits = params.sec() as u32;
     let tag = key_id.into();
 
     // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
     // and use a pmax=1 which should allow for any HW.
-    let max_norm_hwt = params
-        .get_params_basics_handle()
-        .get_sk_deviations()
-        .map(|x| x.pmax)
-        .unwrap_or(1.0);
+    let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
 
     // unwrap is ok here because parameters should always have a correct pmax
     let max_norm_hwt = tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt)
@@ -379,16 +375,12 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 ) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
     let sid = req_id.derive_session_id()?;
     let internal_pp = public_parameters_by_trusted_setup(
-        &params
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params(),
+        &params.compact_pk_enc_params(),
         max_num_bits.map(|x| x as usize),
         sid,
         &mut rng,
     )?;
-    let pke_params = params
-        .get_params_basics_handle()
-        .get_compact_pk_enc_params();
+    let pke_params = params.compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
     let crs_info = crate::engine::base::compute_info_crs(
         sk,
@@ -936,8 +928,7 @@ impl<
                 anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
             }
         }
-        let custodian_meta_store =
-            Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
+        let custodian_meta_store = MetaStore::new_from_map(validation_material);
         let tracker = Arc::new(TaskTracker::new());
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
@@ -975,9 +966,8 @@ impl<
         }
         tracing::info!("Successfully updated backup vault when booting");
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
-        let user_dec_meta_store =
-            Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
-        let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
+        let user_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
+        let pub_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let telemetry_conf = config
             .telemetry
             .unwrap_or_else(|| TelemetryConfig::builder().build());
@@ -996,15 +986,13 @@ impl<
             CentralizedKms {
                 base_kms,
                 crypto_storage,
-                epoch_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
-                preprocessing_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(
-                    HashMap::new(),
-                ))),
-                key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
+                epoch_ids: MetaStore::new_from_map(HashMap::new()),
+                preprocessing_meta_store: MetaStore::new_from_map(HashMap::new()),
+                key_meta_map: MetaStore::new_from_map(public_key_info),
                 ongoing_key_gen: Arc::new(Mutex::new(HashMap::new())),
                 pub_dec_meta_store,
                 user_dec_meta_store,
-                crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                crs_meta_map: MetaStore::new_from_map(crs_info),
                 ongoing_crs_gen: Arc::new(Mutex::new(HashMap::new())),
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
@@ -1664,9 +1652,7 @@ pub(crate) mod tests {
         epoch_id: &EpochId,
         params: DKGParams,
     ) {
-        let pbs_params: ClassicPBSParameters = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params: ClassicPBSParameters = params.classic_pbs();
         let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let wrong_client_key = tfhe::ClientKey::generate(config);
 

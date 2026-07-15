@@ -6,7 +6,8 @@ use kms_grpc::{
     ContextId, RequestId,
     kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
-        CustodianRecoveryRequest, Empty, NewCustodianContextRequest, OperatorBackupOutput,
+        CustodianRecoveryRequest, DestroyCustodianContextRequest, Empty,
+        NewCustodianContextRequest, OperatorBackupOutput,
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
@@ -95,6 +96,29 @@ pub(crate) async fn do_new_custodian_context(
     }
 
     Ok(custodian_context_id)
+}
+
+pub(crate) async fn do_destroy_custodian_context(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    custodian_context_id: &RequestId,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.values() {
+        let mut cur_client = ce.clone();
+        let context_cloned = (*custodian_context_id).into();
+        req_tasks.spawn(async move {
+            cur_client
+                .destroy_custodian_context(tonic::Request::new(DestroyCustodianContextRequest {
+                    context_id: Some(context_cloned),
+                }))
+                .await
+        });
+    }
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
 }
 
 pub(crate) async fn do_custodian_recovery_init(

@@ -21,9 +21,9 @@ use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
 use threshold_execution::{
     config::BatchParams,
+    constants::TRACKER_LOG_PERCENTAGE,
     online::{
         preprocessing::{
-            constants::TRACKER_LOG_PERCENTAGE,
             memory::InMemoryBitPreprocessing,
             orchestration::{
                 consumers::{
@@ -77,10 +77,11 @@ impl BGVPreprocessingOrchestrator {
         let (num_bits, num_triples, num_randomness) =
             get_num_correlated_randomness_required(poly_size);
         let triple_progress_tracker =
-            ProgressTracker::new("TripleGen", num_triples, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("TripleGen", num_triples, *TRACKER_LOG_PERCENTAGE);
         let random_progress_tracker =
-            ProgressTracker::new("RandomGen", num_randomness, TRACKER_LOG_PERCENTAGE);
-        let bit_progress_tracker = ProgressTracker::new("BitGen", num_bits, TRACKER_LOG_PERCENTAGE);
+            ProgressTracker::new("RandomGen", num_randomness, *TRACKER_LOG_PERCENTAGE);
+        let bit_progress_tracker =
+            ProgressTracker::new("BitGen", num_bits, *TRACKER_LOG_PERCENTAGE);
 
         Self {
             poly_size,

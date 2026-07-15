@@ -683,9 +683,7 @@ mod tests {
 
         // generate the keys
         let params = crate::consts::TEST_PARAM;
-        let pbs_params: ClassicPBSParameters = params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params: ClassicPBSParameters = params.classic_pbs();
         let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
         let client_key = tfhe::ClientKey::generate(config);
         let server_key = client_key.generate_server_key();
@@ -733,20 +731,20 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: None,
+                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        verification_key: None,
+                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -754,7 +752,7 @@ mod tests {
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }]
                 } else {
                     vec![]
@@ -1024,11 +1022,7 @@ mod tests {
         let config = params.to_tfhe_config();
         // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
         // and use a pmax=1 which should allow for any HW.
-        let max_norm_hwt = params
-            .get_params_basics_handle()
-            .get_sk_deviations()
-            .map(|x| x.pmax)
-            .unwrap_or(1.0);
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let tag = (&key_id).into();
 
@@ -1065,20 +1059,20 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: None,
+                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        verification_key: None,
+                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -1086,7 +1080,7 @@ mod tests {
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
                     }]
                 } else {
                     vec![]

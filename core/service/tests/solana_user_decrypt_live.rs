@@ -397,9 +397,9 @@ async fn solana_user_decrypt_live() {
         )
         .unwrap();
         let payload: UserDecryptionResponsePayload =
-            bc2wrap::deserialize_safe(&payload_bytes).unwrap();
+            bc2wrap::deserialize_slice(&payload_bytes).unwrap();
         if kms_pk.is_none() {
-            kms_pk = Some(bc2wrap::deserialize_safe(&payload.verification_key).unwrap());
+            kms_pk = Some(bc2wrap::deserialize_slice(&payload.verification_key).unwrap());
         }
         agg_resp.push(UserDecryptionResponse {
             signature: vec![],

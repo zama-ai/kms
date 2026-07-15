@@ -268,7 +268,7 @@ mod tests {
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use std::collections::BTreeMap;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
     use tfhe::safe_serialization::safe_serialize;
     use threshold_types::role::Role;
 
@@ -381,10 +381,7 @@ mod tests {
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [4_u8; 32],
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: SystemTime::now(),
             public_enc_key: enc_key.clone(),
             verification_key: verf_key.clone(),
         };

@@ -15,95 +15,38 @@ use crate::online::triple::{open, open_list};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
 use algebra::{
     galois_rings::common::ResiduePoly,
-    poly::Poly,
     sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
     structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
 };
 use threshold_types::role::Role;
 
-use super::glwe_key::GlweSecretKeyShare;
-
-pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    output: &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
+/// Negacyclic multiply-accumulate over slices, all of length `n = acc.len()`: computes `acc += lhs * rhs mod (X^n + 1)`
+/// in place, allocating nothing.
+pub(crate) fn negacyclic_mul_reduce_acc<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    acc: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
     lhs: &[Z],
     rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
 ) {
-    debug_assert!(
-        lhs.len() == rhs.len(),
-        "lhs (len: {}) and rhs (len: {}) must have the same length",
-        lhs.len(),
-        rhs.len()
-    );
-    debug_assert!(
-        output.len() == lhs.len(),
-        "output (len: {}) and lhs (len: {}) must have the same length",
-        output.len(),
-        lhs.len()
-    );
-    output.fill(ResiduePoly::ZERO);
-    let mut rev_rhs = rhs.to_vec();
-    rev_rhs.reverse();
-    let lhs_pol = Poly::from_coefs(lhs.to_vec());
-    let rhs_pol = Poly::from_coefs(rev_rhs);
-
-    let res = pol_mul_reduce(&lhs_pol, &rhs_pol, output.len());
-    *output = res.coefs().to_vec();
-}
-
-pub fn slice_to_polynomials<Z: Ring>(slice: &[Z], pol_size: usize) -> Vec<Poly<Z>> {
-    let mut res: Vec<Poly<Z>> = Vec::new();
-    for coefs in &slice.iter().chunks(pol_size) {
-        let coef = coefs.copied().collect_vec();
-        res.push(Poly::from_coefs(coef));
-    }
-    res
-}
-
-pub fn pol_mul_reduce<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    poly_1: &Poly<Z>,
-    poly_2: &Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
-    output_size: usize,
-) -> Poly<ResiduePoly<Z, EXTENSION_DEGREE>> {
-    let mut coefs = (0..output_size)
-        .map(|_| ResiduePoly::default())
-        .collect_vec();
-
-    assert!(
-        output_size == poly_1.coefs().len(),
-        "Output polynomial size {:?} is not the same as input polynomial1 {:?}.",
-        output_size,
-        poly_1.coefs().len(),
-    );
-    assert!(
-        output_size == poly_2.coefs().len(),
-        "Output polynomial size {:?} is not the same as input polynomial2 {:?}.",
-        output_size,
-        poly_2.coefs().len(),
-    );
-
-    for (lhs_degree, lhs_coef) in poly_1.coefs().iter().enumerate() {
-        for (rhs_degree, rhs_coef) in poly_2.coefs().iter().enumerate() {
+    let n = acc.len();
+    assert_eq!(lhs.len(), n, "lhs length must equal acc length");
+    assert_eq!(rhs.len(), n, "rhs length must equal acc length");
+    for (lhs_degree, &lhs_coef) in lhs.iter().enumerate() {
+        for (rhs_degree, &rhs_coef) in rhs.iter().enumerate() {
+            let prod = rhs_coef * lhs_coef;
             let target_degree = lhs_degree + rhs_degree;
-            if target_degree < output_size {
-                //Safe to unwrap as we checked the size above
-                let output_coefficient = coefs.get_mut(target_degree).unwrap();
-                *output_coefficient += *rhs_coef * *lhs_coef;
+            if target_degree < n {
+                acc[target_degree] += prod;
             } else {
-                let target_degree = target_degree % output_size;
-
-                //Safe to unwrap as we took the target degree modulo output size
-                let output_coefficient = coefs.get_mut(target_degree).unwrap();
-                *output_coefficient -= *rhs_coef * *lhs_coef;
+                // target_degree is in [n, 2n-2], so the negacyclic wrap is target_degree - n.
+                acc[target_degree - n] -= prod;
             }
         }
     }
-
-    Poly::from_coefs(coefs)
 }
 
 pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lhs: &[Z],
-    rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    rhs: impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>>,
 ) -> ResiduePoly<Z, EXTENSION_DEGREE> {
     assert_eq!(
         lhs.len(),
@@ -117,36 +60,8 @@ pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     // zip_eq can panic but we just asserted that lhs and rhs have the same length
     // so that'd panic first but would be a bug in the code
     lhs.iter()
-        .zip_eq(rhs.iter())
+        .zip_eq(rhs)
         .fold(ResiduePoly::ZERO, |acc, (left, right)| acc + right * *left)
-}
-
-pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
-    output_mask: &[Z],
-    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-) where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let pol_dimension = glwe_secret_key_share.polynomial_size.0;
-    let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
-    let pol_output_mask = slice_to_polynomials(output_mask, pol_dimension);
-    let pol_glwe_secret_key_share =
-        slice_to_polynomials(&glwe_secret_key_share.data_as_raw_vec(), pol_dimension);
-
-    for (poly_1, poly_2) in pol_output_mask
-        .iter()
-        .zip_eq(pol_glwe_secret_key_share.iter())
-    {
-        pol_output_body = pol_output_body + pol_mul_reduce(poly_1, poly_2, pol_dimension);
-    }
-
-    for (coef_output, coef_pol) in output_body
-        .iter_mut()
-        .zip_eq(pol_output_body.coefs().iter())
-    {
-        *coef_output = *coef_pol;
-    }
 }
 
 pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
@@ -288,7 +203,7 @@ pub(super) async fn compute_hamming_weight_glwe_sk<
 #[cfg(test)]
 pub mod tests {
     use crate::tfhe_internals::glwe_key::GlweSecretKeyShare;
-    use crate::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
+    use crate::tfhe_internals::parameters::DKGParams;
     use crate::tfhe_internals::private_keysets::PrivateKeySet;
     use crate::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
     use algebra::{
@@ -343,13 +258,10 @@ pub mod tests {
         }
     }
 
-    pub fn reconstruct_lwe_secret_key_from_file<
-        const EXTENSION_DEGREE: usize,
-        Params: DKGParamsBasics + ?Sized,
-    >(
+    pub fn reconstruct_lwe_secret_key_from_file<const EXTENSION_DEGREE: usize>(
         parties: usize,
         threshold: usize,
-        params: &Params,
+        params: &DKGParams,
         prefix_path: &Path,
     ) -> LweSecretKeyOwned<u64>
     where
@@ -424,27 +336,24 @@ pub mod tests {
         for (role, sk) in sk_shares {
             glwe_key_shares.insert(role, sk.glwe_secret_key_share);
 
-            match params {
-                DKGParams::WithoutSnS(_) => (),
-                DKGParams::WithSnS(sns_params) => {
-                    let _ = big_glwe_key_shares
-                        .insert(role, sk.glwe_secret_key_share_sns_as_lwe.unwrap().data);
+            if let Some(sns_params) = params.sns() {
+                let _ = big_glwe_key_shares
+                    .insert(role, sk.glwe_secret_key_share_sns_as_lwe.unwrap().data);
 
-                    if let Some(inner) = sk.glwe_sns_compression_key_as_lwe {
-                        sns_compression_key_shares.insert(
-                            role,
-                            SnsCompressionPrivateKeyShares {
-                                post_packing_ks_key: GlweSecretKeyShare {
-                                    data: inner.data,
-                                    polynomial_size: sns_params
-                                        .sns_compression_params
-                                        .unwrap()
-                                        .packing_ks_polynomial_size,
-                                },
-                                params: sns_params.sns_compression_params.unwrap(),
+                if let Some(inner) = sk.glwe_sns_compression_key_as_lwe {
+                    sns_compression_key_shares.insert(
+                        role,
+                        SnsCompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data: inner.data,
+                                polynomial_size: sns_params
+                                    .sns_compression_params()
+                                    .unwrap()
+                                    .packing_ks_polynomial_size,
                             },
-                        );
-                    }
+                            params: sns_params.sns_compression_params().unwrap(),
+                        },
+                    );
                 }
             }
         }
@@ -473,59 +382,59 @@ pub mod tests {
             read_secret_key_shares_from_file::<EXTENSION_DEGREE>(parties, params, prefix_path);
         let glwe_key = reconstruct_bit_vec_from_glwe_share_enum(
             glwe_key_shares,
-            params.get_params_basics_handle().glwe_sk_num_bits(),
+            params.glwe_sk_num_bits(),
             threshold,
         );
-        let glwe_secret_key = GlweSecretKeyOwned::from_container(
-            glwe_key,
-            params.get_params_basics_handle().polynomial_size(),
-        );
+        let glwe_secret_key =
+            GlweSecretKeyOwned::from_container(glwe_key, params.polynomial_size());
 
-        let (big_glwe_secret_key, sns_compression_secret_key) = match params {
-            DKGParams::WithSnS(sns_params) => {
-                let big_glwe_key = reconstruct_bit_vec(
-                    big_glwe_key_shares,
-                    sns_params.glwe_sk_num_bits_sns(),
-                    threshold,
-                )
-                .into_iter()
-                .map(|bit| bit as u128)
-                .collect_vec();
-                let glwe_secret_key_as_lwe = GlweSecretKeyOwned::from_container(
-                    big_glwe_key,
-                    sns_params.polynomial_size_sns(),
-                )
-                .into_lwe_secret_key();
+        let (big_glwe_secret_key, sns_compression_secret_key) =
+            if let Some(sns_params) = params.sns() {
+                {
+                    let big_glwe_key = reconstruct_bit_vec(
+                        big_glwe_key_shares,
+                        sns_params.glwe_sk_num_bits_sns(),
+                        threshold,
+                    )
+                    .into_iter()
+                    .map(|bit| bit as u128)
+                    .collect_vec();
+                    let glwe_secret_key_as_lwe = GlweSecretKeyOwned::from_container(
+                        big_glwe_key,
+                        sns_params.polynomial_size_sns(),
+                    )
+                    .into_lwe_secret_key();
 
-                let sns_compression_private_key =
-                    if let Some(sns_compression_params) = sns_params.sns_compression_params {
-                        let sns_compression_key_bits = reconstruct_bit_vec(
-                            sns_compression_key_shares
-                                .into_iter()
-                                .map(|(k, v)| (k, v.post_packing_ks_key.data))
-                                .collect::<HashMap<_, _>>(),
-                            sns_params.sns_compression_sk_num_bits(),
-                            threshold,
-                        )
-                        .into_iter()
-                        .map(|x| x as u128)
-                        .collect::<Vec<_>>();
+                    let sns_compression_private_key =
+                        if let Some(sns_compression_params) = sns_params.sns_compression_params() {
+                            let sns_compression_key_bits = reconstruct_bit_vec(
+                                sns_compression_key_shares
+                                    .into_iter()
+                                    .map(|(k, v)| (k, v.post_packing_ks_key.data))
+                                    .collect::<HashMap<_, _>>(),
+                                sns_params.sns_compression_sk_num_bits(),
+                                threshold,
+                            )
+                            .into_iter()
+                            .map(|x| x as u128)
+                            .collect::<Vec<_>>();
 
-                        Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
-                            GlweSecretKeyOwned::from_container(
-                                sns_compression_key_bits,
-                                sns_compression_params.packing_ks_polynomial_size,
-                            ),
-                            sns_compression_params,
-                        ))
-                    } else {
-                        None
-                    };
+                            Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
+                                GlweSecretKeyOwned::from_container(
+                                    sns_compression_key_bits,
+                                    sns_compression_params.packing_ks_polynomial_size,
+                                ),
+                                sns_compression_params,
+                            ))
+                        } else {
+                            None
+                        };
 
-                (Some(glwe_secret_key_as_lwe), sns_compression_private_key)
-            }
-            DKGParams::WithoutSnS(_) => (None, None),
-        };
+                    (Some(glwe_secret_key_as_lwe), sns_compression_private_key)
+                }
+            } else {
+                (None, None)
+            };
 
         (
             glwe_secret_key,

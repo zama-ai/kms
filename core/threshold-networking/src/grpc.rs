@@ -2,7 +2,9 @@
 
 use super::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use super::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
-use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
+use super::sending_service::{
+    AtomicDuration, GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
+};
 use super::tls::extract_subject_from_cert;
 use crate::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
@@ -17,7 +19,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
@@ -26,7 +28,7 @@ use threshold_types::{
     party::{MpcIdentity, RoleAssignment},
 };
 use tokio::sync::{
-    Mutex, RwLock,
+    Mutex,
     mpsc::{Receiver, Sender, channel},
 };
 use tokio::time::{Duration, Instant};
@@ -288,13 +290,13 @@ impl GrpcNetworkingManager {
                         }
                         SessionStatus::Active(session) => match session.upgrade() {
                             Some(network_session) => {
-                                let time_since_last_rec = {
-                                    network_session
-                                        .last_rec_activity_time
-                                        .read()
-                                        .await
-                                        .elapsed()
-                                };
+                                let time_since_last_rec = Duration::from_millis(
+                                    now_activity_millis().saturating_sub(
+                                        network_session
+                                            .last_rec_activity_time
+                                            .load(Ordering::Relaxed),
+                                    ),
+                                );
                                 if time_since_last_rec > discard_inactive_interval {
                                     tracing::warn!(
                                         "Discarding Active session {:?} after {:?} seconds.",
@@ -325,7 +327,6 @@ impl GrpcNetworkingManager {
     pub fn new(
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
-        peer_tcp_proxy: bool,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
@@ -368,7 +369,7 @@ impl GrpcNetworkingManager {
             active_session_count,
             opened_sessions_tracker: Arc::new(DashMap::new()),
             conf,
-            sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy)?,
+            sending_service: GrpcSendingService::new(tls_conf, conf)?,
             #[cfg(feature = "testing")]
             force_tls,
         })
@@ -480,11 +481,11 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
-                    last_rec_activity_time: RwLock::new(Instant::now().into()),
-                    current_network_timeout: RwLock::new(timeout),
-                    next_network_timeout: RwLock::new(timeout),
-                    max_elapsed_time: RwLock::new(Duration::ZERO),
-                    num_byte_sent: RwLock::new(0),
+                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+                    current_network_timeout: AtomicDuration::new(timeout),
+                    next_network_timeout: AtomicDuration::new(timeout),
+                    max_elapsed_time: AtomicDuration::new(Duration::ZERO),
+                    num_byte_sent: AtomicUsize::new(0),
                 });
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
@@ -508,11 +509,11 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
-                    last_rec_activity_time: RwLock::new(Instant::now().into()),
-                    current_network_timeout: RwLock::new(timeout),
-                    next_network_timeout: RwLock::new(timeout),
-                    max_elapsed_time: RwLock::new(Duration::ZERO),
-                    num_byte_sent: RwLock::new(0),
+                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+                    current_network_timeout: AtomicDuration::new(timeout),
+                    next_network_timeout: AtomicDuration::new(timeout),
+                    max_elapsed_time: AtomicDuration::new(Duration::ZERO),
+                    num_byte_sent: AtomicUsize::new(0),
                 });
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
@@ -1001,7 +1002,7 @@ impl Gnetworking for NetworkingImpl {
         .transpose()
         .map_err(|boxed| *boxed)?;
         let request = request.into_inner();
-        let health_tag = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
+        let health_tag = bc2wrap::deserialize_slice::<HealthTag>(&request.tag).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("failed to parse value: {} as a HealthTag", e),
@@ -1016,7 +1017,7 @@ impl Gnetworking for NetworkingImpl {
         )
         .map_err(|e| *e)?;
 
-        tracing::info!("Received a HealthPing from {}", health_tag.sender);
+        tracing::debug!("Received a HealthPing from {}", health_tag.sender);
         Ok(tonic::Response::new(HealthCheckResponse::default()))
     }
 
@@ -1045,7 +1046,7 @@ impl Gnetworking for NetworkingImpl {
         .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
-        let tag = bc2wrap::deserialize_safe::<Tag>(&request.tag).map_err(|e| {
+        let tag = bc2wrap::deserialize_slice::<Tag>(&request.tag).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("failed to parse value: {}", e),

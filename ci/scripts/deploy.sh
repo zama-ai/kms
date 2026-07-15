@@ -37,6 +37,7 @@ KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-s
 KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client}"
 CLEANUP="false"
 BUILD_IMAGES="false"
+ENABLE_METRICS="false"
 
 # Perf-testing defaults (can be overridden by env/args)
 KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
@@ -46,7 +47,7 @@ PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
 TLS="${TLS:-false}"
 
 # Build defaults (for local image building)
-RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.94}"
+RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.97}"
 
 # AWS/Tailscale Defaults
 TAILSCALE_HOSTNAME="tailscale-operator-zws-dev.diplodocus-boa.ts.net"
@@ -111,6 +112,7 @@ main() {
     log_info "Core Tag:        ${KMS_CORE_TAG}"
     log_info "Client Tag:      ${KMS_CLIENT_TAG}"
     log_info "TLS:             ${TLS}"
+    log_info "Metrics:         ${ENABLE_METRICS}"
     log_info "========================================="
 
     #=========================================================================

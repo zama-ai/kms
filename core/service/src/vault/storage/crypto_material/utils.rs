@@ -306,22 +306,17 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     const DEFAULT_MAX_NUM_BITS: usize = threshold_execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS;
     const FALLBACK_BITS: usize = 16;
 
-    // Cache the params_basics_handle to avoid calling it twice
-    let params_basics = dkg_params.get_params_basics_handle();
-
     // Try to calculate max_messages, but fall back to default if it fails
-    let max_messages = match max_num_messages(
-        &params_basics.get_compact_pk_enc_params(),
-        DEFAULT_MAX_NUM_BITS,
-    ) {
-        Ok(messages) => messages,
-        Err(e) => {
-            tracing::error!("Failed to calculate max_num_messages: {}", e);
-            return FALLBACK_BITS;
-        }
-    };
+    let max_messages =
+        match max_num_messages(&dkg_params.compact_pk_enc_params(), DEFAULT_MAX_NUM_BITS) {
+            Ok(messages) => messages,
+            Err(e) => {
+                tracing::error!("Failed to calculate max_num_messages: {}", e);
+                return FALLBACK_BITS;
+            }
+        };
 
-    if params_basics.lwe_dimension().0 < max_messages.0 {
+    if dkg_params.lwe_dimension().0 < max_messages.0 {
         tracing::warn!(
             "lwe dimension is too small, using max num bits: {}",
             FALLBACK_BITS

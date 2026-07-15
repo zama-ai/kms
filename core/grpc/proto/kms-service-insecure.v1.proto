@@ -9,6 +9,19 @@ import "kms.v1.proto";
 // the documentation. Please see the documentation of the secure endpoint.
 // All insecure RPCs (i.e., the ones that have `Insecure` in the prefix)
 // have the same semantics as the secure ones.
+//
+// How key-generation preprocessing relates to key generation differs between
+// the centralized and threshold KMS:
+//   - Threshold: the preprocessing type and the keygen type must match. Normal
+//     preprocessing (`KeyGenPreproc`) produces real correlated randomness and
+//     may ONLY be consumed by the secure `KeyGen`; insecure preprocessing
+//     (`InsecureKeyGenPreproc`) generates no material and may ONLY be consumed
+//     by `InsecureKeyGen`. Each keygen rejects a preprocessing ID of the other
+//     type.
+//   - Centralized: there is no distinction between normal and insecure
+//     preprocessing (both are dummy and stored identically), so a preprocessing
+//     produced by either `KeyGenPreproc` or `InsecureKeyGenPreproc` can be
+//     consumed by either `KeyGen` or `InsecureKeyGen`.
 service CoreServiceEndpoint {
 
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
@@ -16,6 +29,10 @@ service CoreServiceEndpoint {
   rpc PartialKeyGenPreproc(kms.v1.PartialKeyGenPreprocRequest) returns (kms.v1.Empty);
 
   rpc GetKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
+
+  rpc InsecureKeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
+
+  rpc GetInsecureKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
 
   rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
 
@@ -73,4 +90,6 @@ service CoreServiceEndpoint {
   rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
 
   rpc GetHealthStatus(kms.v1.Empty) returns (kms.v1.HealthStatusResponse);
+
+    rpc BandwidthBenchmark(kms.v1.BandwidthBenchmarkRequest) returns (kms.v1.BandwidthBenchmarkResponse);
 }

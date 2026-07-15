@@ -415,12 +415,52 @@ impl std::fmt::Debug for ThresholdFheKeys {
     }
 }
 
+/// Entry of the preprocessing meta store, produced by the key generation
+/// preprocessing endpoints and consumed (deleted) by key generation.
 #[derive(Clone)]
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
-    pub(crate) preprocessing_store: Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+    pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
+}
+
+/// The preprocessing material backing a [`BucketMetaStore`] entry.
+///
+/// `Real` holds the actual correlated randomness produced by the secure
+/// preprocessing endpoint. `Insecure` is a marker stored by the insecure
+/// preprocessing endpoint: no material exists and the entry may only be
+/// consumed by the insecure key generation, mirroring the dummy
+/// preprocessing of the centralized KMS.
+#[derive(Clone)]
+pub enum PreprocMaterial {
+    Real(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>),
+    #[cfg(feature = "insecure")]
+    Insecure,
+}
+
+/// Build the meta-store entry stored by the insecure (dummy) preprocessing:
+/// no material is generated, only the external signature is computed.
+#[cfg(feature = "insecure")]
+pub(crate) fn new_insecure_preproc_bucket(
+    sk: &crate::cryptography::signatures::PrivateSigKey,
+    preprocessing_id: RequestId,
+    dkg_param: DKGParams,
+    domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<BucketMetaStore> {
+    let external_signature = crate::engine::base::compute_external_signature_preprocessing(
+        sk,
+        &preprocessing_id,
+        domain,
+        extra_data,
+    )?;
+    Ok(BucketMetaStore {
+        preprocessing_id,
+        external_signature,
+        preprocessing_store: PreprocMaterial::Insecure,
+        dkg_param,
+    })
 }
 
 #[cfg(not(feature = "insecure"))]
@@ -471,7 +511,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    peer_tcp_proxy: bool,
     ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
@@ -543,7 +582,6 @@ where
             .as_ref()
             .map(|(_, client_config, _)| client_config.clone()),
         threshold_config.core_to_core_net,
-        peer_tcp_proxy,
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
@@ -638,19 +676,19 @@ where
             std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
         });
 
-    let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let preproc_buckets = MetaStore::new_unlimited();
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
-    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
-    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
-    let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
+    let crs_meta_store = MetaStore::new_from_map(crs_info);
+    let dkg_pubinfo_meta_store = MetaStore::new_from_map(public_key_info);
+    let pub_dec_meta_store = MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
-    )));
-    let user_decrypt_meta_store = Arc::new(RwLock::new(MetaStore::new(
+    );
+    let user_decrypt_meta_store = MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
-    )));
-    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
+    );
+    let custodian_meta_store = MetaStore::new_from_map(validation_material);
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
@@ -720,7 +758,7 @@ where
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance().await,
-        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,
@@ -855,6 +893,7 @@ where
         backup_operator,
         Arc::clone(&tracker),
         immutable_session_maker,
+        config.bandwidth_benchmark.clone().unwrap_or_default(),
         core_service_health_reporter.clone(),
         abort_handle,
     );

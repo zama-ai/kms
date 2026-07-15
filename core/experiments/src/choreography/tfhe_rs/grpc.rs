@@ -604,7 +604,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -613,7 +613,7 @@ where
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let prss_params: PrssInitParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse prss params: {e:?}"),
@@ -723,7 +723,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -731,7 +731,7 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_safe(&request.params)
+        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -764,8 +764,8 @@ where
                 )
             })?;
 
-        match (dkg_params, session_type) {
-            (DKGParams::WithoutSnS(_), SessionType::Small) => {
+        match (dkg_params.supports_sns(), session_type) {
+            (false, SessionType::Small) => {
                 let prss_setup = self
                     .data
                     .prss_setup
@@ -808,7 +808,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithoutSnS(_), SessionType::Large) => {
+            (false, SessionType::Large) => {
                 let result_store = self.data.dkg_preproc_store_regular.clone();
                 let my_future = || async move {
                     let sessions = create_large_sessions(base_sessions);
@@ -840,7 +840,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), SessionType::Small) => {
+            (true, SessionType::Small) => {
                 let prss_setup = self
                     .data
                     .prss_setup
@@ -881,7 +881,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), SessionType::Large) => {
+            (true, SessionType::Large) => {
                 let result_store = self.data.dkg_preproc_store_sns.clone();
                 let my_future = || async move {
                     let sessions = create_large_sessions(base_sessions);
@@ -949,7 +949,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -957,8 +957,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let kg_params: ThresholdKeyGenParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+        let kg_params: ThresholdKeyGenParams = bc2wrap::deserialize_slice(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen params: {e:?}"),
@@ -986,8 +986,8 @@ where
             })?;
 
         let key_store = self.data.key_store.clone();
-        match (dkg_params, preproc_sid) {
-            (DKGParams::WithoutSnS(_), Some(id)) => {
+        match (dkg_params.supports_sns(), preproc_sid) {
+            (false, Some(id)) => {
                 let (_, (params, mut preproc)) =
                     self.data.dkg_preproc_store_regular.remove(&id).ok_or_else(|| {
                         tonic::Status::new(
@@ -1028,7 +1028,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithoutSnS(_), None) => {
+            (false, None) => {
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
@@ -1053,7 +1053,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), Some(id)) => {
+            (true, Some(id)) => {
                 let (_, (params, mut preproc)) =
                     self.data.dkg_preproc_store_sns.remove(&id).ok_or_else(|| {
                         tonic::Status::new(
@@ -1094,7 +1094,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            (DKGParams::WithSnS(_), None) => {
+            (true, None) => {
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
@@ -1141,7 +1141,7 @@ where
         let tag = tfhe::Tag::default();
 
         let kg_result_params: ThresholdKeyGenResultParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
@@ -1153,7 +1153,7 @@ where
 
         if let Some(dkg_params) = dkg_params {
             let role_assignment: HashMap<Role, Identity> =
-                bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+                bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
@@ -1249,7 +1249,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1257,7 +1257,7 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocDecryptParams = bc2wrap::deserialize_safe(&request.params)
+        let preproc_params: PreprocDecryptParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -1595,7 +1595,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1605,7 +1605,7 @@ where
         let roles = role_assignment.keys().cloned().collect();
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize_safe(&request.params)
+        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -2319,7 +2319,7 @@ where
         request: tonic::Request<ThresholdDecryptResultRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
         let request = request.into_inner();
-        let session_id = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+        let session_id = bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2373,7 +2373,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -2381,12 +2381,13 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let crs_params: CrsGenParams = bc2wrap::deserialize_safe(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Crs Gen params: {e:?}"),
-            )
-        })?;
+        let crs_params: CrsGenParams =
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Crs Gen params: {e:?}"),
+                )
+            })?;
 
         let session_id = crs_params.session_id;
         let witness_dim = crs_params.witness_dim;
@@ -2446,7 +2447,7 @@ where
         let request = request.into_inner();
 
         let session_id: SessionId =
-            bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Error deserializing session_id: {e}"),
@@ -2482,7 +2483,7 @@ where
         request: tonic::Request<StatusCheckRequest>,
     ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
         let request = request.into_inner();
-        let sid: SessionId = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+        let sid: SessionId = bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2537,7 +2538,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -2545,7 +2546,7 @@ where
             })?;
 
         let reshare_params: ReshareParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Reshare params: {e:?}"),

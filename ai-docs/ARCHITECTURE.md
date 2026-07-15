@@ -30,7 +30,7 @@ RPCs (preprocessing, reshare) are only meaningful in threshold mode.
 
 The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM.
 
-The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts. 
+The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
 ## Workspace layout
 
@@ -57,6 +57,7 @@ The repository is a Cargo workspace. The members are declared in
 | `kms-grpc` | [core/grpc/](core/grpc/) | Protobuf definitions + generated types and client stubs |
 | `core-client` | [core-client/](core-client/) | CLI client that drives the gRPC API |
 | `observability` | [observability/](observability/) | OpenTelemetry / Prometheus wiring |
+| `vsocktun` | [vsocktun/](vsocktun/) | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
 | `bc2wrap` | [bc2wrap/](bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
 | `error-utils` | [core/error-utils/](core/error-utils/) | Shared error types and helpers |
 | `thread-handles` | [core/thread-handles/](core/thread-handles/) | Rayon thread-pool management |
@@ -107,8 +108,9 @@ All under [core/service/src/bin/](core/service/src/bin/):
   initialization.
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
   signing keys (and, in threshold mode, per-party self-signed CA certificates
-  for mTLS). Supports `--mock-enclave` for local dev, must be compiled with the
-  `insecure` feature.
+  for mTLS). Reads a keygen TOML with `--config-file`; supports
+  `mock_enclave` in config for local dev when compiled with the `insecure`
+  feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
@@ -130,7 +132,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 - **Key generation** — `KeyGenPreproc` / `KeyGenPreprocResult` (threshold
   preprocessing), `KeyGen`, and `NewMpcEpoch` for key rotation. Multiple keyset
   configurations are supported (standard, decompression-only, compressed
-  variants).
+  variants). Insecure key generation still requires an explicit preprocessing
+  ID for both the centralized and threshold cases.
   Standard threshold keygen persists a dedicated OPRF LWE secret-key share in
   each party's private key material and includes the corresponding OPRF server
   key in the generated TFHE server key. Legacy private keysets that predate this
@@ -144,7 +147,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   refreshes secret shares as part of epoch creation; the outcome is fetched
   via `GetEpochResult`. When resharing legacy key material that has no
   dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and the
-  reshared private keyset keeps that field absent.
+  reshared private keyset keeps that field absent. `DestroyMpcContext` carries
+  the context's epoch IDs and erases their secret shares (cascading to the
+  existing per-epoch deletion) before forgetting the context, so retiring a
+  party set leaves no usable key shares behind; the kms-connector is the source
+  of truth for which epochs belong to a context.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -198,9 +205,8 @@ Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
 `NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit`
 / `CustodianBackupRecovery` RPCs defined in
-[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). A separate
-`RestoreFromBackup` RPC completes restoration on the node and also covers
-the no-custodian AWS-KMS path.
+[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto).
+A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
@@ -269,7 +275,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.94.0`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
+- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.97.0`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.

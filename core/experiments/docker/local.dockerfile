@@ -30,7 +30,7 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 
 
 
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:16-dev AS prod
 
 USER root
 # Install required runtime dependencies

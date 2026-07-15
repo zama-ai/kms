@@ -7,7 +7,6 @@ use algebra::sharing::share::Share;
 use algebra::structure_traits::Ring;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
-use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 use std::num::Wrapping;
 use threshold_execution::endpoints::decryption::{
@@ -247,7 +246,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
 
 criterion_group! {
     name = bit_dec;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default();
     targets = bit_dec_online, bit_dec_small_e2e_abort, bit_dec_large_e2e
 }
 

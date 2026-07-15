@@ -69,6 +69,55 @@ use super::decryption::LowLevelCiphertext;
 use super::reconstruct::{combine_decryptions, reconstruct_message};
 use crate::tfhe_internals::private_keysets::PrivateKeySet;
 
+/// A [`LowLevelCiphertext`] bundled with exactly the keys its variant needs to be
+/// converted into a squashed-noise ciphertext.
+///
+/// The `Big*` variants are already squashed and need no keys; the `Small` variant
+/// always carries the switch-and-squash keys (server key + noise squashing key).
+/// This makes it impossible to call the noise-flooding decryption with a keyless
+/// small ciphertext, and lets the production (`Big*`) path avoid touching — and
+/// thus avoid lazily decompressing — those keys entirely.
+pub enum LowLevelCiphertextAndKeys {
+    BigCompressed(SnsRadixOrBoolCiphertext),
+    BigStandard(SnsRadixOrBoolCiphertext),
+    Small {
+        ct: RadixOrBoolCiphertext,
+        server_key: Arc<ServerKey>,
+        ck: Arc<NoiseSquashingKey>,
+    },
+}
+
+impl LowLevelCiphertextAndKeys {
+    pub fn decryption_key_type(&self) -> SnsDecryptionKeyType {
+        match self {
+            Self::BigCompressed(_) => SnsDecryptionKeyType::SnsCompressionKey,
+            Self::BigStandard(_) | Self::Small { .. } => SnsDecryptionKeyType::SnsKey,
+        }
+    }
+}
+
+impl LowLevelCiphertext {
+    /// Attach the switch-and-squash keys needed to decrypt this ciphertext.
+    ///
+    /// `provide` is invoked **only** for the [`LowLevelCiphertext::Small`] variant —
+    /// the `Big*` variants are already squashed and need no keys, so callers never
+    /// fetch (and thus never trigger lazy decompression of) the keys on the
+    /// production path.
+    pub fn with_sns_keys<F>(self, provide: F) -> anyhow::Result<LowLevelCiphertextAndKeys>
+    where
+        F: FnOnce() -> anyhow::Result<(Arc<ServerKey>, Arc<NoiseSquashingKey>)>,
+    {
+        Ok(match self {
+            LowLevelCiphertext::BigCompressed(ct) => LowLevelCiphertextAndKeys::BigCompressed(ct),
+            LowLevelCiphertext::BigStandard(ct) => LowLevelCiphertextAndKeys::BigStandard(ct),
+            LowLevelCiphertext::Small(ct) => {
+                let (server_key, ck) = provide()?;
+                LowLevelCiphertextAndKeys::Small { ct, server_key, ck }
+            }
+        })
+    }
+}
+
 // NOTE: This whole trait system for noiseflood preproc is
 // a bit convoluted and could probably be refactored to be simpler.
 pub struct SmallOfflineNoiseFloodSession<
@@ -280,9 +329,9 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 ///
 /// # Arguments
 /// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
-/// * `server_key` - The server key, used together with `ck` for switch&squash
-/// * `ck` - The conversion key, used for switch&squash
-/// * `ct` - The ciphertext to be decrypted
+/// * `ct` - The ciphertext to be decrypted, bundled with the switch&squash keys
+///   (server key + noise squashing key) that its `Small` variant requires; the
+///   `Big*` variants carry no keys
 /// * `secret_key_share` - The secret key share of the party_keyshare
 ///
 /// # Returns
@@ -300,9 +349,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 #[instrument(skip_all, fields(sid, my_role))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>(
     noiseflood_session: &mut P,
-    server_key: Arc<ServerKey>,
-    ck: Arc<NoiseSquashingKey>,
-    ct: LowLevelCiphertext,
+    ct: LowLevelCiphertextAndKeys,
     secret_key_share: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
@@ -315,9 +362,9 @@ where
     let execution_start_timer = Instant::now();
     let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
-        LowLevelCiphertext::BigCompressed(ct128) => ct128,
-        LowLevelCiphertext::BigStandard(ct128) => ct128,
-        LowLevelCiphertext::Small(ct64) => match ct64 {
+        LowLevelCiphertextAndKeys::BigCompressed(ct128) => ct128,
+        LowLevelCiphertextAndKeys::BigStandard(ct128) => ct128,
+        LowLevelCiphertextAndKeys::Small { ct, server_key, ck } => match ct {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
                 spawn_compute_bound(move || {
                     ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
@@ -371,9 +418,9 @@ where
 ///
 /// # Arguments
 /// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
-/// * `server_key` - The server key, used together with `ck` for switch&squash
-/// * `ck` - The conversion key, used for switch&squash
-/// * `ct` - The ciphertext to be decrypted
+/// * `ct` - The ciphertext to be decrypted, bundled with the switch&squash keys
+///   (server key + noise squashing key) that its `Small` variant requires; the
+///   `Big*` variants carry no keys
 /// * `secret_key_share` - The secret key share of the party_keyshare
 ///
 /// # Returns
@@ -394,9 +441,7 @@ where
 #[instrument(skip_all, fields(sid, my_role))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     noiseflood_session: &mut P,
-    server_key: Arc<ServerKey>,
-    ck: Arc<NoiseSquashingKey>,
-    ct: LowLevelCiphertext,
+    ct: LowLevelCiphertextAndKeys,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
 ) -> anyhow::Result<(
     HashMap<String, Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
@@ -419,9 +464,9 @@ where
     let execution_start_timer = Instant::now();
     let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
-        LowLevelCiphertext::BigCompressed(ct128) => ct128,
-        LowLevelCiphertext::BigStandard(ct128) => ct128,
-        LowLevelCiphertext::Small(ct64) => match ct64 {
+        LowLevelCiphertextAndKeys::BigCompressed(ct128) => ct128,
+        LowLevelCiphertextAndKeys::BigStandard(ct128) => ct128,
+        LowLevelCiphertextAndKeys::Small { ct, server_key, ck } => match ct {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
                 spawn_compute_bound(move || {
                     ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
@@ -1203,7 +1248,7 @@ where
 {
     let sns_secret_key = match ddec_key_type {
         SnsDecryptionKeyType::SnsKey => match &sk_share.glwe_secret_key_share_sns_as_lwe {
-            Some(key) => key.data_as_raw_iter(),
+            Some(key) => key.data_iter(),
             None => {
                 return Err(anyhow_error_and_log(
                     "Missing the switch and squash secret key".to_string(),
@@ -1212,7 +1257,7 @@ where
         },
         SnsDecryptionKeyType::SnsCompressionKey => {
             match &sk_share.glwe_sns_compression_key_as_lwe {
-                Some(key) => key.data_as_raw_iter(),
+                Some(key) => key.data_iter(),
                 None => {
                     return Err(anyhow_error_and_log(
                         "Missing the switch and squash compression secret key".to_string(),
@@ -1277,7 +1322,7 @@ where
                 .convert_to_z64()
         }
     };
-    let key_share64_iter = key_share64.data_as_raw_iter();
+    let key_share64_iter = key_share64.data_iter();
     let a_time_s = key_share64_iter.zip_eq(mask.as_ref()).fold(
         ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO,
         |acc, (sk, m)| {
@@ -1347,17 +1392,17 @@ mod tests {
         (0..parties).for_each(|i| {
             first_bit_shares.push(Share::new(
                 Role::indexed_from_zero(i),
-                *shares[i]
+                shares[i]
                     .glwe_secret_key_share_sns_as_lwe
                     .as_ref()
                     .unwrap()
-                    .data_as_raw_vec()
-                    .first()
+                    .data_iter()
+                    .next()
                     .unwrap(),
             ));
         });
         let first_bit_sharing = ShamirSharings::create(first_bit_shares);
-        let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
+        let rec = first_bit_sharing.error_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
             ClientKeyView::new(&keyset.client_key)

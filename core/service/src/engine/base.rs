@@ -903,17 +903,24 @@ pub fn compute_public_decryption_message(
 /// InvalidArgument if the concrete parameter does not exist.
 /// The default DKG parameters are returned if None is provided.
 pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParams, BoxedStatus> {
-    match fhe_parameter {
+    let params = match fhe_parameter {
         Some(inner) => {
             let fhe_parameter: WrappedDKGParams = FheParameter::try_from(inner)
                 .map_err(|e| {
                     tonic::Status::invalid_argument(format!("DKG parameter not found: {e}"))
                 })?
                 .into();
-            Ok(*fhe_parameter)
+            *fhe_parameter
         }
-        None => Ok(*WrappedDKGParams::from(FheParameter::default())),
-    }
+        None => *WrappedDKGParams::from(FheParameter::default()),
+    };
+    // Validate the KMS-level invariants at the parameter-entry boundary so a
+    // malformed parameter set fails fast here with a clear error, instead of
+    // panicking deep inside an accessor (e.g. `classic_pbs`) later on.
+    params
+        .check_conformance()
+        .map_err(|e| tonic::Status::invalid_argument(format!("Invalid DKG parameters: {e}")))?;
+    Ok(params)
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -2106,7 +2113,7 @@ pub(crate) mod tests {
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
         let deserialized_upgraded: KeyGenMetadataInnerV1 =
-            bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
+            bc2wrap::deserialize_slice(&upgraded_bytes).unwrap();
         assert_eq!(deserialized_upgraded.extra_data, None);
         assert_eq!(deserialized_upgraded.key_id, q126.key_id);
         assert_eq!(
@@ -2163,7 +2170,7 @@ pub(crate) mod tests {
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
         let deserialized_upgraded: CrsGenMetadataInner =
-            bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
+            bc2wrap::deserialize_slice(&upgraded_bytes).unwrap();
         assert_eq!(deserialized_upgraded.extra_data, None);
         assert_eq!(deserialized_upgraded.crs_id, q126.crs_id);
         assert_eq!(deserialized_upgraded.max_num_bits, q126.max_num_bits);

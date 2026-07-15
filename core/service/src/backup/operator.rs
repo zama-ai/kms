@@ -3,10 +3,6 @@ use super::{
     error::{BackupError, SetupSkipReason},
     secretsharing,
 };
-use crate::backup::{
-    custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
-    error::RecoverySkipReason,
-};
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
@@ -20,6 +16,13 @@ use crate::{
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
+};
+use crate::{
+    backup::{
+        custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+        error::RecoverySkipReason,
+    },
+    cryptography::internal_crypto_types::LegacySerialization,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -35,7 +38,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
-    time::{SystemTime, UNIX_EPOCH},
+    ops::{Add, Sub},
+    time::{Duration, SystemTime},
 };
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -43,7 +47,7 @@ use threshold_types::role::Role;
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
-const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
+const TIMESTAMP_VALIDATION_WINDOW: Duration = Duration::from_hours(24);
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalRecoveryRequestVersions {
@@ -63,6 +67,7 @@ impl Named for InternalRecoveryRequest {
 #[versionize(InternalRecoveryRequestVersions)]
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
+    operator_verf_key: PublicSigKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
 }
 
@@ -70,44 +75,23 @@ impl InternalRecoveryRequest {
     /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' unsigncryption keys.
     pub fn new(
         ephem_op_enc_key: UnifiedPublicEncKey,
+        operator_verf_key: PublicSigKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
             ephem_op_enc_key,
+            operator_verf_key,
             cts,
         };
         Ok(res)
     }
 
-    /// Validate that the data in the request is sensible.
-    pub fn is_valid(
-        &self,
-        custodian_role: Role,
-        unsigncrypt_key: &UnifiedUnsigncryptionKey,
-    ) -> anyhow::Result<bool> {
-        let output = match self.cts.get(&custodian_role) {
-            Some(output) => output,
-            None => {
-                tracing::warn!(
-                    "InternalRecoveryRequest is missing ciphertext for custodian role {}",
-                    custodian_role
-                );
-                return Ok(false);
-            }
-        };
-        // We ignore the result, but just ensure that unsigncryption works
-        if unsigncrypt_key
-            .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &output.signcryption)
-            .is_err()
-        {
-            tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
     pub fn backup_enc_key(&self) -> &UnifiedPublicEncKey {
         &self.ephem_op_enc_key
+    }
+
+    pub fn operator_verf_key(&self) -> &PublicSigKey {
+        &self.operator_verf_key
     }
 
     pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
@@ -136,8 +120,10 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             let inner_ct: InnerOperatorBackupOutput = cur_backup_out.try_into()?;
             cts.insert(role, inner_ct);
         }
+        let operator_verf_key = PublicSigKey::from_legacy_bytes(&value.operator_verf_key)?;
         Ok(Self {
             ephem_op_enc_key,
+            operator_verf_key,
             cts,
         })
     }
@@ -844,18 +830,18 @@ fn validate_custodian_messages(
 
         if validate_timestamps {
             tracing::debug!(
-                "Validating timestamp {} in custodian setup message from custodian {}",
+                "Validating timestamp {:?} in custodian setup message from custodian {}",
                 timestamp,
                 custodian_role
             );
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            if !(now.saturating_sub(TIMESTAMP_VALIDATION_WINDOW_SECS) < timestamp
-                && timestamp < now.saturating_add(TIMESTAMP_VALIDATION_WINDOW_SECS))
+            let now = SystemTime::now();
+            if !(now.sub(TIMESTAMP_VALIDATION_WINDOW) < timestamp
+                && timestamp < now.add(TIMESTAMP_VALIDATION_WINDOW))
             {
                 tracing::warn!(
-                    "Invalid timestamp in custodian setup message from custodian {}: expected within {} seconds of now, but got {}",
+                    "Invalid timestamp in custodian setup message from custodian {}: expected within {:?} of now, but got {:?}",
                     custodian_role,
-                    TIMESTAMP_VALIDATION_WINDOW_SECS,
+                    TIMESTAMP_VALIDATION_WINDOW,
                     timestamp
                 );
                 skip_reasons.push(SetupSkipReason::InvalidTimestamp);
@@ -937,7 +923,7 @@ mod tests {
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [4_u8; 32],
-            timestamp: 0,
+            timestamp: SystemTime::now(),
             public_enc_key: enc_key.clone(),
             verification_key: verf_key.clone(),
         };
@@ -1000,10 +986,7 @@ mod tests {
             header: HEADER.to_owned(),
             custodian_role: role,
             random_value: [9_u8; 32],
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: SystemTime::now(),
             name: format!("custodian_{}", role.one_based()),
             public_enc_key: enc_key,
             public_verf_key: verf_key,
@@ -1103,7 +1086,7 @@ mod tests {
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg1.timestamp = 0; // too far in the past
+        msg1.timestamp = SystemTime::now() - Duration::from_hours(666); // too far in the past
         let msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =
@@ -1131,11 +1114,8 @@ mod tests {
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        let present = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        msg1.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        let present = SystemTime::now();
+        msg1.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =
@@ -1161,19 +1141,16 @@ mod tests {
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
-        let present = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let present = SystemTime::now();
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg1.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        msg1.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let mut msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
-        msg2.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        msg2.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let mut msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
-        msg3.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        msg3.timestamp = present + Duration::from_secs(24 * 3600 + 2); // too far in the future by 2 seconds
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, false).unwrap();
         assert_eq!(result.keys.len(), 3);
         assert!(

@@ -10,7 +10,6 @@ use algebra::{
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
-    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
@@ -28,7 +27,7 @@ use tfhe::FheTypes;
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
         SecureOnlineNoiseFloodDecryption, SmallOfflineNoiseFloodSession,
         decrypt_using_noiseflooding, secure_decrypt_using_bitdec,
     },
@@ -36,7 +35,7 @@ use threshold_execution::{
     tfhe_internals::private_keysets::PrivateKeySet,
 };
 use threshold_types::session_id::SessionId;
-use tokio::sync::{OwnedRwLockReadGuard, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -44,6 +43,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
@@ -63,7 +63,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
             update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
@@ -80,9 +80,7 @@ pub trait NoiseFloodDecryptor: Send + Sync {
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
@@ -102,9 +100,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
-        server_key: Arc<tfhe::integer::ServerKey>,
-        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-        ct: LowLevelCiphertext,
+        ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
@@ -117,7 +113,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
             Self::Prep,
             SecureOnlineNoiseFloodDecryption,
             T,
-        >(noiseflood_session, server_key, ck, ct, secret_key_share)
+        >(noiseflood_session, ct, secret_key_share)
         .await
     }
 }
@@ -164,10 +160,7 @@ impl<
         ct: Vec<u8>,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
-        fhe_keys: OwnedRwLockReadGuard<
-            HashMap<(RequestId, EpochId), ThresholdFheKeys>,
-            ThresholdFheKeys,
-        >,
+        fhe_keys: ThresholdFheKeys,
         dec_mode: DecryptionMode,
     ) -> anyhow::Result<T>
     where
@@ -182,7 +175,13 @@ impl<
         );
 
         let keys = fhe_keys;
-        let decomp_key = keys.decompression_key();
+        // Only the SmallCompressed format needs the decompression key to deserialize.
+        // Fetching it would lazily decompress the (multi-GiB) keyset, so avoid it for
+        // the Big*/SmallExpanded formats that don't use it.
+        let decomp_key = match ct_format {
+            CiphertextFormat::SmallCompressed => keys.decompression_key(),
+            _ => None,
+        };
         let low_level_ct = spawn_compute_bound(move || {
             deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
         })
@@ -200,14 +199,15 @@ impl<
                     })?;
                 let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
 
-                Dec::decrypt(
-                    &mut noiseflood_session,
-                    keys.integer_server_key(),
-                    keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?,
-                    low_level_ct,
-                    keys.private_keys.clone(),
-                )
-                .await
+                // Only `Small` ciphertexts need switch&squash; the closure (and hence the
+                // lazy key decompression it triggers) does not run for the Big* variants.
+                let ct = low_level_ct.with_sns_keys(|| {
+                    let server_key = keys.integer_server_key();
+                    let ck = keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?;
+                    Ok((server_key, ck))
+                })?;
+
+                Dec::decrypt(&mut noiseflood_session, ct, keys.private_keys.clone()).await
             }
             DecryptionMode::BitDecSmall => {
                 let mut session = session_maker
@@ -313,17 +313,6 @@ impl<
             "Starting decryption process"
         );
 
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        add_req_to_meta_store(
-            &mut self.pub_dec_meta_store.write().await,
-            &req_id,
-            OP_PUBLIC_DECRYPT_REQUEST,
-        )?;
-
         let ext_handles_bytes = ciphertexts
             .iter()
             .map(|c| c.external_handle.to_owned())
@@ -338,6 +327,30 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+
+        let fhe_keys_rlock = self
+            .crypto_storage
+            .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_INNER,
+                    Some(req_id),
+                    anyhow::anyhow!("fhe key not found due to {e:?}"),
+                    tonic::Code::NotFound,
+                )
+            })?;
+
+        // Below we write to the meta-store, leaving this [req_id] in the
+        // "Started" (Pending) state. The management task updates it on every
+        // outcome path; should the permit ever be dropped without an update, the
+        // store's reaper fails the entry rather than leaving it Pending forever.
+        let meta_permit = add_or_redo_failed_in_meta_store(
+            &self.pub_dec_meta_store,
+            &req_id,
+            OP_PUBLIC_DECRYPT_REQUEST,
+        )
+        .await?;
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let mut dec_tasks = Vec::new();
 
@@ -347,35 +360,14 @@ impl<
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .tags(metric_tags.clone())
                 .start();
-            let internal_sid = req_id
-                .derive_session_id_with_counter(ctr as u64)
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        e,
-                        tonic::Code::Aborted,
-                    )
-                })?;
 
-            let crypto_storage = self.crypto_storage.clone();
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store
             let session_maker = self.session_maker.clone();
 
-            let fhe_keys_rlock = crypto_storage
-                .read_guarded_fhe_keys(&key_id.into(), &epoch_id)
-                .await
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        anyhow::anyhow!("fhe key not found due to {e:?}"),
-                        tonic::Code::NotFound,
-                    )
-                })?;
-
+            let fhe_keys_rlock_clone = fhe_keys_rlock.clone();
             let decrypt_future = || async move {
+                let internal_sid = req_id.derive_session_id_with_counter(ctr as u64)?;
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
                     f
@@ -404,7 +396,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -419,7 +411,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -434,7 +426,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -449,7 +441,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -464,7 +456,7 @@ impl<
                         ciphertext,
                         fhe_type,
                         ct_format,
-                        fhe_keys_rlock,
+                        fhe_keys_rlock_clone,
                         dec_mode,
                     )
                     .await
@@ -478,7 +470,7 @@ impl<
                             ciphertext,
                             fhe_type,
                             ct_format,
-                            fhe_keys_rlock,
+                            fhe_keys_rlock_clone,
                             dec_mode,
                         )
                         .await
@@ -493,7 +485,7 @@ impl<
                             ciphertext,
                             fhe_type,
                             ct_format,
-                            fhe_keys_rlock,
+                            fhe_keys_rlock_clone,
                             dec_mode,
                         )
                         .await
@@ -513,7 +505,7 @@ impl<
                             ciphertext,
                             fhe_type,
                             ct_format,
-                            fhe_keys_rlock,
+                            fhe_keys_rlock_clone,
                             dec_mode,
                         )
                         .await
@@ -540,7 +532,8 @@ impl<
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: _permit should be dropped at the end of this function
+            // permit should be dropped at the end of this function
+            let mut meta_permit = Some(meta_permit);
             let mut decs = HashMap::new();
 
             // Collect all results first, without holding any locks
@@ -561,11 +554,14 @@ impl<
                     }
                 };
                 let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    &req_id,
+                    &meta_store,
+                    meta_permit
+                        .take() // Ensure permit gets set to `None` after updating meta store with an errror
+                        .expect("permit must still be present on first error"),
                     err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
-                );
+                )
+                .await;
                 return;
             }
             // All the inner decrypts succeeded ok...
@@ -600,11 +596,14 @@ impl<
             };
 
             update_req_in_meta_store(
-                &mut meta_store.write().await,
-                &req_id,
+                &meta_store,
+                meta_permit
+                    .take()
+                    .expect("permit must still be present on success path"),
                 res,
                 OP_PUBLIC_DECRYPT_REQUEST,
-            );
+            )
+            .await;
         };
         // Increment the error counter if ever the task fails
         self.tracker.spawn(async move {
@@ -633,13 +632,14 @@ impl<
             )
         })?;
 
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-            retrieve_from_meta_store(
-                self.pub_dec_meta_store.read().await,
-                &request_id,
-                OP_PUBLIC_DECRYPT_RESULT,
-            )
-            .await?;
+        let arc = retrieve_from_meta_store_with_timeout(
+            &self.pub_dec_meta_store,
+            &request_id,
+            OP_PUBLIC_DECRYPT_RESULT,
+            DURATION_WAITING_ON_RESULT_SECONDS,
+        )
+        .await?;
+        let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
 
         if request_id != retrieved_req_id {
             return Err(MetricedError::new(
@@ -709,7 +709,15 @@ fn format_public_request(request: &PublicDecryptionRequest) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use crate::{
+        consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
+        cryptography::signatures::gen_sig_keys,
+        dummy_domain,
+        engine::threshold::service::session::SessionMaker,
+        vault::storage::{crypto_material::PublicKeySet, ram},
+    };
     use aes_prng::AesRng;
+    use kms_grpc::RequestId;
     use kms_grpc::{
         kms::v1::TypedCiphertext,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -718,14 +726,6 @@ mod tests {
     use threshold_execution::{
         runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
-    };
-
-    use crate::{
-        consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
-        cryptography::signatures::gen_sig_keys,
-        dummy_domain,
-        engine::threshold::service::session::SessionMaker,
-        vault::storage::{crypto_material::PublicKeySet, ram},
     };
 
     use super::*;
@@ -741,9 +741,7 @@ mod tests {
 
         async fn decrypt<T>(
             noiseflood_session: &mut Self::Prep,
-            _server_key: Arc<tfhe::integer::ServerKey>,
-            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-            _ct: LowLevelCiphertext,
+            _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
         ) -> anyhow::Result<(HashMap<String, T>, Duration)>
         where
@@ -790,7 +788,7 @@ mod tests {
             Self {
                 base_kms,
                 crypto_storage,
-                pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                pub_dec_meta_store: MetaStore::new_unlimited(),
                 session_maker,
                 tracker,
                 rate_limiter,
@@ -858,10 +856,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut key_store = MetaStore::new_unlimited();
-        key_store.insert(&key_id).unwrap();
-        // key_store.update(&key_id, Ok(info.clone())).unwrap();
-        let key_meta_store = Arc::new(RwLock::new(key_store));
+        let key_meta_store = MetaStore::new_unlimited();
+        let meta_store_permit = key_meta_store.write().await.insert(&key_id).unwrap();
 
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
             base_kms,
@@ -877,6 +873,7 @@ mod tests {
                 threshold_fhe_keys,
                 PublicKeySet::Uncompressed(Arc::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                meta_store_permit,
                 "",
             )
             .await
@@ -1221,10 +1218,11 @@ mod tests {
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol
-        // and always produces the same response
-        public_decryptor
-            .get_result(Request::new(req_id.into()))
-            .await
-            .unwrap();
+        // and always produces the same response.
+        crate::testing::utils::poll_result_until_ready(|| {
+            public_decryptor.get_result(Request::new(req_id.into()))
+        })
+        .await
+        .unwrap();
     }
 }

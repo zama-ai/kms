@@ -262,8 +262,6 @@ fn test_dkg_orchestrator_large(
 
     redis_tidy();
 
-    let params_basics_handles = params.get_params_basics_handle();
-
     let roles = generate_fixed_roles(num_parties);
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
@@ -335,8 +333,8 @@ fn test_dkg_orchestrator_large(
             Some(ref ref_key) => assert_eq!(ref_key, &pk),
         };
         write_element(
-            params_basics_handles
-                .get_prefix_path()
+            params
+                .generate_testing_prefix()
                 .join("ORCHESTRATOR")
                 .join(format!("sk_p{party_id}.der")),
             &sk,
@@ -345,8 +343,8 @@ fn test_dkg_orchestrator_large(
     }
     let pk_ref = pk_ref.unwrap();
     write_element(
-        params_basics_handles
-            .get_prefix_path()
+        params
+            .generate_testing_prefix()
             .join("ORCHESTRATOR")
             .join("pk.der"),
         &pk_ref,
@@ -356,17 +354,14 @@ fn test_dkg_orchestrator_large(
 
 #[test]
 fn test_dkg_orchestrator_params8_small_no_sns() {
-    use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use threshold_execution::tfhe_internals::parameters::{DkgMode, PARAMS_TEST_BK_SNS};
 
-    let params = PARAMS_TEST_BK_SNS;
-    let params = params.get_params_without_sns();
-    fs::create_dir_all(
-        params
-            .get_params_basics_handle()
-            .get_prefix_path()
-            .join("ORCHESTRATOR"),
-    )
-    .unwrap();
+    // `PARAMS_TEST_BK_SNS` is Z128 (SnS forces it); its non-SnS form is Z64, which is
+    // what this Z64 orchestrator/keygen test needs (matches the legacy
+    // `get_params_without_sns()` behavior this replaced).
+    let mut params = PARAMS_TEST_BK_SNS.remove_sns_parameters();
+    params.dkg_mode = DkgMode::Z64;
+    fs::create_dir_all(params.generate_testing_prefix().join("ORCHESTRATOR")).unwrap();
     let num_sessions = 10;
     let num_parties = 5;
     let threshold = 1;

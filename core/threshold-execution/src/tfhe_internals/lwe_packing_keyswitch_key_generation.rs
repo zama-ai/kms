@@ -38,7 +38,7 @@ fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     let decomp_level_count = lwe_packing_keyswitch_key.decomposition_level_count();
     let polynomial_size = lwe_packing_keyswitch_key.output_polynomial_size();
 
-    let input_key_it = input_lwe_sk.data_as_raw_vec().into_iter();
+    let input_key_it = input_lwe_sk.data_iter();
     let packing_key_switch_key_block_it = lwe_packing_keyswitch_key.iter_mut_levels();
 
     let mut decomposition_plaintexts_buffer =

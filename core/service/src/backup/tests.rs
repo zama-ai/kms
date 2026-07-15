@@ -26,7 +26,7 @@ use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use proptest::prelude::*;
 use rand::{SeedableRng, rngs::OsRng};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 use threshold_types::role::Role;
 
 #[test]
@@ -76,7 +76,7 @@ fn operator_setup() {
     // use the wrong timestamp, setup should not fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[1].timestamp += 24 * 3700;
+        wrong_custodian_messages[1].timestamp += Duration::from_secs(24 * 3700);
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new_for_sharing(
@@ -462,14 +462,18 @@ fn full_flow_malicious_custodian_second() {
         }
     }
 }
-
+#[rstest::rstest]
+#[case(4, 5, 2)]
+#[case(4, 3, 1)]
+#[case(13, 3, 1)]
 #[test]
-fn full_flow_malicious_operator() {
+fn full_flow_malicious_operator(
+    #[case] operator_count: usize,
+    #[case] custodian_count: usize,
+    #[case] custodian_threshold: usize,
+) {
     let mut rng = AesRng::seed_from_u64(1337);
     let backup_id = derive_request_id(std::stringify!(full_flow_malicious_operator)).unwrap();
-    let operator_count = 4usize;
-    let custodian_count = 5usize;
-    let custodian_threshold = 2usize;
 
     let (setup_msgs, mnemonics) = generate_setup_messages(&mut rng, custodian_count);
     let (operators, payload_for_custodians) = operator_handle_init(

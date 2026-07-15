@@ -40,7 +40,7 @@ path = "src/bin/kms-custodian.rs"
 aes-gcm-siv.workspace = true
 aes-gcm.workspace = true
 aes-prng.workspace = true
-aes.workspace = true
+aes08.workspace = true
 algebra = { workspace= true }
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
@@ -48,14 +48,11 @@ alloy-signer-local.workspace = true
 alloy-signer.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
-async_cell.workspace = true
 attestation-doc-validation = { workspace = true, optional = true}
 aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
 aws-sdk-kms = { workspace = true, optional = true }
 aws-sdk-s3 = { workspace = true, optional = true }
-aws-smithy-runtime = { workspace = true, optional = true }
-aws-smithy-runtime-api = { workspace = true, optional = true }
 aws-smithy-types = { workspace = true, optional = true }
 bc2wrap.workspace = true
 bincode.workspace = true
@@ -67,11 +64,8 @@ clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
-getrandom.workspace = true # For some weird reason it needs to be here for wasm builds ? (even though we don't use it anywhere ?)
 hashing.workspace = true
 hex.workspace = true
-http-legacy.workspace = true
-hyper-rustls = { workspace = true, optional = true }
 iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
@@ -154,7 +148,7 @@ walkdir = { workspace = true }
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile"]
+testing = ["dep:tempfile", "threshold-execution/testing"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",
@@ -164,10 +158,7 @@ non-wasm = [
     "dep:aws-nitro-enclaves-nsm-api",
     "dep:aws-sdk-kms",
     "dep:aws-sdk-s3",
-    "dep:aws-smithy-runtime",
-    "dep:aws-smithy-runtime-api",
     "dep:aws-smithy-types",
-    "dep:hyper-rustls",
     "dep:iam-rs",
     "dep:observability",
     "dep:rustls-webpki",

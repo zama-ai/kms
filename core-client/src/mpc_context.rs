@@ -1,14 +1,14 @@
 #[cfg(feature = "testing")]
 use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
 #[cfg(feature = "testing")]
 use kms_lib::{
     conf::{CoreConfig, init_conf},
-    engine::context::{NodeInfo, SoftwareVersion},
+    engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
 use std::collections::HashMap;
@@ -62,7 +62,6 @@ pub async fn create_test_context_info_from_core_config(
             kms_lib::conf::threshold::TlsConf::Auto {
                 eif_signing_cert: _,
                 trusted_releases,
-                ignore_aws_ca_chain: _,
                 attest_private_vault_root_key: _,
                 renew_slack_after_expiration: _,
                 renew_fail_retry_timeout: _,
@@ -183,12 +182,12 @@ pub async fn create_test_context_info_from_core_config(
         mpc_nodes.push(NodeInfo {
             mpc_identity: mpc_identity.to_string(),
             party_id: role.one_based() as u32,
-            verification_key: Some(verification_key.clone()),
+            signer_address: Some(SignerAddress(verification_key.address())),
             external_url: format!("https://{}:{}", identity.hostname(), identity.port()),
             ca_cert: Some(ca_cert.pem().as_bytes().to_vec()),
             public_storage_url: s3_endpoint,
             public_storage_prefix: prefix,
-            extra_verification_keys: vec![],
+            extra_signer_addresses: vec![],
         });
 
         thresholds.push(threshold_config.threshold);
@@ -269,15 +268,20 @@ pub(crate) async fn do_new_mpc_context(
 pub(crate) async fn do_destroy_mpc_context(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     context_id: &ContextId,
+    epoch_ids: &[EpochId],
 ) -> anyhow::Result<()> {
+    // The KMS destroys exactly the epochs it is given; be careful.
+    let proto_epoch_ids: Vec<_> = epoch_ids.iter().map(|id| (*id).into()).collect();
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let context_cloned = (*context_id).into();
+        let epoch_ids_cloned = proto_epoch_ids.clone();
         req_tasks.spawn(async move {
             cur_client
                 .destroy_mpc_context(DestroyMpcContextRequest {
                     context_id: Some(context_cloned),
+                    epoch_ids: epoch_ids_cloned,
                 })
                 .await
         });

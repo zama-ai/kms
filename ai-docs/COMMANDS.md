@@ -2,7 +2,7 @@
 
 Commands that come up during ordinary work in this repo. All commands are expected to be run from the repository root unless noted otherwise.
 
-Toolchain is pinned to Rust `1.94.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
+Toolchain is pinned to Rust `1.97.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
 
 ## Build and lint
 
@@ -179,6 +179,13 @@ All from the `core-client/` directory:
 cd core-client
 cargo run -- --help
 cargo run -- -f config/client_local_threshold.toml crs-gen
+```
+
+When using the core client for custodian backup CLI management instead use:
+```
+cd core-client
+cargo run -- --help
+cargo run -- -f config/client_local_threshold_custodian_backup.toml new-custodian-context
 ```
 
 More: [docs/guides/core_client.md](../docs/guides/core_client.md).
