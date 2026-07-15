@@ -1407,9 +1407,9 @@ mod tests {
 
         let malicious_party = DroppingCeremony;
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
         ).await;
     }
 
@@ -1426,9 +1426,9 @@ mod tests {
             broadcast: broadcast_strategy,
         };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
         ).await;
     }
 
@@ -1448,9 +1448,9 @@ mod tests {
             broadcast: broadcast_strategy,
         };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
         ).await;
     }
 
@@ -1469,9 +1469,9 @@ mod tests {
             broadcast: broadcast_strategy,
         };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
         ).await;
     }
 
