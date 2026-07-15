@@ -635,8 +635,6 @@ fn verify_proof(
     expected_round: u64,
     sid: SessionId,
 ) -> anyhow::Result<InternalPublicParameter> {
-    partial_proof_to_check.validate_points()?;
-
     // Ensure that the round number in the new partial proof matches the expected round number exactly.
     // This is important to prevent malicious parties from inflating the round number to suppress later honest contributions.
     if partial_proof_to_check.new_pp.round != expected_round {
@@ -667,7 +665,9 @@ fn verify_proof(
         )));
     }
 
-    let new_pp = partial_proof_to_check.new_pp.clone();
+    // Borrow the received public parameter for the checks below and only clone it on the
+    // success path, so a rejected proof never pays for the (large) copy.
+    let new_pp = &partial_proof_to_check.new_pp;
 
     // Check dimensions against the trusted current_pp before any indexing
     // below: a malformed proof must error here, not panic on an out-of-bounds index
@@ -687,6 +687,8 @@ fn verify_proof(
             new_pp.witness_dim()
         )));
     }
+
+    partial_proof_to_check.validate_points()?;
 
     let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
     let g1_j = new_pp.g1g2list.g1s[0]; // g_{1, j}
@@ -725,10 +727,10 @@ fn verify_proof(
     // perform the well-formedness check
     // this check guarantees that the prover
     // is raising the elements in the CRS by the correct powers of tau
-    verify_wellformedness(&new_pp, sid)?;
+    verify_wellformedness(new_pp, sid)?;
 
     // We have passed all the above checks and can return the new public parameter
-    Ok(new_pp)
+    Ok(new_pp.clone())
 }
 
 fn verify_dlog_proof(
