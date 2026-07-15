@@ -42,6 +42,24 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
     bucketSize: 50000
+  # Issue#3089: temporary request-ID activation thresholds for the PRSS-Mask counter-schedule
+  # fix (#663). Requests with an ID strictly below the configured value run the legacy
+  # (pre-#663) schedule for interop with unpatched peers; requests at or above it run the
+  # fixed schedule. MANDATORY fields of the server config (chart rendering fails if nulled);
+  # "0" means the fixed schedule is always used.
+  #
+  # ALL MPC parties MUST configure identical values, chosen
+  # with enough margin for the slowest party to upgrade before the counters reach
+  # them. ALWAYS quote the values (they are 256-bit integers, decimal or 0x-prefixed hex;
+  # unquoted large YAML numbers get mangled). Remove once the migration is complete.
+  # PRSS-Mask legacy-schedule activation thresholds (Issue#3089). Left EMPTY by default so the
+  # config omits the fields entirely — pre-#663 binaries reject unknown config keys, so during a
+  # rolling upgrade these must stay unset until every party runs the new binary, then be enabled
+  # in a second pass (see ci/scripts/rolling_upgrade.sh). Empty => new binary defaults to "0"
+  # (always the fixed schedule). Set to a decimal/0x-hex request-ID threshold to activate.
+  legacyPrssMask:
+    beforePublicDecryptId: ""
+    beforeUserDecryptId: ""
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false

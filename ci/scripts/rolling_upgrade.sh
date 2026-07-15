@@ -214,6 +214,62 @@ main() {
         "${OLD_KMS_CHART_VERSION}" \
         "${NEW_KMS_CHART_VERSION}"
 
+    #=========================================================================
+    # Step 4 (phase 2): Enable the PRSS-Mask legacy-schedule threshold on the
+    # upgraded parties, AFTER their new binary is running.
+    #
+    # The threshold lives in the core-service config (TOML over vsock — pod env
+    # does not reach the enclave). Pre-#663 binaries reject the unknown field
+    # (`deny_unknown_fields`, config read fresh at start), so it must be absent
+    # until every upgraded party runs the new binary — which Step 3 guarantees
+    # by deploying them with the field off (chart value empty). We now set it via
+    # a second helm upgrade on the upgraded parties only; the configmap change
+    # bumps `checksum/config`, restarting the (already-new) pod to pick it up.
+    # Non-upgraded (old) parties are never touched, so no old binary ever sees it.
+    #=========================================================================
+    local threshold="${LEGACY_PRSS_MASK_THRESHOLD:-100}"
+    log_info "Step 4: Enabling PRSS-Mask threshold=${threshold} on upgraded parties [${ALL_UPGRADED_PARTIES}]..."
+
+    local new_chart_loc="${REPO_ROOT}/charts/kms-core"
+    local new_version_args=()
+    if [[ "${NEW_KMS_CHART_VERSION}" != "repository" ]]; then
+        new_chart_loc="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
+        new_version_args=(--version "${NEW_KMS_CHART_VERSION}")
+    fi
+
+    # Run the upgrades in parallel but track each PID → party, and fail the step if ANY of them
+    # fails (a bare `wait` only returns the exit status of the last backgrounded job).
+    IFS=',' read -ra _prss_ids <<< "${ALL_UPGRADED_PARTIES}"
+    local -a _prss_pids=()
+    local -a _prss_parties=()
+    for _id in "${_prss_ids[@]}"; do
+        local i; i="$(echo "${_id}" | tr -d ' ')"
+        [[ -z "${i}" ]] && continue
+        log_info "  Party ${i}: helm upgrade (reuse-values) + PRSS threshold..."
+        helm upgrade --install "${HELM_RELEASE_PREFIX}-${i}" "${new_chart_loc}" \
+            "${new_version_args[@]}" \
+            --namespace "${NAMESPACE}" \
+            --reuse-values \
+            --set kmsGenCertAndKeys.enabled=false \
+            --set "kmsCore.legacyPrssMask.beforePublicDecryptId=${threshold}" \
+            --set "kmsCore.legacyPrssMask.beforeUserDecryptId=${threshold}" \
+            --wait --wait-for-jobs --timeout=1200s &
+        _prss_pids+=("$!")
+        _prss_parties+=("${i}")
+    done
+
+    local _prss_failed=()
+    for _idx in "${!_prss_pids[@]}"; do
+        if ! wait "${_prss_pids[$_idx]}"; then
+            _prss_failed+=("${_prss_parties[$_idx]}")
+        fi
+    done
+    if [[ "${#_prss_failed[@]}" -gt 0 ]]; then
+        log_error "PRSS-Mask threshold rollout failed for parties: ${_prss_failed[*]}"
+        exit 1
+    fi
+    log_info "PRSS-Mask threshold enabled on all upgraded parties."
+
     log_info "========================================="
     log_info "Rolling Upgrade Complete!"
     log_info "========================================="

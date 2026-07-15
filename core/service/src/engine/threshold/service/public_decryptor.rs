@@ -51,7 +51,10 @@ use crate::{
             deserialize_to_low_level,
         },
         threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+            service::{
+                prss_compat::{DecryptKind, use_legacy_prss_mask},
+                session::{ImmutableSessionMaker, validate_context_and_epoch},
+            },
             traits::PublicDecryptor,
         },
         traits::BaseKms,
@@ -169,6 +172,7 @@ impl<
             ThresholdFheKeys,
         >,
         dec_mode: DecryptionMode,
+        use_legacy_prss: bool,
     ) -> anyhow::Result<T>
     where
         T: tfhe::integer::block_decomposition::Recomposable
@@ -190,7 +194,7 @@ impl<
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
-                let session = session_maker
+                let mut session = session_maker
                     .make_small_async_session_z128(session_id, context_id, epoch_id)
                     .await
                     .map_err(|e| {
@@ -198,6 +202,9 @@ impl<
                             "Could not prepare ddec data for noiseflood decryption: {e}",
                         )
                     })?;
+                // Issue#3089: masks for this session must follow the schedule agreed for
+                // this request ID, identically across all parties.
+                session.prss_state.set_run_legacy_prss(use_legacy_prss);
                 let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
 
                 Dec::decrypt(
@@ -341,6 +348,11 @@ impl<
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let mut dec_tasks = Vec::new();
 
+        // Issue#3089: decide once per request whether the legacy (pre-#663) PRSS-Mask
+        // schedule must be used, based on the raw request ID (session IDs are hashes of it
+        // and carry no order).
+        let use_legacy_prss = use_legacy_prss_mask(&req_id, DecryptKind::Public);
+
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
@@ -406,6 +418,7 @@ impl<
                         ct_format,
                         fhe_keys_rlock,
                         dec_mode,
+                        use_legacy_prss,
                     )
                     .await
                     .map(TypedPlaintext::from_u2048),
@@ -421,6 +434,7 @@ impl<
                         ct_format,
                         fhe_keys_rlock,
                         dec_mode,
+                        use_legacy_prss,
                     )
                     .await
                     .map(TypedPlaintext::from_u1024),
@@ -436,6 +450,7 @@ impl<
                         ct_format,
                         fhe_keys_rlock,
                         dec_mode,
+                        use_legacy_prss,
                     )
                     .await
                     .map(TypedPlaintext::from_u512),
@@ -451,6 +466,7 @@ impl<
                         ct_format,
                         fhe_keys_rlock,
                         dec_mode,
+                        use_legacy_prss,
                     )
                     .await
                     .map(TypedPlaintext::from_u256),
@@ -466,6 +482,7 @@ impl<
                         ct_format,
                         fhe_keys_rlock,
                         dec_mode,
+                        use_legacy_prss,
                     )
                     .await
                     .map(TypedPlaintext::from_u160),
@@ -480,6 +497,7 @@ impl<
                             ct_format,
                             fhe_keys_rlock,
                             dec_mode,
+                            use_legacy_prss,
                         )
                         .await
                         .map(|x| TypedPlaintext::new(x, fhe_type))
@@ -495,6 +513,7 @@ impl<
                             ct_format,
                             fhe_keys_rlock,
                             dec_mode,
+                            use_legacy_prss,
                         )
                         .await
                         .map(TypedPlaintext::from_u80)
@@ -515,6 +534,7 @@ impl<
                             ct_format,
                             fhe_keys_rlock,
                             dec_mode,
+                            use_legacy_prss,
                         )
                         .await
                         .map(|x| TypedPlaintext::new(x as u128, fhe_type))

@@ -212,6 +212,7 @@ impl<
             prss_setup: honest_state.prss_setup,
             prfs: honest_state.prfs,
             broadcast: self.broadcast.clone(),
+            run_legacy_prss: honest_state.run_legacy_prss,
         };
 
         Self {
@@ -375,6 +376,7 @@ impl<
             prss_setup: honest_state.prss_setup,
             prfs: honest_state.prfs,
             broadcast: self.broadcast.clone(),
+            run_legacy_prss: honest_state.run_legacy_prss,
         };
 
         // Deterministically derive seed from sid by xoring the MSB to the LSB

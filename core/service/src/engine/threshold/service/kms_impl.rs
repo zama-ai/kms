@@ -480,6 +480,9 @@ where
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
+    // Issue#3089: initialize the PRSS-Mask schedule activation thresholds before any
+    // decryption request can be served (fails fast on malformed values).
+    super::prss_compat::init_from_conf(threshold_config)?;
     let rate_limiter_conf = config.rate_limiter_conf.to_owned().unwrap_or_default();
     let telemetry_conf = config
         .telemetry

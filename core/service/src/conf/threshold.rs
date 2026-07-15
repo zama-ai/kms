@@ -1,4 +1,4 @@
-use crate::engine::base::derive_request_id;
+use crate::engine::{base::derive_request_id, threshold::service::prss_compat::parse_threshold};
 use alloy_primitives::Address;
 use kms_grpc::RequestId;
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,29 @@ pub struct ThresholdPartyConf {
     pub peers: Option<Vec<PeerConf>>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
     pub decryption_mode: DecryptionMode,
+
+    /// Issue#3089: temporary request-ID activation thresholds for the PRSS-Mask
+    /// counter-schedule fix (#663). Requests whose raw request ID, interpreted as a
+    /// big-endian integer, is strictly below the configured value run the legacy PRSS.
+    /// Values are decimal or 0x-prefixed hex integers of up to 256 bits, given as
+    /// strings. All MPC parties MUST configure identical values.
+    /// OPTIONAL: defaults to "0" (always run the fixed schedule, since no request ID is
+    /// strictly below 0) when absent. This lets a config written by an older chart — or a
+    /// rolling upgrade that enables the threshold only *after* the new binary is running —
+    /// parse cleanly, which is required because pre-#663 binaries reject the field entirely
+    /// (`deny_unknown_fields`) and the config is read fresh at process start. Public and user
+    /// decryption request IDs come from separate counters, hence one threshold each. Remove
+    /// once the migration is complete.
+    #[serde(default = "default_legacy_prss_mask_threshold")]
+    pub legacy_prss_mask_before_public_decrypt_id: String,
+    /// See [`Self::legacy_prss_mask_before_public_decrypt_id`].
+    #[serde(default = "default_legacy_prss_mask_threshold")]
+    pub legacy_prss_mask_before_user_decrypt_id: String,
+}
+
+/// Default PRSS-Mask activation threshold ("0" = always use the fixed post-#663 schedule).
+fn default_legacy_prss_mask_threshold() -> String {
+    "0".to_string()
 }
 
 fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
@@ -81,6 +104,25 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
         }
     } else {
         tracing::info!("No peer list provided; skipping threshold and party ID validation");
+    }
+
+    // Issue#3089: fail at config load on malformed PRSS-Mask schedule activation thresholds.
+    for (name, value) in [
+        (
+            "legacy_prss_mask_before_public_decrypt_id",
+            &conf.legacy_prss_mask_before_public_decrypt_id,
+        ),
+        (
+            "legacy_prss_mask_before_user_decrypt_id",
+            &conf.legacy_prss_mask_before_user_decrypt_id,
+        ),
+    ] {
+        if let Err(e) = parse_threshold(value) {
+            return Err(
+                ValidationError::new("Invalid PRSS-Mask schedule activation threshold")
+                    .with_message(format!("{name}: {e}").into()),
+            );
+        }
     }
     Ok(())
 }
@@ -274,4 +316,54 @@ MEUCIEfh23uIR76K+tv+s5pi0uksEeleDonWm+tqStxeRFR5AiEAs4mw/Yi6aoDg
 
     // `into_pem` will deserialize the string inside `tls_cert`
     let _ = tls_cert.into_pem_with_sanity_check(1, &peers).unwrap();
+}
+
+/// Issue#3089: `validate_threshold_party_conf` must reject malformed PRSS-Mask schedule activation thresholds at config
+/// load. Complements the `parse_threshold` unit tests in `prss_compat` by covering the config-validation wiring (both
+/// fields), including the empty-string case that a templating mishap could produce.
+#[test]
+fn rejects_malformed_legacy_prss_mask_threshold() {
+    // Minimal conf with no peers (skips the peer/threshold checks), so only the PRSS-Mask
+    // threshold validation runs.
+    let conf_with = |public: &str, user: &str| ThresholdPartyConf {
+        listen_address: "0.0.0.0".to_string(),
+        listen_port: 5000,
+        tls: None,
+        threshold: 1,
+        my_id: None,
+        dec_capacity: 1,
+        min_dec_cache: 1,
+        preproc_redis: None,
+        num_sessions_preproc: None,
+        peers: None,
+        core_to_core_net: None,
+        decryption_mode: DecryptionMode::NoiseFloodSmall,
+        legacy_prss_mask_before_public_decrypt_id: public.to_string(),
+        legacy_prss_mask_before_user_decrypt_id: user.to_string(),
+    };
+
+    // Well-formed values (default "0", decimal, and 0x-hex) pass.
+    assert!(validate_threshold_party_conf(&conf_with("0", "0")).is_ok());
+    assert!(validate_threshold_party_conf(&conf_with("1234", "0x1f")).is_ok());
+
+    // A malformed value in either field is rejected, and the error names the offending field.
+    let err = validate_threshold_party_conf(&conf_with("nonsense", "0"))
+        .expect_err("a malformed public threshold must be rejected");
+    assert!(
+        err.message
+            .as_ref()
+            .is_some_and(|m| m.contains("legacy_prss_mask_before_public_decrypt_id")),
+        "unexpected error: {err:?}"
+    );
+    let err = validate_threshold_party_conf(&conf_with("0", "0xzz"))
+        .expect_err("a malformed user threshold must be rejected");
+    assert!(
+        err.message
+            .as_ref()
+            .is_some_and(|m| m.contains("legacy_prss_mask_before_user_decrypt_id")),
+        "unexpected error: {err:?}"
+    );
+
+    // An empty string (e.g. from a templating mishap) fails loudly rather than defaulting to 0.
+    assert!(validate_threshold_party_conf(&conf_with("", "0")).is_err());
 }

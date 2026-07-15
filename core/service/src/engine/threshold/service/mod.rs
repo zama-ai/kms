@@ -6,6 +6,7 @@
 // - key_generator.rs: RealKeyGenerator implementation for key generation
 // - kms_impl.rs: Server initialization functions
 // - preprocessor.rs: RealPreprocessor implementation for preprocessing
+// - prss_compat.rs: Issue#3089 temporary request-ID gate for the PRSS-Mask schedule fix
 // - public_decryptor.rs: RealPublicDecryptor implementation for public decryption
 // - session.rs: SessionPreparer implementation for session management
 // - user_decryptor.rs: RealUserDecryptor implementation for user decryption
@@ -20,6 +21,7 @@ pub(crate) mod epoch_manager;
 //mod initiator;
 mod key_generator;
 mod preprocessor;
+pub mod prss_compat;
 mod public_decryptor;
 pub(crate) mod reshare_utils;
 pub mod session;
