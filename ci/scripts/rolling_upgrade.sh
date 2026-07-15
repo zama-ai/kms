@@ -226,7 +226,20 @@ main() {
     # a second helm upgrade on the upgraded parties only; the configmap change
     # bumps `checksum/config`, restarting the (already-new) pod to pick it up.
     # Non-upgraded (old) parties are never touched, so no old binary ever sees it.
+    #
+    # Only the `prss-threshold` test profile needs this; the standard `decrypt`
+    # profile (plain decrypt correctness for any version pair) leaves the field
+    # off, so phase 2 is skipped entirely. Gated via ENABLE_PRSS_THRESHOLD (set
+    # by the workflow's "Configure deployment parameters" step).
     #=========================================================================
+    if [[ "${ENABLE_PRSS_THRESHOLD:-false}" != "true" ]]; then
+        log_info "Step 4: PRSS-Mask threshold rollout skipped (ENABLE_PRSS_THRESHOLD != true)."
+        log_info "========================================="
+        log_info "Rolling Upgrade Complete!"
+        log_info "========================================="
+        return 0
+    fi
+
     local threshold="${LEGACY_PRSS_MASK_THRESHOLD:-100}"
     log_info "Step 4: Enabling PRSS-Mask threshold=${threshold} on upgraded parties [${ALL_UPGRADED_PARTIES}]..."
 

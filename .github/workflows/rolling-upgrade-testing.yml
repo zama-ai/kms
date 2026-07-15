@@ -141,6 +141,14 @@ on:
         required: true
         default: '6,7,8,9'
         type: string
+      test_profile:
+        description: 'decrypt = the standard pre-upgrade check for any n->n+1 pair (plain pdec/udec correctness on the mixed cluster). prss-threshold = the exceptional legacy-PRSS-mask request-ID boundary probe (needs a threshold-aware new image + core-client).'
+        required: true
+        default: 'decrypt'
+        type: choice
+        options:
+          - decrypt
+          - prss-threshold
 
 permissions: {}
 
@@ -246,6 +254,7 @@ jobs:
           SECOND_BATCH: ${{ inputs.second_batch_parties }}
           SYNC_SECRETS_CHART_VERSION: '0.2.1'
           CLIENT_LOGS: ${{ inputs.client_logs }}
+          TEST_PROFILE: ${{ inputs.test_profile }}
         run: |
           # Map the boolean client_logs input to the argo enabled/disabled value
           # (same convention as performance-testing.yml).
@@ -254,6 +263,20 @@ jobs:
           else
             CLIENT_LOGS_STATUS="disabled"
           fi
+          # Resolve the test profile into the mixed-state Argo workflow file and
+          # whether the legacy-PRSS-mask threshold rollout runs in phase 2.
+          #   decrypt        -> standard pdec/udec correctness, no reqid, no threshold
+          #   prss-threshold -> request-ID boundary probe + legacy-mask rollout
+          case "${TEST_PROFILE}" in
+            prss-threshold)
+              MIXED_WORKFLOW_FILE="${DEPLOYMENT_TYPE}-rolling-upgrade-workflow-${PATH_SUFFIX}.yaml"
+              ENABLE_PRSS_THRESHOLD="true"
+              ;;
+            *)
+              MIXED_WORKFLOW_FILE="decrypt-test-during-upgrades.yaml"
+              ENABLE_PRSS_THRESHOLD="false"
+              ;;
+          esac
           {
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
@@ -264,6 +287,9 @@ jobs:
             echo "FIRST_BATCH=${FIRST_BATCH}"
             echo "SECOND_BATCH=${SECOND_BATCH}"
             echo "CLIENT_LOGS_STATUS=${CLIENT_LOGS_STATUS}"
+            echo "TEST_PROFILE=${TEST_PROFILE}"
+            echo "MIXED_WORKFLOW_FILE=${MIXED_WORKFLOW_FILE}"
+            echo "ENABLE_PRSS_THRESHOLD=${ENABLE_PRSS_THRESHOLD}"
           } >> "$GITHUB_ENV"
 
       # ====================================================================
@@ -469,7 +495,9 @@ jobs:
 
           # Mixed-state run: decrypt the pre-upgrade BASELINE_KEY_ID on the mixed
           # cluster. core-client runs the NEW tag; core images stay mixed.
-          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-rolling-upgrade-workflow-"${PATH_SUFFIX}".yaml \
+          # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
+          # set in "Configure deployment parameters".
+          cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
              /tmp/mixed-5-workflow.yaml
           sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
@@ -477,6 +505,19 @@ jobs:
           # Count upgraded nodes from FIRST_BATCH
           NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+
+          # The prss-threshold profile pins unique request-IDs straddling the
+          # legacy-mask boundary; the decrypt profile uses random IDs. IDs must be
+          # globally unique across pub/user AND across the 5/13 and 9/13 runs.
+          REQID_ARGS=()
+          if [[ "${ENABLE_PRSS_THRESHOLD}" == "true" ]]; then
+            REQID_ARGS=(
+              -p pdec-below-id=000000000000000000000000000000000000000000000000000000000000005a
+              -p pdec-above-id=000000000000000000000000000000000000000000000000000000000000006e
+              -p udec-below-id=000000000000000000000000000000000000000000000000000000000000005b
+              -p udec-above-id=000000000000000000000000000000000000000000000000000000000000006f
+            )
+          fi
 
           argo submit -n argo /tmp/mixed-5-workflow.yaml \
             -p tls="${TLS_STATUS}" \
@@ -489,10 +530,7 @@ jobs:
             -p new_version="${NEW_IMAGE_TAG}" \
             -p num_upgraded="${NUM_UPGRADED}" \
             -p num_total="13" \
-            -p pdec-below-id=000000000000000000000000000000000000000000000000000000000000005a \
-            -p pdec-above-id=000000000000000000000000000000000000000000000000000000000000006e \
-            -p udec-below-id=000000000000000000000000000000000000000000000000000000000000005b \
-            -p udec-above-id=000000000000000000000000000000000000000000000000000000000000006f
+            "${REQID_ARGS[@]}"
 
           echo "Streaming mixed-5/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
@@ -551,7 +589,9 @@ jobs:
 
           # Mixed-state run: decrypt the pre-upgrade BASELINE_KEY_ID on the mixed
           # cluster. core-client runs the NEW tag; core images stay mixed.
-          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-rolling-upgrade-workflow-"${PATH_SUFFIX}".yaml \
+          # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
+          # set in "Configure deployment parameters".
+          cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
              /tmp/mixed-9-workflow.yaml
           sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
@@ -560,6 +600,18 @@ jobs:
           ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
           NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+
+          # prss-threshold pins unique request-IDs (distinct from the 5/13 run's
+          # ids to avoid "already exists" collisions); decrypt uses random IDs.
+          REQID_ARGS=()
+          if [[ "${ENABLE_PRSS_THRESHOLD}" == "true" ]]; then
+            REQID_ARGS=(
+              -p pdec-below-id=000000000000000000000000000000000000000000000000000000000000005c
+              -p pdec-above-id=0000000000000000000000000000000000000000000000000000000000000070
+              -p udec-below-id=000000000000000000000000000000000000000000000000000000000000005d
+              -p udec-above-id=0000000000000000000000000000000000000000000000000000000000000071
+            )
+          fi
 
           argo submit -n argo /tmp/mixed-9-workflow.yaml \
             -p tls="${TLS_STATUS}" \
@@ -572,10 +624,7 @@ jobs:
             -p new_version="${NEW_IMAGE_TAG}" \
             -p num_upgraded="${NUM_UPGRADED}" \
             -p num_total="13" \
-            -p pdec-below-id=000000000000000000000000000000000000000000000000000000000000005c \
-            -p pdec-above-id=0000000000000000000000000000000000000000000000000000000000000070 \
-            -p udec-below-id=000000000000000000000000000000000000000000000000000000000000005d \
-            -p udec-above-id=0000000000000000000000000000000000000000000000000000000000000071
+            "${REQID_ARGS[@]}"
 
           echo "Streaming mixed-9/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
