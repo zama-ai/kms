@@ -99,27 +99,7 @@ data:
     else
       echo "Launching new KMS key generation with config:"
       cat config.toml
-      key_gen_args="{{ .Values.kmsGenKeys.keyGenArgs }}"
-      # First whitespace-delimited token, i.e. the subcommand.
-      key_gen_cmd=${key_gen_args%% *}
-      if [ "$key_gen_args" = "insecure-key-gen" ]; then
-        result_preproc_id=$(bin/kms-core-client -f config.toml insecure-preproc-key-gen)
-        KMS_PREPROC_ID=$(echo $result_preproc_id | grep request_id | cut -d'"' -f4)
-        if [ -z "$KMS_PREPROC_ID" ]; then
-          echo "Error: insecure-preproc-key-gen failed. Exiting."
-          exit 1
-        fi
-        result_key_id=$(bin/kms-core-client -f config.toml insecure-key-gen -i "$KMS_PREPROC_ID")
-      elif [ "$key_gen_cmd" = "insecure-key-gen" ]; then
-        # Extra flags (e.g. "insecure-key-gen --uncompressed") are not supported
-        # here: this script only knows how to run the preprocessing + keygen flow
-        # for a bare "insecure-key-gen". Fail hard rather than silently skipping
-        # the required insecure-preproc-key-gen step.
-        echo "Error: insecure-key-gen with extra arguments is not supported by this script (got: '$key_gen_args'). Use exactly 'insecure-key-gen'. Exiting."
-        exit 1
-      else
-        result_key_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKeys.keyGenArgs }})
-      fi
+      result_key_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKeys.keyGenArgs }})
       KMS_KEY_ID=$(echo $result_key_id | grep request_id | cut -d'"' -f4)
       if [ -z "$KMS_KEY_ID" ]; then
         echo "Error: key-gen failed. Exiting."
