@@ -655,6 +655,18 @@ fn verify_proof(
         )));
     }
 
+    // Ensure max_num_bits is not changed during the ceremony. It is carried in the public
+    // parameter but bound to no hash, so without this check any contributor could set a
+    // different value that later parties would silently adopt. Every party initializes it
+    // to the same request-derived value, so binding the received value to the verifier's
+    // current (trusted, locally-initialized) value keeps all parties on the same value.
+    if partial_proof_to_check.new_pp.max_num_bits != current_pp.max_num_bits {
+        return Err(anyhow_error_and_log(format!(
+            "max_num_bits mismatch: expected {} but got {} from new partial proof",
+            current_pp.max_num_bits, partial_proof_to_check.new_pp.max_num_bits
+        )));
+    }
+
     let new_pp = partial_proof_to_check.new_pp.clone();
 
     // Check dimensions against the trusted current_pp before any indexing
@@ -1611,6 +1623,20 @@ mod tests {
                     .unwrap_err()
                     .to_string()
                     .contains("crs length check failed (g_hat)")
+            );
+        }
+        {
+            // A contributor must not change max_num_bits mid-ceremony: a proof whose
+            // max_num_bits differs from the verifier's current value is rejected, so all
+            // parties keep the same request-derived value. (pp1 was built with Some(1).)
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            assert_eq!(proof.new_pp.max_num_bits, 1);
+            proof.new_pp.max_num_bits = 2;
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("max_num_bits mismatch")
             );
         }
         {
