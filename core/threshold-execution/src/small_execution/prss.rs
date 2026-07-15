@@ -554,6 +554,13 @@ impl<Z: Default + Clone + Serialize, B: Broadcast> PRSSState<Z, B> {
     ///
     /// Defaults to `false` (the fixed, disjoint schedule). Must be set to the same value by
     /// all parties of a session, before the first call to `mask_next`/`mask_next_vec`.
+    ///
+    /// The default is deliberately the *fixed* schedule, not the legacy one: `PRSSState` backs
+    /// every PRSS use (key generation, resharing, …), and all of those must use the correct
+    /// post-#663 schedule.
+    /// Only below-threshold *decryption* requests opt into the legacy schedule, and they do so
+    /// explicitly per request via this setter (see `prss_compat::use_legacy_prss_mask` in the
+    /// service crate).
     pub fn set_run_legacy_prss(&mut self, run_legacy: bool) {
         self.run_legacy_prss = run_legacy;
     }

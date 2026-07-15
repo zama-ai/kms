@@ -136,6 +136,11 @@ fn is_before(req_id: &RequestId, threshold: &U256) -> bool {
 /// Returns true iff the given request must use the legacy (pre-#663) overlapping PRSS-Mask
 /// counter schedule, i.e. iff an activation threshold is configured for `kind` and the raw
 /// request ID is strictly below it.
+///
+/// This gate applies to *decryption* only. Other PRSS consumers — notably key generation and
+/// resharing — are NOT gated and always run the fixed schedule, so they are only safe once the
+/// whole fleet runs the fixed schedule. Consequently key generation must not be attempted while
+/// the cluster is mixed-version; wait until every party is upgraded (QA/runbook note).
 pub(crate) fn use_legacy_prss_mask(req_id: &RequestId, kind: DecryptKind) -> bool {
     let cell = match kind {
         DecryptKind::Public => &LEGACY_BEFORE_PUBLIC,
