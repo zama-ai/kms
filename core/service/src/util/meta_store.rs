@@ -662,6 +662,22 @@ impl<T> MetaStore<T> {
         self.storage.get(request_id).map(EntryState::from)
     }
 
+    /// Remove one completed request while preserving the completion order.
+    fn remove_completed(&mut self, request_id: &RequestId) -> Result<(), MetaStoreError> {
+        let position = self
+            .complete_queue
+            .iter()
+            .position(|id| id == request_id)
+            .ok_or_else(|| {
+                let msg =
+                    format!("completed element {request_id} is missing from the completion queue");
+                tracing::error!(msg);
+                MetaStoreError::Invariant(msg)
+            })?;
+        let _ = self.complete_queue.remove(position);
+        Ok(())
+    }
+
     /// Mark an existing entry as deleted, regardless of whether it was Pending
     /// or Done. Consumes the permit. Returns the previous state. If the previous
     /// state was `Done`, the entry is also removed from the completion queue.
@@ -681,7 +697,7 @@ impl<T> MetaStore<T> {
         entry.set_deleted();
         self.deleted_set.insert(req_id);
         if was_done {
-            self.complete_queue.retain(|id| id != &req_id);
+            self.remove_completed(&req_id)?;
         }
         Ok(prev)
     }
@@ -722,7 +738,7 @@ impl<T> MetaStore<T> {
         entry.set_deleted();
         self.deleted_set.insert(*request_id);
         if was_done {
-            self.complete_queue.retain(|id| id != request_id);
+            self.remove_completed(request_id)?;
         }
         Ok(prev)
     }
@@ -795,7 +811,7 @@ impl<T> MetaStore<T> {
         // Reset to a fresh `Pending` (with a new, empty result channel): drop it
         // from the completion queue and install a new claim, then hand back a
         // permit (mirroring `insert`).
-        self.complete_queue.retain(|id| id != req_id);
+        self.remove_completed(req_id)?;
         let (entry, claim) = StoredEntry::new_pending();
         self.storage.insert(*req_id, entry);
         Ok(MetaStorePermit::new(*req_id, claim, self.reaper_tx.clone()))
@@ -1369,6 +1385,28 @@ mod tests {
             EntryState::Done(Err(e)) => assert_eq!(e, expected),
             other => panic!("expected Done(Err), got {other}"),
         }
+    }
+
+    #[test]
+    fn remove_completed_preserves_order_and_reports_missing_entries() {
+        let ids = [
+            derive_request_id("remove-front").unwrap(),
+            derive_request_id("remove-middle").unwrap(),
+            derive_request_id("remove-back").unwrap(),
+        ];
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
+        store.complete_queue.extend(ids);
+
+        store.remove_completed(&ids[1]).unwrap();
+        assert_eq!(store.complete_queue, VecDeque::from([ids[0], ids[2]]));
+        store.remove_completed(&ids[0]).unwrap();
+        store.remove_completed(&ids[2]).unwrap();
+        assert!(store.complete_queue.is_empty());
+
+        assert!(matches!(
+            store.remove_completed(&ids[0]),
+            Err(MetaStoreError::Invariant(_))
+        ));
     }
 
     #[test]
