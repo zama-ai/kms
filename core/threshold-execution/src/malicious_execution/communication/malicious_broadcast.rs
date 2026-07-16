@@ -445,3 +445,153 @@ impl Broadcast for MaliciousBroadcastRandomizer {
             .await
     }
 }
+
+/// Malicious implementation of the [`Broadcast`] protocol that exploits the
+/// missing *per-voter* deduplication in the vote-counting logic
+/// (`internal_process_echos_or_votes`).
+///
+/// Each colluding party equivocates on its own sender slot in round 1 (sending a
+/// different random value to every party, like [`MaliciousBroadcastSender`]) so
+/// that no honest value for that slot ever reaches the `n - t` echo threshold — a
+/// correct protocol therefore outputs `Bot` for it and flags the sender as
+/// corrupt. The coalition then *injects* a fixed `phantom` value into each
+/// `target` slot: it echoes the phantom (so honest parties learn its pre-image,
+/// but with only `t` echoes it is never *registered*), and, crucially, it
+/// re-broadcasts a vote for `(target, hash(phantom))` in *every* one of the
+/// `threshold + 1` voting rounds.
+///
+/// Because votes are tallied by `(sender, value)` with no record of *who* voted,
+/// every re-sent copy is counted: `t` colluding parties contribute up to
+/// `t * (t + 1)` votes for the phantom — enough to cross the `n - t` delivery
+/// threshold (for `t >= 2`, e.g. `n = 7, t = 2`). Honest parties then deliver the
+/// phantom for a slot that no honest party legitimately voted for, so the
+/// equivocating senders evade `Bot`/corruption detection and agreement is
+/// violated. Run through the standard harness, this makes the protocol's
+/// correctness assertion fail.
+///
+/// Set `flood = false` to send the injected votes only once. That is `t` votes,
+/// which correct (distinct-voter) counting keeps below `n - t`, so the phantom is
+/// ignored, the equivocating senders are correctly detected, and the protocol
+/// behaves as specified. This isolates the *duplication* — not the mere presence
+/// of the malicious votes — as the root cause.
+#[derive(Clone)]
+pub struct MaliciousBroadcastDoubleVote {
+    /// Sender slots to inject the phantom value into. In the coalition setting
+    /// these are the malicious parties' own (equivocated) slots.
+    pub targets: HashSet<Role>,
+    /// If `true`, re-send the injected votes in every voting round (the exploit).
+    /// If `false`, send them only once (honest-style single vote, the control).
+    pub flood: bool,
+}
+
+impl ProtocolDescription for MaliciousBroadcastDoubleVote {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{indent}-MaliciousBroadcastDoubleVote")
+    }
+}
+
+#[async_trait]
+impl Broadcast for MaliciousBroadcastDoubleVote {
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
+        &self,
+        session: &mut B,
+        senders: &HashSet<Role>,
+        my_message: Option<BroadcastValue<Z>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        if senders.is_empty() {
+            return Err(anyhow_error_and_log(
+                "We expect at least one party as sender in reliable broadcast".to_string(),
+            ));
+        }
+        let threshold = session.threshold() as usize;
+        let my_role = session.my_role();
+        let is_sender = senders.contains(&my_role);
+        let mut non_answering_parties = HashSet::new();
+
+        // The value the coalition injects into every target slot: a fixed, non-Bot
+        // constant whose pre-image we make available through our Echo messages.
+        let phantom = BroadcastValue::from(Z::ONE);
+        assert_ne!(
+            my_message,
+            Some(phantom.clone()),
+            "The phantom must be distinct from the input for this strategy to be malicious"
+        );
+        let phantom_hash = phantom.to_bcast_hash()?;
+
+        // ---- Round 1 (Send): equivocate — send a different random value to each
+        // party, so no single value for our own slot reaches n - t echoes. We stay
+        // "answering", so honest parties keep counting our echoes and votes. ----
+        let mut round1_contributions = HashMap::<Role, BroadcastValue<Z>>::new();
+        session.network().increase_round_counter().await;
+        let mut rng = AesRng::from_random_seed();
+        match (my_message, is_sender) {
+            (Some(message), true) => {
+                round1_contributions.insert(my_role, message);
+                for other_role in session.roles().iter() {
+                    if my_role != *other_role {
+                        let malicious_msg =
+                            NetworkValue::Send(BroadcastValue::from(Z::sample(&mut rng)));
+                        session
+                            .network()
+                            .send(Arc::new(malicious_msg.to_network()), other_role)
+                            .await?;
+                    }
+                }
+            }
+            (None, false) => (),
+            (_, _) => {
+                return Err(anyhow_error_and_log(
+                    "A sender must have a value in reliable broadcast".to_string(),
+                ));
+            }
+        }
+        receive_contribution_from_all_senders(
+            &mut round1_contributions,
+            session,
+            &my_role,
+            senders,
+            &mut non_answering_parties,
+        )
+        .await?;
+
+        // ---- Round 2 (Echo): announce the phantom for every target slot so honest
+        // parties store its pre-image. Only the malicious coalition echoes it (< n - t), so it
+        // is never *registered* from echoes — it is forced through via votes. ----
+        let mut echo_batch = round1_contributions;
+        for target in self.targets.iter() {
+            echo_batch.insert(*target, phantom.clone());
+        }
+        let to_send = NetworkValue::EchoBatch(echo_batch);
+        send_to_all(session, &my_role, &to_send).await?;
+        let _ = receive_echos_from_all_batched::<Z, B>(
+            session,
+            &my_role,
+            &mut non_answering_parties,
+            HashMap::new(),
+        )
+        .await?;
+
+        // ---- Vote phase: THE EXPLOIT. ----
+        // Honest parties emit exactly `threshold + 1` vote messages (one initial
+        // cast + `threshold` amplification casts). We match that count exactly to
+        // stay in round-sync, but we re-send the same votes for every target slot
+        // every time (or just once, if `!flood`). With no per-voter dedup, each
+        // copy is counted, inflating the tally past `n - t`.
+        let mut inflated_vote = HashMap::new();
+        for target in self.targets.iter() {
+            inflated_vote.insert(*target, phantom_hash);
+        }
+        for round in 0..=threshold {
+            let msg: NetworkValue<Z> = if self.flood || round == 0 {
+                NetworkValue::VoteBatch(inflated_vote.clone())
+            } else {
+                NetworkValue::Empty
+            };
+            send_to_all(session, &my_role, &msg).await?;
+        }
+
+        // The attacker does not care about its own output.
+        Ok(RoleValueMap::new())
+    }
+}
