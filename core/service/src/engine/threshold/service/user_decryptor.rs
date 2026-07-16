@@ -820,7 +820,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -844,7 +844,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -873,7 +873,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -902,7 +902,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -947,7 +947,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -986,7 +986,7 @@ mod tests {
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
-            client_identity: None,
+            solana_pubkey: None,
         });
         assert_eq!(
             user_decryptor
@@ -1027,7 +1027,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -1058,7 +1058,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(bad_epoch_id.into()),
-                client_identity: None,
+                solana_pubkey: None,
             });
             assert_eq!(
                 user_decryptor
@@ -1104,7 +1104,7 @@ mod tests {
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
-            client_identity: None,
+            solana_pubkey: None,
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1148,7 +1148,7 @@ mod tests {
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
-            client_identity: None,
+            solana_pubkey: None,
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         crate::testing::utils::poll_result_until_ready(|| {
