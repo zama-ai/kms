@@ -26,6 +26,8 @@ pub mod utils;
 
 #[cfg(feature = "non-wasm")]
 mod validation_non_wasm;
+#[cfg(feature = "non-wasm")]
+mod validation_solana;
 mod validation_wasm;
 
 // This is the only one that is allowed to be compiled with wasm
