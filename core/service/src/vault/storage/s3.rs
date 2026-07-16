@@ -930,8 +930,9 @@ async fn abort_multipart_upload_best_effort(
 /// Payloads that fit in one `part_size` buffer are stored with a single
 /// `PutObject`; larger ones are streamed as an S3 multipart upload so the full
 /// serialized blob never exists in memory. Visibility is all-or-nothing: the
-/// object appears only once `CompleteMultipartUpload` succeeds, and on any
-/// failure the multipart upload is aborted.
+/// object appears only once `CompleteMultipartUpload` succeeds. Reported
+/// failures abort the upload best-effort; a panic or a cancelled future can
+/// still leave an incomplete upload behind for the bucket lifecycle rule.
 pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
     bucket: &str,
@@ -1482,8 +1483,9 @@ mod tests {
             let req_id = derive_request_id(prefix).unwrap();
             let key = storage.item_key(&req_id, TestBigType::NAME);
 
-            // bincode's size-limit pre-pass rejects the payload before a
-            // single byte is written, so nothing must reach S3 at all.
+            // Only the small header reaches the writer before bincode's
+            // size-limit pre-pass rejects the body, so no part ever spills and
+            // the failed serialization keeps the single PUT from happening.
             let res = s3_put_versioned(
                 &storage.s3_client,
                 BUCKET_NAME,
