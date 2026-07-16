@@ -718,7 +718,6 @@ where
         generic_receive_from_all_senders_with_role_transform(
             &mut jobs,
             two_sets_session,
-            &two_sets_session.my_role(),
             &parties_in_s1,
             Some(two_sets_session.corrupt_roles()),
             |msg, _id| match msg {

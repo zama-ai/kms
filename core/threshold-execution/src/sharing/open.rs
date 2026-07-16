@@ -238,7 +238,7 @@ impl RobustOpen for SecureRobustOpen {
                 // We do not need to explicitly increase the round counter here
                 // because send_to_all does it
                 let shares = NetworkValue::VecRingValue(shares);
-                send_to_all(session, &own_role, &shares).await?;
+                send_to_all(session, &shares).await?;
 
                 // Small hack to avoid cloning ,
                 // we just wrap and unwrap the shares into a NetworkValue
@@ -257,7 +257,6 @@ impl RobustOpen for SecureRobustOpen {
             generic_receive_from_all(
                 &mut jobs,
                 session,
-                &own_role,
                 Some(session.corrupt_roles()),
                 |msg, _id| match msg {
                     NetworkValue::VecRingValue(v) => Ok(v),
@@ -355,7 +354,6 @@ impl RobustOpen for SecureRobustOpen {
             generic_receive_from_all_senders_with_role_transform(
                 &mut jobs,
                 session,
-                &own_role,
                 &parties_to_receive_from,
                 Some(session.corrupt_roles()),
                 |msg, _id| match msg {
