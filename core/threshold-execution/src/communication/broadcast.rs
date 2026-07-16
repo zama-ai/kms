@@ -628,7 +628,8 @@ impl Broadcast for SyncReliableBroadcast {
 mod tests {
     use super::*;
     use crate::malicious_execution::communication::malicious_broadcast::{
-        MaliciousBroadcastDrop, MaliciousBroadcastSender, MaliciousBroadcastSenderEcho,
+        MaliciousBroadcastDoubleVote, MaliciousBroadcastDrop, MaliciousBroadcastSender,
+        MaliciousBroadcastSenderEcho,
     };
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::small_session::SmallSession;
@@ -920,6 +921,58 @@ mod tests {
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             _,
         >(params, malicious_strategy)
+        .await;
+    }
+
+    /// Regression test
+    /// Two colluding parties (P6, P7) equivocate on their own
+    /// slots and re-send a vote for a phantom value in every voting round. With
+    /// `n = 7, t = 2` that is `t * (t + 1) = 6 >= n - t = 5` counted votes, so
+    /// honest parties deliver the phantom for the equivocating slots instead of
+    /// `Bot`. The equivocators evade corruption detection, so the harness's
+    /// `should_be_detected = true` assertion blows up.
+    ///
+    /// Once vote counting deduplicates per voter, the phantom gets only 2 distinct
+    /// votes (< 5), the equivocators are detected, and this test passes — remove
+    /// the `#[should_panic]` at that point.
+    #[tokio::test]
+    #[should_panic]
+    async fn test_broadcast_double_vote_evades_detection() {
+        let strategy = MaliciousBroadcastDoubleVote {
+            targets: HashSet::from([Role::indexed_from_one(6), Role::indexed_from_one(7)]),
+            flood: true,
+        };
+        // P6, P7 malicious (zero-based indices 5, 6); they equivocate, so a correct
+        // protocol must detect them.
+        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, None);
+
+        test_broadcast_from_all_w_corrupt_set_update_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(params, strategy)
+        .await;
+    }
+
+    /// Control: the *same* strategy voting only ONCE (`flood = false`). That is 2
+    /// votes for the phantom (< n - t = 5) — exactly what correct distinct-voter
+    /// counting sees — so the phantom is ignored, the equivocating senders are
+    /// correctly detected, and the harness's assertions pass on the current code.
+    /// This isolates the *duplication* (not the mere presence of the malicious
+    /// votes) as the root cause of the break.
+    #[tokio::test]
+    async fn test_broadcast_single_vote_is_detected() {
+        let strategy = MaliciousBroadcastDoubleVote {
+            targets: HashSet::from([Role::indexed_from_one(6), Role::indexed_from_one(7)]),
+            flood: false,
+        };
+        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, None);
+
+        test_broadcast_from_all_w_corrupt_set_update_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(params, strategy)
         .await;
     }
 }
