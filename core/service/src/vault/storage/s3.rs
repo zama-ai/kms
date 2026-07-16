@@ -1539,14 +1539,22 @@ mod tests {
             );
         }
 
-        #[tokio::test]
+        // Multi-thread flavor so the store exercises the `block_in_place`
+        // serialization branch that production (multi-thread) runtimes take.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn s3_multipart_via_store_data() {
             let prefix = std::stringify!(s3_multipart_via_store_data);
             let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
-            // One byte more than a production part, so the pipeline engages.
+            // 1 MiB more than a production part, so the pipeline engages.
             let data = big_payload(S3_MULTIPART_PART_SIZE + 1024 * 1024);
             let req_id = derive_request_id(prefix).unwrap();
 
+            // Ensure no old data is present: a leftover object from a failed
+            // previous run (persistent buckets) would make the store a no-op.
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
             let before =
                 observability::metrics::METRICS.payload_size_sample_count(TestBigType::NAME);
             let outcome = storage
@@ -1568,6 +1576,41 @@ mod tests {
                 .delete_data(&req_id, TestBigType::NAME)
                 .await
                 .unwrap();
+        }
+
+        /// An uploader-side S3 failure (here: the bucket does not exist, so
+        /// `CreateMultipartUpload` fails on the uploader thread) must close the
+        /// part channel, unwind the serializing side, and surface the uploader
+        /// error as the root cause.
+        #[tokio::test]
+        async fn s3_multipart_uploader_failure_propagates() {
+            use std::io::Write;
+
+            let prefix = std::stringify!(s3_multipart_uploader_failure_propagates);
+            let storage = create_s3_storage(StorageType::PUB, prefix).await;
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+            let bucket = "no-such-bucket-multipart-test";
+
+            let mut writer = S3PartWriter::new(
+                storage.s3_client.config().clone(),
+                bucket,
+                &key,
+                S3_MULTIPART_MIN_PART_SIZE,
+            );
+            // Two spills, so a send blocks on the capacity-1 channel and
+            // observes the uploader dropping its receiver on failure. Whether
+            // the write itself errors depends on how fast the uploader dies;
+            // the uploader error must win either way.
+            let write_res =
+                writer.write_all(&vec![7u8; 2 * S3_MULTIPART_MIN_PART_SIZE + 1024 * 1024]);
+            let ser_result = write_res.map_err(|e| anyhow::anyhow!(e));
+            let res = s3_finish_put(&storage.s3_client, bucket, &key, writer, ser_result).await;
+            let err = res.expect_err("uploader failure must propagate");
+            assert!(
+                err.to_string().contains("creating multipart upload"),
+                "expected the uploader's create error as root cause, got: {err}"
+            );
         }
     }
 }
