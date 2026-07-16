@@ -694,12 +694,11 @@ enum PartWriterOutcome {
 /// `std::io::Write` sink that buffers serialized bytes into `part_size` chunks
 /// and, once the first chunk fills, streams them to S3 as a multipart upload.
 ///
-/// The serializer runs inline on the calling async task (it borrows the
-/// element, so it cannot move into `spawn_blocking`, and `block_in_place`
-/// panics on current-thread runtimes — same trade-off as
-/// `util::file_handling::safe_write_element_versioned`), while a dedicated
-/// uploader thread drains the bounded part queue, so serialization and upload
-/// overlap without unbounded buffering.
+/// The serializer runs on the calling async task (it borrows the element, so
+/// it cannot move into `spawn_blocking`) — under `block_in_place` on
+/// multi-thread runtimes, inline otherwise (see [`s3_put_versioned`]) — while
+/// a dedicated uploader thread drains the bounded part queue, so
+/// serialization and upload overlap without unbounded buffering.
 struct S3PartWriter {
     config: aws_sdk_s3::Config,
     bucket: String,
@@ -952,7 +951,20 @@ pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     size_limit: u64,
 ) -> anyhow::Result<u64> {
     let mut writer = S3PartWriter::new(s3_client.config().clone(), bucket, key, part_size);
-    let ser_result = safe_serialize(data, &mut writer, size_limit).map_err(|e| {
+    // The serializer borrows `data`, so it cannot move into `spawn_blocking`;
+    // it runs on this task, blocking in `spill` at upload pace once the
+    // payload exceeds one part. `block_in_place` keeps the worker's other
+    // tasks running meanwhile, but panics on current-thread runtimes (tests),
+    // where the inline fallback preserves the old behavior.
+    let serialize = |writer: &mut S3PartWriter| safe_serialize(data, writer, size_limit);
+    let ser_result = if tokio::runtime::Handle::current().runtime_flavor()
+        == tokio::runtime::RuntimeFlavor::MultiThread
+    {
+        tokio::task::block_in_place(|| serialize(&mut writer))
+    } else {
+        serialize(&mut writer)
+    }
+    .map_err(|e| {
         anyhow::anyhow!(
             "failed to serialize {} for key {key}: {e}",
             <T as Named>::NAME
