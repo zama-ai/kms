@@ -664,6 +664,14 @@ impl<T> MetaStore<T> {
 
     /// Remove one completed request while preserving the completion order.
     fn remove_completed(&mut self, request_id: &RequestId) -> Result<(), MetaStoreError> {
+        if self.complete_queue.front() == Some(request_id) {
+            self.complete_queue.pop_front();
+            return Ok(());
+        }
+        if self.complete_queue.back() == Some(request_id) {
+            self.complete_queue.pop_back();
+            return Ok(());
+        }
         let position = self
             .complete_queue
             .iter()
@@ -1399,8 +1407,8 @@ mod tests {
 
         store.remove_completed(&ids[1]).unwrap();
         assert_eq!(store.complete_queue, VecDeque::from([ids[0], ids[2]]));
-        store.remove_completed(&ids[0]).unwrap();
         store.remove_completed(&ids[2]).unwrap();
+        store.remove_completed(&ids[0]).unwrap();
         assert!(store.complete_queue.is_empty());
 
         assert!(matches!(

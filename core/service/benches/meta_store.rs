@@ -24,7 +24,9 @@
 //! - `eviction_position`: evict entries from different positions in the completion queue.
 //! - `retrieval`: retrieve a completed request's result.
 //! - `retry_failed`: admit a request again after it has failed.
+//! - `retry_position`: retry failed requests from different completion-queue positions.
 //! - `tombstone_completed`: delete completed requests from stores of different sizes.
+//! - `tombstone_position`: delete requests from different completion-queue positions.
 //! - `scans`: collect all request IDs or only those with a given status.
 //! - `contention`: admit and complete requests with and without readers.
 //! - `status_scan_contention`: admit and complete while collecting IDs of processing requests.
@@ -42,7 +44,7 @@ use kms_lib::{
 use std::{
     cell::Cell,
     collections::VecDeque,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::{runtime::Runtime, sync::Barrier};
@@ -243,6 +245,78 @@ fn retry_failed(c: &mut Criterion) {
     group.finish();
 }
 
+/// Compares retry cost when the failed request is at different positions in a full completion
+/// queue. Every request is failed, so each position remains retryable as the queue rotates.
+fn retry_position(c: &mut Criterion) {
+    const POSITIONS: [usize; 7] = [0, 1, 10, 100, 1_000, 5_000, DEC_CAPACITY - 1];
+    const STORE_COUNT: usize = 4;
+
+    let runtime = Runtime::new().expect("the benchmark Tokio runtime should start");
+    let failed_ids = request_ids("retry-position", DEC_CAPACITY);
+    let mut group = c.benchmark_group("meta_store/retry_position");
+    group.throughput(Throughput::Elements(1));
+
+    for position in POSITIONS {
+        let stores = runtime.block_on(async {
+            let mut stores = Vec::with_capacity(STORE_COUNT);
+            for _ in 0..STORE_COUNT {
+                let store = MetaStoreBenchmark::new(DEC_CAPACITY, 0);
+                fail_requests(&store, &failed_ids).await;
+                stores.push(store);
+            }
+            stores
+        });
+        let completed_ids = Arc::new(Mutex::new(vec![
+            failed_ids
+                .iter()
+                .copied()
+                .collect::<VecDeque<_>>();
+            STORE_COUNT
+        ]));
+
+        group.bench_with_input(BenchmarkId::from_parameter(position), &position, |b, _| {
+            b.to_async(&runtime).iter_custom(|iterations| {
+                let stores = &stores;
+                let completed_ids = Arc::clone(&completed_ids);
+                async move {
+                    let mut measured = Duration::ZERO;
+                    let iterations_per_store = iterations / stores.len() as u64;
+                    let remainder = iterations % stores.len() as u64;
+
+                    for (store_index, store) in stores.iter().enumerate() {
+                        let store_iterations =
+                            iterations_per_store + u64::from(store_index < remainder as usize);
+                        for _ in 0..store_iterations {
+                            let request_id = completed_ids
+                                .lock()
+                                .expect("the retry queue model lock should not be poisoned")
+                                [store_index][position];
+                            let start = Instant::now();
+                            let permit = store
+                                .admit(&request_id)
+                                .await
+                                .expect("the selected failed request should be retryable");
+                            measured += start.elapsed();
+
+                            assert!(store.fail(permit).await);
+                            let mut completed_ids = completed_ids
+                                .lock()
+                                .expect("the retry queue model lock should not be poisoned");
+                            let removed = completed_ids[store_index].remove(position).expect(
+                                "the retried request should remain at the selected position",
+                            );
+                            assert_eq!(removed, request_id);
+                            completed_ids[store_index].push_back(request_id);
+                        }
+                    }
+                    measured
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 /// Measures deleting the oldest completed requests from stores of different sizes.
 /// Both the permit-based and permit-free production paths are covered.
 fn tombstone_completed(c: &mut Criterion) {
@@ -269,6 +343,7 @@ fn tombstone_completed(c: &mut Criterion) {
                     DELETIONS_PER_STORE,
                     iterations,
                     true,
+                    0,
                 )
             });
         });
@@ -280,6 +355,36 @@ fn tombstone_completed(c: &mut Criterion) {
                     DELETIONS_PER_STORE,
                     iterations,
                     false,
+                    0,
+                )
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Compares permit-free deletion cost at different positions in a full completion queue.
+/// Each deleted request is replaced so every measurement sees the same queue length and position.
+fn tombstone_position(c: &mut Criterion) {
+    const DELETIONS_PER_STORE: usize = 512;
+    const POSITIONS: [usize; 7] = [0, 1, 10, 100, 1_000, 5_000, DEC_CAPACITY - 1];
+
+    let runtime = Runtime::new().expect("the benchmark Tokio runtime should start");
+    let initial_ids = request_ids("tombstone-position-initial", DEC_CAPACITY);
+    let replacement_ids = request_ids("tombstone-position-replacement", DELETIONS_PER_STORE);
+    let mut group = c.benchmark_group("meta_store/tombstone_position");
+    group.throughput(Throughput::Elements(1));
+
+    for position in POSITIONS {
+        group.bench_with_input(BenchmarkId::from_parameter(position), &position, |b, _| {
+            b.to_async(&runtime).iter_custom(|iterations| {
+                measure_completed_deletions(
+                    &initial_ids,
+                    &replacement_ids,
+                    DELETIONS_PER_STORE,
+                    iterations,
+                    false,
+                    position,
                 )
             });
         });
@@ -581,6 +686,7 @@ async fn measure_completed_deletions(
     deletions_per_store: usize,
     iterations: u64,
     with_permit: bool,
+    position: usize,
 ) -> Duration {
     let mut measured = Duration::ZERO;
     let mut remaining = iterations;
@@ -592,9 +698,7 @@ async fn measure_completed_deletions(
         let mut completed_ids = initial_ids.iter().copied().collect::<VecDeque<_>>();
 
         for (value, replacement_id) in replacement_ids[..deletion_count].iter().enumerate() {
-            let request_id = completed_ids
-                .pop_front()
-                .expect("the completed queue should remain full");
+            let request_id = completed_ids[position];
 
             if with_permit {
                 let permit = store
@@ -609,6 +713,11 @@ async fn measure_completed_deletions(
                 assert!(store.try_delete(&request_id).await);
                 measured += start.elapsed();
             }
+
+            let removed = completed_ids
+                .remove(position)
+                .expect("the deleted request should remain at the selected position");
+            assert_eq!(removed, request_id);
 
             // Replace the tombstoned entry outside the measured interval so
             // every deletion sees the same completion-queue length.
@@ -741,6 +850,7 @@ criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(20);
     targets = lifecycle, steady_state_eviction, eviction_position, retrieval, retry_failed,
-        tombstone_completed, scans, contention, status_scan_contention
+        retry_position, tombstone_completed, tombstone_position, scans, contention,
+        status_scan_contention
 }
 criterion_main!(benches);
