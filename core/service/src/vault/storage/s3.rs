@@ -824,6 +824,10 @@ fn run_multipart_uploader(
     // serializer for the duration of this upload; force a fresh pool instead.
     let mut config = config.to_builder();
     config.set_http_client(None);
+    // Same for the identity cache: the caller's lazy cache single-flights
+    // credential refreshes, so waiting here on a refresh started by a task on
+    // the caller's (blocked) runtime would deadlock the pipeline.
+    config.set_identity_cache(aws_sdk_s3::config::IdentityCache::lazy().build());
     // Pin checksum calculation so an ambient `when_required` setting (env or
     // profile) cannot strip the per-part CRC32 that the declared algorithm
     // below obliges every part to carry.
