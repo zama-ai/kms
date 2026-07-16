@@ -692,7 +692,8 @@ enum PartWriterOutcome {
 }
 
 /// `std::io::Write` sink that buffers serialized bytes into `part_size` chunks
-/// and, once the first chunk fills, streams them to S3 as a multipart upload.
+/// and, once the payload outgrows the first chunk, streams them to S3 as a
+/// multipart upload.
 ///
 /// The serializer runs on the calling async task (it borrows the element, so
 /// it cannot move into `spawn_blocking`) — under `block_in_place` on
@@ -746,7 +747,6 @@ impl S3PartWriter {
             self.pipeline = Some(MultipartPipeline { part_tx, result_rx });
         }
         let part = std::mem::replace(&mut self.buf, Vec::with_capacity(self.part_size));
-        // The pipeline was just installed above if it was missing.
         let pipeline = self.pipeline.as_ref().expect("pipeline installed above");
         pipeline.part_tx.send(part).map_err(|_| {
             std::io::Error::other("S3 multipart uploader stopped; it reports the root cause")
@@ -908,8 +908,8 @@ fn run_multipart_uploader(
 }
 
 /// Best-effort abort of a multipart upload; failures are only logged, leaving
-/// the orphaned parts for the bucket's `AbortIncompleteMultipartUpload`
-/// lifecycle rule to reclaim.
+/// the orphaned parts for a bucket `AbortIncompleteMultipartUpload` lifecycle
+/// rule (if configured) to reclaim.
 async fn abort_multipart_upload_best_effort(
     s3_client: &S3Client,
     bucket: &str,
@@ -941,7 +941,8 @@ async fn abort_multipart_upload_best_effort(
 /// serialized blob never exists in memory. Visibility is all-or-nothing: the
 /// object appears only once `CompleteMultipartUpload` succeeds. Reported
 /// failures abort the upload best-effort; a panic or a cancelled future can
-/// still leave an incomplete upload behind for the bucket lifecycle rule.
+/// still leave an incomplete upload behind for a bucket lifecycle rule
+/// (if configured) to reclaim.
 pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
     bucket: &str,
@@ -955,7 +956,7 @@ pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     // it runs on this task, blocking in `spill` at upload pace once the
     // payload exceeds one part. `block_in_place` keeps the worker's other
     // tasks running meanwhile, but panics on current-thread runtimes (tests),
-    // where the inline fallback preserves the old behavior.
+    // where serialization simply runs inline and blocks the runtime.
     let serialize = |writer: &mut S3PartWriter| safe_serialize(data, writer, size_limit);
     let ser_result = if tokio::runtime::Handle::current().runtime_flavor()
         == tokio::runtime::RuntimeFlavor::MultiThread
@@ -994,7 +995,7 @@ async fn s3_finish_put(
             let (upload_id, upload_result) = result_rx.await.map_err(|_| {
                 anyhow::anyhow!(
                     "S3 multipart uploader thread died for key {key}; an incomplete \
-                     multipart upload may linger until the bucket lifecycle rule reaps it"
+                     multipart upload may linger unless a bucket lifecycle rule reaps it"
                 )
             })?;
             let parts = match (upload_result, ser_result) {
