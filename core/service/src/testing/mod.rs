@@ -5,6 +5,7 @@
 //! # Module Organization
 //!
 //! - **`material`**: Test material management (`TestMaterialManager`, `TestMaterialSpec`)
+//! - **`meta_store`**: Small interface used by metastore benchmarks
 //! - **`setup`**: Test environment setup (centralized & threshold)
 //! - **`helpers`**: Common test utilities and helper functions
 //! - **`types`**: Test-specific types and configurations
@@ -31,6 +32,8 @@
 //! Both environments use RAII for automatic cleanup.
 pub mod helpers;
 pub mod material;
+// Metastore benchmark helper
+pub mod meta_store;
 pub mod setup;
 pub mod types;
 pub mod utils;
