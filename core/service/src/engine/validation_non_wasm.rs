@@ -285,6 +285,12 @@ fn unpack_user_decrypt_req(
         })
         .transpose()?;
     if let Some(solana_pubkey) = solana_pubkey_opt {
+        if !req.client_address.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Solana user decryption request must not set client_address"
+            )
+            .into());
+        }
         let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
             req.typed_ciphertexts
                 .iter()
@@ -1470,6 +1476,20 @@ mod tests {
                 solana_pubkey: Some(vec![0x11; 32]),
             };
             assert!(unpack_user_decrypt_req(&solana_req).is_ok());
+
+            for client_address in [
+                client_address.to_checksum(None),
+                format!("solana:{}", alloy_primitives::hex::encode([0x11; 32])),
+            ] {
+                let mut mixed_identity = solana_req.clone();
+                mixed_identity.client_address = client_address;
+                assert_eq!(
+                    unpack_user_decrypt_req(&mixed_identity)
+                        .unwrap_err()
+                        .to_string(),
+                    "Solana user decryption request must not set client_address"
+                );
+            }
 
             for actual in [31, 33] {
                 let mut invalid_identity = solana_req.clone();

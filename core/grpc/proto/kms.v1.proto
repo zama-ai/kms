@@ -430,14 +430,15 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address, encoded using EIP-55. I.e. including `0x`.
+  // The EVM client's (blockchain wallet) address, encoded using EIP-55, including `0x`.
+  // Solana requests MUST leave this empty and use `solana_pubkey` instead.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
   // This must be a bincode (v.1) encoded ML-KEM 512 key.
   bytes enc_key = 5;
 
-  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
+  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and, for EVM requests, be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 
   // Extra data used in the EIP712 signature - external_signature.
