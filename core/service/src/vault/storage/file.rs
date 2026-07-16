@@ -57,8 +57,6 @@ impl FileStorage {
         };
         fs::create_dir_all(&path)?;
         let path = path.canonicalize()?;
-        // Best-effort cleanup of partials orphaned by hard crashes; never
-        // fails construction.
         sweep_stale_partials(&path);
         Ok(Self { path })
     }

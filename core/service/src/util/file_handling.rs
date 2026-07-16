@@ -14,8 +14,8 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 static PARTIAL_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// `.<final_name>.partial.<pid>.<seq>` — the temp-name grammar shared by the
-/// writer and [`sweep_stale_partials`]; `OsString` so non-UTF-8 destination
-/// names keep working.
+/// writer and [`sweep_stale_partials`]; `OsStr` in and out because that is
+/// what `Path::file_name` yields (the sweep only parses UTF-8 names).
 pub(crate) fn partial_file_name(final_name: &OsStr, pid: u32, seq: u64) -> OsString {
     let mut name = OsString::from(".");
     name.push(final_name);
@@ -63,22 +63,30 @@ fn create_partial_tempfile(
                 "reclaiming orphaned partial file {} left by a dead process with reused pid {pid}",
                 parent.join(&tmp_name).display()
             );
-            std::fs::remove_file(parent.join(&tmp_name))?;
+            if let Err(e) = std::fs::remove_file(parent.join(&tmp_name))
+                // NotFound: a concurrent sweeper of the same root won the race.
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(e);
+            }
             build()
         }
         res => res,
     }
 }
 
-/// Directory layout is at most `{root}/{data_type}/{epoch_id}/{file}`; one
-/// extra level of headroom.
+/// Directory layout is at most `{root}/{data_type}/{epoch_id}/{file}`, i.e.
+/// recursion depth 2; two extra levels of headroom.
 const MAX_SWEEP_DEPTH: usize = 4;
 
 /// Best-effort removal of `.<name>.partial.<pid>.<seq>` files orphaned under
 /// `root` by hard-crashed processes (on a clean failure the temp file's drop
-/// guard removes it). Only files whose embedded pid is neither our own nor a
-/// live process are deleted, so in-flight writes of concurrent writers are
-/// never touched; IO errors are logged and never propagated.
+/// guard removes it). A file is deleted only if its embedded pid is dead, or
+/// live but younger than the file — a writer's file cannot predate the writer,
+/// while a pid reused after a crash (e.g. the server being pid 1 on every
+/// container restart) carries a fresh start time. In-flight writes are thus
+/// never touched, assuming all writers to `root` share this process' pid
+/// namespace and clock. IO errors are logged and never propagated.
 pub(crate) fn sweep_stale_partials(root: &Path) {
     let mut candidates: Vec<(PathBuf, u32)> = Vec::new();
     collect_partial_files(root, 0, &mut candidates);
@@ -93,15 +101,14 @@ pub(crate) fn sweep_stale_partials(root: &Path) {
         );
         return;
     }
-    let own_pid = std::process::id();
     let mut pids: Vec<sysinfo::Pid> = candidates
         .iter()
-        .filter(|(_, pid)| *pid != own_pid)
         .map(|(_, pid)| sysinfo::Pid::from_u32(*pid))
         .collect();
     pids.sort_unstable();
     pids.dedup();
-    // One batched liveness query for all encountered pids.
+    // One batched liveness query for all encountered pids, our own included:
+    // its start time is what ages out a dead predecessor's same-pid files.
     let mut system = sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing());
     system.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::Some(&pids),
@@ -109,13 +116,12 @@ pub(crate) fn sweep_stale_partials(root: &Path) {
         sysinfo::ProcessRefreshKind::nothing(),
     );
     for (path, pid) in candidates {
-        if pid == own_pid || system.process(sysinfo::Pid::from_u32(pid)).is_some() {
-            // In-flight write of this or another live process.
+        if may_be_in_flight(&system, pid, &path) {
             continue;
         }
         match std::fs::remove_file(&path) {
             Ok(()) => tracing::info!(
-                "removed stale partial file {} of dead process {pid}",
+                "removed stale partial file {} orphaned by pid {pid}",
                 path.display()
             ),
             // A concurrent sweeper of the same root won the race.
@@ -126,6 +132,24 @@ pub(crate) fn sweep_stale_partials(root: &Path) {
             ),
         }
     }
+}
+
+/// Whether `path` may be the in-flight write of a live process owning `pid`:
+/// the pid is alive and the file is not older than that process. Start times
+/// are whole seconds, so same-second counts as not older; an unknown start
+/// time or mtime also counts as in-flight to stay on the safe side.
+fn may_be_in_flight(system: &sysinfo::System, pid: u32, path: &Path) -> bool {
+    let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
+        return false;
+    };
+    let start = process.start_time();
+    if start == 0 {
+        return true;
+    }
+    let Ok(mtime) = std::fs::metadata(path).and_then(|m| m.modified()) else {
+        return true;
+    };
+    mtime >= std::time::UNIX_EPOCH + std::time::Duration::from_secs(start)
 }
 
 /// Recursively collect partial-write files under `dir` for
@@ -497,6 +521,23 @@ mod tests {
         let inflight = plant_partial(dir.path(), "element", std::process::id());
         sweep_stale_partials(dir.path());
         assert!(inflight.exists());
+    }
+
+    #[test]
+    fn sweep_removes_own_pid_partials_older_than_process_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = plant_partial(dir.path(), "element", std::process::id());
+        // Backdate to before this process started: a dead predecessor's
+        // leftover carrying our reused pid (pid 1 on every container restart).
+        std::fs::File::options()
+            .write(true)
+            .open(&orphan)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
+            .unwrap();
+
+        sweep_stale_partials(dir.path());
+        assert!(!orphan.exists(), "predecessor's same-pid partial was kept");
     }
 
     // The sweep must never remove a live foreign process' in-flight write.
