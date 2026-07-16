@@ -75,7 +75,7 @@ impl Broadcast for MaliciousBroadcastSender {
         let num_senders = senders.len();
 
         let threshold = session.threshold();
-        let min_honest_nodes = num_parties as u32 - threshold as u32;
+        let min_honest_nodes = num_parties - threshold as usize;
 
         let my_role = session.my_role();
         let is_sender = senders.contains(&my_role);
@@ -116,7 +116,6 @@ impl Broadcast for MaliciousBroadcastSender {
         receive_contribution_from_all_senders(
             &mut round1_data,
             session,
-            &my_role,
             senders,
             &mut non_answering_parties,
         )
@@ -126,25 +125,23 @@ impl Broadcast for MaliciousBroadcastSender {
         // Parties send Echo to the other parties
         // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
         let msg = round1_data;
-        send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await?;
+        send_to_all(session, NetworkValue::EchoBatch(msg.clone())).await?;
         // adding own echo to the map
-        let echos_count: HashMap<(Role, BroadcastValue<Z>), u32> =
-            msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
+        let echos_count: HashMap<(Role, BroadcastValue<Z>), HashSet<Role>> = msg
+            .iter()
+            .map(|(k, v)| ((*k, v.clone()), HashSet::from([session.my_role()])))
+            .collect();
         // retrieve echos from all parties
-        let (mut registered_votes, mut map_hash_to_value) = receive_echos_from_all_batched(
-            session,
-            &my_role,
-            &mut non_answering_parties,
-            echos_count,
-        )
-        .await?;
+        let (mut registered_votes, mut map_hash_to_value) =
+            receive_echos_from_all_batched(session, &mut non_answering_parties, echos_count)
+                .await?;
 
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         let mut casted_vote: HashMap<Role, bool> =
             senders.iter().map(|role| (*role, false)).collect();
 
-        cast_threshold_vote::<Z, B>(session, &my_role, &registered_votes, 1).await?;
+        cast_threshold_vote::<Z, B>(session, &registered_votes, 1).await?;
 
         //Keep track of which instances of bcast we already voted for so we don't vote twice
         for (role, _) in registered_votes.keys() {
@@ -163,14 +160,13 @@ impl Broadcast for MaliciousBroadcastSender {
         // then we know for sure that Pi has broadcasted message m
         gather_votes::<Z, B>(
             session,
-            &my_role,
             &mut registered_votes,
             &mut casted_vote,
             &mut non_answering_parties,
         )
         .await?;
         for ((role, value), hits) in registered_votes.into_iter() {
-            if hits >= min_honest_nodes {
+            if hits.len() >= min_honest_nodes {
                 //Retrieve the actual data from the hash
                 let value = map_hash_to_value.remove(&(role, value)).ok_or_else(|| {
                     anyhow_error_and_log(format!(
@@ -265,7 +261,6 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         receive_contribution_from_all_senders(
             &mut round1_data,
             session,
-            &my_role,
             senders,
             &mut non_answering_parties,
         )
@@ -294,12 +289,12 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         }
         let msg = msg_to_others;
         // adding own echo to the map
-        let echos: HashMap<(Role, BroadcastValue<Z>), u32> =
-            msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
+        let echos: HashMap<(Role, BroadcastValue<Z>), HashSet<Role>> = msg
+            .iter()
+            .map(|(k, v)| ((*k, v.clone()), HashSet::from([my_role])))
+            .collect();
         // retrieve echos from all parties
-        let _ =
-            receive_echos_from_all_batched(session, &my_role, &mut non_answering_parties, echos)
-                .await?;
+        let _ = receive_echos_from_all_batched(session, &mut non_answering_parties, echos).await?;
 
         //Stop voting now
         Ok(round1_data)
@@ -549,7 +544,6 @@ impl Broadcast for MaliciousBroadcastDoubleVote {
         receive_contribution_from_all_senders(
             &mut round1_contributions,
             session,
-            &my_role,
             senders,
             &mut non_answering_parties,
         )
@@ -563,10 +557,9 @@ impl Broadcast for MaliciousBroadcastDoubleVote {
             echo_batch.insert(*target, phantom.clone());
         }
         let to_send = NetworkValue::EchoBatch(echo_batch);
-        send_to_all(session, &my_role, &to_send).await?;
+        send_to_all(session, &to_send).await?;
         let _ = receive_echos_from_all_batched::<Z, B>(
             session,
-            &my_role,
             &mut non_answering_parties,
             HashMap::new(),
         )
@@ -588,7 +581,7 @@ impl Broadcast for MaliciousBroadcastDoubleVote {
             } else {
                 NetworkValue::Empty
             };
-            send_to_all(session, &my_role, &msg).await?;
+            send_to_all(session, &msg).await?;
         }
 
         // The attacker does not care about its own output.
