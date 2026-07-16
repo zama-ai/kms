@@ -32,7 +32,9 @@ pub(crate) const S3_MULTIPART_PART_SIZE: usize = 16 * 1024 * 1024;
 pub(crate) const S3_MULTIPART_MIN_PART_SIZE: usize = 5 * 1024 * 1024;
 
 /// Queue depth between the serializing task and the uploader thread; peak
-/// in-flight memory is roughly `(2 + capacity) * part_size`.
+/// in-flight memory is roughly `(3 + capacity) * part_size`: the buffer being
+/// filled, the one held by a blocking send, the queued one, and the one the
+/// uploader is currently shipping.
 const PART_CHANNEL_CAPACITY: usize = 1;
 
 #[derive(Debug, Clone)]
