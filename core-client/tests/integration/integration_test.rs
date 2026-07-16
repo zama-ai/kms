@@ -1127,6 +1127,8 @@ async fn integration_test_commands(
     let key_id = KeyId::from_str(&key_id)?;
     let ctxt_path = keys_folder.join("test_encrypt_cipher.txt");
     let ctxt_with_sns_path = keys_folder.join("test_encrypt_cipher_with_sns.txt");
+    let compressed_ctxt_with_sns_path =
+        keys_folder.join("test_encrypt_compressed_cipher_with_sns.txt");
 
     let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
         cipher_params(val, dt, key_id, bs, no_comp, no_sns, None)
@@ -1280,6 +1282,28 @@ async fn integration_test_commands(
         })),
         CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
             ctxt_with_sns_path.clone(),
+            2,
+        ))),
+        // Production format: `BigCompressed` (compressed + SnS precomputed). Exercise the
+        // same format when the ciphertext is loaded from a file rather than encrypted in-process.
+        CCCommand::Encrypt(cipher_params(
+            "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            FheType::Euint256,
+            key_id,
+            1,
+            false,
+            false,
+            Some(compressed_ctxt_with_sns_path.clone()),
+        )),
+        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: compressed_ctxt_with_sns_path.clone(),
+            batch_size: 2,
+            num_requests: 2,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+            compressed_ctxt_with_sns_path,
             2,
         ))),
     ];
