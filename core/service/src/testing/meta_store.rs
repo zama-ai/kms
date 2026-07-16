@@ -116,9 +116,9 @@ impl<T: Send + Sync + 'static> MetaStoreBenchmark<T> {
                 .copied()
                 .collect::<Vec<_>>()
                 .len(),
-            MetaStoreScan::Successful => guard.get_successful_completed_request_ids().len(),
-            MetaStoreScan::Processing => guard.get_processing_request_ids().len(),
-            MetaStoreScan::Failed => guard.get_failed_request_ids().len(),
+            MetaStoreScan::Successful => guard.get_successful_completed_request_ids().count(),
+            MetaStoreScan::Processing => guard.get_processing_request_ids().count(),
+            MetaStoreScan::Failed => guard.get_failed_request_ids().count(),
             MetaStoreScan::Deleted => guard
                 .get_deleted_request_ids()
                 .copied()

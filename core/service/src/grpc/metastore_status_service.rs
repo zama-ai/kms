@@ -54,6 +54,21 @@ pub type PreprocMetaStore = MetaStore<BucketMetaStore>;
 /// MetaStore for recovery information, storing setup messages along with signcrypted payloads of shares needed for backup operations.
 pub type CustodianMetaStore = MetaStore<RecoveryValidationMaterial>;
 
+/// Collect one page and one extra item to determine whether another page exists.
+fn collect_request_page(
+    request_ids: impl Iterator<Item = kms_grpc::RequestId>,
+    start_index: usize,
+    max_results: usize,
+) -> (Vec<kms_grpc::RequestId>, bool) {
+    let mut page: Vec<_> = request_ids
+        .skip(start_index)
+        .take(max_results.saturating_add(1))
+        .collect();
+    let has_more = page.len() > max_results;
+    page.truncate(max_results);
+    (page, has_more)
+}
+
 /// Implementation of the MetaStoreStatusService gRPC service.
 ///
 /// This service provides monitoring and status information about various meta-stores
@@ -252,23 +267,7 @@ impl MetaStoreStatusServiceImpl {
         max_results: Option<i32>,
         page_token: Option<String>,
     ) -> Result<(Vec<RequestStatusInfo>, Option<String>), tonic::Status> {
-        let store_guard = store.read().await;
-
-        let request_ids = match status_filter {
-            Some(RequestProcessingStatus::Processing) => store_guard.get_processing_request_ids(),
-            Some(RequestProcessingStatus::Completed) => {
-                store_guard.get_successful_completed_request_ids()
-            }
-            Some(RequestProcessingStatus::Failed) => store_guard.get_failed_request_ids(),
-            Some(RequestProcessingStatus::Any) | None => {
-                store_guard.get_any_seen_request_ids().copied().collect()
-            }
-            Some(RequestProcessingStatus::Deleted) => {
-                store_guard.get_deleted_request_ids().copied().collect()
-            }
-        };
-
-        // Handle pagination
+        // Parse pagination before taking the store lock.
         let start_index = if let Some(token) = page_token {
             match token.parse::<usize>() {
                 Ok(index) => {
@@ -293,47 +292,56 @@ impl MetaStoreStatusServiceImpl {
             0
         };
 
-        // Normalize the page size. Treat non-positive values as unset (a negative would become
-        // ~usize::MAX when cast; 0 would return an empty page while still emitting a
-        // non-advancing next_page_token, looping a token-following client forever) and clamp
-        // the positive side so a single request can't force the whole store to be materialized
-        // under the read lock. Saturate the addition too: release builds have no
-        // overflow-checks, so the raw `start_index + max_results` could otherwise wrap into an
-        // inverted slice range below.
+        // Treat non-positive sizes as unset and clamp positive sizes so one request cannot
+        // materialize the whole store under the read lock.
         const DEFAULT_PAGE_SIZE: usize = 100;
         const MAX_PAGE_SIZE: usize = 1000;
         let max_results = max_results
             .filter(|n| *n > 0)
             .map(|n| (n as usize).min(MAX_PAGE_SIZE))
             .unwrap_or(DEFAULT_PAGE_SIZE);
-        let end_index = std::cmp::min(start_index.saturating_add(max_results), request_ids.len());
 
-        // Monitor pagination bounds
+        let store_guard = store.read().await;
+        let (request_ids, has_more) = match status_filter {
+            Some(RequestProcessingStatus::Processing) => collect_request_page(
+                store_guard.get_processing_request_ids(),
+                start_index,
+                max_results,
+            ),
+            Some(RequestProcessingStatus::Completed) => collect_request_page(
+                store_guard.get_successful_completed_request_ids(),
+                start_index,
+                max_results,
+            ),
+            Some(RequestProcessingStatus::Failed) => collect_request_page(
+                store_guard.get_failed_request_ids(),
+                start_index,
+                max_results,
+            ),
+            Some(RequestProcessingStatus::Any) | None => collect_request_page(
+                store_guard.get_any_seen_request_ids().copied(),
+                start_index,
+                max_results,
+            ),
+            Some(RequestProcessingStatus::Deleted) => collect_request_page(
+                store_guard.get_deleted_request_ids().copied(),
+                start_index,
+                max_results,
+            ),
+        };
+
         tracing::debug!(
-            "Pagination for {:?} store: total_requests={}, start_index={}, end_index={}, max_results={}",
+            "Pagination for {:?} store: start_index={}, page_size={}, has_more={}",
             store_type,
-            request_ids.len(),
             start_index,
-            end_index,
-            max_results
+            request_ids.len(),
+            has_more
         );
 
-        // `get` yields None for any out-of-range or inverted (start > end) range, so a page
-        // token past the end returns an empty slice instead of panicking.
-        let paginated_ids = request_ids.get(start_index..end_index).unwrap_or_else(|| {
-            tracing::warn!(
-                "Pagination start_index ({}) beyond total requests ({}) for {:?} store - returning empty slice",
-                start_index,
-                request_ids.len(),
-                store_type
-            );
-            &[]
-        });
-
-        // Batch collect all request data while holding lock once
-        let mut request_data: Vec<(_, (RequestProcessingStatus, Option<String>))> = Vec::new();
-        for request_id in paginated_ids {
-            let status_pair = match store_guard.retrieve(request_id) {
+        // Snapshot the selected entries while holding the same read lock as the scan.
+        let mut request_data = Vec::with_capacity(request_ids.len());
+        for request_id in request_ids {
+            let status_pair = match store_guard.retrieve(&request_id) {
                 Some(EntryState::Done(Ok(_))) => (RequestProcessingStatus::Completed, None),
                 Some(EntryState::Done(Err(err))) => (RequestProcessingStatus::Failed, Some(err)),
                 Some(EntryState::Pending) => (RequestProcessingStatus::Processing, None),
@@ -353,13 +361,12 @@ impl MetaStoreStatusServiceImpl {
                     )
                 }
             };
-            request_data.push((*request_id, status_pair));
+            request_data.push((request_id, status_pair));
         }
-        drop(store_guard); // Explicitly release the read lock
+        drop(store_guard);
 
         // Convert to RequestStatusInfo with enhanced status detection (without holding lock)
-        let mut requests = Vec::new();
-        let total_request_count = request_ids.len();
+        let mut requests = Vec::with_capacity(request_data.len());
         for (request_id, (status, error_message)) in request_data {
             tracing::debug!(
                 "Request {} in {:?} store has status {:?}",
@@ -376,17 +383,14 @@ impl MetaStoreStatusServiceImpl {
             });
         }
 
-        // Log summary for debugging
         tracing::debug!(
-            "Listed {} requests from {:?} store (total available: {})",
+            "Listed {} requests from {:?} store",
             requests.len(),
-            store_type,
-            total_request_count
+            store_type
         );
 
-        // Determine next page token
-        let next_page_token = if end_index < total_request_count {
-            Some(end_index.to_string())
+        let next_page_token = if has_more {
+            Some(start_index.saturating_add(requests.len()).to_string())
         } else {
             None
         };
