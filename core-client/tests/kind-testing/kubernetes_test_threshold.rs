@@ -198,11 +198,14 @@ impl K8sTestContext {
         );
 
         let key_id_parsed = key_id.parse().expect("invalid key ID");
+        // `BigCompressed` (no_compression=false, no_precompute_sns=false) — the production
+        // format and fast decrypt path. These cluster tests exercise wiring/round-trips, not
+        // ciphertext formats, so they use the format real deployments run.
         self.execute(CCCommand::Encrypt(CipherParameters {
             to_encrypt: plaintext.to_string(),
             data_type,
             no_compression: false,
-            no_precompute_sns: true,
+            no_precompute_sns: false,
             key_id: key_id_parsed,
             context_id: None,
             epoch_id: None,
