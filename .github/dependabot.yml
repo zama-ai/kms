@@ -10,6 +10,8 @@ updates:
     open-pull-requests-limit: 0
     cooldown:
       default-days: 4 # set to zizmor's minimum as we are not opening PR
+    exclude-paths:
+      - "backward-compatibility/**" # we are testing older crate versions here and do not use these in prod
   - package-ecosystem: "github-actions"
     directory: "/"
     # Check for updates every Monday
