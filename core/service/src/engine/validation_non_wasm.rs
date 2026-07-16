@@ -27,7 +27,7 @@ use kms_grpc::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
         TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
-    rpc_types::{SolanaUserDecryptBinding, optional_protobuf_to_alloy_domain},
+    rpc_types::optional_protobuf_to_alloy_domain,
 };
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
@@ -182,14 +182,6 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
-/// Derives the stable 20-byte signcryption `client_id` from a 32-byte Solana pubkey as
-/// `keccak256(pubkey)[12..]`, mirroring EVM address derivation. The client reproduces this
-/// to de-signcrypt the response; it is a deterministic label, not an authorization input
-/// (Solana user-decrypt authorization is enforced by the kms-connector before this call).
-fn solana_user_decrypt_client_id(solana_pubkey: &[u8; 32]) -> alloy_primitives::Address {
-    alloy_primitives::Address::from_slice(&alloy_primitives::keccak256(solana_pubkey)[12..])
-}
-
 /// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
@@ -261,56 +253,9 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    // Solana-native user decryption: the client identity is a typed 32-byte ed25519 pubkey and
-    // there is no EVM
-    // verifying contract. Authorization (RPC-verified on-chain ACL + ed25519 signMessage) is
-    // enforced by the kms-connector before this call — exactly as the gateway enforces the EVM
-    // ACL before the EVM path — so here we only bind the response to the request via the Solana
-    // link (`compute_link_solana`). The link is passed opaquely into signcryption, so the
-    // binding is sound as long as the client recomputes the same link. The response cert is the
-    // standard secp256k1 EIP-712 the gateway verifies, signed under the gateway's `Decryption`
-    // domain (`req.domain`) — see the domain note at the return below.
-    // Only the typed pubkey selects Solana. An unset pubkey follows the unchanged EVM route;
-    // `client_address` is never inspected for a Solana prefix.
-    let solana_pubkey_opt: Option<[u8; 32]> = req
-        .solana_pubkey
-        .as_deref()
-        .map(|pubkey| {
-            <[u8; 32]>::try_from(pubkey).map_err(|_| {
-                anyhow::anyhow!(
-                    "Solana client identity must be a 32-byte pubkey, got {} bytes",
-                    pubkey.len()
-                )
-            })
-        })
-        .transpose()?;
-    if let Some(solana_pubkey) = solana_pubkey_opt {
-        if !req.client_address.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Solana user decryption request must not set client_address"
-            )
-            .into());
-        }
-        let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
-            req.typed_ciphertexts
-                .iter()
-                .map(|ciphertext| ciphertext.external_handle.as_slice()),
-        )?;
-        let link = binding.compute_link(&req.enc_key, &solana_pubkey);
-        let client_verf_key = solana_user_decrypt_client_id(&solana_pubkey);
-        let _client_enc_key =
-            UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
-                anyhow::anyhow!(
-                    "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {e}"
-                )
-            })?;
-        // The KMS signs `UserDecryptResponseVerification` under the gateway's `Decryption`
-        // EIP-712 domain (name/version/chainId/verifyingContract, carried in `req.domain`) so the
-        // gateway's `userDecryptionResponse` recovers the registered KMS signer on-chain. The
-        // response cert is the standard secp256k1 EIP-712 — identical to EVM; only the user
-        // *authorization* seam differs (ed25519, already enforced by the connector), so there is
-        // no user EIP-712 to verify here.
-        let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    if let Some((link, client_verf_key, response_domain)) =
+        super::validation_solana::validate_user_decrypt_req(req)?
+    {
         return Ok((
             req.typed_ciphertexts.clone(),
             link,
@@ -1063,23 +1008,6 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         resharing,
         extra_data: req.extra_data,
     })
-}
-
-#[cfg(test)]
-mod solana_user_decrypt_tests {
-    use super::solana_user_decrypt_client_id;
-
-    #[test]
-    fn client_id_is_keccak_derived_and_deterministic() {
-        let pubkey = [0x22u8; 32];
-        let id = solana_user_decrypt_client_id(&pubkey);
-        assert_eq!(id, solana_user_decrypt_client_id(&pubkey));
-        let expected = &alloy_primitives::keccak256(pubkey)[12..];
-        assert_eq!(id.as_slice(), expected);
-        let mut other = pubkey;
-        other[0] ^= 0xff;
-        assert_ne!(id, solana_user_decrypt_client_id(&other));
-    }
 }
 
 #[cfg(test)]
