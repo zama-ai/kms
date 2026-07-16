@@ -31,6 +31,8 @@ pub(crate) const S3_MULTIPART_PART_SIZE: usize = 16 * 1024 * 1024;
 /// S3's minimum size for every multipart part except the last.
 pub(crate) const S3_MULTIPART_MIN_PART_SIZE: usize = 5 * 1024 * 1024;
 
+const _: () = assert!(S3_MULTIPART_PART_SIZE >= S3_MULTIPART_MIN_PART_SIZE);
+
 /// Queue depth between the serializing task and the uploader thread; peak
 /// in-flight memory is roughly `(3 + capacity) * part_size`: the buffer being
 /// filled, the one held by a blocking send, the queued one, and the one the
@@ -710,7 +712,11 @@ struct S3PartWriter {
 
 impl S3PartWriter {
     fn new(config: aws_sdk_s3::Config, bucket: &str, key: &str, part_size: usize) -> Self {
-        debug_assert!(part_size >= S3_MULTIPART_MIN_PART_SIZE);
+        // Callers pass `S3_MULTIPART_PART_SIZE` or a test constant, so this
+        // cannot fire in correct execution. Not a `debug_assert`: in release
+        // S3 would only reject an undersized part at CompleteMultipartUpload,
+        // once the whole object has already been uploaded.
+        assert!(part_size >= S3_MULTIPART_MIN_PART_SIZE);
         Self {
             config,
             bucket: bucket.to_string(),
