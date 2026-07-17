@@ -1,4 +1,4 @@
-# KMS Deployment Scripts
+# KMS Deployment/management Scripts
 
 ## Overview
 
@@ -11,8 +11,13 @@
 
 ```
 ci/scripts/
-├── deploy.sh                      # Main entry point (143 lines)
+├── backward_snapshot.sh           # Generate and compare backward-compatibility snapshots
+├── collect_network_diagnostics.sh # Capture per-pod network interface counters
+├── deploy.sh                      # Main deployment entry point
+├── local_docs_link_check.py       # Check Markdown links to local files
 ├── manage_lifecycle.sh            # Lifecycle management
+├── rolling_upgrade.sh             # Partially upgrade enclave KMS parties
+├── sample_core_cpu.sh             # Sample KMS core CPU and memory during benchmarks
 └── lib/                           # Modular libraries
     ├── common.sh                  # Logging, parsing, utilities (277 lines)
     ├── context.sh                 # Kubernetes context setup (87 lines)
@@ -80,8 +85,11 @@ The build process will:
 | Need to modify... | Edit this file |
 |------------------|----------------|
 | **Logging or argument parsing** | `lib/common.sh` |
+| **Backward-compatibility snapshots** | `backward_snapshot.sh` |
+| **Benchmark network diagnostics** | `collect_network_diagnostics.sh` |
 | **Kind cluster setup** | `lib/context.sh` |
 | **AWS/Tailscale config** | `lib/context.sh` |
+| **Local documentation link checks** | `local_docs_link_check.py` |
 | **LocalStack deployment** | `lib/infrastructure.sh` |
 | **TKMS/Crossplane** | `lib/infrastructure.sh` |
 | **Registry credentials** | `lib/infrastructure.sh` |
@@ -90,6 +98,8 @@ The build process will:
 | **Docker image building** | `lib/utils.sh` |
 | **Port forwarding** | `lib/utils.sh` |
 | **Log collection** | `lib/utils.sh` |
+| **Rolling KMS upgrades** | `rolling_upgrade.sh` |
+| **Core CPU/memory benchmark samples** | `sample_core_cpu.sh` |
 
 ### Module Details
 
