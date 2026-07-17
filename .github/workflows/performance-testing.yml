@@ -443,6 +443,15 @@ jobs:
           ###################################################################
           echo "Starting performance testing workflow..."
 
+          # Sample per-core (kms-core pod) CPU throughout the run so we can correlate
+          # core CPU% against the rate rungs by timestamp (pairs with the eth0
+          # diagnostics to distinguish CPU-bound vs network-bound at the top rungs).
+          # Backgrounded here so it lives for this step's shell; killed on exit
+          # (incl. the exit-1 path). Failures are non-fatal — it must never break the run.
+          bash ci/scripts/sample_core_cpu.sh "${NAMESPACE}" > core-cpu-samples.log 2>&1 &
+          CPU_SAMPLER_PID=$!
+          trap 'kill "${CPU_SAMPLER_PID}" 2>/dev/null || true' EXIT
+
           # Convert TLS boolean to enabled/disabled string
           if [[ "${TLS}" == "true" ]]; then
             TLS_STATUS="enabled"
@@ -507,6 +516,18 @@ jobs:
 
           echo "Workflow completed."
 
+      - name: Report core CPU samples
+        if: always()
+        run: |
+          if [ ! -s core-cpu-samples.log ]; then
+            echo "[cpu] no samples captured — check metrics-server pod-metrics RBAC for the CI identity in ${NAMESPACE}"
+            exit 0
+          fi
+          echo "[cpu] per-core CPU via metrics-server (~15s resolution); cores request 48 vCPU (=48000m)."
+          echo "[cpu] full timeseries is in the core-cpu-samples artifact; correlate its timestamps with the rung timestamps in the Argo log."
+          echo "[cpu] $(wc -l < core-cpu-samples.log) sample lines captured; last 500 below (the sampler loop is uncapped, so the full dump is unbounded — hence the tail + artifact):"
+          tail -n 500 core-cpu-samples.log
+
       - name: Capture network diagnostics after perf
         if: always()
         run: |
@@ -521,6 +542,14 @@ jobs:
         with:
           name: argo-workflow-logs.txt
           path: argo-workflow-logs.txt
+          retention-days: 30
+
+      - name: Upload core CPU samples
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-cpu-samples.log
+          path: core-cpu-samples.log
           retention-days: 30
 
       # ======================================================================
