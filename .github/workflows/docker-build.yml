@@ -99,7 +99,13 @@ jobs:
     outputs:
       golden_tag: ${{ steps.compute.outputs.golden_tag }}
       cache_hit: ${{ steps.lookup.outputs.cache_hit }}
+      repository_name: ${{ steps.set-repository-name.outputs.repository_name }}
     steps:
+      - name: Set repository name
+        id: set-repository-name
+        run: |
+          echo "repository_name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       - name: KMS Docker image tag
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -234,7 +240,7 @@ jobs:
       docker-file: './docker/base/Dockerfile'
       working-directory: './base'
       push_image: true
-      image-name: 'kms/rust-golden-image'
+      image-name: '${{ needs.golden-image-tag.outputs.repository_name }}/rust-golden-image'
       app-cache-dir: 'kms-base'
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
@@ -322,6 +328,7 @@ jobs:
   core-client:
     name: docker-build/core-client (bpr)
     needs:
+      - golden-image-tag
       - golden-image-latest
     if: |
       !cancelled() &&
@@ -343,7 +350,7 @@ jobs:
       docker-file: './docker/core-client/Dockerfile'
       working-directory: './core-client'
       push_image: true
-      image-name: 'kms/core-client'
+      image-name: '${{ needs.golden-image-tag.outputs.repository_name }}/core-client'
       app-cache-dir: 'kms-core-client'
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
@@ -362,6 +369,7 @@ jobs:
   core-service:
     name: docker-build/core-service (bpr)
     needs:
+      - golden-image-tag
       - golden-image-latest
     if: |
       !cancelled() &&
@@ -383,7 +391,7 @@ jobs:
       docker-file: './docker/core/service/Dockerfile'
       working-directory: './core/service'
       push_image: true
-      image-name: 'kms/core-service'
+      image-name: '${{ needs.golden-image-tag.outputs.repository_name }}/core-service'
       app-cache-dir: 'kms'
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
@@ -402,6 +410,7 @@ jobs:
   enclave:
     name: docker-build/core-service-enclave (bpr)
     needs:
+      - golden-image-tag
       - core-service
     if: |
       !cancelled() &&
@@ -419,8 +428,8 @@ jobs:
       docker-file-enclave: './docker/core/service/enclave.dockerfile'
       working-directory: './core/service'
       push_image: true
-      image-name: 'kms/core-service'
-      image-enclave-name: 'kms/core-service-enclave'
+      image-name: '${{ needs.golden-image-tag.outputs.repository_name }}/core-service'
+      image-enclave-name: '${{ needs.golden-image-tag.outputs.repository_name }}/core-service-enclave'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
