@@ -279,12 +279,10 @@ impl MetaStoreStatusServiceImpl {
                     index
                 }
                 Err(err) => {
-                    tracing::warn!(
-                        "Failed to parse page token '{}' as usize: {} - defaulting to 0",
-                        token,
-                        err
-                    );
-                    0
+                    let err_str =
+                        format!("Failed to parse page token '{}' as usize: {}", token, err);
+                    tracing::warn!("{err_str}");
+                    return Err(tonic::Status::invalid_argument(err_str));
                 }
             }
         } else {
@@ -331,7 +329,7 @@ impl MetaStoreStatusServiceImpl {
         };
 
         tracing::debug!(
-            "Pagination for {:?} store: start_index={}, page_size={}, has_more={}",
+            "Pagination for {:?} store: start_index={}, page_len={}, has_more={}",
             store_type,
             start_index,
             request_ids.len(),

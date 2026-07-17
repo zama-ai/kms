@@ -111,19 +111,11 @@ impl<T: Send + Sync + 'static> MetaStoreBenchmark<T> {
     pub async fn scan_len(&self, scan: MetaStoreScan) -> usize {
         let guard = self.inner.read().await;
         match scan {
-            MetaStoreScan::All => guard
-                .get_any_seen_request_ids()
-                .copied()
-                .collect::<Vec<_>>()
-                .len(),
+            MetaStoreScan::All => guard.get_any_seen_request_ids().count(),
             MetaStoreScan::Successful => guard.get_successful_completed_request_ids().count(),
             MetaStoreScan::Processing => guard.get_processing_request_ids().count(),
             MetaStoreScan::Failed => guard.get_failed_request_ids().count(),
-            MetaStoreScan::Deleted => guard
-                .get_deleted_request_ids()
-                .copied()
-                .collect::<Vec<_>>()
-                .len(),
+            MetaStoreScan::Deleted => guard.get_deleted_request_ids().count(),
         }
     }
 }
