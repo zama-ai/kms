@@ -661,7 +661,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -700,7 +700,7 @@ where
             }
         }
 
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     async fn new_custodian_context(
@@ -913,7 +913,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<tonic::Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -943,7 +943,7 @@ where
                     tonic::Code::Internal,
                 )
             })?;
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     async fn new_custodian_context(

@@ -315,35 +315,30 @@ service CoreServiceEndpoint {
   // Destroys an MPC context and the epochs associated with it by removing them from memory and storage.
   //
   // Care must be taken to ensure that the currently active MPC context is not destroyed; the KMS is agnostic to which
-  // context is active and which is not.
+  // context is active and which is not. It does however ensure that at leat 1 context will remain after the destruction call.
   //
-  // The caller supplies the full set of epoch IDs that belong to the context in `epoch_ids`; the KMS destroys exactly
-  // those epochs (erasing their secret key shares and PRSS randomness) before forgetting the context. The call attempts
-  // to delete every epoch ID listed in `epoch_ids`. It is idempotent: an epoch that no longer exists (e.g. already
-  // deleted by a previous attempt) is not treated as an error, it is simply skipped. It is best-effort: if one epoch
-  // fails to delete, the remaining epochs are still attempted, and the call then returns an error so the caller can
-  // safely retry until every listed epoch is gone.
-  //
-  // WARNING: the KMS does NOT (and cannot) validate that `epoch_ids` is the complete set of epochs belonging to the
-  // context. It has no internal context-to-epoch mapping and destroys exactly the IDs provided, nothing more. If the
-  // caller omits an epoch — or sends an empty list — the context is still forgotten while the omitted epochs' secret
-  // key shares and PRSS data remain on the node. Supplying the complete set is the caller's responsibility (the
-  // kms-connector is the source of truth); an incomplete list is a silent security gap, not a request error.
+  // The call returns the set of epoch IDs that belong to the context in `epoch_ids` which has also been destroyed as part of the call.
+  // In case of repeated calls, where the list will be empty since the first call will have destroyed all associated epochs to the context.
+  // Thus repeated calls are safe, and will not produce any errors, but the reponse value will always be different. 
+  // Similarely, in case of something goes wrong during the initial call, but things succeeds in the subsequent one, 
+  // then the subsequent one will contain the ids of the epochs destroyed in the second (successful) call.
   //
   // # Parameters
   // * `context_id` - Context ID of the MPC context to destroy.
-  // * `epoch_ids` - The epochs associated with the context that must be destroyed alongside it. May be empty for a
-  //   context that has no epochs; completeness is not verified by the KMS (see WARNING above).
+  //
+  // # Returns
+  // * `epoch_ids` - The epochs associated with the context that was destroyed alongside the context. May be empty for a
+  //   context that has no epochs or a repeated call.
   //
   // # Conditions
   // ## Pre-condition:
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
-  // * Each entry in `epoch_ids` must be a valid [`RequestId`].
   // ## Post-condition:
-  // * The `context_id` in `request` can no longer be used. Any MPC context data associated with it, that may have existed, has been purged from both memory and disk.
-  // * Each epoch in `epoch_ids` that existed has had its private key shares and PRSS data purged from both memory and disk.
-  // * Epochs NOT listed in `epoch_ids` are left untouched, even if they belong to the destroyed context.
-  rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
+  // * The `context_id` in `request` and any `epoch_id` in the list returned in the response can no longer be used. 
+  //   All MPC context data and epoch data associated with these ids, that may have existed, has been purged from both memory and disk.
+  //   Concretely each epoch in `epoch_ids` that existed has had its private key shares and PRSS data purged from both memory and disk.
+  //   Epochs NOT listed in the `epoch_ids` response are left untouched, even if they belong to the destroyed context.
+  rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.DestroyMpcContextResponse);
 
   // Creates a new MPC epoch.
   // This involves executing the PRSS protocol to generate secret shared correlated randomness.

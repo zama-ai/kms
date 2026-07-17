@@ -231,7 +231,7 @@ impl_endpoint! {
         async fn destroy_mpc_context(
             &self,
             request: Request<DestroyMpcContextRequest>,
-        ) -> Result<Response<Empty>, Status> {
+        ) -> Result<Response<DestroyMpcContextResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
             let inner = request.into_inner();
 
@@ -252,13 +252,16 @@ impl_endpoint! {
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
+            let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
 
             // Every epoch is now gone, so it is safe to remove the context.
             self.context_manager
                 .destroy_mpc_context(Request::new(inner))
                 .await
-                .map_err(Status::from)
+                .map_err(Status::from)?;
+            Ok(Response::new(DestroyMpcContextResponse {
+                epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+            }))
         }
 
         #[tracing::instrument(skip_all)]

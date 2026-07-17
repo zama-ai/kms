@@ -1411,12 +1411,16 @@ impl<
     async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
-    ) -> Result<(), MetricedError> {
+    ) -> Result<Vec<EpochId>, MetricedError> {
         let epochs_to_destroy = self.session_maker.epochs_for_context(context_id).await;
         self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
 
-    async fn destroy_mpc_epochs(&self, epoch_ids: &[EpochId]) -> Result<(), MetricedError> {
+    async fn destroy_mpc_epochs(
+        &self,
+        epoch_ids: &[EpochId],
+    ) -> Result<Vec<EpochId>, MetricedError> {
+        let mut destroyed_epochs = Vec::new();
         let mut first_error: Option<MetricedError> = None;
         for epoch_id in epoch_ids {
             if !self.session_maker.epoch_exists(epoch_id).await {
@@ -1429,16 +1433,18 @@ impl<
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_and_purge_cache(epoch_id).await
-                && first_error.is_none()
-            {
-                first_error = Some(e);
+            if let Err(e) = self.destroy_epoch_and_purge_cache(epoch_id).await {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+                continue;
             }
+            destroyed_epochs.push(*epoch_id);
         }
 
         match first_error {
             Some(e) => Err(e),
-            None => Ok(()),
+            None => Ok(destroyed_epochs),
         }
     }
 

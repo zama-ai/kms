@@ -634,6 +634,11 @@ message DestroyMpcContextRequest {
   RequestId context_id = 1;
 }
 
+message DestroyMpcContextResponse {
+  // The ID of the the epochs destroyed as part of the context.
+  repeated RequestId epoch_ids = 1;
+}
+
 message NewCustodianContextRequest {
   // The new custodian context to create.
   CustodianContext new_custodian_context = 1;
