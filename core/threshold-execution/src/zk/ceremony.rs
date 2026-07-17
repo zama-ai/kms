@@ -616,24 +616,80 @@ pub fn public_parameters_by_trusted_setup<R: Rng + CryptoRng>(
     })
 }
 
-// This function returns a custom error message
-// for different types of error, so that we can
-// test for different scenarios.
-// But the error type should be swallowed when
-// it is used in a public API.
+/// Verifies an untrusted `partial_proof_to_check` against the trusted local
+/// `current_pp` (public parameter) and the `expected_round` and `sid`, and if valid,
+/// returns the updated public parameter (Steps 3–5 of CRS-Gen.Update, NIST spec).
+///
+/// Checks, in order: valid curve points; the round equals `expected_round` (the contributor's
+/// fixed position in the sorted role list) and is strictly increasing — so a malicious
+/// party cannot inflate it to suppress later honest contributions; CRS dimensions match
+/// `current_pp`, verified before any indexing so a malformed proof errors instead of
+/// panicking (which would abort the ceremony); the discrete-log proof (bound to `expected_round`
+/// and `sid`); non-degeneracy and correct puncturing; and well-formedness.
+///
+/// Errors carry a distinct message per failing check for tests; the message should be
+/// swallowed on the public API path.
 fn verify_proof(
     current_pp: &InternalPublicParameter,
-    partial_proof: &PartialProof,
-    round: u64,
+    partial_proof_to_check: &PartialProof,
+    expected_round: u64,
     sid: SessionId,
 ) -> anyhow::Result<InternalPublicParameter> {
-    partial_proof.validate_points()?;
-
-    if current_pp.round >= partial_proof.new_pp.round {
-        return Err(anyhow_error_and_log("bad round number".to_string()));
+    // Ensure that the round number in the new partial proof matches the expected round number exactly.
+    // This is important to prevent malicious parties from inflating the round number to suppress later honest contributions.
+    if partial_proof_to_check.new_pp.round != expected_round {
+        return Err(anyhow_error_and_log(format!(
+            "bad round number: expected {expected_round} but got {} from new partial proof",
+            partial_proof_to_check.new_pp.round
+        )));
     }
 
-    let new_pp = partial_proof.new_pp.clone();
+    // Also check that the received round is strictly greater (newer) than the current known round.
+    // We might have skipped a previous round (if some parties were offline), so the current known round might be less than the expected round.
+    if partial_proof_to_check.new_pp.round <= current_pp.round {
+        return Err(anyhow_error_and_log(format!(
+            "bad round number: new partial proof round {} is not greater than current round {}",
+            partial_proof_to_check.new_pp.round, current_pp.round
+        )));
+    }
+
+    // Ensure max_num_bits is not changed during the ceremony. It is carried in the public
+    // parameter but bound to no hash, so without this check any contributor could set a
+    // different value that later parties would silently adopt. Every party initializes it
+    // to the same request-derived value, so binding the received value to the verifier's
+    // current (trusted, locally-initialized) value keeps all parties on the same value.
+    if partial_proof_to_check.new_pp.max_num_bits != current_pp.max_num_bits {
+        return Err(anyhow_error_and_log(format!(
+            "max_num_bits mismatch: expected {} but got {} from new partial proof",
+            current_pp.max_num_bits, partial_proof_to_check.new_pp.max_num_bits
+        )));
+    }
+
+    // Borrow the received public parameter for the checks below and only clone it on the
+    // success path, so a rejected proof never pays for the (large) copy.
+    let new_pp = &partial_proof_to_check.new_pp;
+
+    // Check dimensions against the trusted current_pp before any indexing
+    // below: a malformed proof must error here, not panic on an out-of-bounds index
+    // (which would abort the ceremony and let one party break liveness).
+    let witness_dim = current_pp.witness_dim();
+    if new_pp.g1g2list.g1s.len() != witness_dim * 2 {
+        return Err(anyhow_error_and_log(format!(
+            "crs length check failed (g). expected {} but got {}",
+            witness_dim * 2,
+            new_pp.g1g2list.g1s.len()
+        )));
+    }
+    if new_pp.witness_dim() != witness_dim {
+        return Err(anyhow_error_and_log(format!(
+            "crs length check failed (g_hat). expected {} but got {}",
+            witness_dim,
+            new_pp.witness_dim()
+        )));
+    }
+
+    partial_proof_to_check.validate_points()?;
+
     let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
     let g1_j = new_pp.g1g2list.g1s[0]; // g_{1, j}
 
@@ -643,11 +699,11 @@ fn verify_proof(
     // this proof ensures that the prover
     // did not erase the previous CRS contribution
     verify_dlog_proof(
-        partial_proof.s_pok,
-        partial_proof.h_pok,
+        partial_proof_to_check.s_pok,
+        partial_proof_to_check.h_pok,
         &g1_jm1,
         &g1_j,
-        round,
+        expected_round,
         sid,
     )?;
 
@@ -659,20 +715,7 @@ fn verify_proof(
         ));
     }
 
-    // I (caller) need to make sure the lengths are correct
-    // the point of reference is the current_pp
-    let witness_dim = current_pp.witness_dim();
-    if new_pp.g1g2list.g1s.len() != witness_dim * 2 {
-        return Err(anyhow_error_and_log(
-            "crs length check failed (g)".to_string(),
-        ));
-    }
-    if new_pp.witness_dim() != witness_dim {
-        return Err(anyhow_error_and_log(
-            "crs length check failed (g_hat)".to_string(),
-        ));
-    }
-
+    // check that list of G1s is correctly punctured (i.e., the element at index witness_dim is zero)
     if new_pp.g1g2list.g1s[witness_dim] != curve::G1::ZERO {
         return Err(anyhow_error_and_log(
             "the list of G1s is not correctly punctured".to_string(),
@@ -684,9 +727,10 @@ fn verify_proof(
     // perform the well-formedness check
     // this check guarantees that the prover
     // is raising the elements in the CRS by the correct powers of tau
-    verify_wellformedness(&new_pp, sid)?;
+    verify_wellformedness(new_pp, sid)?;
 
-    Ok(new_pp)
+    // We have passed all the above checks and can return the new public parameter
+    Ok(new_pp.clone())
 }
 
 fn verify_dlog_proof(
@@ -851,6 +895,18 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
         witness_dim: usize,
         max_num_pt_bits: Option<u32>,
     ) -> anyhow::Result<FinalizedInternalPublicParameter> {
+        // The CRS elements are indexed up to `witness_dim + 1` (in the
+        // well-formedness check), so a witness dimension below 2 would make
+        // `verify_proof` panic on an out-of-bounds access. Production always
+        // derives `witness_dim` from the FHE parameters (thousands), so this only
+        // guards against a misconfiguration or a bad caller: fail with a clear
+        // error instead of a later index panic.
+        if witness_dim < 2 {
+            return Err(anyhow_error_and_log(format!(
+                "CRS ceremony requires witness_dim >= 2, got {witness_dim}"
+            )));
+        }
+
         // the parties need to execute the protocol in a deterministic order
         // so we sort the roles to fix this order
         // even if the adversary can pick the order, it does not affect the security
@@ -858,6 +914,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
         all_roles_sorted.sort();
         let my_role = session.my_role();
 
+        // the initial public parameter is the trivial one, i.e., pp_0 in the NIST spec
         let mut pp = InternalPublicParameter::new(witness_dim, max_num_pt_bits);
         let sid = session.session_id();
         tracing::info!(
@@ -870,6 +927,8 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
             // i.e., Role, and internally Role stores u64
             let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
             if *role == my_role {
+                // it is my turn to contribute to the ceremony, so we generate a new partial proof as contribution
+                // to the public param and broadcast it
                 let mut xof = RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(
                     session.rng().r#gen::<u128>(),
                     ZK_DSEP_CRS_UPDA,
@@ -887,12 +946,12 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
                 // More info: https://ryhl.io/blog/async-what-is-blocking/
-                let proof = spawn_compute_bound(move || {
+                let partial_proof = spawn_compute_bound(move || {
                     make_partial_proof_deterministic(&pp, &tau, round, &r, sid)
                 })
                 .await?;
 
-                let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
+                let vi = BroadcastValue::PartialProof::<Z>(partial_proof.clone());
 
                 // nobody else should be broadcasting so we do not process results
                 // since I know I'm honest, this step should never fail since
@@ -902,15 +961,15 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                     .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                     .await?;
 
-                // update our pp
-                pp = proof.new_pp;
+                // update our public parameter with the new one we just generated
+                pp = partial_proof.new_pp;
 
                 tracing::info!(
                     "Role {my_role} finished my turn in CRS ceremony for session {}",
                     session.session_id()
                 );
             } else {
-                // do the following if it is not my turn to contribute
+                // I am a receiver in this round and will get a partial proof from another sender
                 match self
                     .broadcast
                     .broadcast_w_corrupt_set_update::<Z, _>(session, HashSet::from([*role]), None)
@@ -918,24 +977,27 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 {
                     Ok(res) => {
                         // reliable broadcast finished, we need to check the proof
-                        // check that it is from the correct sender
+                        // check that it is from the correct sender and verify the proof
                         for (sender, msg) in res {
                             if sender == *role {
-                                if let BroadcastValue::PartialProof(proof) = msg {
+                                if let BroadcastValue::PartialProof(partial_proof_rcvd) = msg {
                                     // We move pp and then let the blocking thread return it to pp_tmp
                                     // this will avoid cloning the whole pp which is just two vectors.
                                     // The rayon threadpool is used again (see comment above).
                                     let (ver, pp_tmp) = spawn_compute_bound(move || {
-                                        let res = verify_proof(&pp, &proof, round, sid);
+                                        let res =
+                                            verify_proof(&pp, &partial_proof_rcvd, round, sid);
                                         (res, pp)
                                     })
                                     .await?;
+
+                                    // update our public parameter with the new one if the proof is valid, otherwise we keep the old one
                                     pp = pp_tmp;
 
                                     // Step 5 of CRS-Gen.Update from the NIST spec
                                     // where we receive the proof and update the public parameter if the proof is valid.
                                     match ver {
-                                        // verification succeeded, we can update pp with the new value
+                                        // verification succeeded, we can update public parameter pp with the new value
                                         Ok(new_pp) => {
                                             tracing::info!(
                                                 "proof verification succeeded in crs ceremony for {sender}'s contribution"
@@ -969,6 +1031,22 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                     }
                 }
             }
+        }
+
+        // Post-ceremony invariant. `pp.round` is the sorted position of the last
+        // accepted contribution, so it must fall in `1..=num_parties`:
+        // - `0` means no contribution was folded in (only possible if every party
+        //   was skipped, i.e. more faults than the protocol tolerates) — the CRS is
+        //   the trivial `pp_0` and its trapdoor is known.
+        // - a value above `num_parties` can only arise from a round that escaped the
+        //   binding in `verify_proof`.
+        // Either way the result is unsafe, so fail loudly instead of returning it.
+        let num_parties = all_roles_sorted.len() as u64;
+        if pp.round == 0 || pp.round > num_parties {
+            return Err(anyhow_error_and_log(format!(
+                "CRS ceremony for session {sid} ended with an invalid final round {}: expected 1..={num_parties}",
+                pp.round
+            )));
         }
 
         Ok(FinalizedInternalPublicParameter { inner: pp, sid })
@@ -1012,6 +1090,40 @@ mod tests {
     #[test]
     fn test_honest_crs_ceremony_insecure() {
         test_honest_crs_ceremony(InsecureCeremony::default)
+    }
+
+    #[test]
+    fn test_ceremony_rejects_small_witness_dim() {
+        // The well-formedness check indexes up to `witness_dim + 1`, so `execute` requires
+        // witness_dim >= 2 and must reject a smaller value up front with a clear error
+        // rather than panicking on an out-of-bounds access later. The guard runs before any
+        // networking, so a single session is enough to exercise it.
+        let roles = generate_fixed_roles(4);
+        let runtime: DistributedTestRuntime<
+            ResiduePolyF4Z64,
+            _,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+        > = DistributedTestRuntime::new(roles, 1, NetworkMode::Sync, None);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let role = *runtime.roles.iter().next().unwrap();
+        let mut session = runtime.large_session_for_party(SessionId::from(2), role);
+
+        for bad_dim in [0usize, 1usize] {
+            let err = rt
+                .block_on(SecureCeremony::default().execute::<ResiduePolyF4Z64, _>(
+                    &mut session,
+                    bad_dim,
+                    Some(1),
+                ))
+                .err()
+                .unwrap();
+            assert!(
+                err.to_string().contains("witness_dim >= 2"),
+                "witness_dim={bad_dim} should be rejected, got: {err}"
+            );
+        }
     }
 
     fn test_honest_crs_ceremony<F, C>(ceremony_f: F)
@@ -1191,6 +1303,86 @@ mod tests {
         }
     }
 
+    // A malicious party that broadcasts a structurally malformed proof: the
+    // point vectors are emptied. An honest verifier must reject this with an
+    // error (not panic on an out-of-bounds index), so that the ceremony stays
+    // live and still produces a valid CRS from the honest contributions.
+    #[derive(Clone, Default)]
+    struct MalformedProofCeremony<BCast: Broadcast> {
+        broadcast: BCast,
+    }
+
+    impl<B: Broadcast + Default> ProtocolDescription for MalformedProofCeremony<B> {
+        fn protocol_desc(depth: usize) -> String {
+            let indent = Self::INDENT_STRING.repeat(depth);
+            format!(
+                "{}-MalformedProofCeremony:\n{}",
+                indent,
+                B::protocol_desc(depth + 1)
+            )
+        }
+    }
+
+    #[async_trait]
+    impl<BCast: Broadcast + Default> Ceremony for MalformedProofCeremony<BCast> {
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
+            &self,
+            session: &mut S,
+            witness_dim: usize,
+            max_num_bits: Option<u32>,
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
+            let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
+            all_roles_sorted.sort();
+            let my_role = session.my_role();
+
+            let mut pp = InternalPublicParameter::new(witness_dim, max_num_bits);
+
+            let sid = session.session_id();
+            for (round, role) in all_roles_sorted.iter().enumerate() {
+                let round = round as u64;
+                if role == &my_role {
+                    let mut tau = curve::ZeroizeZp::ZERO;
+                    tau.rand_in_place(&mut session.rng());
+                    let mut r = curve::ZeroizeZp::ZERO;
+                    r.rand_in_place(&mut session.rng());
+                    // make a structurally malformed proof by emptying the point
+                    // lists; the round number is left correct so the malformed
+                    // vectors are what an honest verifier trips on.
+                    let mut proof: PartialProof =
+                        make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
+                    proof.new_pp.g1g2list.g1s.clear();
+                    proof.new_pp.g1g2list.g2s.clear();
+                    let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
+
+                    let _ = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
+                        .await?;
+                    pp = proof.new_pp;
+                } else {
+                    let hm = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update::<Z, _>(
+                            session,
+                            HashSet::from([*role]),
+                            None,
+                        )
+                        .await
+                        .unwrap();
+                    let msg = hm.get(role).unwrap();
+                    if let BroadcastValue::PartialProof(proof) = msg {
+                        pp = proof.new_pp.clone();
+                    }
+                }
+            }
+
+            Ok(FinalizedInternalPublicParameter {
+                inner: pp,
+                sid: session.session_id(),
+            })
+        }
+    }
+
     async fn test_ceremony_strategies_large<
         C: Ceremony + 'static,
         Z: Ring,
@@ -1243,24 +1435,24 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         use crate::malicious_execution::zk::ceremony::DroppingCeremony;
 
         let malicious_party = DroppingCeremony;
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
         ).await;
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
@@ -1270,16 +1462,38 @@ mod tests {
             broadcast: broadcast_strategy,
         };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
+        ).await;
+    }
+
+    // Liveness: a party that broadcasts a structurally malformed proof (empty
+    // point vectors) must not stall or crash the ceremony. The honest parties
+    // reject it and still agree on a valid CRS built from the honest rounds.
+    #[rstest]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_malformed_proof_ceremony<BCast: Broadcast + Default + 'static>(
+        #[case] params: TestingParameters,
+        #[case] witness_dim: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
+        let malicious_party = MalformedProofCeremony {
+            broadcast: broadcast_strategy,
+        };
+        test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
+            params,
+            witness_dim,
+            malicious_party,
         ).await;
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
@@ -1291,9 +1505,9 @@ mod tests {
             broadcast: broadcast_strategy,
         };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
-            params.clone(),
+            params,
             witness_dim,
-            malicious_party.clone(),
+            malicious_party,
         ).await;
     }
 
@@ -1382,12 +1596,83 @@ mod tests {
         {
             let proof1 = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
 
-            // dlog check failed because input to Hash has the wrong round number
+            // the round carried in the proof (1) does not match the round the
+            // verifier expects for this position (11), so it is rejected before
+            // the dlog check
             assert!(
                 verify_proof(&pp1, &proof1, 11, sid)
                     .unwrap_err()
                     .to_string()
+                    .contains("bad round number")
+            );
+        }
+        {
+            // A malicious contributor must not be able to inflate the round
+            // number stored in the public parameter. Before this was checked,
+            // a very large round would pass the monotonicity check and then
+            // cause every subsequent honest contribution to be rejected as
+            // stale, letting the attacker fix the final CRS to their own.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            proof.new_pp.round = u64::MAX;
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bad round number")
+            );
+        }
+        {
+            // The round number is also bound into the discrete-log proof. Even
+            // if a malicious contributor forges new_pp.round to the value the
+            // verifier expects (passing the round check above), a proof whose
+            // dlog was computed for a different round is still rejected.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 11, &r, sid);
+            proof.new_pp.round = 1;
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
                     .contains("dlog check failed")
+            );
+        }
+        {
+            // A malformed proof with an empty G1 list must be rejected with an
+            // error, never panic on an out-of-bounds index. verify_proof runs
+            // inside a compute task whose panic would abort the whole ceremony,
+            // so this is a liveness guard: lengths are checked before indexing.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            proof.new_pp.g1g2list.g1s.clear();
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("crs length check failed (g)")
+            );
+        }
+        {
+            // Same guard for the G2 (g_hat) list: a truncated g2s vector is
+            // rejected, not indexed into.
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            proof.new_pp.g1g2list.g2s.clear();
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("crs length check failed (g_hat)")
+            );
+        }
+        {
+            // A contributor must not change max_num_bits mid-ceremony: a proof whose
+            // max_num_bits differs from the verifier's current value is rejected, so all
+            // parties keep the same request-derived value. (pp1 was built with Some(1).)
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
+            assert_eq!(proof.new_pp.max_num_bits, 1);
+            proof.new_pp.max_num_bits = 2;
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("max_num_bits mismatch")
             );
         }
         {
