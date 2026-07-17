@@ -994,23 +994,21 @@ fn cipher_params(
         context_id: None,
         epoch_id: None,
         batch_size,
-        num_requests: 1,
-        parallel_requests: 1,
         ciphertext_output_path,
-        inter_request_delay_ms: 0,
     }
 }
 
-/// Build `UserDecryptParameters` with a tiny rate-based run for integration tests.
-fn user_decrypt_params(
+/// Build a `DecryptParameters` with sensible defaults, overriding only what varies per test case.
+fn public_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
     key_id: KeyId,
     batch_size: usize,
     no_compression: bool,
     no_precompute_sns: bool,
-) -> UserDecryptParameters {
-    UserDecryptParameters {
+    ciphertext_output_path: Option<PathBuf>,
+) -> DecryptParameters {
+    DecryptParameters {
         to_encrypt: to_encrypt.to_string(),
         data_type,
         no_compression,
@@ -1019,19 +1017,39 @@ fn user_decrypt_params(
         context_id: None,
         epoch_id: None,
         batch_size,
-        rate: Some(1),
-        duration: Some(1),
-        max_in_flight: Some(10),
+        ciphertext_output_path,
+        rate_options: DecryptRateOptions::default(),
     }
 }
 
-fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> UserDecryptFile {
-    UserDecryptFile {
+/// Build `DecryptParameters` for a single non-rate user decrypt.
+fn user_decrypt_params(
+    to_encrypt: &str,
+    data_type: FheType,
+    key_id: KeyId,
+    batch_size: usize,
+    no_compression: bool,
+    no_precompute_sns: bool,
+) -> DecryptParameters {
+    DecryptParameters {
+        to_encrypt: to_encrypt.to_string(),
+        data_type,
+        no_compression,
+        no_precompute_sns,
+        key_id,
+        context_id: None,
+        epoch_id: None,
+        batch_size,
+        ciphertext_output_path: None,
+        rate_options: DecryptRateOptions::default(),
+    }
+}
+
+fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
+    DecryptFile {
         input_path,
         batch_size,
-        rate: Some(1),
-        duration: Some(1),
-        max_in_flight: Some(10),
+        rate_options: DecryptRateOptions::default(),
     }
 }
 
@@ -1130,8 +1148,8 @@ async fn integration_test_commands(
     let compressed_ctxt_with_sns_path =
         keys_folder.join("test_encrypt_compressed_cipher_with_sns.txt");
 
-    let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, no_comp, no_sns, None)
+    let pdp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
+        public_decrypt_params(val, dt, key_id, bs, no_comp, no_sns, None)
     };
     let ucp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
         user_decrypt_params(val, dt, key_id, bs, no_comp, no_sns)
@@ -1139,49 +1157,49 @@ async fn integration_test_commands(
 
     // Commands without SnS precompute (no_precompute_sns=true)
     let commands = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x1",
             FheType::Ebool,
             1,
             false,
             true,
         ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0x1",
             FheType::Ebool,
             1,
             false,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
             3,
             true,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
             3,
             false,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0xFFFF",
             FheType::Euint16,
             3,
             false,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B",
             FheType::Euint256,
             2,
             false,
             true,
         ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
             FheType::Euint256,
             2,
@@ -1197,14 +1215,12 @@ async fn integration_test_commands(
             true,
             Some(ctxt_path.clone()),
         )),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+        CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: ctxt_path.clone(),
             batch_size: 2,
-            num_requests: 2,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            rate_options: DecryptRateOptions::default(),
         })),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+        CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
             ctxt_path.clone(),
             2,
         ))),
@@ -1212,35 +1228,35 @@ async fn integration_test_commands(
 
     // Commands with SnS precompute (no_precompute_sns=false)
     let commands_for_sns_precompute = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x1",
             FheType::Ebool,
             2,
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0x78",
             FheType::Euint8,
             2,
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0x1",
             FheType::Ebool,
             1,
             true,
             false,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
             3,
             true,
             false,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820",
             FheType::Euint256,
             2,
@@ -1250,14 +1266,14 @@ async fn integration_test_commands(
         // Production format: `BigCompressed` (compressed + SnS precomputed). The other blocks
         // cover Small*/BigExpanded; this is the format real deployments actually run, so the
         // suite must exercise it explicitly.
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
             FheType::Euint256,
             2,
             false,
             false,
         ))),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F",
             FheType::Euint256,
             2,
@@ -1273,14 +1289,12 @@ async fn integration_test_commands(
             false,
             Some(ctxt_with_sns_path.clone()),
         )),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+        CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: ctxt_with_sns_path.clone(),
             batch_size: 2,
-            num_requests: 2,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            rate_options: DecryptRateOptions::default(),
         })),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+        CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
             ctxt_with_sns_path.clone(),
             2,
         ))),
@@ -1295,14 +1309,12 @@ async fn integration_test_commands(
             false,
             Some(compressed_ctxt_with_sns_path.clone()),
         )),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+        CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: compressed_ctxt_with_sns_path.clone(),
             batch_size: 2,
-            num_requests: 2,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            rate_options: DecryptRateOptions::default(),
         })),
-        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+        CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
             compressed_ctxt_with_sns_path,
             2,
         ))),
@@ -1319,13 +1331,8 @@ async fn integration_test_commands(
 
         // Validate result count matches expected requests
         match &command {
-            CCCommand::PublicDecrypt(cipher_arguments) => {
-                let num_expected_results = cipher_arguments.get_num_requests();
-                assert_eq!(results.len(), num_expected_results);
-            }
-            CCCommand::UserDecrypt(_) => {
-                assert!(results.is_empty());
-                continue;
+            CCCommand::PublicDecrypt(_) | CCCommand::UserDecrypt(_) => {
+                assert_eq!(results.len(), 1);
             }
             _ => {}
         }
@@ -2447,7 +2454,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     // Verify that a public-decrypt request succeeds in the new context.
     // Uses `BigCompressed` (no_compression=false, no_precompute_sns=false) — the production
     // format and the fast decrypt path; this test exercises the context switch, not ciphertext types.
-    let mut params = cipher_params(
+    let mut params = public_decrypt_params(
         "0x1",
         FheType::Ebool,
         KeyId::from_str(&key_id)?,
@@ -2459,7 +2466,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     params.context_id = Some(context_id);
     let ddec_config = cmd_config(
         &config_path,
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(params)),
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(params)),
         200,
     );
     let results = execute_cmd(&ddec_config, test_path)
@@ -3089,7 +3096,7 @@ async fn test_threshold_reshare() -> Result<()> {
         &config_path,
         // `BigCompressed` (production format, fast path) — this test exercises reshare, not
         // ciphertext types.
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
             to_encrypt: "0x123456".to_string(),
             data_type: FheType::Euint64,
             no_compression: false,
@@ -3098,10 +3105,8 @@ async fn test_threshold_reshare() -> Result<()> {
             context_id: Some(context_id),
             epoch_id: Some(new_epoch_id),
             batch_size: 1,
-            num_requests: 1,
             ciphertext_output_path: None,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            rate_options: DecryptRateOptions::default(),
         })),
         200,
     );
