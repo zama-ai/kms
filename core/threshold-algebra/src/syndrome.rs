@@ -169,9 +169,9 @@ pub fn decode_syndrome<F: Field>(
 
     // initialize error magnitudes to 0 for all indices
     let mut e = vec![F::ZERO; x_alpha_inv.len()];
-    for (i, xi) in x_alpha_inv.iter().enumerate() {
-        if sigma.eval(xi) == F::ZERO {
-            e[i] = mag_factor[i] * omega.eval(xi) / sigma_deriv.eval(xi);
+    for (i, xi_inv) in x_alpha_inv.iter().enumerate() {
+        if sigma.eval(xi_inv) == F::ZERO {
+            e[i] = mag_factor[i] * omega.eval(xi_inv) / sigma_deriv.eval(xi_inv);
         }
     }
 

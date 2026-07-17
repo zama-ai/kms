@@ -36,7 +36,7 @@ use std::{
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::Zeroize;
 
-/// Precompute for Reed–Solomon syndrome computation and decoding over the ring `ResiduePoly<Z, EXT>`.
+/// Precompute for Reed–Solomon syndrome computation and decoding over the ring `ResiduePoly<Z, EXTENSION_DEGREE>`.
 ///
 /// Every field here depends only on the ordered set of party [`Role`]s holding the shares — and the threshold `t`,
 /// never on share values. It is built once per committee with [`Self::new`] and reused across every sharing reshared
@@ -50,9 +50,9 @@ use zeroize::Zeroize;
 ///
 /// **NOTE**: the shares passed to [`Self::compute`] must be in the **same order** as `parties` was in [`Self::new`] —
 /// index `i` lines up across `alpha_powers`, `inv_denoms`, and `sharing.shares`.
-pub struct SyndromeContext<Z: BaseRing, const EXT: usize>
+pub struct SyndromeContext<Z: BaseRing, const EXTENSION_DEGREE: usize>
 where
-    ResiduePoly<Z, EXT>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
     /// Committee size `n`.
     party_count: usize,
@@ -60,25 +60,25 @@ where
     pub r: usize,
     /// `alpha_powers[i][j] = αᵢʲ` for `j ∈ 0..r` (exponents `0..=r−1`), where `αᵢ = embed(roleᵢ)` is party `i`'s ring
     /// point: the Vandermonde weights of the syndrome map. Read as `alpha_powers[i][j]` in [`Self::compute`].
-    alpha_powers: Vec<Vec<ResiduePoly<Z, EXT>>>,
+    alpha_powers: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>,
     /// `inv_denoms[i] = 1 / Lᵢ(αᵢ) = 1 / ∏_{j≠i}(αᵢ − αⱼ)`, the inverse Lagrange denominator for party `i`. The second
     /// factor of each syndrome term in [`Self::compute`] (`numerator * inv_denoms[i]`).
-    inv_denoms: Vec<ResiduePoly<Z, EXT>>,
+    inv_denoms: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
     /// `deltas[i] = δᵢ(0) = Lᵢ(0) / Lᵢ(αᵢ)`, the coefficient mapping party `i`'s share to its contribution at
     /// evaluation point `0`. Unused here; exposed via [`Self::deltas`] so `reshare.rs` can build its reconstruction
     /// coefficients without recomputing numerators.
-    deltas: Vec<ResiduePoly<Z, EXT>>,
+    deltas: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
     /// Field-level inverse party points `1 / roleᵢ` (in the quotient field). Committee-invariant hint passed to
     /// `decode_syndrome` in [`Self::decode`] for the error-location root search.
-    x_inv: Vec<<ResiduePoly<Z, EXT> as QuotientMaximalIdeal>::QuotientOutput>,
+    x_inv: Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
     /// Field-level error-magnitude factors `−roleᵢ · Lᵢ(roleᵢ)`. The second committee-invariant hint passed to
     /// `decode_syndrome` in [`Self::decode`]; per error it is multiplied by the `ω/σ′` term.
-    mag_factor: Vec<<ResiduePoly<Z, EXT> as QuotientMaximalIdeal>::QuotientOutput>,
+    mag_factor: Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
 }
 
-impl<Z: BaseRing, const EXT: usize> SyndromeContext<Z, EXT>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> SyndromeContext<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, EXT>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
     /// Build the committee-invariant precompute for `parties` (the ordered committee) and `threshold`.
     ///
@@ -105,15 +105,12 @@ where
         }
 
         // --- Field-level decode hints (consumed per bit-plane by `decode_syndrome` in `decode`) ---
-        // The parties as points of the quotient field (GF16) — the field syndrome decoding runs in.
-        let parties_as_field_points: Vec<_> = parties
+        // The parties as points of the quotient field (the field syndrome decoding runs in).
+        let parties_as_field_points = parties
             .iter()
-            .map(|role| {
-                <ResiduePoly<Z, EXT> as QuotientMaximalIdeal>::QuotientOutput::from(
-                    role.one_based() as u8,
-                )
-            })
-            .collect();
+            .map(RingWithExceptionalSequence::embed_role_to_exceptional_sequence)
+            .collect::<Result<Vec<_>>>()?;
+
         // x_inv[i] = 1/roleᵢ (root search) and mag_factor[i] = −roleᵢ·Lᵢ(roleᵢ) (error magnitude).
         let (x_inv, mag_factor) = field_decode_hints(&parties_as_field_points);
 
@@ -123,14 +120,14 @@ where
         let parties = parties
             .iter()
             .map(ResiduePoly::embed_role_to_exceptional_sequence)
-            .collect::<Result<Vec<ResiduePoly<Z, EXT>>>>()?;
+            .collect::<Result<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>>()?;
         // Lagrange numerators Lᵢ(Z) = ∏_{j≠i}(Z − αⱼ) (the Lᵢ of Eq. 15 in the spec).
         let lagrange_numerators = lagrange_numerators(&parties);
         // alpha_powers[i][j] = αᵢʲ for j ∈ 0..r — the Vandermonde weights. `compute` only reads exponents up to r − 1,
         // so we stop there (`compute_powers_list` yields `max_exponent + 1` powers per party, i.e. exponents 0..=r−1).
         let alpha_powers = compute_powers_list(&parties, r - 1);
         // inv_denoms[i] = 1 / Lᵢ(αᵢ): evaluate each numerator at its own point, then invert once.
-        let inv_denoms: Vec<ResiduePoly<Z, EXT>> = parties
+        let inv_denoms: Vec<ResiduePoly<Z, EXTENSION_DEGREE>> = parties
             .iter()
             .zip(&lagrange_numerators)
             .map(|(alpha_i, ell_i)| ell_i.eval(alpha_i).invert())
@@ -139,7 +136,7 @@ where
         // --- Reconstruction coefficients for `reshare.rs` (exposed via `deltas`) ---
         // δᵢ(0) = Lᵢ(0) / Lᵢ(αᵢ), reusing the numerators and inverse denominators just built.
         let zero = ResiduePoly::get_from_exceptional_sequence(0)?;
-        let deltas: Vec<ResiduePoly<Z, EXT>> = lagrange_numerators
+        let deltas: Vec<ResiduePoly<Z, EXTENSION_DEGREE>> = lagrange_numerators
             .iter()
             .zip(&inv_denoms)
             .map(|(l_i, inv)| l_i.eval(&zero) * *inv)
@@ -159,8 +156,8 @@ where
     /// Compute the syndrome polynomial given the [`ShamirSharings`].
     pub fn compute(
         &self,
-        sharing: &ShamirSharings<ResiduePoly<Z, EXT>>,
-    ) -> Result<Poly<ResiduePoly<Z, EXT>>> {
+        sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    ) -> Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>> {
         // This doesn't protect against a same-sized but wrong-order share. Callers **must** ensure the shares match up.
         debug_assert_eq!(
             sharing.shares.len(),
@@ -187,8 +184,8 @@ where
     /// Decode the error in the given syndrome polynomial
     pub fn decode(
         &self,
-        mut syn_poly: Poly<ResiduePoly<Z, EXT>>,
-    ) -> Result<Vec<ResiduePoly<Z, EXT>>> {
+        mut syn_poly: Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    ) -> Result<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>> {
         // sum up the error vectors here
         let mut e_res = vec![ResiduePoly::ZERO; self.party_count];
         // If all parties are honest, the syndrome poly is zero => bail early
@@ -247,7 +244,7 @@ where
     }
 
     /// Return a slice to the pre-computed delta_i's evaluated at zero.
-    pub fn deltas(&self) -> &[ResiduePoly<Z, EXT>] {
+    pub fn deltas(&self) -> &[ResiduePoly<Z, EXTENSION_DEGREE>] {
         &self.deltas
     }
 }
