@@ -112,9 +112,10 @@ def dag_tasks(kind, scen):
         out += [
             f"- name: {name}",
             f"  dependencies: [{deps_str}]",
-            f"  template: run-{kind}-rate",
+            "  template: run-decrypt-rate",
             "  arguments:",
             "    parameters:",
+            f'    - {{name: kind, value: "{kind}"}}',
             f'    - {{name: rate, value: "{r["rate"]}"}}',
             f'    - {{name: key_id, value: "{{{{tasks.{key}.outputs.parameters.request-id}}}}"}}',
             f'    - {{name: previous-ok, value: "{prevok}"}}',

@@ -323,7 +323,6 @@ enum CiphertextFormat {
   // we can directly decrypt this ciphertext.
   SmallExpanded = 1;
   // Big (128-bit) compressed ciphertexts.
-  // WARNING! currently not supported.
   BigCompressed = 2;
   // Big (128-bit) expanded ciphertexts.
   // This is only useful when doing the second half of
@@ -699,7 +698,7 @@ message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes ephem_op_enc_key = 1;
   // The public verification key of the KMS server. MUST be manually validated by custodian
-  bytes operator_verf_key = 2; 
+  bytes operator_verf_key = 2;
   /// The ciphertexts that are the backup. Indexed by the custodian role.
   map<uint64, OperatorBackupOutput> cts = 3;
 }

@@ -598,7 +598,7 @@ Optional arguments:
  - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
  - `--no-verify`: Skip all verification of the fetched responses (both the internal KMS-node signatures and the external signature) and just return them.
 
-Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<PublicDecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
+Upon success, `public-decrypt` prints phased timing lines and a result line formatted as `<message> - "request_id": "<REQUEST_ID>"`. In rate mode (`--rate`/`--duration`), it prints `PUBLIC_DECRYPT_METRICS {json}`.
 
 Recall that `PublicDecryptionResponse` follows this format:
 ```proto
@@ -645,19 +645,14 @@ Options shared by public and user decryption are:
  - `--no-precompute-sns` / `--ns`: Disables precomputation of the switch and squash on the core client. Setting this flag causes transmission of smaller ciphertexts and runs the SnS computation on the cores. (default: False = SnS precomputation enabled)
  - `--context-id <CONTEXT_ID>`: optionally specify the context ID to use for the decryption. Defaults to the default context if not specified.
  - `--epoch-id <EPOCH_ID>`: optionally specify the epoch ID to use for the decryption. Defaults to the default epoch if not specified.
-
-Public-decrypt-only options are:
- - `-n`/`--num-requests <NUM_REQUESTS>`: the number of requests that are sent in total. This will create `NUM_REQUESTS` copies of the same request (each with a different `REQUEST_ID`)
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
- - `-i`/`--inter-request-delay-ms <DELAY>`: delay in milliseconds between consecutive decrypt requests (default: `0`, i.e. no waiting between requests)
- - `-p`/`--parallel-requests <NUM>`: number of requests to be sent in parallel before waiting `<DELAY>` specified with `-i` (default: `0`, i.e. all requests are sent at once)
 
-User-decrypt-only options are:
+Public/user-decrypt rate-mode options are:
  - `--rate <REQUESTS_PER_SECOND>`: request launch rate. Must be used together with `--duration`.
  - `--duration <SECONDS>`: load-test duration. Must be used together with `--rate`.
  - `--max-in-flight <NUM>`: optional rate-mode cap for in-flight requests before the client starts shedding requests.
 
- __NOTE__: For public decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `-n`/`--num-requests <NUM_REQUESTS>`, `--inter-request-delay-ms <DELAY>`, and `-p`/`--parallel-requests <NUM>` are supported. For user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, and `--max-in-flight <NUM>` are supported.
+ __NOTE__: For public and user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, and `--max-in-flight <NUM>` are supported.
 
 ### Custodian context
 
