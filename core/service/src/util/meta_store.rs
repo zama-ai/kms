@@ -38,6 +38,7 @@
 use crate::engine::utils::MetricedError;
 use anyhow::anyhow;
 use kms_grpc::RequestId;
+use std::collections::hash_map;
 use std::fmt::{self};
 use std::sync::Weak;
 use std::{
@@ -464,51 +465,66 @@ impl<T> MetaStore<T> {
         &mut self,
         request_id: &RequestId,
     ) -> Result<MetaStorePermit<T>, MetaStoreError> {
+        // Fast path — store below capacity (always true for an unlimited store, and for a bounded store that has not
+        // yet filled).
+        //
+        // The capacity-full path below uses a two-probe form because eviction mutates `storage`, which cannot coexist
+        // with a held `VacantEntry`.
+        if self.storage.len() < self.capacity {
+            return match self.storage.entry(*request_id) {
+                hash_map::Entry::Occupied(_) => Err(MetaStoreError::AlreadyExists {
+                    req_id: *request_id,
+                }),
+                hash_map::Entry::Vacant(slot) => {
+                    let (entry, claim) = StoredEntry::new_pending();
+                    let permit = MetaStorePermit::new(*request_id, claim, self.reaper_tx.clone());
+                    slot.insert(entry);
+                    Ok(permit)
+                }
+            };
+        }
+
+        // Capacity-full path — must evict, which mutates `storage` on its own, so existence is checked up front (before
+        // evicting) and the insert happens at the end.
         if self.storage.contains_key(request_id) {
             return Err(MetaStoreError::AlreadyExists {
                 req_id: *request_id,
             });
         }
-        if self.storage.len() >= self.capacity {
-            if self.complete_queue.len() <= self.min_cache {
-                return Err(MetaStoreError::CapacityFull {
-                    req_id: *request_id,
-                });
-            } else {
-                // Evict the oldest completed entry that has no outstanding
-                // permit. A `Done` entry can be permit-held (via `reserve` /
-                // `lock_entry`); evicting it would pull storage out from under
-                // the holder, so we skip held entries (`strong_count > 1`).
-                let evict_pos = {
-                    let storage = &self.storage;
-                    self.complete_queue.iter().position(|id| {
-                        storage
-                            .get(id)
-                            .is_some_and(|e| e.status() == EntryStatus::Done && !e.is_permit_held())
-                    })
-                };
-                let Some(pos) = evict_pos else {
-                    // Every completed entry is currently reserved, so there is
-                    // nothing safe to evict; treat the store as full.
-                    return Err(MetaStoreError::CapacityFull {
-                        req_id: *request_id,
-                    });
-                };
-                let Some(old_request_id) = self.complete_queue.remove(pos) else {
-                    let msg =
-                        format!("complete_queue index {pos} vanished while inserting {request_id}");
-                    tracing::error!(msg);
-                    return Err(MetaStoreError::Invariant(msg));
-                };
-                if self.storage.remove(&old_request_id).is_none() {
-                    self.complete_queue.insert(pos, old_request_id);
-                    let msg = format!(
-                        "failed to remove old element {old_request_id} from storage while inserting {request_id}"
-                    );
-                    tracing::error!(msg);
-                    return Err(MetaStoreError::Invariant(msg));
-                }
-            }
+        if self.complete_queue.len() <= self.min_cache {
+            return Err(MetaStoreError::CapacityFull {
+                req_id: *request_id,
+            });
+        }
+        // Evict the oldest completed entry that has no outstanding permit. A `Done` entry can be permit-held (via
+        // `reserve` / `lock_entry`); evicting it would pull storage out from under the holder, so we skip held entries
+        // (`strong_count > 1`).
+        let evict_pos = {
+            let storage = &self.storage;
+            self.complete_queue.iter().position(|id| {
+                storage
+                    .get(id)
+                    .is_some_and(|e| e.status() == EntryStatus::Done && !e.is_permit_held())
+            })
+        };
+        let Some(pos) = evict_pos else {
+            // Every completed entry is currently reserved, so there is nothing safe to evict; treat the store as full.
+            return Err(MetaStoreError::CapacityFull {
+                req_id: *request_id,
+            });
+        };
+        let Some(old_request_id) = self.complete_queue.remove(pos) else {
+            let msg = format!("complete_queue index {pos} vanished while inserting {request_id}");
+            tracing::error!(msg);
+            return Err(MetaStoreError::Invariant(msg));
+        };
+        if self.storage.remove(&old_request_id).is_none() {
+            self.complete_queue.insert(pos, old_request_id);
+            let msg = format!(
+                "failed to remove old element {old_request_id} from storage while inserting {request_id}"
+            );
+            tracing::error!(msg);
+            return Err(MetaStoreError::Invariant(msg));
         }
         let (entry, claim) = StoredEntry::new_pending();
         let permit = MetaStorePermit::new(*request_id, claim, self.reaper_tx.clone());
@@ -566,6 +582,17 @@ impl<T> MetaStore<T> {
     fn update(
         &mut self,
         update: Result<T, String>,
+        permit: MetaStorePermit<T>,
+    ) -> Result<(), MetaStoreError> {
+        self.update_arc(update.map(Arc::new), permit)
+    }
+
+    /// Like [`update`](Self::update), but takes the value already wrapped in an
+    /// `Arc`. This lets the caller allocate *before* acquiring the store lock,
+    /// keeping the allocation out of the globally-serialized critical section.
+    fn update_arc(
+        &mut self,
+        update: Result<Arc<T>, String>,
         mut permit: MetaStorePermit<T>,
     ) -> Result<(), MetaStoreError> {
         // We own the outcome from here on, so a later drop must not reap.
@@ -578,7 +605,7 @@ impl<T> MetaStore<T> {
         if entry.status() != EntryStatus::Pending {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
-        entry.set_complete(update.map(Arc::new));
+        entry.set_complete(update);
         self.complete_queue.push_back(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
@@ -1043,7 +1070,8 @@ pub(crate) async fn update_ok_req_in_meta_store<T>(
     request_metric: &'static str,
 ) -> bool {
     let req_id = permit.req_id;
-    match meta_store.write().await.update(Ok(result), permit) {
+    let result = Arc::new(result);
+    match meta_store.write().await.update_arc(Ok(result), permit) {
         Ok(()) => true,
         Err(e) => {
             MetricedError::handle_unreturnable_error(request_metric, Some(req_id), e);
