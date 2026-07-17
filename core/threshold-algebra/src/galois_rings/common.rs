@@ -161,7 +161,7 @@ where
         &self,
         sharing: &ShamirSharings<ResiduePoly<Z, EXT>>,
     ) -> Result<Poly<ResiduePoly<Z, EXT>>> {
-        // TODO(dp): this doesn't protect against a same-sized but wrong-order share. Callers **must** ensure the shares match up.
+        // This doesn't protect against a same-sized but wrong-order share. Callers **must** ensure the shares match up.
         debug_assert_eq!(
             sharing.shares.len(),
             self.party_count,
@@ -177,7 +177,7 @@ where
                 let numerator = y * self.alpha_powers[i][j];
                 coef += numerator * self.inv_denoms[i];
             }
-            // TODO(dp): `set_coef` is not optimal. Prolly very minor, but that resize is weird.
+            // TODO(dp): `set_coef` is not optimal. Prolly very minor, but that resize is weird. #3096
             res.set_coef(j, coef);
         }
 
@@ -201,7 +201,7 @@ where
             let sliced_syndrome_coefs: Vec<_> = syn_poly
                 .coefs()
                 .iter()
-                // TODO(dp): bit_compose looks slow, should be very quick. Defer to later, but check the impl.
+                // TODO(dp): bit_compose looks slow, should be very quick. Defer to later, but check the impl. #3097
                 .map(|c| c.bit_compose(bit_idx))
                 .collect();
 
@@ -210,7 +210,6 @@ where
             if sliced_syndrome.is_zero() {
                 continue;
             }
-            // TODO(dp): We do not re-use `ej` and should avoid materializing it here. Instead build `lifted_e` directly. Not  right now though.
             // bit error in this for this bit-idx
             let ej = decode_syndrome(sliced_syndrome, self.r, &self.x_inv, &self.mag_factor);
 
