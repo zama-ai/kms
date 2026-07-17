@@ -52,6 +52,8 @@
 #   core_client_image_tag  (string, optional, default = new_image_tag)
 #                            Core-client (test harness) image tag, decoupled from
 #                            the core versions under test. Same across all stages.
+#   client_logs            (boolean, default false)
+#                            Enable core-client tracing logs.
 #   build                  (boolean, default false)
 #                            If true, build new images via docker-build.yml and use
 #                            that tag as NEW; kms_branch applies to the build.
@@ -71,6 +73,10 @@
 #                            Comma-separated party IDs for the first upgrade wave.
 #   second_batch_parties   (string, default 6,7,8,9)
 #                            Comma-separated party IDs for the second upgrade wave.
+#   test_profile           (choice decrypt|prss-threshold, default decrypt)
+#                            decrypt = plain pdec/udec correctness on the mixed
+#                            cluster. prss-threshold = legacy-PRSS-mask request-ID
+#                            boundary probe (below/above threshold reqids).
 #
 # Jobs
 # ----
