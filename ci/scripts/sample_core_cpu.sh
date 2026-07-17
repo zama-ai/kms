@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Sample per-party (kms-core pod) CPU + memory via metrics-server, timestamped,
-# every INTERVAL seconds until killed. Used by performance-testing.yml to
-# correlate core CPU against the decrypt rate rungs — pairs with the eth0
-# diagnostics (collect_network_diagnostics.sh) to show whether the cores are
-# CPU-bound or network-bound at the top rungs.
+# Basic bash script to sample CPUs on the core side during benchmarking so we can get an idea of how much pressure our
+# benchmarks are putting on the KMS cluster.
+# Samples per-party CPU + memory every INTERVAL seconds until killed. Used by performance-testing.yml to correlate core
+# CPU against performance tests in a similar way to the eth0 diagnostics (collect_network_diagnostics.sh).
 #
-# metrics-server resolution is ~15s and `kubectl top` reports CPU as a rate over
-# that window, so sampling faster just re-reads the same value; ~10s is plenty.
-# Namespace-scoped pod metrics only (no cluster node-metrics RBAC needed).
+# Kubernetes's metrics-server resolution is ~15s and `kubectl top` reports CPU as a rate over that window, so sampling
+# faster just re-reads the same value; ~10s is plenty.
 #
 # Each line: "<utc-ts> <pod> <cpu> <mem>", e.g. "2026-07-12T10:25:00Z kms-core-1-core-1 47800m 20480Mi".
 set -uo pipefail
