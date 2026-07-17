@@ -19,8 +19,8 @@ use crate::backup::{
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{
-    PubDecVerificationMaterial, do_public_decrypt, do_user_decrypt, do_user_decrypt_once,
-    get_public_decrypt_responses,
+    PubDecVerificationMaterial, do_public_decrypt, do_public_decrypt_once, do_user_decrypt,
+    do_user_decrypt_once, get_public_decrypt_responses,
 };
 use crate::keygen::{
     do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
@@ -69,7 +69,7 @@ use validator::{Validate, ValidationError};
 
 // time to sleep between `get_result` poll requests in milliseconds
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
-const USER_DECRYPT_DRAIN_TIMEOUT_SECS: u64 = 30;
+const DECRYPT_RATE_DRAIN_TIMEOUT_SECS: u64 = 30;
 
 /// Retries a function a given number of times with a given interval between retries.
 macro_rules! retry {
@@ -332,27 +332,14 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     Ok(())
 }
 
-fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
-    if cf.get_num_requests() == 0 {
-        return Err(anyhow::anyhow!("Number of requests cannot be zero."));
-    }
-
-    if cf.get_batch_size() == 0 {
-        return Err(anyhow::anyhow!("Batch size cannot be zero."));
-    }
-
-    if cf.get_parallel_requests() > cf.get_num_requests() {
-        return Err(anyhow::anyhow!(
-            "Number of parallel requests ({}) cannot be > total number of requests ({}).",
-            cf.get_parallel_requests(),
-            cf.get_num_requests()
-        ));
-    }
-
-    Ok(())
+trait DecryptRateArgs {
+    fn get_batch_size(&self) -> usize;
+    fn get_rate(&self) -> Option<u64>;
+    fn get_duration(&self) -> Option<u64>;
+    fn get_max_in_flight(&self) -> Option<usize>;
 }
 
-fn validate_user_decrypt_args(cf: &UserDecryptArguments) -> anyhow::Result<()> {
+fn validate_decrypt_rate_args(cf: &impl DecryptRateArgs) -> anyhow::Result<()> {
     if cf.get_batch_size() == 0 {
         return Err(anyhow::anyhow!("Batch size cannot be zero."));
     }
@@ -604,85 +591,70 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
+/// Decryption input source and optional rate-mode controls (shared by public and user decrypt).
 #[derive(Debug, Subcommand, Clone)]
-pub enum CipherArguments {
-    FromFile(CipherFile),
-    FromArgs(CipherParameters),
+pub enum DecryptArguments {
+    /// Load an existing ciphertext from disk before asking KMS cores for decryption.
+    FromFile(DecryptFile),
+    /// Encrypt CLI-provided plaintext before asking KMS cores for decryption.
+    FromArgs(DecryptParameters),
 }
 
-impl CipherArguments {
-    pub fn get_batch_size(&self) -> usize {
+impl DecryptRateArgs for DecryptArguments {
+    fn get_batch_size(&self) -> usize {
         match self {
-            CipherArguments::FromFile(cipher_file) => cipher_file.batch_size,
-            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.batch_size,
+            DecryptArguments::FromFile(cipher_file) => cipher_file.batch_size,
+            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.batch_size,
         }
     }
 
-    pub fn get_num_requests(&self) -> usize {
+    fn get_rate(&self) -> Option<u64> {
         match self {
-            CipherArguments::FromFile(cipher_file) => cipher_file.num_requests,
-            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.num_requests,
+            DecryptArguments::FromFile(cipher_file) => cipher_file.rate_options.rate,
+            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.rate_options.rate,
         }
     }
 
-    pub fn get_parallel_requests(&self) -> usize {
+    fn get_duration(&self) -> Option<u64> {
         match self {
-            CipherArguments::FromFile(cipher_file) => cipher_file.parallel_requests,
-            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.parallel_requests,
-        }
-    }
-
-    pub fn get_inter_request_delay_ms(&self) -> Duration {
-        match self {
-            CipherArguments::FromFile(cipher_file) => {
-                tokio::time::Duration::from_millis(cipher_file.inter_request_delay_ms)
-            }
-            CipherArguments::FromArgs(cipher_parameters) => {
-                tokio::time::Duration::from_millis(cipher_parameters.inter_request_delay_ms)
+            DecryptArguments::FromFile(cipher_file) => cipher_file.rate_options.duration,
+            DecryptArguments::FromArgs(cipher_parameters) => {
+                cipher_parameters.rate_options.duration
             }
         }
     }
-}
 
-#[derive(Debug, Subcommand, Clone)]
-pub enum UserDecryptArguments {
-    FromFile(UserDecryptFile),
-    FromArgs(UserDecryptParameters),
-}
-
-impl UserDecryptArguments {
-    pub fn get_batch_size(&self) -> usize {
+    fn get_max_in_flight(&self) -> Option<usize> {
         match self {
-            UserDecryptArguments::FromFile(cipher_file) => cipher_file.batch_size,
-            UserDecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.batch_size,
+            DecryptArguments::FromFile(cipher_file) => cipher_file.rate_options.max_in_flight,
+            DecryptArguments::FromArgs(cipher_parameters) => {
+                cipher_parameters.rate_options.max_in_flight
+            }
         }
+    }
+}
+
+impl DecryptArguments {
+    pub fn get_batch_size(&self) -> usize {
+        DecryptRateArgs::get_batch_size(self)
     }
 
     pub fn get_rate(&self) -> Option<u64> {
-        match self {
-            UserDecryptArguments::FromFile(cipher_file) => cipher_file.rate,
-            UserDecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.rate,
-        }
+        DecryptRateArgs::get_rate(self)
     }
 
     pub fn get_duration(&self) -> Option<u64> {
-        match self {
-            UserDecryptArguments::FromFile(cipher_file) => cipher_file.duration,
-            UserDecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.duration,
-        }
+        DecryptRateArgs::get_duration(self)
     }
 
     pub fn get_max_in_flight(&self) -> Option<usize> {
-        match self {
-            UserDecryptArguments::FromFile(cipher_file) => cipher_file.max_in_flight,
-            UserDecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.max_in_flight,
-        }
+        DecryptRateArgs::get_max_in_flight(self)
     }
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
 pub struct CipherParameters {
-    /// Hex value to encrypt for encryption/public-decryption commands.
+    /// Hex value to encrypt for encryption/decryption commands.
     /// The value will be converted from a little endian hex string to a `Vec<u8>`.
     /// Can optionally have a "0x" prefix.
     #[clap(long, short = 'e')]
@@ -699,7 +671,7 @@ pub struct CipherParameters {
     /// Default: False, i.e. the SnS is precomputed on the core client.
     #[clap(long, alias = "ns")]
     pub no_precompute_sns: bool,
-    /// Key identifier to use for public decryption.
+    /// Key identifier to use for decryption.
     #[clap(long, short = 'k')]
     pub key_id: KeyId,
     /// Optionally specify the context ID to use for the decryption.
@@ -715,48 +687,15 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
-    /// Numbers of requests to process at once.
-    /// Each request uses a copy of the same batch.
-    #[serde(skip_serializing, skip_deserializing)]
-    #[clap(long, short = 'n', default_value_t = 1)]
-    pub num_requests: usize,
     /// Optionally dump the ciphertext to a file.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
-    /// Delay (in ms) between consecutive requests for decrypt operations
-    #[serde(skip_serializing, skip_deserializing)]
-    #[clap(long, short = 'i', default_value_t = 0)]
-    pub inter_request_delay_ms: u64,
-    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
-    #[serde(skip_serializing, skip_deserializing)]
-    #[clap(long, short = 'p', default_value_t = 0)]
-    pub parallel_requests: usize,
 }
 
 #[derive(Debug, Args, Clone)]
-pub struct CipherFile {
-    /// Input file of the ciphertext.
-    #[clap(long)]
-    pub input_path: PathBuf,
-    /// Number of copies of the ciphertext to process in a single request.
-    #[clap(long, short = 'b', default_value_t = 1)]
-    pub batch_size: usize,
-    /// Numbers of requests to process at once.
-    /// Each request uses a copy of the same batch.
-    #[clap(long, short = 'n', default_value_t = 1)]
-    pub num_requests: usize,
-    /// Delay (in ms) between consecutive requests for decrypt operations
-    #[clap(long, default_value_t = 0)]
-    pub inter_request_delay_ms: u64,
-    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
-    #[clap(long, short = 'p', default_value_t = 0)]
-    pub parallel_requests: usize,
-}
-
-#[derive(Debug, Args, Clone)]
-pub struct UserDecryptParameters {
-    /// Hex value to encrypt and request a user decryption.
+pub struct DecryptParameters {
+    /// Hex value to encrypt and request a decryption.
     /// The value will be converted from a little endian hex string to a `Vec<u8>`.
     /// Can optionally have a "0x" prefix.
     #[clap(long, short = 'e')]
@@ -773,7 +712,7 @@ pub struct UserDecryptParameters {
     /// Default: False, i.e. the SnS is precomputed on the core client.
     #[clap(long, alias = "ns")]
     pub no_precompute_sns: bool,
-    /// Key identifier to use for user decryption.
+    /// Key identifier to use for decryption.
     #[clap(long, short = 'k')]
     pub key_id: KeyId,
     /// Optionally specify the context ID to use for the decryption.
@@ -787,18 +726,14 @@ pub struct UserDecryptParameters {
     /// Number of copies of the ciphertext to process in a single request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
-    /// Request launch rate, in requests per second. Must be used together with `--duration`.
+    /// Optionally dump the ciphertext to a file.
     #[clap(long)]
-    pub rate: Option<u64>,
-    /// Rate-mode duration, in seconds. Must be used together with `--rate`.
-    #[clap(long)]
-    pub duration: Option<u64>,
-    /// Maximum number of in-flight requests allowed during a rate-mode run.
-    #[clap(long)]
-    pub max_in_flight: Option<usize>,
+    pub ciphertext_output_path: Option<PathBuf>,
+    #[clap(flatten)]
+    pub rate_options: DecryptRateOptions,
 }
 
-impl UserDecryptParameters {
+impl DecryptParameters {
     fn to_cipher_parameters(&self) -> CipherParameters {
         CipherParameters {
             to_encrypt: self.to_encrypt.clone(),
@@ -809,22 +744,13 @@ impl UserDecryptParameters {
             context_id: self.context_id,
             epoch_id: self.epoch_id,
             batch_size: self.batch_size,
-            num_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            parallel_requests: 0,
+            ciphertext_output_path: self.ciphertext_output_path.clone(),
         }
     }
 }
 
-#[derive(Debug, Args, Clone)]
-pub struct UserDecryptFile {
-    /// Input file of the ciphertext.
-    #[clap(long)]
-    pub input_path: PathBuf,
-    /// Number of copies of the ciphertext to process in a single request.
-    #[clap(long, short = 'b', default_value_t = 1)]
-    pub batch_size: usize,
+#[derive(Debug, Args, Clone, Copy, Default)]
+pub struct DecryptRateOptions {
     /// Request launch rate, in requests per second. Must be used together with `--duration`.
     #[clap(long)]
     pub rate: Option<u64>,
@@ -834,6 +760,18 @@ pub struct UserDecryptFile {
     /// Maximum number of in-flight requests allowed during a rate-mode run.
     #[clap(long)]
     pub max_in_flight: Option<usize>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct DecryptFile {
+    /// Input file of the ciphertext.
+    #[clap(long)]
+    pub input_path: PathBuf,
+    /// Number of copies of the ciphertext to process in a single request.
+    #[clap(long, short = 'b', default_value_t = 1)]
+    pub batch_size: usize,
+    #[clap(flatten)]
+    pub rate_options: DecryptRateOptions,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1204,10 +1142,10 @@ pub enum CCCommand {
     InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
-    PublicDecrypt(CipherArguments),
+    PublicDecrypt(DecryptArguments),
     PublicDecryptResult(PublicDecryptResultParameters),
     #[clap(subcommand)]
-    UserDecrypt(UserDecryptArguments),
+    UserDecrypt(DecryptArguments),
     CrsGen(CrsParameters),
     CrsGenResult(CrsGenResultParameters),
     AbortCrsGen(AbortParameters),
@@ -2026,7 +1964,7 @@ pub async fn execute_cmd(
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
-            validate_cipher_args(cipher_args)?;
+            validate_decrypt_rate_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2041,10 +1979,10 @@ pub async fn execute_cmd(
                 context_id,
                 epoch_id,
             } = match cipher_args {
-                CipherArguments::FromFile(cipher_file) => {
+                DecryptArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
-                CipherArguments::FromArgs(cipher_parameters) => {
+                DecryptArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     let party_confs = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
@@ -2064,7 +2002,7 @@ pub async fn execute_cmd(
                     encrypt(
                         destination_prefix,
                         storage_prefix,
-                        cipher_parameters.clone(),
+                        cipher_parameters.to_cipher_parameters(),
                     )
                     .await?
                 }
@@ -2085,29 +2023,57 @@ pub async fn execute_cmd(
                     })
                     .collect();
 
-            do_public_decrypt(
-                &mut rng,
-                cipher_args.get_num_requests(),
-                internal_client,
-                ct_batch,
-                key_id,
-                context_id,
-                epoch_id,
-                &core_endpoints_req,
-                &core_endpoints_resp,
-                ptxt,
-                num_parties,
-                kms_addrs.to_vec(),
-                max_iter,
-                num_expected_responses,
-                cipher_args.get_inter_request_delay_ms(),
-                cipher_args.get_parallel_requests(),
-                cc_conf.default_domain()?,
-            )
-            .await?
+            match (cipher_args.get_rate(), cipher_args.get_duration()) {
+                (Some(rate), Some(duration)) => {
+                    let max_in_flight = cipher_args
+                        .get_max_in_flight()
+                        .unwrap_or_else(|| (rate as usize).saturating_mul(10).max(1));
+                    do_public_decrypt(
+                        &mut rng,
+                        rate,
+                        duration,
+                        max_in_flight,
+                        DECRYPT_RATE_DRAIN_TIMEOUT_SECS,
+                        internal_client,
+                        ct_batch,
+                        key_id,
+                        context_id,
+                        epoch_id,
+                        &core_endpoints_req,
+                        &core_endpoints_resp,
+                        ptxt,
+                        num_parties,
+                        kms_addrs.to_vec(),
+                        max_iter,
+                        num_expected_responses,
+                        cc_conf.default_domain()?,
+                    )
+                    .await?
+                }
+                (None, None) => {
+                    do_public_decrypt_once(
+                        &mut rng,
+                        internal_client,
+                        ct_batch,
+                        key_id,
+                        context_id,
+                        epoch_id,
+                        &core_endpoints_req,
+                        &core_endpoints_resp,
+                        ptxt,
+                        num_parties,
+                        kms_addrs.to_vec(),
+                        max_iter,
+                        num_expected_responses,
+                        cc_conf.default_domain()?,
+                    )
+                    .await?
+                }
+                _ => unreachable!("public-decrypt rate arguments are validated before dispatch"),
+            }
         }
         CCCommand::UserDecrypt(cipher_args) => {
-            validate_user_decrypt_args(cipher_args)?;
+            validate_decrypt_rate_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(
                 internal_client.expect("UserDecrypt requires a KMS client"),
             ));
@@ -2125,10 +2091,10 @@ pub async fn execute_cmd(
                 context_id,
                 epoch_id,
             } = match cipher_args {
-                UserDecryptArguments::FromFile(cipher_file) => {
+                DecryptArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
-                UserDecryptArguments::FromArgs(cipher_parameters) => {
+                DecryptArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     let party_confs = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
@@ -2174,7 +2140,7 @@ pub async fn execute_cmd(
                         rate,
                         duration,
                         max_in_flight,
-                        USER_DECRYPT_DRAIN_TIMEOUT_SECS,
+                        DECRYPT_RATE_DRAIN_TIMEOUT_SECS,
                         internal_client,
                         ct_batch,
                         key_id,
@@ -3010,109 +2976,70 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
-    fn test_cipher_parameters() -> CipherParameters {
-        CipherParameters {
+    fn test_decrypt_parameters() -> DecryptParameters {
+        DecryptParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             no_compression: false,
             no_precompute_sns: true,
-            key_id: derive_request_id("user_decrypt_args").unwrap().into(),
+            key_id: derive_request_id("decrypt_args").unwrap().into(),
             context_id: None,
             epoch_id: None,
             batch_size: 1,
-            num_requests: 1,
-            inter_request_delay_ms: 0,
             ciphertext_output_path: None,
-            parallel_requests: 0,
-        }
-    }
-
-    fn test_user_decrypt_parameters() -> UserDecryptParameters {
-        UserDecryptParameters {
-            to_encrypt: "0x1".to_string(),
-            data_type: FheType::Ebool,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id: derive_request_id("user_decrypt_args").unwrap().into(),
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            rate: Some(10),
-            duration: Some(10),
-            max_in_flight: None,
+            rate_options: DecryptRateOptions {
+                rate: Some(10),
+                duration: Some(10),
+                max_in_flight: None,
+            },
         }
     }
 
     #[test]
-    fn test_cipher_args_validation() {
-        let assert_error_contains = |params: CipherParameters, expected: &str| {
-            let err = validate_cipher_args(&CipherArguments::FromArgs(params)).unwrap_err();
+    fn test_decrypt_args_validation() {
+        let assert_error_contains = |params: DecryptParameters, expected: &str| {
+            let err = validate_decrypt_rate_args(&DecryptArguments::FromArgs(params)).unwrap_err();
             assert!(err.to_string().contains(expected));
         };
 
-        let mut params = test_cipher_parameters();
-        params.num_requests = 0;
-        assert_error_contains(params, "Number of requests");
+        let params = test_decrypt_parameters();
+        validate_decrypt_rate_args(&DecryptArguments::FromArgs(params)).unwrap();
 
-        let mut params = test_cipher_parameters();
+        let mut params = test_decrypt_parameters();
+        params.rate_options.rate = None;
+        params.rate_options.duration = None;
+        validate_decrypt_rate_args(&DecryptArguments::FromArgs(params)).unwrap();
+
+        let mut params = test_decrypt_parameters();
         params.batch_size = 0;
         assert_error_contains(params, "Batch size");
 
-        let mut params = test_cipher_parameters();
-        params.num_requests = 1;
-        params.parallel_requests = 1;
-        validate_cipher_args(&CipherArguments::FromArgs(params.clone())).unwrap();
-
-        params.parallel_requests = 2;
-        assert_error_contains(params, "parallel requests");
-    }
-
-    #[test]
-    fn test_user_decrypt_args_validation() {
-        let assert_error_contains = |params: UserDecryptParameters, expected: &str| {
-            let err =
-                validate_user_decrypt_args(&UserDecryptArguments::FromArgs(params)).unwrap_err();
-            assert!(err.to_string().contains(expected));
-        };
-
-        let params = test_user_decrypt_parameters();
-        validate_user_decrypt_args(&UserDecryptArguments::FromArgs(params)).unwrap();
-
-        let mut params = test_user_decrypt_parameters();
-        params.rate = None;
-        params.duration = None;
-        validate_user_decrypt_args(&UserDecryptArguments::FromArgs(params)).unwrap();
-
-        let mut params = test_user_decrypt_parameters();
-        params.batch_size = 0;
-        assert_error_contains(params, "Batch size");
-
-        let mut params = test_user_decrypt_parameters();
-        params.rate = Some(0);
+        let mut params = test_decrypt_parameters();
+        params.rate_options.rate = Some(0);
         assert_error_contains(params, "Rate");
 
-        let mut params = test_user_decrypt_parameters();
-        params.duration = Some(0);
+        let mut params = test_decrypt_parameters();
+        params.rate_options.duration = Some(0);
         assert_error_contains(params, "Duration");
 
-        let mut params = test_user_decrypt_parameters();
-        params.max_in_flight = Some(0);
+        let mut params = test_decrypt_parameters();
+        params.rate_options.max_in_flight = Some(0);
         assert_error_contains(params, "Max in-flight");
 
-        let mut params = test_user_decrypt_parameters();
-        params.rate = Some(10);
-        params.duration = None;
+        let mut params = test_decrypt_parameters();
+        params.rate_options.rate = Some(10);
+        params.rate_options.duration = None;
         assert_error_contains(params, "--duration");
 
-        let mut params = test_user_decrypt_parameters();
-        params.rate = None;
-        params.duration = Some(10);
+        let mut params = test_decrypt_parameters();
+        params.rate_options.rate = None;
+        params.rate_options.duration = Some(10);
         assert_error_contains(params, "--rate");
 
-        let mut params = test_user_decrypt_parameters();
-        params.rate = None;
-        params.duration = None;
-        params.max_in_flight = Some(10);
+        let mut params = test_decrypt_parameters();
+        params.rate_options.rate = None;
+        params.rate_options.duration = None;
+        params.rate_options.max_in_flight = Some(10);
         assert_error_contains(params, "--max-in-flight");
     }
 
