@@ -238,6 +238,13 @@ Because `*-reqid-above` failures are expected, the job's correctness gate exclud
 `reqid-above` pods — read each probe's PASS/FAIL from the run summary, not the job
 conclusion. Requires a threshold-aware new image and a request-ID-capable core-client.
 
+#### Core-client compatibility
+
+The Argo command strings target the **`v0.13.x` core-client CLI**. A main / `v0.14+` client is **not** compatible as-is.
+So set `core_client_image_tag` to a `v0.13.x` tag, and **do not** use `build=true` (it would build a main-based client).
+Making the `decrypt` profile main-compatible means updating those commands; the `prss-threshold` profile is
+`v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config).
+
 ### Debugging
 
 Enable verbose mode to see all function calls:
