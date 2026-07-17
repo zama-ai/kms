@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: rolling-upgrade-kms-enclave-ci-<version>-
+  generateName: decrypt-test-during-upgrades-ci-<version>-
   namespace: kms-ci
   labels:
-    app: rolling-upgrade-kms-enclave-ci-test-suite
+    app: decrypt-test-during-upgrades-ci-test-suite
 spec:
   serviceAccountName: workflow-runner
   activeDeadlineSeconds: 345600  # 96 hours total timeout
@@ -33,7 +33,7 @@ spec:
 
 
   # Main entry point
-  entrypoint: rolling-upgrade-kms-enclave-ci-test-suite
+  entrypoint: decrypt-test-during-upgrades-ci-test-suite
   arguments:
     parameters:
     - name: tls
@@ -56,91 +56,80 @@ spec:
       value: "0"
     - name: num_total
       value: "13"
-    # Unique per-stage decrypt request-IDs (32-byte hex). Below/above the PRSS-mask
-    # threshold (100). Must differ across pub/user and across the 5/13 & 9/13 runs.
-    - name: pdec-below-id
-      value: ""
-    - name: pdec-above-id
-      value: ""
-    - name: udec-below-id
-      value: ""
-    - name: udec-above-id
-      value: ""
 
 
   templates:
     # Main DAG workflow — decrypt-only tests using a pre-existing key-id
-    - name: rolling-upgrade-kms-enclave-ci-test-suite
+    - name: decrypt-test-during-upgrades-ci-test-suite
       dag:
         tasks:
           ##########################################################################
-          # Legacy-PRSS-mask boundary probe. Threshold = 100 (set on the upgraded
-          # parties in phase 2). Each decrypt pins a UNIQUE request-ID (they must be
-          # globally unique — across pub/user AND across the 5/13 and 9/13 runs, else
-          # the cores reject the duplicate) via a per-stage workflow parameter, landing
-          # below (<100 -> legacy mask on both sides -> reconstructs) or above (>100 ->
-          # new mask on the upgraded nodes -> Gao decode fails vs the legacy old nodes).
-          # Strict `<` boundary already confirmed separately (id=100 -> new schedule).
+          # Standard decrypt suite: plain public/user decrypt of the pre-upgrade
+          # key-id on the mixed cluster (correctness only — no request-ID pinning,
+          # no PRSS-mask threshold). -a forces all 13 cores to answer, so a
+          # version-incompatible node fails reconstruction rather than being masked
+          # by a quorum. Every task is expected to PASS; a failure means the mixed
+          # cluster cannot decrypt (the upgrade is not decrypt-safe for this pair).
           ##########################################################################
-          - name: public-decrypt-euint64-reqid-below
+          - name: public-decrypt-euint64-req1
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-reqid-below"
+                  value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.pdec-below-id}}"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
-          - name: public-decrypt-euint64-reqid-above
-            dependencies: ["public-decrypt-euint64-reqid-below"]
+          - name: user-decrypt-euint64-req1
+            dependencies: ["public-decrypt-euint64-req1"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-reqid-above"
+                  value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.pdec-above-id}}"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
-          - name: user-decrypt-euint64-reqid-below
-            dependencies: ["public-decrypt-euint64-reqid-above"]
+          - name: public-decrypt-euint64-req10
+            dependencies: ["user-decrypt-euint64-req1"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-reqid-below"
+                  value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.udec-below-id}}"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
-          - name: user-decrypt-euint64-reqid-above
-            dependencies: ["user-decrypt-euint64-reqid-below"]
+          - name: user-decrypt-euint64-req10
+            dependencies: ["public-decrypt-euint64-req10"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-reqid-above"
+                  value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.udec-above-id}}"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
           # Summary report generation
           - name: generate-summary
             dependencies: [
-              "public-decrypt-euint64-reqid-below",
-              "public-decrypt-euint64-reqid-above",
-              "user-decrypt-euint64-reqid-below",
-              "user-decrypt-euint64-reqid-above"
+              "public-decrypt-euint64-req1",
+              "user-decrypt-euint64-req1",
+              "public-decrypt-euint64-req10",
+              "user-decrypt-euint64-req10"
             ]
             template: summary-report
             continueOn:
@@ -148,13 +137,13 @@ spec:
             arguments:
               parameters:
               - name: test-result-1
-                value: "{{tasks.public-decrypt-euint64-reqid-below.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
               - name: test-result-2
-                value: "{{tasks.public-decrypt-euint64-reqid-above.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
               - name: test-result-3
-                value: "{{tasks.user-decrypt-euint64-reqid-below.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
               - name: test-result-4
-                value: "{{tasks.user-decrypt-euint64-reqid-above.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -187,7 +176,7 @@ spec:
       metadata:
         labels:
           test: "{{inputs.parameters.test-name}}"
-          app: rolling-upgrade-kms-enclave-test-suite
+          app: decrypt-test-during-upgrades-test-suite
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
@@ -417,10 +406,10 @@ spec:
           apk add --no-cache jq
           # Make a directory for all the results
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/public-decrypt-euint64-reqid-below.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/public-decrypt-euint64-reqid-above.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/user-decrypt-euint64-reqid-below.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-reqid-above.json
+          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req10.json
           ls -ali /mnt/results/
 
           TEST_LABEL="{{inputs.parameters.test_label}}"
@@ -451,10 +440,10 @@ spec:
 
           # Process result files in execution order
           for result in \
-            /mnt/results/public-decrypt-euint64-reqid-below.json \
-            /mnt/results/public-decrypt-euint64-reqid-above.json \
-            /mnt/results/user-decrypt-euint64-reqid-below.json \
-            /mnt/results/user-decrypt-euint64-reqid-above.json; do
+            /mnt/results/public-decrypt-euint64-req1.json \
+            /mnt/results/user-decrypt-euint64-req1.json \
+            /mnt/results/public-decrypt-euint64-req10.json \
+            /mnt/results/user-decrypt-euint64-req10.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -619,10 +608,10 @@ spec:
                   }
                 ],
                 "text": "\`\`\`\n$(for result in \
-                  /mnt/results/public-decrypt-euint64-reqid-below.json \
-                  /mnt/results/public-decrypt-euint64-reqid-above.json \
-                  /mnt/results/user-decrypt-euint64-reqid-below.json \
-                  /mnt/results/user-decrypt-euint64-reqid-above.json; do
+                  /mnt/results/public-decrypt-euint64-req1.json \
+                  /mnt/results/user-decrypt-euint64-req1.json \
+                  /mnt/results/public-decrypt-euint64-req10.json \
+                  /mnt/results/user-decrypt-euint64-req10.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
