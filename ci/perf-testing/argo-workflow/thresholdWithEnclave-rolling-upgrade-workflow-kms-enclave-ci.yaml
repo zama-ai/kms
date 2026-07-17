@@ -75,7 +75,7 @@ spec:
                 - name: test-name
                   value: "warmup-public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff"
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
@@ -91,7 +91,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff"
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
@@ -107,7 +107,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --rate 10 --duration 1"
                 - name: fhe-params
                   value: "Default"
 
@@ -124,7 +124,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req100"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --rate 100 --duration 1"
                 - name: fhe-params
                   value: "Default"
 

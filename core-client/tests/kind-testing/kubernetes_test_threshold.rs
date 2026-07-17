@@ -210,10 +210,7 @@ impl K8sTestContext {
             context_id: None,
             epoch_id: None,
             batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
             ciphertext_output_path: Some(cipher_path.clone()),
-            inter_request_delay_ms: 0,
         }))
         .await;
 
@@ -244,13 +241,11 @@ impl K8sTestContext {
         let start = std::time::Instant::now();
 
         let results = self
-            .execute(CCCommand::PublicDecrypt(CipherArguments::FromFile(
-                CipherFile {
+            .execute(CCCommand::PublicDecrypt(DecryptArguments::FromFile(
+                DecryptFile {
                     input_path: enc.cipher_path.clone(),
                     batch_size: 1,
-                    num_requests: 1,
-                    inter_request_delay_ms: 0,
-                    parallel_requests: 1,
+                    rate_options: DecryptRateOptions::default(),
                 },
             )))
             .await;

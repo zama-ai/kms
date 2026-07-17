@@ -6,18 +6,18 @@ the Actions tab ("Run workflow").
 
 The workflow spins up a real KMS deployment in Kubernetes, runs a suite of perf
 tests against it (keygen, CRS generation, public decrypt, and user decrypt),
-and posts a summary to Slack. This document focuses on the **user-decrypt**
-test, which is the part most people come here to run.
+and posts a summary to Slack. This document focuses on user/public decryption rate tests,
+which are the part most people come here to run.
 
-## User-decrypt rate test
+## Decryption rate tests
 
-The user-decrypt test offers a fixed number of requests per second for a fixed
-duration, then reports whether the KMS kept up. The current CI suite uses this
-to measure how many user decryptions per second the deployment can handle.
+The public- and user-decrypt tests offer a fixed number of requests per second
+for a fixed duration, then report whether the KMS kept up. The current CI suite
+uses this to measure how many decryptions per second the deployment can handle.
 
 ## Quick start
 
-To iterate on the user-decrypt test, trigger the workflow with these values:
+To iterate on the decrypt tests, trigger the workflow with these values:
 
 | Field | Value |
 | --- | --- |
@@ -39,8 +39,17 @@ they produce are real regardless of this setting.
 
 ## Reading the results
 
-The user-decrypt test runs three scenarios, each sending `1 × euint64` for 60
+The public-decrypt test runs three scenarios, each sending `1 × euint64` for 30
 seconds:
+
+| Scenario | Rate | Budget (allowed slack) |
+| --- | ---: | --- |
+| stable | 1,100 req/s | no failures, no shedding, ≥98% of target rate |
+| near-limit | 1,300 req/s | ≤1% failures, ≤1% shed, ≥90% of target rate |
+| over-limit | 1,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+
+The user-decrypt test also runs three scenarios, each sending `1 × euint64` for
+30 seconds:
 
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
@@ -58,15 +67,15 @@ Each scenario lands on one of these outcomes:
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
 - **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, **or** it's the `2,750` probe, which is expected to run hot and is
-  never allowed to fail the workflow.
-- **❌ fail** — a `2,400` or `2,700` scenario went outside its budget. This
-  fails the whole workflow.
+  traffic, **or** it's the `1,500` (pdec) or `2,750` (udec) probe, which is
+  expected to run hot and is never allowed to fail the workflow.
+- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,400`/`2,700` (udec) scenario went
+  outside its budget. This fails the whole workflow.
 - **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
   run in ascending order and stop climbing once one falls over).
 
-The `2,750` scenario is deliberately just above the clean `2,700` run: it probes
-where capacity starts to break down, so it warns instead of failing.
+The top public- and user-decrypt scenarios are deliberately exploratory probes:
+they run just above the current clean range, so they warn instead of failing.
 
 ### Metric glossary
 
@@ -91,7 +100,7 @@ overhead):
 | `request_payload_bytes` | Total request bytes submitted, counted once per core target. |
 | `request_payload_mib_per_sec` | Request bytes per second, in MiB/s. |
 | `request_payload_avg_bytes` | Average encoded size of one request. |
-| `response_payload_bytes` | Total response bytes accepted for reconstruction (excludes late/abandoned responses). |
+| `response_payload_bytes` | Total response bytes accepted for verification/reconstruction (excludes late/abandoned responses). |
 | `response_payload_mib_per_sec` | Response bytes per second, in MiB/s. |
 | `response_payload_avg_bytes` | Average encoded size of one accepted response. |
 
@@ -165,7 +174,7 @@ Network diagnostics are printed directly in the GitHub Actions log. The output
 is intentionally terse: node placement, KMS core pod placement, and after-run
 `eth0` rx/tx deltas for each running KMS core pod plus a total.
 
-Each user-decrypt scenario also captures its own `eth0` rx/tx counters *inside* the
+Each decrypt scenario also captures its own `eth0` rx/tx counters *inside* the
 Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
 diagnostics only include KMS core pods that are still running when the snapshot
 is taken.
