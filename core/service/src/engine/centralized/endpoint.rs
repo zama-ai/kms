@@ -288,7 +288,7 @@ impl<
         self.context_manager
             .destroy_mpc_context(request)
             .await
-            .map_err(|e| e.into())?;
+            .map_err(Status::from)?;
         // Note that there are no epochs in the centralized case, so we return an empty list of epoch IDs
         Ok(Response::new(DestroyMpcContextResponse {
             epoch_ids: Vec::new(),
