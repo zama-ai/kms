@@ -1127,6 +1127,8 @@ async fn integration_test_commands(
     let key_id = KeyId::from_str(&key_id)?;
     let ctxt_path = keys_folder.join("test_encrypt_cipher.txt");
     let ctxt_with_sns_path = keys_folder.join("test_encrypt_cipher_with_sns.txt");
+    let compressed_ctxt_with_sns_path =
+        keys_folder.join("test_encrypt_compressed_cipher_with_sns.txt");
 
     let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
         cipher_params(val, dt, key_id, bs, no_comp, no_sns, None)
@@ -1245,6 +1247,16 @@ async fn integration_test_commands(
             true,
             false,
         ))),
+        // Production format: `BigCompressed` (compressed + SnS precomputed). The other blocks
+        // cover Small*/BigExpanded; this is the format real deployments actually run, so the
+        // suite must exercise it explicitly.
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+            "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            FheType::Euint256,
+            2,
+            false,
+            false,
+        ))),
         CCCommand::UserDecrypt(UserDecryptArguments::FromArgs(ucp(
             "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F",
             FheType::Euint256,
@@ -1270,6 +1282,28 @@ async fn integration_test_commands(
         })),
         CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
             ctxt_with_sns_path.clone(),
+            2,
+        ))),
+        // Production format: `BigCompressed` (compressed + SnS precomputed). Exercise the
+        // same format when the ciphertext is loaded from a file rather than encrypted in-process.
+        CCCommand::Encrypt(cipher_params(
+            "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            FheType::Euint256,
+            key_id,
+            1,
+            false,
+            false,
+            Some(compressed_ctxt_with_sns_path.clone()),
+        )),
+        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: compressed_ctxt_with_sns_path.clone(),
+            batch_size: 2,
+            num_requests: 2,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(UserDecryptArguments::FromFile(user_decrypt_file(
+            compressed_ctxt_with_sns_path,
             2,
         ))),
     ];
@@ -2410,14 +2444,16 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     // Perform the context switch
     new_mpc_context(&config_path, &context_path, test_path).await?;
 
-    // Verify that a public-decrypt request succeeds in the new context
+    // Verify that a public-decrypt request succeeds in the new context.
+    // Uses `BigCompressed` (no_compression=false, no_precompute_sns=false) — the production
+    // format and the fast decrypt path; this test exercises the context switch, not ciphertext types.
     let mut params = cipher_params(
         "0x1",
         FheType::Ebool,
         KeyId::from_str(&key_id)?,
         1,
         false,
-        true,
+        false,
         None,
     );
     params.context_id = Some(context_id);
@@ -3051,11 +3087,13 @@ async fn test_threshold_reshare() -> Result<()> {
     assert_eq!(resharing_result.len(), 2);
     let ddec_config = cmd_config(
         &config_path,
+        // `BigCompressed` (production format, fast path) — this test exercises reshare, not
+        // ciphertext types.
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x123456".to_string(),
             data_type: FheType::Euint64,
             no_compression: false,
-            no_precompute_sns: true,
+            no_precompute_sns: false,
             key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
             context_id: Some(context_id),
             epoch_id: Some(new_epoch_id),
