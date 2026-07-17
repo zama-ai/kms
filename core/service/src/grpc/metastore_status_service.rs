@@ -268,7 +268,7 @@ impl MetaStoreStatusServiceImpl {
         page_token: Option<String>,
     ) -> Result<(Vec<RequestStatusInfo>, Option<String>), tonic::Status> {
         // Parse pagination before taking the store lock.
-        let start_index = if let Some(token) = page_token {
+        let start_index = if let Some(token) = page_token.filter(|t| !t.is_empty()) {
             match token.parse::<usize>() {
                 Ok(index) => {
                     tracing::debug!(
