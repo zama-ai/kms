@@ -143,6 +143,52 @@ The build process will:
 
 ## Testing
 
+### Performance testing
+
+The performance-testing workflow collects network counters before and after a run,
+and samples KMS Core CPU and memory while it is running. Both scripts use the
+current Kubernetes context and default to the `kms-ci` namespace.
+
+#### Network diagnostics
+
+`collect_network_diagnostics.sh` captures per-interface counters from each running `kms-core-<party>-core-<core>`
+pod. Run it once before and once after a performance test to produce per-pod and
+aggregate `eth0` traffic deltas:
+
+```bash
+bash collect_network_diagnostics.sh before-perf <namespace>
+# Run the performance test.
+bash collect_network_diagnostics.sh after-perf <namespace>
+```
+
+Results are written to `network-diagnostics/<phase>/`. The `after-perf` call also
+writes `network-diagnostics/pod-interface-counter-delta.tsv` and prints the
+transfer volume, average throughput, errors, and dropped packets. Set
+`NETWORK_DIAGNOSTICS_DIR` to store the results elsewhere.
+
+#### KMS Core CPU samples
+
+`sample_core_cpu.sh` continuously records CPU and memory for KMS Core pods using
+`kubectl top`. Its output is one space-separated line per pod per sample:
+
+```text
+<UTC timestamp> <pod> <CPU> <memory>
+```
+
+Start it in the background for the duration of a test and stop it when the test
+finishes:
+
+```bash
+bash sample_core_cpu.sh <namespace> <interval-seconds> > core-cpu-samples.log &
+CPU_SAMPLER_PID=$!
+# Run the performance test.
+kill "${CPU_SAMPLER_PID}"
+```
+
+The namespace defaults to `kms-ci` and the interval defaults to 10 seconds. The
+cluster must have metrics-server available and the current identity must be able
+to run `kubectl top pod` in that namespace.
+
 ### Debugging
 
 Enable verbose mode to see all function calls:
