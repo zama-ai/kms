@@ -164,18 +164,17 @@ where
             self.party_count,
             "sharing size must match the committee that the hints were built for"
         );
-        let mut res = Poly::zero();
-
+        // `Poly::zeros` is safe here because the computation writes exactly `r` coefficients so no need to resize as we
+        // go.
+        let mut res = Poly::zeros(self.r);
         // Compute syndrome coefficients: share values divided by the lagrange poly evaluation at each party ID's ring embedding
-        for j in 0..self.r {
+        for (j, out) in res.coefs_mut().iter_mut().enumerate() {
             let mut coef = ResiduePoly::ZERO;
             for i in 0..sharing.shares.len() {
                 let y = sharing.shares[i].value();
-                let numerator = y * self.alpha_powers[i][j];
-                coef += numerator * self.inv_denoms[i];
+                coef += y * self.alpha_powers[i][j] * self.inv_denoms[i];
             }
-            // TODO(dp): `set_coef` is not optimal. Prolly very minor, but that resize is weird. #3096
-            res.set_coef(j, coef);
+            *out = coef;
         }
 
         Ok(res)
