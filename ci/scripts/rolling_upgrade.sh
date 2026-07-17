@@ -214,6 +214,90 @@ main() {
         "${OLD_KMS_CHART_VERSION}" \
         "${NEW_KMS_CHART_VERSION}"
 
+    #=========================================================================
+    # Step 4 (phase 2): Enable the PRSS-Mask legacy-schedule threshold on the
+    # upgraded parties, AFTER their new binary is running.
+    #
+    # The threshold lives in the core-service config (TOML over vsock — pod env
+    # does not reach the enclave). Pre-#663 binaries reject the unknown field
+    # (`deny_unknown_fields`, config read fresh at start), so it must be absent
+    # until every upgraded party runs the new binary — which Step 3 guarantees
+    # by deploying them with the field off (chart value empty). We now set it via
+    # a second helm upgrade on the upgraded parties only; the configmap change
+    # bumps `checksum/config`, restarting the (already-new) pod to pick it up.
+    # Non-upgraded (old) parties are never touched, so no old binary ever sees it.
+    #
+    # Only the `prss-threshold` test profile needs this; the standard `decrypt`
+    # profile (plain decrypt correctness for any version pair) leaves the field
+    # off, so phase 2 is skipped entirely. Gated via ENABLE_PRSS_THRESHOLD (set
+    # by the workflow's "Configure deployment parameters" step).
+    #=========================================================================
+    if [[ "${ENABLE_PRSS_THRESHOLD:-false}" != "true" ]]; then
+        log_info "Step 4: PRSS-Mask threshold rollout skipped (ENABLE_PRSS_THRESHOLD != true)."
+        log_info "========================================="
+        log_info "Rolling Upgrade Complete!"
+        log_info "========================================="
+        return 0
+    fi
+
+    local threshold="${LEGACY_PRSS_MASK_THRESHOLD:-100}"
+    log_info "Step 4: Enabling PRSS-Mask threshold=${threshold} on upgraded parties [${ALL_UPGRADED_PARTIES}]..."
+
+    local new_chart_loc="${REPO_ROOT}/charts/kms-core"
+    local new_version_args=()
+    if [[ "${NEW_KMS_CHART_VERSION}" != "repository" ]]; then
+        new_chart_loc="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
+        new_version_args=(--version "${NEW_KMS_CHART_VERSION}")
+    fi
+
+    # PRSS-threshold needs a chart that templates the kmsCore.legacyPrssMask.*
+    # fields into kms-server.toml; otherwise the --set below is silently dropped
+    # and the threshold never takes effect (a meaningless probe). The in-repo
+    # chart on main deliberately does NOT carry those fields — they live on the
+    # #712 / v0.13.2x release line — so fail fast rather than run a silent no-op.
+    # Only the local repository chart is checked (we can read it); released OCI
+    # charts selected via --new-kms-chart-version are trusted to support it.
+    if [[ "${NEW_KMS_CHART_VERSION}" == "repository" ]]; then
+        local _configmap="${new_chart_loc}/templates/kms-core-configmap.yaml"
+        if ! grep -q "legacyPrssMask" "${_configmap}" 2>/dev/null; then
+            log_error "PRSS-Mask threshold requested but the repository chart does not template kmsCore.legacyPrssMask (${_configmap}); the --set would be a no-op. Use a chart that supports the field: a v0.13.2x release chart via --new-kms-chart-version, or a branch carrying the #712 chart."
+            exit 1
+        fi
+    fi
+
+    # Run the upgrades in parallel but track each PID → party, and fail the step
+    # if ANY of them fails (a bare `wait` only returns the last job's status).
+    IFS=',' read -ra _prss_ids <<< "${ALL_UPGRADED_PARTIES}"
+    local -a _prss_pids=()
+    local -a _prss_parties=()
+    for _id in "${_prss_ids[@]}"; do
+        local i; i="$(echo "${_id}" | tr -d ' ')"
+        [[ -z "${i}" ]] && continue
+        log_info "  Party ${i}: helm upgrade (reuse-values) + PRSS threshold..."
+        helm upgrade --install "${HELM_RELEASE_PREFIX}-${i}" "${new_chart_loc}" \
+            "${new_version_args[@]}" \
+            --namespace "${NAMESPACE}" \
+            --reuse-values \
+            --set kmsGenCertAndKeys.enabled=false \
+            --set "kmsCore.legacyPrssMask.beforePublicDecryptId=${threshold}" \
+            --set "kmsCore.legacyPrssMask.beforeUserDecryptId=${threshold}" \
+            --wait --wait-for-jobs --timeout=1200s &
+        _prss_pids+=("$!")
+        _prss_parties+=("${i}")
+    done
+
+    local _prss_failed=()
+    for _idx in "${!_prss_pids[@]}"; do
+        if ! wait "${_prss_pids[$_idx]}"; then
+            _prss_failed+=("${_prss_parties[$_idx]}")
+        fi
+    done
+    if [[ "${#_prss_failed[@]}" -gt 0 ]]; then
+        log_error "PRSS-Mask threshold rollout failed for parties: ${_prss_failed[*]}"
+        exit 1
+    fi
+    log_info "PRSS-Mask threshold enabled on all upgraded parties."
+
     log_info "========================================="
     log_info "Rolling Upgrade Complete!"
     log_info "========================================="

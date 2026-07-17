@@ -57,7 +57,7 @@ kms-grpc.workspace = true
 observability.workspace = true
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "rustls"] }
 rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
