@@ -251,7 +251,7 @@ impl std::str::FromStr for PubDataType {
 }
 
 impl fmt::Display for PubDataType {
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PubDataType::PublicKey => write!(f, "PublicKey"),
