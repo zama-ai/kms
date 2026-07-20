@@ -1073,6 +1073,18 @@ impl<
             ));
         }
 
+        if session_maker.epoch_count().await < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
+                    epoch_id
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+
         let mut priv_storage_guard = priv_storage.lock().await;
 
         // At this point we're committed to deleting the epoch, so do not return if there's an error,
@@ -1711,7 +1723,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        // Structural check: epoch must be on disk after the first run (persisted by PrssSetup).
+        // Structural check: epoch must be on disk after the first run
         let epoch_after_first: std::collections::HashMap<RequestId, EpochData> =
             read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
                 .await

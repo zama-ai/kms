@@ -635,7 +635,7 @@ message DestroyMpcContextRequest {
 }
 
 message DestroyMpcContextResponse {
-  // The ID of the the epochs destroyed as part of the context.
+  // The ID of the epochs destroyed as part of the context.
   repeated RequestId epoch_ids = 1;
 }
 
