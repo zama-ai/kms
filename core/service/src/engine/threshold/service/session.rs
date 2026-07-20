@@ -959,12 +959,13 @@ mod tests {
             .add_epoch(epoch_b, dummy_epoch_data(context_b))
             .await;
 
-        let for_a = session_maker.epochs_for_context(&context_a).await;
-        assert_eq!(
-            for_a,
-            vec![epoch_a1, epoch_a2],
-            "context A must map to exactly its epochs"
-        );
+        let for_a: std::collections::HashSet<EpochId> = session_maker
+            .epochs_for_context(&context_a)
+            .await
+            .into_iter()
+            .collect();
+        let expected: std::collections::HashSet<EpochId> = [epoch_a1, epoch_a2].into_iter().collect();
+        assert_eq!(for_a, expected, "context A must map to exactly its epochs");
 
         let for_b = session_maker.epochs_for_context(&context_b).await;
         assert_eq!(

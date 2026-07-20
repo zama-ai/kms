@@ -681,7 +681,14 @@ where
         let context_info_ids = guarded_priv_storage
             .all_data_ids(&PrivDataType::ContextInfo.to_string())
             .await
-            .unwrap();
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    anyhow::anyhow!("Failed to list contexts from storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         if context_info_ids.len() < 2 {
             return Err(MetricedError::new(
                 OP_DESTROY_MPC_CONTEXT,

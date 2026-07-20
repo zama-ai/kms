@@ -99,9 +99,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// That is, epochs are flattened and NOT indexed by their associated context ID.
     pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
         let priv_storage = self.inner.private_storage.lock().await;
-        let intermidiate_res: HashMap<RequestId, EpochData> =
+        let intermediate_res: HashMap<RequestId, EpochData> =
             read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
-        Ok(intermidiate_res
+        Ok(intermediate_res
             .into_iter()
             .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
             .collect())
