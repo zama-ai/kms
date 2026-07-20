@@ -157,8 +157,9 @@ impl SessionMaker {
         let epoch_map = self.epoch_map.read().await;
         epoch_map
             .iter()
-            .filter(|(_, epoch_data)| epoch_data.context_id == *context_id)
-            .map(|(epoch_id, _)| *epoch_id)
+            .filter_map(|(epoch_id, epoch_data)| {
+                (epoch_data.context_id == *context_id).then_some(*epoch_id)
+            })
             .collect()
     }
 
