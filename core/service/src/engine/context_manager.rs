@@ -1283,7 +1283,7 @@ mod tests {
         let keeper_context = ContextInfo {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node2".to_string(),
-                party_id: 2,
+                party_id: 1,
                 signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
