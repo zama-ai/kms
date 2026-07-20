@@ -661,7 +661,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -677,6 +677,21 @@ where
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
+
+        let context_info_ids = guarded_priv_storage
+            .all_data_ids(&PrivDataType::ContextInfo.to_string())
+            .await
+            .unwrap();
+        if context_info_ids.len() < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left in storage"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
 
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
@@ -700,7 +715,7 @@ where
             }
         }
 
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     async fn new_custodian_context(
@@ -913,7 +928,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<tonic::Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -926,6 +941,17 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+
+        if self.session_maker.context_count().await < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
@@ -943,7 +969,7 @@ where
                     tonic::Code::Internal,
                 )
             })?;
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     async fn new_custodian_context(

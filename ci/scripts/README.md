@@ -1,4 +1,4 @@
-# KMS Deployment Scripts
+# KMS Deployment/management Scripts
 
 ## Overview
 
@@ -11,8 +11,13 @@
 
 ```
 ci/scripts/
-├── deploy.sh                      # Main entry point (143 lines)
+├── backward_snapshot.sh           # Generate and compare backward-compatibility snapshots
+├── collect_network_diagnostics.sh # Capture per-pod network interface counters
+├── deploy.sh                      # Main deployment entry point
+├── local_docs_link_check.py       # Check Markdown links to local files
 ├── manage_lifecycle.sh            # Lifecycle management
+├── rolling_upgrade.sh             # Partially upgrade enclave KMS parties
+├── sample_core_cpu.sh             # Sample KMS core CPU and memory during benchmarks
 └── lib/                           # Modular libraries
     ├── common.sh                  # Logging, parsing, utilities (277 lines)
     ├── context.sh                 # Kubernetes context setup (87 lines)
@@ -80,8 +85,11 @@ The build process will:
 | Need to modify... | Edit this file |
 |------------------|----------------|
 | **Logging or argument parsing** | `lib/common.sh` |
+| **Backward-compatibility snapshots** | `backward_snapshot.sh` |
+| **Benchmark network diagnostics** | `collect_network_diagnostics.sh` |
 | **Kind cluster setup** | `lib/context.sh` |
 | **AWS/Tailscale config** | `lib/context.sh` |
+| **Local documentation link checks** | `local_docs_link_check.py` |
 | **LocalStack deployment** | `lib/infrastructure.sh` |
 | **TKMS/Crossplane** | `lib/infrastructure.sh` |
 | **Registry credentials** | `lib/infrastructure.sh` |
@@ -90,6 +98,8 @@ The build process will:
 | **Docker image building** | `lib/utils.sh` |
 | **Port forwarding** | `lib/utils.sh` |
 | **Log collection** | `lib/utils.sh` |
+| **Rolling KMS upgrades** | `rolling_upgrade.sh` |
+| **Core CPU/memory benchmark samples** | `sample_core_cpu.sh` |
 
 ### Module Details
 
@@ -142,6 +152,52 @@ The build process will:
 - `collect_logs()` - Pod log collection for debugging
 
 ## Testing
+
+### Performance testing
+
+The performance-testing workflow collects network counters before and after a run,
+and samples KMS Core CPU and memory while it is running. Both scripts use the
+current Kubernetes context and default to the `kms-ci` namespace.
+
+#### Network diagnostics
+
+`collect_network_diagnostics.sh` captures per-interface counters from each running `kms-core-<party>-core-<core>`
+pod. Run it once before and once after a performance test to produce per-pod and
+aggregate `eth0` traffic deltas:
+
+```bash
+bash collect_network_diagnostics.sh before-perf <namespace>
+# Run the performance test.
+bash collect_network_diagnostics.sh after-perf <namespace>
+```
+
+Results are written to `network-diagnostics/<phase>/`. The `after-perf` call also
+writes `network-diagnostics/pod-interface-counter-delta.tsv` and prints the
+transfer volume, average throughput, errors, and dropped packets. Set
+`NETWORK_DIAGNOSTICS_DIR` to store the results elsewhere.
+
+#### KMS Core CPU samples
+
+`sample_core_cpu.sh` continuously records CPU and memory for KMS Core pods using
+`kubectl top`. Its output is one space-separated line per pod per sample:
+
+```text
+<UTC timestamp> <pod> <CPU> <memory>
+```
+
+Start it in the background for the duration of a test and stop it when the test
+finishes:
+
+```bash
+bash sample_core_cpu.sh <namespace> <interval-seconds> > core-cpu-samples.log &
+CPU_SAMPLER_PID=$!
+# Run the performance test.
+kill "${CPU_SAMPLER_PID}"
+```
+
+The namespace defaults to `kms-ci` and the interval defaults to 10 seconds. The
+cluster must have metrics-server available and the current identity must be able
+to run `kubectl top pod` in that namespace.
 
 ### Debugging
 
