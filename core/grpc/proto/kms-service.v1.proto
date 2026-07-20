@@ -318,10 +318,10 @@ service CoreServiceEndpoint {
   // context is active and which is not. It does however ensure that at least 1 context will remain after the destruction call.
   //
   // The call returns the set of epoch IDs that belong to the context in `epoch_ids` which has also been destroyed as part of the call.
-  // In case of repeated calls, where the list will be empty since the first call will have destroyed all associated epochs to the context.
-  // Thus repeated calls are safe, and will not produce any errors, but the response value will always be different. 
-  // Similarly, in case of something goes wrong during the initial call, but things succeeds in the subsequent one, 
-  // then the subsequent one will contain the ids of the epochs destroyed in the second (successful) call.
+  // On repeated calls, the list will be empty because the first successful call already destroyed all associated epochs.
+  // Thus repeated calls are safe and return no error, but the response payload may differ between calls.
+  // Similarly, if something goes wrong during the initial call but a subsequent retry succeeds,
+  // the successful retry returns the epoch IDs destroyed in that retry.
   //
   // # Parameters
   // * `context_id` - Context ID of the MPC context to destroy.
