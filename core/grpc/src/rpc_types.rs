@@ -300,7 +300,6 @@ pub enum PrivDataType {
     FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
-    // TODO should we actually remove PRSSSetup and handle all the places in the code where this causes a problem?
     #[deprecated(
         note = "Use EpochData instead, but this is still there to avoid semantic change in the storage format"
     )]
