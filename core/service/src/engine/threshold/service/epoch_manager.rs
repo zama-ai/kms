@@ -2394,4 +2394,140 @@ pub(crate) mod tests {
             .await
             .unwrap();
     }
+
+    /// Build a dummy [`EpochData`] tied to `context_id`. The PRSS material is empty testing data;
+    /// only the `context_id` matters for the tests below.
+    pub(crate) fn dummy_epoch_data(context_id: ContextId) -> EpochData {
+        EpochData {
+            context_id,
+            prss: PRSSSetupCombined {
+                prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
+                prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                num_parties: 4,
+                threshold: 1,
+            },
+        }
+    }
+
+    /// Register an epoch both in the session maker and in private storage (as its [`EpochData`]),
+    /// mirroring what a real PRSS setup persists. This is the minimal state `destroy_epoch` needs
+    /// to run its full cascade for the epoch.
+    async fn seed_epoch(
+        epoch_manager: &RealThresholdEpochManager<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >,
+        epoch_id: EpochId,
+        context_id: ContextId,
+    ) {
+        let epoch = dummy_epoch_data(context_id);
+        epoch_manager
+            .session_maker
+            .add_epoch(epoch_id, epoch.clone())
+            .await;
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        let mut priv_storage = private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut (*priv_storage),
+            &epoch_id.into(),
+            &epoch,
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destroy_mpc_epochs_reports_destroyed() {
+        let mut rng = AesRng::seed_from_u64(11);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_a = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+        let nonexistent = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_a, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, epoch_b, *DEFAULT_MPC_CONTEXT).await;
+
+        // The nonexistent epoch is skipped, so only the two real epochs are reported, in input order.
+        let destroyed = epoch_manager
+            .destroy_mpc_epochs(&[epoch_a, nonexistent, epoch_b])
+            .await
+            .unwrap();
+        assert_eq!(
+            destroyed,
+            vec![epoch_a, epoch_b],
+            "only actually-destroyed epochs should be reported"
+        );
+
+        // A second run has nothing left to destroy, so the reported list is empty.
+        let destroyed_again = epoch_manager
+            .destroy_mpc_epochs(&[epoch_a, epoch_b])
+            .await
+            .unwrap();
+        assert!(
+            destroyed_again.is_empty(),
+            "re-destroying already-gone epochs must report an empty list"
+        );
+    }
+
+    /// `destroy_epochs_for_context` must destroy exactly the epochs belonging to the given context,
+    /// leave epochs of other contexts intact, and report the destroyed epochs.
+    #[tokio::test]
+    async fn test_destroy_epochs_for_context() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        let epoch_a1 = EpochId::new_random(&mut rng);
+        let epoch_a2 = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_a1, context_a).await;
+        seed_epoch(&epoch_manager, epoch_a2, context_a).await;
+        seed_epoch(&epoch_manager, epoch_b, context_b).await;
+
+        // Destroying context A must report both of its epochs (order is not guaranteed since the
+        // epochs are gathered from a map, so compare as sets).
+        let destroyed: std::collections::HashSet<EpochId> = epoch_manager
+            .destroy_epochs_for_context(&context_a)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+        let expected: std::collections::HashSet<EpochId> =
+            [epoch_a1, epoch_a2].into_iter().collect();
+        assert_eq!(destroyed, expected);
+
+        // Context A's epochs are gone; context B's epoch is untouched.
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a1).await);
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a2).await);
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_b).await);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epochs_for_context(&context_a)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            epoch_manager
+                .session_maker
+                .epochs_for_context(&context_b)
+                .await,
+            vec![epoch_b]
+        );
+
+        // Destroying a context with no epochs is a successful no-op reporting an empty list.
+        let empty_context = ContextId::new_random(&mut rng);
+        assert!(
+            epoch_manager
+                .destroy_epochs_for_context(&empty_context)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 }

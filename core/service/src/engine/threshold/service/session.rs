@@ -930,3 +930,83 @@ pub(crate) async fn validate_context_and_epoch(
     }
     Ok(my_role)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::threshold::service::epoch_manager::tests::dummy_epoch_data;
+
+    /// Sunshine: `epochs_for_context` returns exactly the epochs whose `EpochData` carries the
+    /// requested context ID, and excludes epochs belonging to other contexts.
+    #[tokio::test]
+    async fn epochs_for_context_filters_by_context() {
+        let mut rng = AesRng::seed_from_u64(1);
+        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(2));
+
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        // Two epochs under context A, one under context B.
+        let epoch_a1 = EpochId::new_random(&mut rng);
+        let epoch_a2 = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+
+        session_maker
+            .add_epoch(epoch_a1, dummy_epoch_data(context_a))
+            .await;
+        session_maker
+            .add_epoch(epoch_a2, dummy_epoch_data(context_a))
+            .await;
+        session_maker
+            .add_epoch(epoch_b, dummy_epoch_data(context_b))
+            .await;
+
+        let for_a = session_maker.epochs_for_context(&context_a).await;
+        assert_eq!(
+            for_a,
+            vec![epoch_a1, epoch_a2],
+            "context A must map to exactly its epochs"
+        );
+
+        let for_b = session_maker.epochs_for_context(&context_b).await;
+        assert_eq!(
+            for_b,
+            vec![epoch_b],
+            "context B must map to exactly its single epoch"
+        );
+    }
+
+    /// Negative: an unknown context (or one with no epochs) yields an empty result rather than an
+    /// error or spurious epochs.
+    #[tokio::test]
+    async fn epochs_for_context_unknown_context_is_empty() {
+        let mut rng = AesRng::seed_from_u64(3);
+        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(4));
+
+        let known_context = ContextId::new_random(&mut rng);
+        session_maker
+            .add_epoch(
+                EpochId::new_random(&mut rng),
+                dummy_epoch_data(known_context),
+            )
+            .await;
+
+        let unknown_context = ContextId::new_random(&mut rng);
+        assert!(
+            session_maker
+                .epochs_for_context(&unknown_context)
+                .await
+                .is_empty(),
+            "a context with no registered epochs must yield an empty vector"
+        );
+
+        // An entirely empty session maker also returns empty.
+        let empty_session = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(5));
+        assert!(
+            empty_session
+                .epochs_for_context(&known_context)
+                .await
+                .is_empty()
+        );
+    }
+}
