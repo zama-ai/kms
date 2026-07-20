@@ -1590,10 +1590,13 @@ pub(crate) mod tests {
             rate_limiter::RateLimiterConfig,
         },
         vault::storage::{
-            StorageType,
+            StorageReader, StorageReaderExt, StorageType,
             file::FileStorage,
+            ram::FailingRamStorage,
             ram::{self, RamStorage},
-            read_all_data_versioned, store_versioned_at_request_id,
+            read_all_data_versioned, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
+            tests::TestType,
         },
     };
     use aes_prng::AesRng;
@@ -2308,6 +2311,136 @@ pub(crate) mod tests {
         .unwrap_err();
 
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Validates partial-failure in destroying MPC epoch:
+    /// If deleting the private data fails, retrying should be possible until success,
+    /// at which point all epoch Ids associated to the destroyed context should be returned.
+    #[tokio::test]
+    async fn test_destroy_epoch_partial_failure_is_retryable() {
+        let mut rng = AesRng::seed_from_u64(42);
+        // We only borrow the session maker; the storage below is a separate, fault-injecting one.
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let session_maker = &epoch_manager.session_maker;
+
+        let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
+        let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
+        let epoch = EpochData {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            prss: PRSSSetupCombined {
+                prss_setup_z128,
+                prss_setup_z64,
+                num_parties: 4,
+                threshold: 1,
+            },
+        };
+
+        // Target epoch to destroy plus a "keeper" so the target is not the last remaining epoch.
+        let epoch_id = EpochId::new_random(&mut rng);
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        session_maker.add_epoch(epoch_id, epoch.clone()).await;
+        session_maker
+            .add_epoch(keeper_epoch_id, epoch.clone())
+            .await;
+
+        // Fault-injecting private storage that we can flip between failing and succeeding on delete.
+        let priv_storage = tokio::sync::Mutex::new(FailingRamStorage::new(100));
+
+        let data_type = PrivDataType::FheKeyInfo;
+        let data = TestType { i: 42 };
+        let data_id = derive_request_id("partial_failure_data").unwrap();
+        let epoch_data_id: RequestId = epoch_id.into();
+
+        {
+            let mut guard = priv_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut (*guard),
+                &data_id,
+                &epoch_id,
+                &data,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+            // The EpochData acts as the durable retry marker that resurrects the epoch on restart.
+            store_versioned_at_request_id(
+                &mut (*guard),
+                &epoch_data_id,
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            // Make every delete fail to simulate a partial failure mid-destruction.
+            guard.set_fail_deletes(true);
+        }
+
+        // First attempt: deletion fails, so the whole operation must fail.
+        let err = RealThresholdEpochManager::<
+            ram::RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+
+        // The epoch must still be present so the caller can retry, and the keeper must be untouched.
+        assert!(
+            session_maker.epoch_exists(&epoch_id).await,
+            "epoch must remain in the session maker after a failed destruction"
+        );
+        assert!(session_maker.epoch_exists(&keeper_epoch_id).await);
+
+        // Both the key share and the durable EpochData retry marker must still be on disk.
+        {
+            let guard = priv_storage.lock().await;
+            let ids = guard
+                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert!(
+                ids.contains(&data_id),
+                "key share must survive a failed destruction so it can be retried"
+            );
+            assert!(
+                guard
+                    .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap(),
+                "EpochData retry marker must not be deleted while other data still lingers on disk"
+            );
+        }
+
+        // Now let deletes succeed and retry: the operation must now complete and clean everything up.
+        priv_storage.lock().await.set_fail_deletes(false);
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        .await
+        .unwrap();
+
+        // The retry succeeded: epoch gone, keeper remains, and all on-disk data is cleared.
+        assert!(!session_maker.epoch_exists(&epoch_id).await);
+        assert!(session_maker.epoch_exists(&keeper_epoch_id).await);
+        {
+            let guard = priv_storage.lock().await;
+            let ids = guard
+                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert!(ids.is_empty());
+            assert!(
+                !guard
+                    .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
     }
 
     #[tokio::test]
