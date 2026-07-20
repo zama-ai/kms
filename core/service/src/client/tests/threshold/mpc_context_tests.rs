@@ -241,6 +241,7 @@ async fn do_context_switch(
 // The KMS always keeps at least one context and one epoch: `DestroyMpcContext` on the only
 // remaining context (which owns the only epoch) is rejected with `FailedPrecondition` and leaves
 // all data intact.
+#[tokio::test(flavor = "multi_thread")]
 async fn test_destroy_only_context_is_rejected_4p() {
     let party_count = 4;
     let env = ThresholdTestEnv::builder()
