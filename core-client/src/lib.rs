@@ -249,6 +249,23 @@ fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
         ));
     }
 
+    let request_ids = cf.get_request_ids();
+    if !request_ids.is_empty() {
+        if request_ids.len() != cf.get_num_requests() {
+            return Err(anyhow::anyhow!(
+                "The number of explicit request IDs ({}) must match --num-requests ({}).",
+                request_ids.len(),
+                cf.get_num_requests()
+            ));
+        }
+        let unique: std::collections::HashSet<_> = request_ids.iter().collect();
+        if unique.len() != request_ids.len() {
+            return Err(anyhow::anyhow!(
+                "Explicit request IDs must be unique, but duplicates were provided."
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -502,6 +519,13 @@ impl CipherArguments {
         };
         parse_extra_data(hex_str)
     }
+
+    pub fn get_request_ids(&self) -> Vec<RequestId> {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.request_ids.clone(),
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.request_ids.clone(),
+        }
+    }
 }
 
 // Helper function to parse the extra data from the CLI arguments, with the same logic for both CipherParameters and CipherFile.
@@ -572,6 +596,14 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub extra_data: Option<String>,
+    /// Optionally specify the request IDs to use for the public/user decryption requests
+    /// (hex strings of 32 bytes, optionally 0x-prefixed). Pass the flag multiple times or
+    /// give a comma-separated list; the number of IDs must match `--num-requests`, request
+    /// `i` uses the `i`-th ID. If not specified, a random request ID is sampled for each
+    /// request. This is ignored for the encryption command.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long = "request-id", value_delimiter = ',')]
+    pub request_ids: Vec<RequestId>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -596,6 +628,13 @@ pub struct CipherFile {
     /// Can optionally have a "0x" prefix.
     #[clap(long)]
     pub extra_data: Option<String>,
+    /// Optionally specify the request IDs to use for the public/user decryption requests
+    /// (hex strings of 32 bytes, optionally 0x-prefixed). Pass the flag multiple times or
+    /// give a comma-separated list; the number of IDs must match `--num-requests`, request
+    /// `i` uses the `i`-th ID. If not specified, a random request ID is sampled for each
+    /// request.
+    #[clap(long = "request-id", value_delimiter = ',')]
+    pub request_ids: Vec<RequestId>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1695,6 +1734,7 @@ pub async fn execute_cmd(
             do_public_decrypt(
                 &mut rng,
                 cipher_args.get_num_requests(),
+                cipher_args.get_request_ids(),
                 internal_client,
                 ct_batch,
                 key_id,
@@ -1772,6 +1812,7 @@ pub async fn execute_cmd(
             do_user_decrypt(
                 &mut rng,
                 cipher_args.get_num_requests(),
+                cipher_args.get_request_ids(),
                 internal_client,
                 ct_batch,
                 key_id,

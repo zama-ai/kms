@@ -192,6 +192,7 @@ impl K8sTestContext {
             inter_request_delay_ms: 0,
             uncompressed_keys: false,
             extra_data: None,
+            request_ids: vec![],
         }))
         .await;
 
@@ -230,6 +231,7 @@ impl K8sTestContext {
                     inter_request_delay_ms: 0,
                     parallel_requests: 1,
                     extra_data: None,
+                    request_ids: vec![],
                 },
             )))
             .await;

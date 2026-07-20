@@ -1034,6 +1034,7 @@ fn cipher_params(
         inter_request_delay_ms: 0,
         uncompressed_keys,
         extra_data: None,
+        request_ids: vec![],
     }
 }
 
@@ -1189,6 +1190,7 @@ async fn integration_test_commands(
             parallel_requests: 1,
             inter_request_delay_ms: 0,
             extra_data: None,
+            request_ids: vec![],
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1197,6 +1199,7 @@ async fn integration_test_commands(
             parallel_requests: 1,
             inter_request_delay_ms: 0,
             extra_data: None,
+            request_ids: vec![],
         })),
     ];
 
@@ -1261,6 +1264,7 @@ async fn integration_test_commands(
             parallel_requests: 1,
             inter_request_delay_ms: 0,
             extra_data: None,
+            request_ids: vec![],
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1269,6 +1273,7 @@ async fn integration_test_commands(
             parallel_requests: 1,
             inter_request_delay_ms: 0,
             extra_data: None,
+            request_ids: vec![],
         })),
     ];
 
@@ -3207,6 +3212,7 @@ async fn test_threshold_reshare() -> Result<()> {
             inter_request_delay_ms: 0,
             uncompressed_keys: false,
             extra_data: None,
+            request_ids: vec![],
         })),
         200,
     );
