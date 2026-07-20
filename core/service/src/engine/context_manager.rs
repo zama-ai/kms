@@ -677,6 +677,25 @@ where
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
+        let context_exists = guarded_priv_storage
+            .data_exists(&context_id.into(), &PrivDataType::ContextInfo.to_string())
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    anyhow::anyhow!("Failed to check if context exists in storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if !context_exists {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in storage"),
+                tonic::Code::NotFound,
+            ));
+        }
 
         let context_info_ids = guarded_priv_storage
             .all_data_ids(&PrivDataType::ContextInfo.to_string())
@@ -948,6 +967,14 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        if !self.session_maker.context_exists(&context_id).await {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in session maker"),
+                tonic::Code::NotFound,
+            ));
+        }
 
         if self.session_maker.context_count().await < 2 {
             return Err(MetricedError::new(
