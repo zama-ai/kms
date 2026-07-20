@@ -2210,6 +2210,14 @@ pub(crate) mod tests {
             .add_epoch(epoch_id, epoch.clone())
             .await;
 
+        // Add a second "keeper" epoch: `destroy_epoch` refuses to remove the last remaining epoch,
+        // so the target epoch must not be the only one for the destruction to succeed.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper_epoch_id, epoch.clone())
+            .await;
+
         // Store some test data under this epoch
         let data_type = PrivDataType::FheKeyInfo;
         let data = TestType { i: 42 };
@@ -2267,8 +2275,14 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        // Verify epoch is gone from session maker
+        // Verify epoch is gone from session maker, while the keeper epoch remains.
         assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&keeper_epoch_id)
+                .await
+        );
 
         // Verify data is gone from storage
         {
@@ -2367,6 +2381,14 @@ pub(crate) mod tests {
             assert!(epoch_manager.session_maker.epoch_exists(epoch_id).await);
         }
 
+        // Add a "keeper" epoch so the two target epochs are never the last remaining one:
+        // `destroy_epoch` refuses to remove the final epoch.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper_epoch_id, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
+
         // Destroy both epochs plus one that was never created: the missing epoch must be skipped
         // (idempotent) while the call still succeeds.
         let nonexistent = EpochId::new_random(&mut rng);
@@ -2405,6 +2427,14 @@ pub(crate) mod tests {
             .destroy_mpc_epochs(&[epoch_ids[0], epoch_ids[1], nonexistent])
             .await
             .unwrap();
+
+        // The keeper epoch is untouched throughout.
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&keeper_epoch_id)
+                .await
+        );
     }
 
     /// Build a dummy [`EpochData`] tied to `context_id`. The PRSS material is empty testing data;
@@ -2461,6 +2491,14 @@ pub(crate) mod tests {
         let nonexistent = EpochId::new_random(&mut rng);
         seed_epoch(&epoch_manager, epoch_a, *DEFAULT_MPC_CONTEXT).await;
         seed_epoch(&epoch_manager, epoch_b, *DEFAULT_MPC_CONTEXT).await;
+
+        // A "keeper" epoch guarantees the two targets are never the last remaining epoch, so both
+        // can actually be destroyed (`destroy_epoch` refuses to remove the final epoch).
+        let keeper = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
 
         // The nonexistent epoch is skipped, so only the two real epochs are reported, in input order.
         let destroyed = epoch_manager
