@@ -293,9 +293,9 @@ impl<
 {
     /// This will load all epochs from storage into session maker.
     pub async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
-        let all_prss = self.crypto_storage.read_all_epoch_data().await?;
+        let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
 
-        for (epoch_id, prss) in all_prss {
+        for (epoch_id, prss) in all_epochs {
             self.session_maker.add_epoch(epoch_id, prss).await;
             tracing::info!("Loaded epoch data from storage for epoch ID {}.", epoch_id);
         }
