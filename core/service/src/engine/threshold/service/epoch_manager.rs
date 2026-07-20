@@ -1055,9 +1055,11 @@ impl<
     /// Destroys an epoch by removing all private data stored under the given epoch for each of the
     /// given data types, then removing the PRSS setup data, and finally removing the epoch from the
     /// session maker.
+    ///
+    /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
+    /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
     async fn destroy_epoch(
         epoch_id: &EpochId,
-        priv_data_types: &[PrivDataType],
         priv_storage: &tokio::sync::Mutex<PrivS>,
         session_maker: &SessionMaker,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -1088,7 +1090,7 @@ impl<
         // but track the first error to report back to the caller.
         let mut first_error: Option<anyhow::Error> = None;
 
-        for priv_data_type in priv_data_types {
+        for priv_data_type in &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo] {
             // Delete all data stored under this epoch for the given private data type
             // first find all data IDs
             let data_ids = match priv_storage_guard
@@ -1167,6 +1169,9 @@ impl<
     /// Fully erase a single epoch: delete its on-disk private key shares, CRS and PRSS setup, then drop the in-memory
     /// decompressed-key cache for that epoch.
     ///
+    /// In case anything goes wrong, an error will be returned and epoch meta-data will remain in the RAM despite being deleted from disk.
+    /// This is to allow the caller to retry the operation until it succeeds.
+    ///
     /// [`Self::destroy_epoch`] only touches storage, so the cache must be cleared here as well or the decompressed keys
     /// stay resident until restart. The cache is purged regardless of the deletion outcome.
     async fn destroy_epoch_and_purge_cache(
@@ -1176,13 +1181,7 @@ impl<
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
         // NOTE: destroy_epoch will also destroy PRSS data
-        let res = Self::destroy_epoch(
-            epoch_id,
-            &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
-            &priv_storage,
-            &self.session_maker,
-        )
-        .await;
+        let res = Self::destroy_epoch(epoch_id, &priv_storage, &self.session_maker).await;
 
         let removed = self.crypto_storage.purge_epoch_from_cache(epoch_id).await;
         tracing::info!(
@@ -2263,12 +2262,7 @@ pub(crate) mod tests {
             ram::RamStorage,
             EmptyPrss,
             SecureReshareSecretKeys,
-        >::destroy_epoch(
-            &epoch_id,
-            &[PrivDataType::FheKeyInfo],
-            &priv_storage,
-            &epoch_manager.session_maker,
-        )
+        >::destroy_epoch(&epoch_id, &priv_storage, &epoch_manager.session_maker)
         .await
         .unwrap();
 
@@ -2307,7 +2301,6 @@ pub(crate) mod tests {
             SecureReshareSecretKeys,
         >::destroy_epoch(
             &nonexistent_epoch_id,
-            &[PrivDataType::FheKeyInfo],
             &priv_storage,
             &epoch_manager.session_maker,
         )
