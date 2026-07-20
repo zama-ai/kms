@@ -297,10 +297,7 @@ impl<
 
         for (epoch_id, prss) in all_prss {
             self.session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                "Loaded epoch data from storage for epoch ID {}.",
-                epoch_id
-            );
+            tracing::info!("Loaded epoch data from storage for epoch ID {}.", epoch_id);
         }
         Ok(())
     }

@@ -964,7 +964,8 @@ mod tests {
             .await
             .into_iter()
             .collect();
-        let expected: std::collections::HashSet<EpochId> = [epoch_a1, epoch_a2].into_iter().collect();
+        let expected: std::collections::HashSet<EpochId> =
+            [epoch_a1, epoch_a2].into_iter().collect();
         assert_eq!(for_a, expected, "context A must map to exactly its epochs");
 
         let for_b = session_maker.epochs_for_context(&context_b).await;
