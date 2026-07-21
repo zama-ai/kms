@@ -749,6 +749,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conf::ContextEpochAssociation;
     use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
@@ -2316,6 +2317,436 @@ mod tests {
             .await
             .unwrap();
         migrate_to_0_13_10(&mut storage, KMSType::Centralized)
+            .await
+            .unwrap();
+    }
+
+    // ── Helpers for the 0.15.x (PRSS → epoch) migration tests ──
+
+    fn make_test_prss_combined(num_parties: u8, threshold: u8) -> PRSSSetupCombined {
+        PRSSSetupCombined {
+            prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
+            prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+            num_parties,
+            threshold,
+        }
+    }
+
+    /// Build a [`MigrationConfig`] from `(context_id, [epoch_id, ...])` pairs.
+    fn migration_config(entries: Vec<(String, Vec<String>)>) -> MigrationConfig {
+        MigrationConfig {
+            context_associations: entries
+                .into_iter()
+                .map(|(context_id, epoch_ids)| ContextEpochAssociation {
+                    context_id,
+                    epoch_ids,
+                })
+                .collect(),
+        }
+    }
+
+    /// The single-context / single-epoch config that maps the default context to the default epoch.
+    fn default_migration_config() -> MigrationConfig {
+        migration_config(vec![(
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec![DEFAULT_EPOCH_ID.to_string()],
+        )])
+    }
+
+    /// Store a combined PRSS under the (deprecated) `PrssSetupCombined` type at `epoch_id`.
+    async fn store_combined_prss_at_epoch(
+        storage: &mut RamStorage,
+        epoch_id: &EpochId,
+        num_parties: u8,
+        threshold: u8,
+    ) {
+        store_versioned_at_request_id(
+            storage,
+            &(*epoch_id).into(),
+            &make_test_prss_combined(num_parties, threshold),
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // ── Tests for parse_migration_map ──
+
+    #[test]
+    fn test_parse_migration_map_sunshine() {
+        // Default context + default epoch, plus an additional context with its own epoch.
+        let config = migration_config(vec![
+            (
+                DEFAULT_MPC_CONTEXT.to_string(),
+                vec![DEFAULT_EPOCH_ID.to_string()],
+            ),
+            (
+                LEGACY_DEFAULT_MPC_CONTEXT.to_string(),
+                vec![LEGACY_DEFAULT_EPOCH_ID.to_string()],
+            ),
+        ]);
+
+        let map = parse_migration_map(&config).unwrap();
+
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get(&DEFAULT_MPC_CONTEXT).unwrap(), &vec![*DEFAULT_EPOCH_ID]);
+        assert_eq!(
+            map.get(&LEGACY_DEFAULT_MPC_CONTEXT).unwrap(),
+            &vec![*LEGACY_DEFAULT_EPOCH_ID]
+        );
+    }
+
+    #[test]
+    fn test_parse_migration_map_missing_default_context() {
+        // Only a non-default context is present.
+        let config = migration_config(vec![(
+            LEGACY_DEFAULT_MPC_CONTEXT.to_string(),
+            vec![LEGACY_DEFAULT_EPOCH_ID.to_string()],
+        )]);
+
+        let err = parse_migration_map(&config).unwrap_err().to_string();
+        assert!(
+            err.contains("Default context ID"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_migration_map_missing_default_epoch() {
+        // Default context present, but it does not list the default epoch.
+        let config = migration_config(vec![(
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec![LEGACY_DEFAULT_EPOCH_ID.to_string()],
+        )]);
+
+        let err = parse_migration_map(&config).unwrap_err().to_string();
+        assert!(err.contains("Default epoch ID"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_parse_migration_map_empty_epoch_list() {
+        let config = migration_config(vec![(DEFAULT_MPC_CONTEXT.to_string(), vec![])]);
+
+        let err = parse_migration_map(&config).unwrap_err().to_string();
+        assert!(
+            err.contains("no associated epoch IDs"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_migration_map_invalid_context_id() {
+        let config = migration_config(vec![(
+            "not-a-hex-context".to_string(),
+            vec![DEFAULT_EPOCH_ID.to_string()],
+        )]);
+
+        let err = parse_migration_map(&config).unwrap_err().to_string();
+        assert!(err.contains("Invalid context id"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_parse_migration_map_invalid_epoch_id() {
+        let config = migration_config(vec![(
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec!["not-a-hex-epoch".to_string()],
+        )]);
+
+        let err = parse_migration_map(&config).unwrap_err().to_string();
+        assert!(err.contains("Invalid epoch ID"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_parse_migration_map_duplicate_epoch() {
+        // The same epoch listed twice (here under the default context) must be rejected.
+        let config = migration_config(vec![(
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec![DEFAULT_EPOCH_ID.to_string(), DEFAULT_EPOCH_ID.to_string()],
+        )]);
+
+        let err = parse_migration_map(&config).unwrap_err().to_string();
+        assert!(err.contains("Duplicate epoch ID"), "unexpected error: {err}");
+    }
+
+    // ── Tests for threshold_prss_to_epoch ──
+
+    #[tokio::test]
+    async fn test_threshold_prss_to_epoch_sunshine() {
+        let mut storage = RamStorage::new();
+        let num_parties = 4u8;
+        let threshold = 1u8;
+
+        // Combined PRSS present at the default epoch, as produced by the earlier migrations.
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
+
+        threshold_prss_to_epoch(&mut storage, &default_migration_config())
+            .await
+            .unwrap();
+
+        // EpochData should now exist at the default epoch, tagged with the default context.
+        let epoch: EpochData = read_versioned_at_request_id(
+            &storage,
+            &(*DEFAULT_EPOCH_ID).into(),
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(epoch.context_id, *DEFAULT_MPC_CONTEXT);
+        assert_eq!(epoch.prss.num_parties, num_parties);
+        assert_eq!(epoch.prss.threshold, threshold);
+    }
+
+    #[tokio::test]
+    async fn test_threshold_prss_to_epoch_missing_prss_errors() {
+        let mut storage = RamStorage::new();
+        // No combined PRSS stored, so reading it back for the mapped epoch must fail.
+        let result = threshold_prss_to_epoch(&mut storage, &default_migration_config()).await;
+        assert!(result.is_err());
+    }
+
+    // ── Tests for migrate_prss_to_epoch ──
+
+    #[tokio::test]
+    async fn test_migrate_prss_to_epoch_centralized_noop() {
+        let mut storage = RamStorage::new();
+        // Even with a config present, centralized KMS performs no migration.
+        migrate_prss_to_epoch(
+            &mut storage,
+            KMSType::Centralized,
+            Some(&default_migration_config()),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            storage
+                .all_data_ids(&PrivDataType::EpochData.to_string())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_prss_to_epoch_already_migrated_skips() {
+        let mut storage = RamStorage::new();
+        let num_parties = 4u8;
+        let threshold = 1u8;
+
+        // EpochData already present → migration is a no-op even without a config.
+        let existing = EpochData {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            prss: make_test_prss_combined(num_parties, threshold),
+        };
+        store_versioned_at_request_id(
+            &mut storage,
+            &(*DEFAULT_EPOCH_ID).into(),
+            &existing,
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+
+        migrate_prss_to_epoch(&mut storage, KMSType::Threshold, None)
+            .await
+            .unwrap();
+
+        // Still exactly one EpochData entry, unchanged.
+        let ids = storage
+            .all_data_ids(&PrivDataType::EpochData.to_string())
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_prss_to_epoch_no_config_no_old_data_skips() {
+        let mut storage = RamStorage::new();
+        // Fresh threshold system: no EpochData, no old PRSS, no config → graceful skip.
+        migrate_prss_to_epoch(&mut storage, KMSType::Threshold, None)
+            .await
+            .unwrap();
+
+        assert!(
+            storage
+                .all_data_ids(&PrivDataType::EpochData.to_string())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_prss_to_epoch_no_config_with_old_data_errors() {
+        let mut storage = RamStorage::new();
+        // Old combined PRSS present but no migration config supplied → must fail loudly.
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+
+        let result = migrate_prss_to_epoch(&mut storage, KMSType::Threshold, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_prss_to_epoch_with_config_sunshine() {
+        let mut storage = RamStorage::new();
+        let num_parties = 4u8;
+        let threshold = 1u8;
+
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
+
+        migrate_prss_to_epoch(
+            &mut storage,
+            KMSType::Threshold,
+            Some(&default_migration_config()),
+        )
+        .await
+        .unwrap();
+
+        let epoch: EpochData = read_versioned_at_request_id(
+            &storage,
+            &(*DEFAULT_EPOCH_ID).into(),
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(epoch.context_id, *DEFAULT_MPC_CONTEXT);
+        assert_eq!(epoch.prss.num_parties, num_parties);
+    }
+
+    // ── Tests for remove_old_prss_data ──
+
+    #[tokio::test]
+    async fn test_remove_old_prss_data_centralized_noop() {
+        let mut storage = RamStorage::new();
+        // Centralized never has combined PRSS data; call is a no-op and must not error.
+        remove_old_prss_data(&mut storage, KMSType::Centralized)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_prss_data_threshold_removes_all() {
+        let mut storage = RamStorage::new();
+
+        // Two combined PRSS entries under different epoch IDs.
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+        store_combined_prss_at_epoch(&mut storage, &LEGACY_DEFAULT_EPOCH_ID, 4, 1).await;
+
+        #[expect(deprecated)]
+        let before = storage
+            .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+            .await
+            .unwrap();
+        assert_eq!(before.len(), 2);
+
+        remove_old_prss_data(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap();
+
+        #[expect(deprecated)]
+        let after = storage
+            .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+            .await
+            .unwrap();
+        assert!(after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_prss_data_threshold_no_data() {
+        let mut storage = RamStorage::new();
+        // Nothing stored → still succeeds.
+        remove_old_prss_data(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap();
+    }
+
+    // ── Tests for migrate_to_0_15_x (orchestrator) ──
+
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_threshold_sunshine() {
+        let mut storage = RamStorage::new();
+        let num_parties = 4u8;
+        let threshold = 1u8;
+
+        // Simulate a post-0.13.20 state: combined PRSS already sits at the default epoch.
+        // The earlier migration steps are no-ops here (no legacy keys/context), so this data
+        // survives and migrate_prss_to_epoch converts it into EpochData.
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
+
+        migrate_to_0_15_x(
+            &mut storage,
+            KMSType::Threshold,
+            Some(&default_migration_config()),
+        )
+        .await
+        .unwrap();
+
+        let epoch: EpochData = read_versioned_at_request_id(
+            &storage,
+            &(*DEFAULT_EPOCH_ID).into(),
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(epoch.context_id, *DEFAULT_MPC_CONTEXT);
+        assert_eq!(epoch.prss.num_parties, num_parties);
+        assert_eq!(epoch.prss.threshold, threshold);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_threshold_idempotent() {
+        let mut storage = RamStorage::new();
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+        let config = default_migration_config();
+
+        migrate_to_0_15_x(&mut storage, KMSType::Threshold, Some(&config))
+            .await
+            .unwrap();
+        // Second run: EpochData already exists, so PRSS migration short-circuits without error.
+        migrate_to_0_15_x(&mut storage, KMSType::Threshold, Some(&config))
+            .await
+            .unwrap();
+
+        let ids = storage
+            .all_data_ids(&PrivDataType::EpochData.to_string())
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_centralized_empty() {
+        let mut storage = RamStorage::new();
+        // Centralized on empty storage: no config needed, nothing to migrate.
+        migrate_to_0_15_x(&mut storage, KMSType::Centralized, None)
+            .await
+            .unwrap();
+    }
+
+    // ── Tests for migrate_to_0_16_x (orchestrator) ──
+
+    #[tokio::test]
+    async fn test_migrate_to_0_16_x_threshold_removes_combined_prss() {
+        let mut storage = RamStorage::new();
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+
+        migrate_to_0_16_x(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap();
+
+        #[expect(deprecated)]
+        let remaining = storage
+            .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+            .await
+            .unwrap();
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_to_0_16_x_centralized_noop() {
+        let mut storage = RamStorage::new();
+        migrate_to_0_16_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
     }
