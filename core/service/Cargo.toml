@@ -144,7 +144,6 @@ test-utils-service = { path = "./test-utils-service" }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 walkdir = { workspace = true }
 
-
 [features]
 default = ["non-wasm"]
 testing = ["dep:tempfile", "threshold-execution/testing"]

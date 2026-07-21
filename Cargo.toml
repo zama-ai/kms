@@ -5,6 +5,7 @@ members = [
     "bc2wrap",
     "core/grpc",
     "core/service",
+    "core/kms-benches",
     "core/test-utils",
     "core/thread-handles",
     "core/experiments",
