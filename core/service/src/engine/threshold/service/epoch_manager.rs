@@ -37,9 +37,7 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
 };
-use observability::metrics_names::{
-    OP_DESTROY_EPOCH, OP_DESTROY_MPC_CONTEXT, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH,
-};
+use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::{Versionize, zk::CompactPkeCrs};
@@ -295,14 +293,11 @@ impl<
 {
     /// This will load all epochs from storage into session maker.
     pub async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
-        let all_prss = self.crypto_storage.read_all_epoch_data().await?;
+        let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
 
-        for (epoch_id, prss) in all_prss {
+        for (epoch_id, prss) in all_epochs {
             self.session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                "Loaded PRSS Setup from storage for request ID {}.",
-                epoch_id
-            );
+            tracing::info!("Loaded epoch data from storage for epoch ID {}.", epoch_id);
         }
         Ok(())
     }
@@ -1060,9 +1055,11 @@ impl<
     /// Destroys an epoch by removing all private data stored under the given epoch for each of the
     /// given data types, then removing the PRSS setup data, and finally removing the epoch from the
     /// session maker.
+    ///
+    /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
+    /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
     async fn destroy_epoch(
         epoch_id: &EpochId,
-        priv_data_types: &[PrivDataType],
         priv_storage: &tokio::sync::Mutex<PrivS>,
         session_maker: &SessionMaker,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -1093,7 +1090,7 @@ impl<
         // but track the first error to report back to the caller.
         let mut first_error: Option<anyhow::Error> = None;
 
-        for priv_data_type in priv_data_types {
+        for priv_data_type in &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo] {
             // Delete all data stored under this epoch for the given private data type
             // first find all data IDs
             let data_ids = match priv_storage_guard
@@ -1172,6 +1169,9 @@ impl<
     /// Fully erase a single epoch: delete its on-disk private key shares, CRS and PRSS setup, then drop the in-memory
     /// decompressed-key cache for that epoch.
     ///
+    /// In case anything goes wrong, an error will be returned and epoch meta-data will remain in the RAM despite being deleted from disk.
+    /// This is to allow the caller to retry the operation until it succeeds.
+    ///
     /// [`Self::destroy_epoch`] only touches storage, so the cache must be cleared here as well or the decompressed keys
     /// stay resident until restart. The cache is purged regardless of the deletion outcome.
     async fn destroy_epoch_and_purge_cache(
@@ -1181,13 +1181,7 @@ impl<
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
         // NOTE: destroy_epoch will also destroy PRSS data
-        let res = Self::destroy_epoch(
-            epoch_id,
-            &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
-            &priv_storage,
-            &self.session_maker,
-        )
-        .await;
+        let res = Self::destroy_epoch(epoch_id, &priv_storage, &self.session_maker).await;
 
         let removed = self.crypto_storage.purge_epoch_from_cache(epoch_id).await;
         tracing::info!(
@@ -1596,10 +1590,13 @@ pub(crate) mod tests {
             rate_limiter::RateLimiterConfig,
         },
         vault::storage::{
-            StorageType,
+            StorageReader, StorageReaderExt, StorageType,
             file::FileStorage,
+            ram::FailingRamStorage,
             ram::{self, RamStorage},
-            read_all_data_versioned, store_versioned_at_request_id,
+            read_all_data_versioned, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
+            tests::TestType,
         },
     };
     use aes_prng::AesRng;
@@ -2212,6 +2209,14 @@ pub(crate) mod tests {
             .add_epoch(epoch_id, epoch.clone())
             .await;
 
+        // Add a second "keeper" epoch: `destroy_epoch` refuses to remove the last remaining epoch,
+        // so the target epoch must not be the only one for the destruction to succeed.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper_epoch_id, epoch.clone())
+            .await;
+
         // Store some test data under this epoch
         let data_type = PrivDataType::FheKeyInfo;
         let data = TestType { i: 42 };
@@ -2260,17 +2265,18 @@ pub(crate) mod tests {
             ram::RamStorage,
             EmptyPrss,
             SecureReshareSecretKeys,
-        >::destroy_epoch(
-            &epoch_id,
-            &[PrivDataType::FheKeyInfo],
-            &priv_storage,
-            &epoch_manager.session_maker,
-        )
+        >::destroy_epoch(&epoch_id, &priv_storage, &epoch_manager.session_maker)
         .await
         .unwrap();
 
-        // Verify epoch is gone from session maker
+        // Verify epoch is gone from session maker, while the keeper epoch remains.
         assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&keeper_epoch_id)
+                .await
+        );
 
         // Verify data is gone from storage
         {
@@ -2298,7 +2304,6 @@ pub(crate) mod tests {
             SecureReshareSecretKeys,
         >::destroy_epoch(
             &nonexistent_epoch_id,
-            &[PrivDataType::FheKeyInfo],
             &priv_storage,
             &epoch_manager.session_maker,
         )
@@ -2306,6 +2311,136 @@ pub(crate) mod tests {
         .unwrap_err();
 
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Validates partial-failure in destroying MPC epoch:
+    /// If deleting the private data fails, retrying should be possible until success,
+    /// at which point all epoch Ids associated to the destroyed context should be returned.
+    #[tokio::test]
+    async fn test_destroy_epoch_partial_failure_is_retryable() {
+        let mut rng = AesRng::seed_from_u64(42);
+        // We only borrow the session maker; the storage below is a separate, fault-injecting one.
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let session_maker = &epoch_manager.session_maker;
+
+        let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
+        let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
+        let epoch = EpochData {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            prss: PRSSSetupCombined {
+                prss_setup_z128,
+                prss_setup_z64,
+                num_parties: 4,
+                threshold: 1,
+            },
+        };
+
+        // Target epoch to destroy plus a "keeper" so the target is not the last remaining epoch.
+        let epoch_id = EpochId::new_random(&mut rng);
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        session_maker.add_epoch(epoch_id, epoch.clone()).await;
+        session_maker
+            .add_epoch(keeper_epoch_id, epoch.clone())
+            .await;
+
+        // Fault-injecting private storage that we can flip between failing and succeeding on delete.
+        let priv_storage = tokio::sync::Mutex::new(FailingRamStorage::new(100));
+
+        let data_type = PrivDataType::FheKeyInfo;
+        let data = TestType { i: 42 };
+        let data_id = derive_request_id("partial_failure_data").unwrap();
+        let epoch_data_id: RequestId = epoch_id.into();
+
+        {
+            let mut guard = priv_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut (*guard),
+                &data_id,
+                &epoch_id,
+                &data,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+            // The EpochData acts as the durable retry marker that resurrects the epoch on restart.
+            store_versioned_at_request_id(
+                &mut (*guard),
+                &epoch_data_id,
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            // Make every delete fail to simulate a partial failure mid-destruction.
+            guard.set_fail_deletes(true);
+        }
+
+        // First attempt: deletion fails, so the whole operation must fail.
+        let err = RealThresholdEpochManager::<
+            ram::RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+
+        // The epoch must still be present so the caller can retry, and the keeper must be untouched.
+        assert!(
+            session_maker.epoch_exists(&epoch_id).await,
+            "epoch must remain in the session maker after a failed destruction"
+        );
+        assert!(session_maker.epoch_exists(&keeper_epoch_id).await);
+
+        // Both the key share and the durable EpochData retry marker must still be on disk.
+        {
+            let guard = priv_storage.lock().await;
+            let ids = guard
+                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert!(
+                ids.contains(&data_id),
+                "key share must survive a failed destruction so it can be retried"
+            );
+            assert!(
+                guard
+                    .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap(),
+                "EpochData retry marker must not be deleted while other data still lingers on disk"
+            );
+        }
+
+        // Now let deletes succeed and retry: the operation must now complete and clean everything up.
+        priv_storage.lock().await.set_fail_deletes(false);
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        .await
+        .unwrap();
+
+        // The retry succeeded: epoch gone, keeper remains, and all on-disk data is cleared.
+        assert!(!session_maker.epoch_exists(&epoch_id).await);
+        assert!(session_maker.epoch_exists(&keeper_epoch_id).await);
+        {
+            let guard = priv_storage.lock().await;
+            let ids = guard
+                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert!(ids.is_empty());
+            assert!(
+                !guard
+                    .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
     }
 
     #[tokio::test]
@@ -2369,6 +2504,14 @@ pub(crate) mod tests {
             assert!(epoch_manager.session_maker.epoch_exists(epoch_id).await);
         }
 
+        // Add a "keeper" epoch so the two target epochs are never the last remaining one:
+        // `destroy_epoch` refuses to remove the final epoch.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper_epoch_id, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
+
         // Destroy both epochs plus one that was never created: the missing epoch must be skipped
         // (idempotent) while the call still succeeds.
         let nonexistent = EpochId::new_random(&mut rng);
@@ -2407,6 +2550,158 @@ pub(crate) mod tests {
             .destroy_mpc_epochs(&[epoch_ids[0], epoch_ids[1], nonexistent])
             .await
             .unwrap();
+
+        // The keeper epoch is untouched throughout.
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&keeper_epoch_id)
+                .await
+        );
+    }
+
+    /// Build a dummy [`EpochData`] tied to `context_id`. The PRSS material is empty testing data;
+    /// only the `context_id` matters for the tests below.
+    pub(crate) fn dummy_epoch_data(context_id: ContextId) -> EpochData {
+        EpochData {
+            context_id,
+            prss: PRSSSetupCombined {
+                prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
+                prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                num_parties: 4,
+                threshold: 1,
+            },
+        }
+    }
+
+    /// Register an epoch both in the session maker and in private storage (as its [`EpochData`]),
+    /// mirroring what a real PRSS setup persists. This is the minimal state `destroy_epoch` needs
+    /// to run its full cascade for the epoch.
+    async fn seed_epoch(
+        epoch_manager: &RealThresholdEpochManager<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >,
+        epoch_id: EpochId,
+        context_id: ContextId,
+    ) {
+        let epoch = dummy_epoch_data(context_id);
+        epoch_manager
+            .session_maker
+            .add_epoch(epoch_id, epoch.clone())
+            .await;
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        let mut priv_storage = private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut (*priv_storage),
+            &epoch_id.into(),
+            &epoch,
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destroy_mpc_epochs_reports_destroyed() {
+        let mut rng = AesRng::seed_from_u64(11);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_a = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+        let nonexistent = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_a, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, epoch_b, *DEFAULT_MPC_CONTEXT).await;
+
+        // A "keeper" epoch guarantees the two targets are never the last remaining epoch, so both
+        // can actually be destroyed (`destroy_epoch` refuses to remove the final epoch).
+        let keeper = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper, dummy_epoch_data(*DEFAULT_MPC_CONTEXT))
+            .await;
+
+        // The nonexistent epoch is skipped, so only the two real epochs are reported, in input order.
+        let destroyed = epoch_manager
+            .destroy_mpc_epochs(&[epoch_a, nonexistent, epoch_b])
+            .await
+            .unwrap();
+        assert_eq!(
+            destroyed,
+            vec![epoch_a, epoch_b],
+            "only actually-destroyed epochs should be reported"
+        );
+
+        // A second run has nothing left to destroy, so the reported list is empty.
+        let destroyed_again = epoch_manager
+            .destroy_mpc_epochs(&[epoch_a, epoch_b])
+            .await
+            .unwrap();
+        assert!(
+            destroyed_again.is_empty(),
+            "re-destroying already-gone epochs must report an empty list"
+        );
+    }
+
+    /// `destroy_epochs_for_context` must destroy exactly the epochs belonging to the given context,
+    /// leave epochs of other contexts intact, and report the destroyed epochs.
+    #[tokio::test]
+    async fn test_destroy_epochs_for_context() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        let epoch_a1 = EpochId::new_random(&mut rng);
+        let epoch_a2 = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_a1, context_a).await;
+        seed_epoch(&epoch_manager, epoch_a2, context_a).await;
+        seed_epoch(&epoch_manager, epoch_b, context_b).await;
+
+        // Destroying context A must report both of its epochs (order is not guaranteed since the
+        // epochs are gathered from a map, so compare as sets).
+        let destroyed: std::collections::HashSet<EpochId> = epoch_manager
+            .destroy_epochs_for_context(&context_a)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+        let expected: std::collections::HashSet<EpochId> =
+            [epoch_a1, epoch_a2].into_iter().collect();
+        assert_eq!(destroyed, expected);
+
+        // Context A's epochs are gone; context B's epoch is untouched.
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a1).await);
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_a2).await);
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_b).await);
+        assert!(
+            epoch_manager
+                .session_maker
+                .epochs_for_context(&context_a)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            epoch_manager
+                .session_maker
+                .epochs_for_context(&context_b)
+                .await,
+            vec![epoch_b]
+        );
+
+        // Destroying a context with no epochs is a successful no-op reporting an empty list.
+        let empty_context = ContextId::new_random(&mut rng);
+        assert!(
+            epoch_manager
+                .destroy_epochs_for_context(&empty_context)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// Build a dummy [`EpochData`] tied to `context_id`. The PRSS material is empty testing data;

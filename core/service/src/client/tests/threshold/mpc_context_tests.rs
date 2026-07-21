@@ -26,7 +26,7 @@ use crate::{
         rate_limiter::RateLimiterConfig,
     },
     vault::storage::{
-        StorageReader, StorageReaderExt, StorageType, file::FileStorage, read_context_at_id,
+        StorageReaderExt, StorageType, file::FileStorage, read_context_at_id,
         read_versioned_at_request_id, store_versioned_at_request_and_epoch_id, tests::TestType,
     },
 };
@@ -238,12 +238,14 @@ async fn do_context_switch(
     }
 }
 
-// `DestroyMpcContext` with a non-empty `epoch_ids` erases the epoch's private data on every party, over real gRPC.
-#[tokio::test]
-async fn test_destroy_context_erases_epoch_data_4p() {
+// The KMS always keeps at least one context and one epoch: `DestroyMpcContext` on the only
+// remaining context (which owns the only epoch) is rejected with `FailedPrecondition` and leaves
+// all data intact.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_destroy_only_context_is_rejected_4p() {
     let party_count = 4;
     let env = ThresholdTestEnv::builder()
-        .with_test_name("destroy_context_erases_epoch_data_4p".to_string())
+        .with_test_name("destroy_only_context_is_rejected_4p".to_string())
         .with_party_count(party_count)
         .with_threshold(1)
         .with_material_spec(TestMaterialSpec::threshold_signing_only(party_count))
@@ -256,10 +258,8 @@ async fn test_destroy_context_erases_epoch_data_4p() {
     let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];
     let default_context = *DEFAULT_MPC_CONTEXT;
     let epoch_id = *DEFAULT_EPOCH_ID;
-    let epoch_req_id: RequestId = epoch_id.into();
     let data_id = RequestId::from_bytes([7u8; 32]);
     let fhe_key_info = PrivDataType::FheKeyInfo.to_string();
-    let prss_type = PrivDataType::PrssSetupCombined.to_string();
 
     // Seed dummy private data under the default epoch for every party.
     for prefix in priv_prefixes {
@@ -274,7 +274,7 @@ async fn test_destroy_context_erases_epoch_data_4p() {
         )
         .await
         .unwrap();
-        // Sanity: the data we just wrote is present before destruction.
+        // Sanity: the data we just wrote is present before the (rejected) destruction attempt.
         assert!(
             storage
                 .all_data_ids_at_epoch(&epoch_id, &fhe_key_info)
@@ -284,7 +284,8 @@ async fn test_destroy_context_erases_epoch_data_4p() {
         );
     }
 
-    // Destroy the default context together with the default epoch's ID over gRPC.
+    // Attempt to destroy the default context, which is the only context (and owns the only epoch).
+    // The guard must reject every party's request with `FailedPrecondition`.
     let mut destroy_tasks = JoinSet::new();
     for client in kms_clients.values() {
         let mut client = client.clone();
@@ -294,10 +295,16 @@ async fn test_destroy_context_erases_epoch_data_4p() {
         destroy_tasks.spawn(async move { client.destroy_mpc_context(req).await });
     }
     destroy_tasks.join_all().await.into_iter().for_each(|res| {
-        assert!(res.is_ok(), "DestroyMpcContext failed: {:?}", res.err());
+        let status = res.expect_err("destroying the only context must be rejected");
+        assert_eq!(
+            status.code(),
+            tonic::Code::FailedPrecondition,
+            "expected FailedPrecondition, got: {status:?}"
+        );
     });
 
-    // Every party has had the epoch's private data and PRSS erased, and the context is gone.
+    // Because the destruction was rejected, nothing was erased: the epoch's key shares remain and
+    // the context is still present on every party.
     for prefix in priv_prefixes {
         let storage =
             FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
@@ -307,21 +314,13 @@ async fn test_destroy_context_erases_epoch_data_4p() {
             .await
             .unwrap();
         assert!(
-            ids.is_empty(),
-            "epoch key shares must be erased for {prefix:?}"
-        );
-
-        assert!(
-            !storage
-                .data_exists(&epoch_req_id, &prss_type)
-                .await
-                .unwrap(),
-            "epoch PRSS must be erased for {prefix:?}"
+            ids.contains(&data_id),
+            "epoch key shares must be preserved for {prefix:?} after a rejected destruction"
         );
 
         read_context_at_id(&storage, &default_context)
             .await
-            .unwrap_err();
+            .expect("the only context must still exist after a rejected destruction");
     }
 
     for (_, server) in kms_servers {

@@ -157,8 +157,9 @@ impl SessionMaker {
         let epoch_map = self.epoch_map.read().await;
         epoch_map
             .iter()
-            .filter(|(_, epoch_data)| epoch_data.context_id == *context_id)
-            .map(|(epoch_id, _)| *epoch_id)
+            .filter_map(|(epoch_id, epoch_data)| {
+                (epoch_data.context_id == *context_id).then_some(*epoch_id)
+            })
             .collect()
     }
 
@@ -959,12 +960,14 @@ mod tests {
             .add_epoch(epoch_b, dummy_epoch_data(context_b))
             .await;
 
-        let for_a = session_maker.epochs_for_context(&context_a).await;
-        assert_eq!(
-            for_a,
-            vec![epoch_a1, epoch_a2],
-            "context A must map to exactly its epochs"
-        );
+        let for_a: std::collections::HashSet<EpochId> = session_maker
+            .epochs_for_context(&context_a)
+            .await
+            .into_iter()
+            .collect();
+        let expected: std::collections::HashSet<EpochId> =
+            [epoch_a1, epoch_a2].into_iter().collect();
+        assert_eq!(for_a, expected, "context A must map to exactly its epochs");
 
         let for_b = session_maker.epochs_for_context(&context_b).await;
         assert_eq!(

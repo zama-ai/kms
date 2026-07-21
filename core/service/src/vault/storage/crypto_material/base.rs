@@ -466,7 +466,7 @@ where
                     }
                     // For other private data, we can delete at request level
                     // Observe we make the types explicit to ensure a compile error when a new type is added
-                    #[allow(deprecated)]
+                    #[expect(deprecated)]
                     PrivDataType::SigningKey
                     | PrivDataType::PrssSetup
                     | PrivDataType::PrssSetupCombined
@@ -607,7 +607,7 @@ where
             }
             // For other private data, we can delete at request level
             // Observe we make the types explicit to ensure a compile error when a new type is added
-            #[allow(deprecated)]
+            #[expect(deprecated)]
             PrivDataType::SigningKey
             | PrivDataType::PrssSetup
             | PrivDataType::PrssSetupCombined

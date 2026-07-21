@@ -936,7 +936,7 @@ where
 }
 
 // *WARNING* this function only works with n=13, t=4
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &PrivS,
     backup_vault: &mut Vault,
@@ -1015,7 +1015,7 @@ pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'stat
     Ok(())
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &mut PrivS,
     backup_vault: &Vault,

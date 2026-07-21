@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: rolling-upgrade-kms-enclave-ci-<version>-
+  generateName: threshold-kms-enclave-ci-test-suite-<version>-
   namespace: kms-ci
   labels:
-    app: rolling-upgrade-kms-enclave-ci-test-suite
+    app: threshold-kms-enclave-ci-test-suite
 spec:
   serviceAccountName: workflow-runner
   activeDeadlineSeconds: 345600  # 96 hours total timeout
@@ -33,114 +33,132 @@ spec:
 
 
   # Main entry point
-  entrypoint: rolling-upgrade-kms-enclave-ci-test-suite
+  entrypoint: threshold-kms-enclave-ci-test-suite
   arguments:
     parameters:
     - name: tls
-      value: "disabled"
-    - name: client-logs
       value: "disabled"
     - name: run_url
       value: "Manually triggered"
     - name: fhe-params
       value: "Test"
-    - name: key-id
-      value: ""
-    - name: test_label
-      value: ""
-    - name: old_version
-      value: ""
-    - name: new_version
-      value: ""
-    - name: num_upgraded
-      value: "0"
-    - name: num_total
-      value: "13"
-    # Unique per-stage decrypt request-IDs (32-byte hex). Below/above the PRSS-mask
-    # threshold (100). Must differ across pub/user and across the 5/13 & 9/13 runs.
-    - name: pdec-below-id
-      value: ""
-    - name: pdec-above-id
-      value: ""
-    - name: udec-below-id
-      value: ""
-    - name: udec-above-id
-      value: ""
+    - name: client-logs
+      value: "disabled"
 
 
   templates:
-    # Main DAG workflow — decrypt-only tests using a pre-existing key-id
-    - name: rolling-upgrade-kms-enclave-ci-test-suite
+    # Main DAG workflow
+    - name: threshold-kms-enclave-ci-test-suite
       dag:
         tasks:
           ##########################################################################
-          # Legacy-PRSS-mask boundary probe. Threshold = 100 (set on the upgraded
-          # parties in phase 2). Each decrypt pins a UNIQUE request-ID (they must be
-          # globally unique — across pub/user AND across the 5/13 and 9/13 runs, else
-          # the cores reject the duplicate) via a per-stage workflow parameter, landing
-          # below (<100 -> legacy mask on both sides -> reconstructs) or above (>100 ->
-          # new mask on the upgraded nodes -> Gao decode fails vs the legacy old nodes).
-          # Strict `<` boundary already confirmed separately (id=100 -> new schedule).
+          # insecure Keygen (v0.13.x: single step, no preprocessing, no -i)
           ##########################################################################
-          - name: public-decrypt-euint64-reqid-below
+          - name: insecure-key-gen
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-reqid-below"
+                  value: "insecure-key-gen"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.pdec-below-id}}"
+                  value: "insecure-key-gen"
                 - name: fhe-params
-                  value: "Default"
-          - name: public-decrypt-euint64-reqid-above
-            dependencies: ["public-decrypt-euint64-reqid-below"]
+                  value: "{{workflow.parameters.fhe-params}}"
+
+          ##########################################################################
+          # real CRS gen
+          ##########################################################################
+          - name: crs-gen
+            dependencies: ["insecure-key-gen"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "public-decrypt-euint64-reqid-above"
+                  value: "crs-gen"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.pdec-above-id}}"
+                  value: "crs-gen --max-num-bits 2048"
                 - name: fhe-params
-                  value: "Default"
-          - name: user-decrypt-euint64-reqid-below
-            dependencies: ["public-decrypt-euint64-reqid-above"]
+                  value: "{{workflow.parameters.fhe-params}}"
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req1
+            dependencies: ["crs-gen"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-reqid-below"
+                  value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.udec-below-id}}"
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
-                  value: "Default"
-          - name: user-decrypt-euint64-reqid-above
-            dependencies: ["user-decrypt-euint64-reqid-below"]
+                  value: "{{workflow.parameters.fhe-params}}"
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req1
+            dependencies: ["public-decrypt-euint64-req1"]
             template: run-test
             continueOn:
               failed: true
             arguments:
               parameters:
                 - name: test-name
-                  value: "user-decrypt-euint64-reqid-above"
+                  value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1 --request-id {{workflow.parameters.udec-above-id}}"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 1"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
+
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req10
+            dependencies: ["user-decrypt-euint64-req1"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req10"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+                - name: fhe-params
+                  value: "{{workflow.parameters.fhe-params}}"
+
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req10
+            dependencies: ["public-decrypt-euint64-req10"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req10"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 10"
+                - name: fhe-params
+                  value: "{{workflow.parameters.fhe-params}}"
 
           # Summary report generation
           - name: generate-summary
             dependencies: [
-              "public-decrypt-euint64-reqid-below",
-              "public-decrypt-euint64-reqid-above",
-              "user-decrypt-euint64-reqid-below",
-              "user-decrypt-euint64-reqid-above"
+              "insecure-key-gen",               # Insecure keygen
+              "crs-gen",                        # CRS gen
+              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt (correctness)
+              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt (correctness)
+              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt (correctness)
+              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt (correctness)
             ]
             template: summary-report
             continueOn:
@@ -148,27 +166,21 @@ spec:
             arguments:
               parameters:
               - name: test-result-1
-                value: "{{tasks.public-decrypt-euint64-reqid-below.outputs.parameters.test-result}}"
+                value: "{{tasks.insecure-key-gen.outputs.parameters.test-result}}"
               - name: test-result-2
-                value: "{{tasks.public-decrypt-euint64-reqid-above.outputs.parameters.test-result}}"
+                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
               - name: test-result-3
-                value: "{{tasks.user-decrypt-euint64-reqid-below.outputs.parameters.test-result}}"
+                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
               - name: test-result-4
-                value: "{{tasks.user-decrypt-euint64-reqid-above.outputs.parameters.test-result}}"
+                value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
+              - name: test-result-5
+                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+              - name: test-result-6
+                value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
                 value: "{{workflow.parameters.run_url}}"
-              - name: test_label
-                value: "{{workflow.parameters.test_label}}"
-              - name: old_version
-                value: "{{workflow.parameters.old_version}}"
-              - name: new_version
-                value: "{{workflow.parameters.new_version}}"
-              - name: num_upgraded
-                value: "{{workflow.parameters.num_upgraded}}"
-              - name: num_total
-                value: "{{workflow.parameters.num_total}}"
     # Templates
     - name: run-test
       inputs:
@@ -187,7 +199,9 @@ spec:
       metadata:
         labels:
           test: "{{inputs.parameters.test-name}}"
-          app: rolling-upgrade-kms-enclave-test-suite
+          app: kms-enclave-test-suite
+      nodeSelector:
+          karpenter.sh/nodepool: kms-pool
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
@@ -275,7 +289,7 @@ spec:
             client_logs_arg="--logs"
           fi
           start_time=$(date +%s)
-          ./bin/kms-core-client ${client_logs_arg} --max-iter 3 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)
           duration=$((end_time - start_time))
@@ -395,13 +409,10 @@ spec:
         - name: test-result-2
         - name: test-result-3
         - name: test-result-4
+        - name: test-result-5
+        - name: test-result-6
         - name: tls
         - name: run_url
-        - name: test_label
-        - name: old_version
-        - name: new_version
-        - name: num_upgraded
-        - name: num_total
       script:
         image: public.ecr.aws/docker/library/alpine:3.23
         command: ["/bin/sh", "-c"]
@@ -417,27 +428,18 @@ spec:
           apk add --no-cache jq
           # Make a directory for all the results
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/public-decrypt-euint64-reqid-below.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/public-decrypt-euint64-reqid-above.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/user-decrypt-euint64-reqid-below.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-reqid-above.json
+          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/insecure-key-gen.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/crs-gen.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req10.json
           ls -ali /mnt/results/
 
-          TEST_LABEL="{{inputs.parameters.test_label}}"
-          OLD_VERSION="{{inputs.parameters.old_version}}"
-          NEW_VERSION="{{inputs.parameters.new_version}}"
-          NUM_UPGRADED="{{inputs.parameters.num_upgraded}}"
-          NUM_TOTAL="{{inputs.parameters.num_total}}"
-          NUM_OLD=$((NUM_TOTAL - NUM_UPGRADED))
-
           echo "=========================================="
-          echo "🔍 KMS ROLLING UPGRADE TEST SUMMARY REPORT [${TEST_LABEL}]"
+          echo "🔍 KMS WITH ENCLAVE TEST SUITE SUMMARY REPORT"
           echo "=========================================="
           echo "Report generated: $(date -u)"
-          echo ""
-          echo "Cluster composition:"
-          echo "  ${NUM_UPGRADED}/${NUM_TOTAL} nodes on NEW version: ${NEW_VERSION}"
-          echo "  ${NUM_OLD}/${NUM_TOTAL} nodes on OLD version: ${OLD_VERSION}"
           echo ""
 
           # Initialize counters
@@ -451,10 +453,12 @@ spec:
 
           # Process result files in execution order
           for result in \
-            /mnt/results/public-decrypt-euint64-reqid-below.json \
-            /mnt/results/public-decrypt-euint64-reqid-above.json \
-            /mnt/results/user-decrypt-euint64-reqid-below.json \
-            /mnt/results/user-decrypt-euint64-reqid-above.json; do
+            /mnt/results/insecure-key-gen.json \
+            /mnt/results/crs-gen.json \
+            /mnt/results/public-decrypt-euint64-req1.json \
+            /mnt/results/user-decrypt-euint64-req1.json \
+            /mnt/results/public-decrypt-euint64-req10.json \
+            /mnt/results/user-decrypt-euint64-req10.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -543,11 +547,6 @@ spec:
             "failed": $failed,
             "success_rate": $success_rate,
             "total_time": $total_time,
-            "test_label": "${TEST_LABEL}",
-            "old_version": "${OLD_VERSION}",
-            "new_version": "${NEW_VERSION}",
-            "num_upgraded": ${NUM_UPGRADED},
-            "num_total": ${NUM_TOTAL},
             "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }
           EOF
@@ -575,11 +574,11 @@ spec:
             "attachments": [
               {
                 "color": "$COLOR",
-                "title": "$TITLE_EMOJI KMS Rolling Upgrade (Core-Client) Test Results <version> [${TEST_LABEL}]",
+                "title": "$TITLE_EMOJI KMS WITH ENCLAVE (Core-Client) Test Suite Results <version>",
                 "fields": [
                   {
                     "title": "Environment",
-                    "value": "kms-enclave-ci (rolling upgrade)",
+                    "value": "kms-enclave-ci",
                     "short": true
                   },
                   {
@@ -603,8 +602,8 @@ spec:
                     "short": true
                   },
                   {
-                    "title": ":twisted_rightwards_arrows: Cluster Composition",
-                    "value": "• ${NUM_UPGRADED}/${NUM_TOTAL} nodes on *${NEW_VERSION}* (new)\n• ${NUM_OLD}/${NUM_TOTAL} nodes on *${OLD_VERSION}* (old)\n",
+                    "title": ":package: Versions",
+                    "value": "• kms-core: <version>\n",
                     "short": false
                   },
                   {
@@ -619,10 +618,12 @@ spec:
                   }
                 ],
                 "text": "\`\`\`\n$(for result in \
-                  /mnt/results/public-decrypt-euint64-reqid-below.json \
-                  /mnt/results/public-decrypt-euint64-reqid-above.json \
-                  /mnt/results/user-decrypt-euint64-reqid-below.json \
-                  /mnt/results/user-decrypt-euint64-reqid-above.json; do
+                  /mnt/results/insecure-key-gen.json \
+                  /mnt/results/crs-gen.json \
+                  /mnt/results/public-decrypt-euint64-req1.json \
+                  /mnt/results/user-decrypt-euint64-req1.json \
+                  /mnt/results/public-decrypt-euint64-req10.json \
+                  /mnt/results/user-decrypt-euint64-req10.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
