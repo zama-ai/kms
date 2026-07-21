@@ -545,16 +545,9 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_to_0_15_x(
-        &mut private_vault,
-        kms_type,
-        core_config
-            .migration
-            .as_ref()
-            .expect("Migration config must be present for 0.15.x migration"),
-    )
-    .await
-    .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
+    migrate_to_0_15_x(&mut private_vault, kms_type, core_config.migration.as_ref())
+        .await
+        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be

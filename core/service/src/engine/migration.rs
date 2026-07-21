@@ -128,18 +128,77 @@ where
 pub async fn migrate_to_0_15_x<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
+    migration_config: Option<&MigrationConfig>,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    // No migration to 0.14 done, but previous version did use migrate_to_0_13_20 so we keep it for compelteness
+    migrate_to_0_13_20(priv_storage, kms_type).await?;
+    migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await
+}
+
+/// TODO Placeholder method to ensure we remember to clean up upgraded material at the next verison
+#[allow(dead_code)]
+pub async fn migrate_to_0_16_x<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    remove_old_prss_data(priv_storage, kms_type).await?;
+    Ok(())
+}
+
+async fn migrate_prss_to_epoch<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+    migration_config: Option<&MigrationConfig>,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    if kms_type == KMSType::Centralized {
+        tracing::info!("No migration needed for centralized KMS");
+        return Ok(());
+    }
+    // Check if PRSS migration has already been done
+    let data_ids = priv_storage
+        .all_data_ids(&PrivDataType::EpochData.to_string())
+        .await?;
+    if !data_ids.is_empty() {
+        tracing::info!("PRSS migration already done, skipping");
+        return Ok(());
+    }
+    let inner_migration_conf = match migration_config {
+        Some(inner_migration_conf) => inner_migration_conf,
+        None => {
+            // This should only be allowed on a fresh system, and not an upgraded system
+            #[expect(deprecated)]
+            let data_ids = priv_storage
+                .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+                .await?;
+            if data_ids.is_empty() {
+                tracing::info!("No old PRSS data found, skipping migration");
+                return Ok(());
+            } else {
+                anyhow::bail!(
+                    "Migration config must be provided for 0.15.x migration when PRSS data is present"
+                );
+            }
+        }
+    };
+    threshold_prss_to_epoch(priv_storage, inner_migration_conf).await
+}
+
+async fn threshold_prss_to_epoch<PrivS>(
+    priv_storage: &mut PrivS,
     migration_config: &MigrationConfig,
 ) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
-    // No migration to 0.14 done, so no need to do old migration here
-
-    if kms_type == KMSType::Centralized {
-        tracing::info!("No migration needed for centralized KMS");
-        return Ok(());
-    }
-
     // Check and parse the migration information
     let migration_map = parse_migration_map(migration_config)?;
     // Next update the actual storage
@@ -165,19 +224,6 @@ where
             .await?;
         }
     }
-    Ok(())
-}
-
-/// TODO Placeholder method to ensure we remember to clean up upgraded material at the next verison
-#[allow(dead_code)]
-pub async fn migrate_to_0_16_x<PrivS>(
-    priv_storage: &mut PrivS,
-    kms_type: KMSType,
-) -> anyhow::Result<()>
-where
-    PrivS: StorageExt + Sync + Send,
-{
-    remove_old_prss_data(priv_storage, kms_type).await?;
     Ok(())
 }
 
