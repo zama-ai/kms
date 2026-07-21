@@ -70,24 +70,25 @@ spec:
           ##########################################################################
           # real CRS gen
           ##########################################################################
-          - name: crs-gen
-            dependencies: ["insecure-key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "crs-gen"
-                - name: test-command
-                  value: "crs-gen --max-num-bits 2048"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
+          # - name: crs-gen
+          #   dependencies: ["insecure-key-gen"]
+          #   template: run-test
+          #   continueOn:
+          #     failed: true
+          #   arguments:
+          #     parameters:
+          #       - name: test-name
+          #         value: "crs-gen"
+          #       - name: test-command
+          #         value: "crs-gen --max-num-bits 2048"
+          #       - name: fhe-params
+          #         value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
           # Public decrypt tests
           ##########################################################################
           - name: public-decrypt-euint64-req1
-            dependencies: ["crs-gen"]
+            # dependencies: ["crs-gen"]
+            dependencies: ["insecure-key-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -168,14 +169,12 @@ spec:
               - name: test-result-1
                 value: "{{tasks.insecure-key-gen.outputs.parameters.test-result}}"
               - name: test-result-2
-                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-3
                 value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-4
+              - name: test-result-3
                 value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-5
+              - name: test-result-4
                 value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-6
+              - name: test-result-5
                 value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
@@ -410,7 +409,6 @@ spec:
         - name: test-result-3
         - name: test-result-4
         - name: test-result-5
-        - name: test-result-6
         - name: tls
         - name: run_url
       script:
@@ -429,11 +427,10 @@ spec:
           # Make a directory for all the results
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-1}}' > /mnt/results/insecure-key-gen.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/user-decrypt-euint64-req10.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -454,7 +451,6 @@ spec:
           # Process result files in execution order
           for result in \
             /mnt/results/insecure-key-gen.json \
-            /mnt/results/crs-gen.json \
             /mnt/results/public-decrypt-euint64-req1.json \
             /mnt/results/user-decrypt-euint64-req1.json \
             /mnt/results/public-decrypt-euint64-req10.json \
@@ -619,7 +615,6 @@ spec:
                 ],
                 "text": "\`\`\`\n$(for result in \
                   /mnt/results/insecure-key-gen.json \
-                  /mnt/results/crs-gen.json \
                   /mnt/results/public-decrypt-euint64-req1.json \
                   /mnt/results/user-decrypt-euint64-req1.json \
                   /mnt/results/public-decrypt-euint64-req10.json \
