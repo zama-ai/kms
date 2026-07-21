@@ -69,12 +69,13 @@ pub async fn init_impl<
 
     // Check that the system is not already initialized
     {
-        if !service
+        if service
             .epoch_ids
             .read()
             .await
             .get_successful_completed_request_ids()
-            .is_empty()
+            .next()
+            .is_some()
         {
             return Err(MetricedError::new(
                 OP_NEW_EPOCH,
