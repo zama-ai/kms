@@ -489,9 +489,9 @@ pub mod tests {
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
     use crate::vault::storage::file::FileStorage;
-    use crate::vault::storage::{Storage, StorageType};
+    use crate::vault::storage::{Storage, StorageExt, StorageReader, StorageReaderExt, StorageType};
     use aes_prng::AesRng;
-    use kms_grpc::{RequestId, rpc_types::PrivDataType};
+    use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
 
     #[test]
@@ -564,5 +564,119 @@ pub mod tests {
             "Backup data file should be at <backup_root>/<custodian_context_id>/<data_type>/<request_id>, \
              expected: {expected_file:?}"
         );
+    }
+
+    /// Regression test for the epoch-namespace gap in custodian context destruction.
+    ///
+    /// `remove_old_backup` (the first thing `delete_custodian_context_at_id` does when a
+    /// custodian context is retired) enumerates and deletes backups with the non-epoch-aware
+    /// [`StorageReader::all_data_ids`] / `delete_data` APIs. Epoch-scoped backup material
+    /// (`FheKeyInfo`, `FhePrivateKey`, `CrsInfo`) is written under
+    /// `<backup_id>/<type>/<epoch_id>/<data_id>`, which those APIs never see. So retiring a
+    /// context reports success while leaving epoch-scoped ciphertexts recoverable in storage.
+    ///
+    /// This test fails on the current (buggy) code and should pass once `remove_old_backup`
+    /// enumerates and deletes epoch-scoped objects too.
+    #[tokio::test]
+    async fn test_remove_old_backup_deletes_epoch_scoped_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let backup_storage =
+            FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
+
+        // Build a secret-sharing backup vault.
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
+            .await
+            .unwrap();
+        let mut vault = Vault {
+            storage: crate::vault::storage::StorageProxy::from(backup_storage),
+            keychain: Some(KeychainProxy::SecretSharing(keychain)),
+        };
+
+        // The custodian context we will retire, and the one that becomes current after rotation.
+        let old_backup_id = derive_request_id("old_custodian_context").unwrap();
+        let current_backup_id = derive_request_id("current_custodian_context").unwrap();
+
+        // `FheKeyInfo` is one of the epoch-scoped private data types.
+        let data_type = PrivDataType::FheKeyInfo;
+        let epoch_id = EpochId::from_bytes([7u8; 32]);
+
+        // While `old_backup_id` is the current context, back up two objects: one epoch-scoped
+        // (as the real backup-sync path does via `store_data_at_epoch`) and one non-epoch object
+        // (a positive control proving `remove_old_backup` actually runs and deletes what it sees).
+        set_current_backup_id(&mut vault, old_backup_id, enc_key.clone());
+        let epoch_id_item = derive_request_id("epoch_backup_item").unwrap();
+        vault
+            .store_bytes_at_epoch(
+                b"epoch_secret",
+                &epoch_id_item,
+                &epoch_id,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+        let non_epoch_item = derive_request_id("non_epoch_backup_item").unwrap();
+        vault
+            .store_bytes(b"non_epoch_secret", &non_epoch_item, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Sanity: both objects are present under the old context before retirement.
+        let old_data_type =
+            VaultDataType::CustodianBackupData(old_backup_id, data_type).to_string();
+        assert!(
+            vault
+                .storage
+                .data_exists_at_epoch(&epoch_id_item, &epoch_id, &old_data_type)
+                .await
+                .unwrap(),
+            "epoch-scoped backup should exist before destruction"
+        );
+
+        // Rotate: a new custodian context becomes current so the old one is allowed to be retired.
+        set_current_backup_id(&mut vault, current_backup_id, enc_key);
+
+        // Retire the old context. This is exactly what `delete_custodian_context_at_id` calls
+        // before deleting the recovery material and reporting a successful destruction.
+        vault.remove_old_backup(&old_backup_id).await.unwrap();
+
+        // Positive control: the non-epoch object was deleted, so `remove_old_backup` did run.
+        assert!(
+            vault
+                .storage
+                .all_data_ids(&old_data_type)
+                .await
+                .unwrap()
+                .is_empty(),
+            "non-epoch backup should have been deleted by remove_old_backup"
+        );
+
+        // The retirement guarantee: no backup object for the retired context may remain.
+        // BUG: the epoch-scoped object survives because `remove_old_backup` only looks at the
+        // non-epoch namespace, so this assertion currently fails.
+        let leftover = vault
+            .storage
+            .all_data_ids_from_all_epochs(&old_data_type)
+            .await
+            .unwrap();
+        assert!(
+            leftover.is_empty(),
+            "destroying a custodian context must erase epoch-scoped backups, \
+             but these survived: {leftover:?}"
+        );
+    }
+
+    /// Point the vault's secret-sharing keychain at `backup_id` as the current custodian context.
+    fn set_current_backup_id(
+        vault: &mut Vault,
+        backup_id: RequestId,
+        enc_key: crate::cryptography::encryption::UnifiedPublicEncKey,
+    ) {
+        match vault.keychain.as_mut() {
+            Some(KeychainProxy::SecretSharing(kc)) => kc.set_backup_enc_key(backup_id, enc_key),
+            _ => panic!("expected a secret sharing keychain"),
+        }
     }
 }
