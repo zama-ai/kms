@@ -73,7 +73,8 @@ where
     x_inv: Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
     /// Field-level error-magnitude factors `−roleᵢ · Lᵢ(roleᵢ)`. The second committee-invariant hint passed to
     /// `decode_syndrome` in [`Self::decode`]; per error it is multiplied by the `ω/σ′` term.
-    error_factor: Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+    error_normalizer:
+        Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> SyndromeContext<Z, EXTENSION_DEGREE>
@@ -111,8 +112,8 @@ where
             .map(RingWithExceptionalSequence::embed_role_to_exceptional_sequence)
             .collect::<Result<Vec<_>>>()?;
 
-        // x_inv[i] = 1/roleᵢ (root search) and error_factor[i] = −roleᵢ·Lᵢ(roleᵢ) (error magnitude).
-        let (x_inv, error_factor) = field_decode_hints(&parties_as_field_points);
+        // x_inv[i] = 1/roleᵢ (root search) and error_normalizer[i] = −roleᵢ·Lᵢ(roleᵢ) (error magnitude).
+        let (x_inv, error_normalizer) = field_decode_hints(&parties_as_field_points);
 
         // --- Ring-level syndrome weights (consumed by the mat-vec in `compute`) ---
         // The same parties, now embedded as ring points αᵢ = embed(roleᵢ). Ordering invariant: the shares passed to
@@ -149,7 +150,7 @@ where
             inv_denoms,
             deltas,
             x_inv,
-            error_factor,
+            error_normalizer,
         })
     }
 
@@ -207,7 +208,7 @@ where
                 continue;
             }
             // bit error in this for this bit-idx
-            let ej = decode_syndrome(sliced_syndrome, self.r, &self.x_inv, &self.error_factor);
+            let ej = decode_syndrome(sliced_syndrome, self.r, &self.x_inv, &self.error_normalizer);
 
             // lift bit error into the ring
             let lifted_e = ej
