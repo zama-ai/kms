@@ -45,6 +45,17 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
     bucketSize: 50000
+  # One-time migration input associating existing epochs with the context they belong to.
+  # Consumed once by the epoch-data migration on startup; idempotent, so it can be left in place.
+  # Each epoch belongs to exactly one context, so a given epoch ID must appear under a single entry.
+  # IDs are hex strings (with or without a `0x` prefix).
+  # Only to be used in 0.15.x and removed in 0.16.x or above.
+  migration:
+    contextAssociations: []
+    #  - contextId: "0x0101010101010101010101010101010101010101010101010101010101020304"
+    #    epochIds:
+    #      - "0x0000000000000000000000000000000000000000000000000000000000000001"
+    #      - "0x0000000000000000000000000000000000000000000000000000000000000002"
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
