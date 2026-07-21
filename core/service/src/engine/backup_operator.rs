@@ -6,6 +6,7 @@ use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -763,6 +764,7 @@ where
                 .await?;
             }
             // Non epoched types
+            #[expect(deprecated)]
             PrivDataType::PrssSetupCombined => {
                 restore_data_type::<PrivS, PRSSSetupCombined>(priv_storage, backup_vault, cur_type)
                     .await?;
@@ -787,6 +789,9 @@ where
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
                     .await?;
+            }
+            PrivDataType::EpochData => {
+                restore_data_type::<PrivS, EpochData>(priv_storage, backup_vault, cur_type).await?;
             }
         }
     }
@@ -931,7 +936,7 @@ where
 }
 
 // *WARNING* this function only works with n=13, t=4
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &PrivS,
     backup_vault: &mut Vault,
@@ -1010,7 +1015,7 @@ pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'stat
     Ok(())
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &mut PrivS,
     backup_vault: &Vault,

@@ -7,8 +7,9 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
-    self, CustodianRecoveryRequest, Empty, HealthStatusResponse, KeyGenPreprocRequest,
-    KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType, OperatorPublicKey,
+    self, CustodianRecoveryRequest, DestroyMpcContextResponse, Empty, HealthStatusResponse,
+    KeyGenPreprocRequest, KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType,
+    OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
@@ -282,12 +283,16 @@ impl<
     async fn destroy_mpc_context(
         &self,
         request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<DestroyMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
         self.context_manager
             .destroy_mpc_context(request)
             .await
-            .map_err(|e| e.into())
+            .map_err(Status::from)?;
+        // Note that there are no epochs in the centralized case, so we return an empty list of epoch IDs
+        Ok(Response::new(DestroyMpcContextResponse {
+            epoch_ids: Vec::new(),
+        }))
     }
 
     #[tracing::instrument(skip(self, request))]

@@ -7,16 +7,13 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
-use kms_grpc::{ContextId, EpochId};
 use observability::{metrics::METRICS, metrics_names::*};
 use threshold_networking::health_check::HealthCheckStatus;
 
 use tonic::{Request, Response, Status};
-
-/// Upper bound on the number of epochs a single `DestroyMpcContext` request may carry.
-const MAX_DESTROY_MPC_EPOCHS: usize = 1024;
 
 macro_rules! impl_endpoint {
     { impl CoreServiceEndpoint $implementations:tt } => {
@@ -234,7 +231,7 @@ impl_endpoint! {
         async fn destroy_mpc_context(
             &self,
             request: Request<DestroyMpcContextRequest>,
-        ) -> Result<Response<Empty>, Status> {
+        ) -> Result<Response<DestroyMpcContextResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
             let inner = request.into_inner();
 
@@ -247,23 +244,7 @@ impl_endpoint! {
                 .context_id
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-            parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
-
-            // Bound the epoch list so a malformed or hostile request cannot trigger unbounded
-            // deletion work.
-            if inner.epoch_ids.len() > MAX_DESTROY_MPC_EPOCHS {
-                return Err(Status::invalid_argument(format!(
-                    "DestroyMpcContext lists {} epochs, exceeding the maximum of {MAX_DESTROY_MPC_EPOCHS}",
-                    inner.epoch_ids.len()
-                )));
-            }
-
-            // Parse every epoch ID up front so a malformed ID is rejected before any deletion.
-            let epoch_ids = inner
-                .epoch_ids
-                .iter()
-                .map(|id| parse_grpc_request_id::<EpochId>(id, RequestIdParsingErr::Epoch))
-                .collect::<Result<Vec<EpochId>, _>>()?;
+            let context_id = parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
 
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
@@ -271,16 +252,16 @@ impl_endpoint! {
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            self.epoch_manager
-                .destroy_mpc_epochs(&epoch_ids)
-                .await
-                .map_err(Status::from)?;
+            let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
 
             // Every epoch is now gone, so it is safe to remove the context.
             self.context_manager
                 .destroy_mpc_context(Request::new(inner))
                 .await
-                .map_err(Status::from)
+                .map_err(Status::from)?;
+            Ok(Response::new(DestroyMpcContextResponse {
+                epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+            }))
         }
 
         #[tracing::instrument(skip_all)]

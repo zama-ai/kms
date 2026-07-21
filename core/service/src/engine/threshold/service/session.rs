@@ -5,17 +5,16 @@ use std::{
 };
 
 use crate::{
-    engine::{context::ContextInfo, utils::MetricedError},
+    engine::{
+        context::ContextInfo, threshold::service::epoch_manager::EpochData, utils::MetricedError,
+    },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === External Crates ===
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
-use kms_grpc::{
-    RequestId,
-    identifiers::{ContextId, EpochId},
-};
+use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
 use threshold_execution::{
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession},
@@ -80,7 +79,7 @@ type ContextMap = HashMap<ContextId, Context>;
 pub(crate) struct SessionMaker {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     context_map: Arc<RwLock<ContextMap>>,
-    epoch_map: Arc<RwLock<HashMap<EpochId, PRSSSetupCombined>>>,
+    epoch_map: Arc<RwLock<HashMap<EpochId, EpochData>>>,
     verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
     rng: Arc<Mutex<AesRng>>,
 }
@@ -96,17 +95,18 @@ impl SessionMaker {
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
     ) -> anyhow::Result<Self> {
-        let session_maker = Self::new_uninitialized(networking_manager, verifier, rng);
-        let all_prss = crypto_storage.read_all_prss_info().await?;
-        if all_prss.is_empty() {
+        let session_maker: SessionMaker =
+            Self::new_uninitialized(networking_manager, verifier, rng);
+        let all_epochs = crypto_storage.read_all_epoch_data().await?;
+        if all_epochs.is_empty() {
             tracing::warn!(
-                "No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server"
+                "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"
             );
         }
-        for (epoch_id, prss) in all_prss {
-            session_maker.add_epoch(epoch_id.into(), prss).await;
+        for (epoch_id, prss) in all_epochs {
+            session_maker.add_epoch(epoch_id, prss).await;
             tracing::info!(
-                "Loaded PRSS Setup from storage for request ID {}.",
+                "Loaded epoch data from storage for request ID {}.",
                 epoch_id
             );
         }
@@ -152,12 +152,21 @@ impl SessionMaker {
         reader_guard.inactive_session_count().await
     }
 
-    #[cfg(test)]
+    /// Return the epoch Ids associated with a given context Id.
+    pub async fn epochs_for_context(&self, context_id: &ContextId) -> Vec<EpochId> {
+        let epoch_map = self.epoch_map.read().await;
+        epoch_map
+            .iter()
+            .filter_map(|(epoch_id, epoch_data)| {
+                (epoch_data.context_id == *context_id).then_some(*epoch_id)
+            })
+            .collect()
+    }
+
     pub(crate) async fn context_count(&self) -> usize {
         self.context_map.read().await.len()
     }
 
-    #[cfg(test)]
     pub(crate) async fn epoch_count(&self) -> usize {
         self.epoch_map.read().await.len()
     }
@@ -200,12 +209,15 @@ impl SessionMaker {
             role_assignment,
         };
 
-        let default_prss = match (prss_setup_z128, prss_setup_z64) {
-            (Some(z128), Some(z64)) => Some(PRSSSetupCombined {
-                prss_setup_z128: z128,
-                prss_setup_z64: z64,
-                num_parties: 4,
-                threshold: 1,
+        let default_epoch = match (prss_setup_z128, prss_setup_z64) {
+            (Some(z128), Some(z64)) => Some(EpochData {
+                context_id: default_context_id,
+                prss: PRSSSetupCombined {
+                    prss_setup_z128: z128,
+                    prss_setup_z64: z64,
+                    num_parties: 4,
+                    threshold: 1,
+                },
             }),
             _ => None,
         };
@@ -216,8 +228,8 @@ impl SessionMaker {
                 default_context_id,
                 default_context,
             )]))),
-            epoch_map: Arc::new(RwLock::new(match default_prss {
-                Some(prss) => HashMap::from_iter([(*epoch_id, prss)]),
+            epoch_map: Arc::new(RwLock::new(match default_epoch {
+                Some(epoch) => HashMap::from_iter([(*epoch_id, epoch)]),
                 None => HashMap::new(),
             })),
             verifier: None,
@@ -386,9 +398,9 @@ impl SessionMaker {
         context_map.remove(context_id);
     }
 
-    pub(crate) async fn add_epoch(&self, epoch_id: EpochId, prss: PRSSSetupCombined) {
+    pub(crate) async fn add_epoch(&self, epoch_id: EpochId, epoch_data: EpochData) {
         let mut epoch_map = self.epoch_map.write().await;
-        epoch_map.insert(epoch_id, prss);
+        epoch_map.insert(epoch_id, epoch_data);
     }
 
     pub(crate) async fn remove_epoch(&self, epoch_id: &EpochId) {
@@ -506,7 +518,7 @@ impl SessionMaker {
             let prss_setup_extended = epoch_map_guard
                 .get(&epoch_id)
                 .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss_setup_z128;
+            let prss_setup = &prss_setup_extended.prss.prss_setup_z128;
             prss_setup.new_prss_session_state(session_id)
         };
 
@@ -533,7 +545,7 @@ impl SessionMaker {
             let prss_setup_extended = epoch_map_guard
                 .get(&epoch_id)
                 .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss_setup_z64;
+            let prss_setup = &prss_setup_extended.prss.prss_setup_z64;
 
             prss_setup.new_prss_session_state(session_id)
         };
@@ -916,4 +928,86 @@ pub(crate) async fn validate_context_and_epoch(
         ));
     }
     Ok(my_role)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::threshold::service::epoch_manager::tests::dummy_epoch_data;
+
+    /// Sunshine: `epochs_for_context` returns exactly the epochs whose `EpochData` carries the
+    /// requested context ID, and excludes epochs belonging to other contexts.
+    #[tokio::test]
+    async fn epochs_for_context_filters_by_context() {
+        let mut rng = AesRng::seed_from_u64(1);
+        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(2));
+
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+
+        // Two epochs under context A, one under context B.
+        let epoch_a1 = EpochId::new_random(&mut rng);
+        let epoch_a2 = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+
+        session_maker
+            .add_epoch(epoch_a1, dummy_epoch_data(context_a))
+            .await;
+        session_maker
+            .add_epoch(epoch_a2, dummy_epoch_data(context_a))
+            .await;
+        session_maker
+            .add_epoch(epoch_b, dummy_epoch_data(context_b))
+            .await;
+
+        let for_a: std::collections::HashSet<EpochId> = session_maker
+            .epochs_for_context(&context_a)
+            .await
+            .into_iter()
+            .collect();
+        let expected: std::collections::HashSet<EpochId> =
+            [epoch_a1, epoch_a2].into_iter().collect();
+        assert_eq!(for_a, expected, "context A must map to exactly its epochs");
+
+        let for_b = session_maker.epochs_for_context(&context_b).await;
+        assert_eq!(
+            for_b,
+            vec![epoch_b],
+            "context B must map to exactly its single epoch"
+        );
+    }
+
+    /// Negative: an unknown context (or one with no epochs) yields an empty result rather than an
+    /// error or spurious epochs.
+    #[tokio::test]
+    async fn epochs_for_context_unknown_context_is_empty() {
+        let mut rng = AesRng::seed_from_u64(3);
+        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(4));
+
+        let known_context = ContextId::new_random(&mut rng);
+        session_maker
+            .add_epoch(
+                EpochId::new_random(&mut rng),
+                dummy_epoch_data(known_context),
+            )
+            .await;
+
+        let unknown_context = ContextId::new_random(&mut rng);
+        assert!(
+            session_maker
+                .epochs_for_context(&unknown_context)
+                .await
+                .is_empty(),
+            "a context with no registered epochs must yield an empty vector"
+        );
+
+        // An entirely empty session maker also returns empty.
+        let empty_session = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(5));
+        assert!(
+            empty_session
+                .epochs_for_context(&known_context)
+                .await
+                .is_empty()
+        );
+    }
 }
