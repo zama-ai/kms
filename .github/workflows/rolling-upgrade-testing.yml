@@ -417,7 +417,7 @@ jobs:
              /tmp/baseline-workflow.yaml
           # <client-version> = the test harness image (modern/NEW); <version> is the
           # displayed server version, which is OLD while the whole cluster is old.
-          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
+          sed -i "s/<client-version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
           sed -i "s/<version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
 
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
