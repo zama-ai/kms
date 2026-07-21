@@ -195,6 +195,8 @@ pub trait Storage: StorageReader {
     ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Delete the given `data_id` with the given `data_type`.
+    /// Missing-data behavior is backend-defined (S3 succeeds, file/ram error);
+    /// use [`delete_at_request_id`] for uniform missing-data semantics.
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
 }
 
@@ -354,7 +356,7 @@ pub async fn delete_all_at_request_id<S: Storage>(
 
 /// Helper method to remove data based on a data type and request ID.
 /// An error will be returned if the data exists but could not be deleted.
-/// In case the data does not exist, an info log is made but no error returned.
+/// In case the data does not exist, a warning is logged but no error returned.
 pub async fn delete_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
@@ -382,7 +384,7 @@ pub async fn delete_at_request_id<S: Storage>(
 
 /// Helper method to remove data based on a data type, request ID and epoch ID.
 /// An error will be returned if the data exists but could not be deleted.
-/// In case the data does not exist, an info log is made but no error returned.
+/// In case the data does not exist, a warning is logged but no error returned.
 pub async fn delete_at_request_and_epoch_id<S: StorageExt>(
     storage: &mut S,
     request_id: &RequestId,

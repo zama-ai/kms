@@ -128,6 +128,8 @@ impl S3Storage {
     /// maps to `Ok(false)`; any other failure (e.g. access denied) is returned
     /// as an error, so exists-guarded callers (overwrite checks, purge and
     /// destroy-epoch flows) never mistake a failed check for absent data.
+    /// Note S3 answers `HeadObject` on a missing key with 403 instead of 404
+    /// when the caller lacks `s3:ListBucket`, so that permission is required.
     async fn data_exists_at_key(&self, key: &str) -> anyhow::Result<bool> {
         tracing::info!(
             "Checking if object exists in bucket {} under key {}",
@@ -738,7 +740,9 @@ impl S3PartWriter {
             std::thread::Builder::new()
                 .name("s3-multipart-upload".to_string())
                 .spawn(move || run_multipart_uploader(config, bucket, key, part_rx, result_tx))
-                .map_err(std::io::Error::other)?;
+                .map_err(|e| {
+                    std::io::Error::other(format!("failed to spawn the S3 uploader thread: {e}"))
+                })?;
             tracing::info!(
                 "Streaming multipart upload engaged for key {} ({} byte parts)",
                 self.key,
@@ -819,14 +823,24 @@ fn run_multipart_uploader(
         }
     };
     // Sharing the caller's HTTP client could hand out pooled connections that
-    // are driven by the caller's runtime, which stays blocked in the
-    // serializer for the duration of this upload; force a fresh pool instead.
+    // are driven by the caller's runtime, which can sit blocked in the
+    // serializer while this upload runs; force a fresh pool instead.
     let mut config = config.to_builder();
     config.set_http_client(None);
     // Same for the identity cache: the caller's lazy cache single-flights
     // credential refreshes, so waiting here on a refresh started by a task on
-    // the caller's (blocked) runtime would deadlock the pipeline.
+    // the caller's (blocked) runtime would deadlock the pipeline. The
+    // credentials provider behind the fresh cache is still shared.
     config.set_identity_cache(aws_sdk_s3::config::IdentityCache::lazy().build());
+    // Bound each attempt so a black-holed connection cannot pin the uploader
+    // — and the serializer blocked in `send` — forever. 600 s still clears a
+    // 16 MiB part at ~28 KiB/s.
+    config.set_timeout_config(Some(
+        aws_sdk_s3::config::timeout::TimeoutConfig::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .operation_attempt_timeout(std::time::Duration::from_secs(600))
+            .build(),
+    ));
     // Pin checksum calculation so an ambient `when_required` setting (env or
     // profile) cannot strip the per-part CRC32 that the declared algorithm
     // below obliges every part to carry.
@@ -954,24 +968,29 @@ pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     let mut writer = S3PartWriter::new(s3_client.config().clone(), bucket, key, part_size);
     // The serializer borrows `data`, so it cannot move into `spawn_blocking`;
     // it runs on this task, blocking in `spill` at upload pace once the
-    // payload exceeds one part. `block_in_place` keeps the worker's other
-    // tasks running meanwhile, but panics on current-thread runtimes (tests),
-    // where serialization simply runs inline and blocks the runtime.
-    let serialize = |writer: &mut S3PartWriter| safe_serialize(data, writer, size_limit);
-    let ser_result = if tokio::runtime::Handle::current().runtime_flavor()
-        == tokio::runtime::RuntimeFlavor::MultiThread
-    {
-        tokio::task::block_in_place(|| serialize(&mut writer))
-    } else {
-        serialize(&mut writer)
-    }
-    .map_err(|e| {
+    // payload exceeds one part (see [`run_blocking`]).
+    let ser_result = run_blocking(|| safe_serialize(data, &mut writer, size_limit)).map_err(|e| {
         anyhow::anyhow!(
             "failed to serialize {} for key {key}: {e}",
             <T as Named>::NAME
         )
     });
     s3_finish_put(s3_client, bucket, key, writer, ser_result).await
+}
+
+/// Run blocking pipeline work off the async scheduler: under `block_in_place`
+/// on multi-thread runtimes so the worker's other tasks keep running;
+/// `block_in_place` panics on current-thread runtimes (tests), where the work
+/// simply runs inline and blocks the runtime while the uploader thread makes
+/// progress on its own.
+fn run_blocking<R>(f: impl FnOnce() -> R) -> R {
+    if tokio::runtime::Handle::current().runtime_flavor()
+        == tokio::runtime::RuntimeFlavor::MultiThread
+    {
+        tokio::task::block_in_place(f)
+    } else {
+        f()
+    }
 }
 
 /// Complete the store fed through an [`S3PartWriter`]: a single PUT for
@@ -986,7 +1005,17 @@ async fn s3_finish_put(
     ser_result: anyhow::Result<()>,
 ) -> anyhow::Result<u64> {
     let total_written = writer.total_written;
-    match writer.finish(ser_result.is_ok()) {
+    let serialization_ok = ser_result.is_ok();
+    // Once the pipeline is engaged, the tail-part send in `finish` blocks on
+    // the bounded channel just like `spill`, so it needs the same
+    // off-scheduler treatment as the serializer; the single-PUT path cannot
+    // block and skips that overhead.
+    let outcome = if writer.pipeline.is_some() {
+        run_blocking(move || writer.finish(serialization_ok))
+    } else {
+        writer.finish(serialization_ok)
+    };
+    match outcome {
         PartWriterOutcome::Single(buf) => {
             ser_result?;
             s3_put_blob(s3_client, bucket, key, buf).await?;
@@ -1434,6 +1463,54 @@ mod tests {
             assert!(
                 etag.trim_matches('"').ends_with("-3"),
                 "expected a 3-part multipart ETag, got {etag}"
+            );
+            let read_back: TestBigType =
+                storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
+            assert_eq!(read_back, data);
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+        }
+
+        /// A payload whose serialized size is exactly one part must stay on
+        /// the single-PUT fast path (a multipart ETag would end in "-<parts>").
+        #[tokio::test]
+        async fn s3_exact_part_size_stays_single_put() {
+            let prefix = std::stringify!(s3_exact_part_size_stays_single_put);
+            let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+            // Serialization overhead (header + vec length) is constant, so an
+            // empty payload measures it exactly.
+            let mut empty = Vec::new();
+            safe_serialize(&big_payload(0), &mut empty, SAFE_SER_SIZE_LIMIT).unwrap();
+            let data = big_payload(S3_MULTIPART_MIN_PART_SIZE - empty.len());
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            let size = s3_put_versioned(
+                &storage.s3_client,
+                BUCKET_NAME,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .await
+            .unwrap();
+            assert_eq!(size as usize, S3_MULTIPART_MIN_PART_SIZE);
+
+            let head = storage
+                .s3_client
+                .head_object()
+                .bucket(BUCKET_NAME)
+                .key(&key)
+                .send()
+                .await
+                .unwrap();
+            let etag = head.e_tag.unwrap();
+            assert!(
+                !etag.trim_matches('"').contains('-'),
+                "expected a single-PUT ETag, got multipart {etag}"
             );
             let read_back: TestBigType =
                 storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
