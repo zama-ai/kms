@@ -163,12 +163,18 @@ where
         tracing::info!("No migration needed for centralized KMS");
         return Ok(());
     }
-    // Check if PRSS migration has already been done
+    // If any EpochData already exists the migration has run before, so this restart is a no-op.
+    //
+    // This guard also prevents resurrecting destroyed epochs: destroying an epoch removes its
+    // EpochData but not the legacy PrssSetupCombined (that is only removed in the 0.16 migration),
+    // so without this check a restart would re-create the destroyed epoch from the lingering PRSS
+    // data. The guard holds because epoch destruction refuses to remove the last remaining epoch,
+    // so at least one EpochData always survives once the migration has run.
     let data_ids = priv_storage
         .all_data_ids(&PrivDataType::EpochData.to_string())
         .await?;
     if !data_ids.is_empty() {
-        tracing::info!("PRSS migration already done, skipping");
+        tracing::info!("Epoch data migration already done, skipping");
         return Ok(());
     }
     let inner_migration_conf = match migration_config {
@@ -201,6 +207,8 @@ where
 {
     // Check and parse the migration information
     let migration_map = parse_migration_map(migration_config)?;
+    let num_contexts = migration_map.len();
+    let mut migrated_epochs = 0usize;
     // Next update the actual storage
     for (cur_context, epoch_list) in migration_map {
         for cur_epoch in epoch_list {
@@ -222,8 +230,19 @@ where
                 &PrivDataType::EpochData.to_string(),
             )
             .await?;
+            tracing::info!(
+                "Migrated epoch {} to the epoch-aware format under context {}",
+                cur_epoch,
+                cur_context
+            );
+            migrated_epochs += 1;
         }
     }
+    tracing::info!(
+        "Successfully migrated {} epoch(s) across {} context(s) to the epoch-aware storage format",
+        migrated_epochs,
+        num_contexts
+    );
     Ok(())
 }
 
@@ -2390,7 +2409,10 @@ mod tests {
         let map = parse_migration_map(&config).unwrap();
 
         assert_eq!(map.len(), 2);
-        assert_eq!(map.get(&DEFAULT_MPC_CONTEXT).unwrap(), &vec![*DEFAULT_EPOCH_ID]);
+        assert_eq!(
+            map.get(&DEFAULT_MPC_CONTEXT).unwrap(),
+            &vec![*DEFAULT_EPOCH_ID]
+        );
         assert_eq!(
             map.get(&LEGACY_DEFAULT_MPC_CONTEXT).unwrap(),
             &vec![*LEGACY_DEFAULT_EPOCH_ID]
@@ -2443,7 +2465,10 @@ mod tests {
         )]);
 
         let err = parse_migration_map(&config).unwrap_err().to_string();
-        assert!(err.contains("Invalid context id"), "unexpected error: {err}");
+        assert!(
+            err.contains("Invalid context id"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -2466,7 +2491,10 @@ mod tests {
         )]);
 
         let err = parse_migration_map(&config).unwrap_err().to_string();
-        assert!(err.contains("Duplicate epoch ID"), "unexpected error: {err}");
+        assert!(
+            err.contains("Duplicate epoch ID"),
+            "unexpected error: {err}"
+        );
     }
 
     // ── Tests for threshold_prss_to_epoch ──
