@@ -1,5 +1,4 @@
 use super::{
-    matrix::compute_powers_list,
     poly::Poly,
     structure_traits::{Field, Ring},
 };
@@ -7,7 +6,7 @@ use std::ops::Neg;
 
 /// computes all polys L_i(Z) = \prod_{i \neq j} (Z - alpha_j) for the given list of points.
 /// this is the numerator part of [lagrange_polynomials()]
-pub fn lagrange_numerators<F: Ring + Neg<Output = F>>(points: &[F]) -> Vec<Poly<F>> {
+pub(crate) fn lagrange_numerators<F: Ring + Neg<Output = F>>(points: &[F]) -> Vec<Poly<F>> {
     let polys: Vec<_> = points
         .iter()
         .enumerate()
@@ -38,7 +37,9 @@ fn prod_alpha_z<F: Field>(points: &[F]) -> Poly<F> {
 }
 
 /// computes a syndrome from a list of coordinates (x: alpha_i, y: c_i) and RS degree v = t + 1 in the field F
-pub fn compute_syndrome<F: Field + std::fmt::Debug>(x_alpha: &[F], ci: &[F], v: usize) -> Poly<F> {
+#[cfg(test)]
+fn compute_syndrome<F: Field + std::fmt::Debug>(x_alpha: &[F], ci: &[F], v: usize) -> Poly<F> {
+    use super::matrix::compute_powers_list;
     assert_eq!(x_alpha.len(), ci.len());
 
     let n = ci.len();
@@ -118,29 +119,29 @@ fn sanity_check_decoding<F: Field>(
 
 /// Precompute the committee-invariant inputs to [`decode_syndrome`] from the evaluation points.
 ///
-/// Returns `(x_alpha_inv, mag_factor)` where `x_alpha_inv[i] = α_i⁻¹` and
-/// `mag_factor[i] = -α_i · L_i(α_i)` (`L_i` being the Lagrange numerator for point `i`).
+/// Returns `(x_alpha_inv, error_factor)` where `x_alpha_inv[i] = α_i⁻¹` and
+/// `error_factor[i] = -α_i · L_i(α_i)` (`L_i` being the Lagrange numerator for point `i`).
 /// These depend only on the point set, so callers that decode many syndromes over the same points
 /// should compute them once and reuse them.
-pub fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
+pub(crate) fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
     let lagrange = lagrange_numerators(x_alpha);
     let x_alpha_inv = x_alpha.iter().map(|x| x.invert()).collect();
-    let mag_factor = x_alpha
+    let error_factor = x_alpha
         .iter()
         .zip(&lagrange)
         .map(|(a, l)| -*a * l.eval(a))
         .collect();
-    (x_alpha_inv, mag_factor)
+    (x_alpha_inv, error_factor)
 }
 
 //NIST: Level Zero Operation
-/// decode a given syndrome poly in the field, given precomputed [`field_decode_hints`] and RS value
-/// r = n - v.
-pub fn decode_syndrome<F: Field>(
+/// Decode a given syndrome poly in the field, given precomputed `error_factor`
+/// from [`field_decode_hints`] and RS value r = n - v.
+pub(crate) fn decode_syndrome<F: Field>(
     syndrome: Poly<F>,
     r: usize,
     x_alpha_inv: &[F],
-    mag_factor: &[F],
+    error_factor: &[F],
 ) -> Vec<F> {
     // nothing to decode if syndrome is zero, return all-zero error vector
     if syndrome.is_zero() {
@@ -171,7 +172,7 @@ pub fn decode_syndrome<F: Field>(
     let mut e = vec![F::ZERO; x_alpha_inv.len()];
     for (i, xi_inv) in x_alpha_inv.iter().enumerate() {
         if sigma.eval(xi_inv) == F::ZERO {
-            e[i] = mag_factor[i] * omega.eval(xi_inv) / sigma_deriv.eval(xi_inv);
+            e[i] = error_factor[i] * omega.eval(xi_inv) / sigma_deriv.eval(xi_inv);
         }
     }
 
@@ -328,8 +329,8 @@ mod tests {
 
         // syndrome should be zero without error
         let syndrome = compute_syndrome(&xs, &ys, v);
-        let (x_alpha_inv, mag_factor) = field_decode_hints(&xs);
-        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &mag_factor);
+        let (x_alpha_inv, error_factor) = field_decode_hints(&xs);
+        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &error_factor);
         tracing::info!("e (ok): {:?}", e);
         assert_eq!(e, vec![BaseField::ZERO; n as usize]); // test that e is all-zero
 
@@ -342,8 +343,8 @@ mod tests {
         ys[err_idxs[0]] += BaseField::from_u128(err_vals[0]);
 
         let syndrome = compute_syndrome(&xs, &ys, v);
-        let (x_alpha_inv, mag_factor) = field_decode_hints(&xs);
-        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &mag_factor);
+        let (x_alpha_inv, error_factor) = field_decode_hints(&xs);
+        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &error_factor);
         tracing::info!("e (1x): {:?}", e);
         let mut reference = vec![BaseField::ZERO; n as usize];
         reference[err_idxs[0]] += BaseField::from_u128(err_vals[0]);
@@ -354,8 +355,8 @@ mod tests {
         ys[err_idxs[1]] += BaseField::from_u128(err_vals[1]);
 
         let syndrome = compute_syndrome(&xs, &ys, v);
-        let (x_alpha_inv, mag_factor) = field_decode_hints(&xs);
-        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &mag_factor);
+        let (x_alpha_inv, error_factor) = field_decode_hints(&xs);
+        let e = decode_syndrome(syndrome, r, &x_alpha_inv, &error_factor);
         tracing::info!("e (2x): {:?}", e);
         reference[err_idxs[1]] += BaseField::from_u128(err_vals[1]);
         assert_eq!(e, reference);
