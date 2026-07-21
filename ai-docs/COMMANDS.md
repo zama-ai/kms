@@ -97,8 +97,8 @@ cargo test --test 'backward_compatibility_*' -- --include-ignored
 
 Regenerate vectors. Versions are split into two lists in the `Makefile`:
 
-- `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`, `0.14.0`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
-- `DETERMINISTIC_BWC_VERSIONS` — `0.15.0` and future versions. Re-running produces byte-identical output.
+- `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
+- `DETERMINISTIC_BWC_VERSIONS` — `0.14.0` and `0.15.0` and future versions. Re-running produces byte-identical output.
 
 Regenerate all deterministic versions (cleans only deterministic data dirs first, then runs their generators; frozen versions are left untouched):
 

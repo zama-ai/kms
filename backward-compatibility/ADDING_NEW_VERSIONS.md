@@ -98,25 +98,16 @@ exclude = [
 ]
 ```
 
-5. **Update** root `Makefile`. Make the new version the sole deterministic one and freeze the
-   version it supersedes, so `generate-backward-compatibility-all` only regenerates the newest
-   version and the previous version's committed data becomes immutable:
+5. **Update** root `Makefile`:
 ```makefile
-FROZEN_BWC_VERSIONS := 0.11.0 0.11.1 0.13.0 0.13.10 0.13.20 0.14.0 0.15.0  # add 0.15.0
-DETERMINISTIC_BWC_VERSIONS := 0.16.0
+DETERMINISTIC_BWC_VERSIONS := 0.14.0 0.15.0 0.16.0
 
 generate-backward-compatibility-v0.16.0:
 	cd backward-compatibility/generate-v0.16.0 && cargo run --release
 ```
 
-6. **Keep the new version out of `FROZEN_BWC_VERSIONS`** — it is the one deterministic version that
-`generate-backward-compatibility-all` will regenerate. Instead, freeze the version it *supersedes*
-(step 5): once a version is released its committed data should no longer change, so it moves from
-`DETERMINISTIC_BWC_VERSIONS` into `FROZEN_BWC_VERSIONS`. This keeps regeneration cheap (only the
-newest version is rebuilt) while leaving prior data immutable. `clean-backward-compatibility-data`
-derives the data directories to wipe from `DETERMINISTIC_BWC_VERSIONS`, so frozen dirs are never
-touched.
-In more detail, the kms code initially had versioned data structures that could not be serialized deterministically (e.g., due to the use of `HashMap`), this made changes harder to review because a lot of the backward compatibility data would change during re-generation. To fix this issue, we made sure all versioned data had deterministic serialization for v0.14.0 and later. Everything before that — plus every released deterministic version once a newer one supersedes it — is listed in `FROZEN_BWC_VERSIONS`.
+6. **Do not add the new version to `FROZEN_BWC_VERSIONS`** unless the generator is known to be non-deterministic and the generated data is intentionally frozen (some excptions on this rule is if we have to make backport some fixes and make a minor release from one of the v0.13.x versions). `clean-backward-compatibility-data` derives deterministic data directories from `DETERMINISTIC_BWC_VERSIONS`.
+In more detail, the kms code initially had versioned data structures that could not be serialized deterministically (e.g., due to the use of `HashMap`), this made changes harder to review because a lot of the backward compatibility data would change during re-generation. To fix this issue, we made sure all versioned data had deterministic serialization for v0.14.0 and later, and froze all prior backward compatibility data, defined in `FROZEN_BWC_VERSIONS`.
 
 7. **Test the new generator**:
 ```bash
