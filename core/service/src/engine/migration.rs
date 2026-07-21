@@ -1,5 +1,7 @@
+use crate::conf::MigrationConfig;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::derive_request_id;
+use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::vault::storage::{
     StorageExt, read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
@@ -8,6 +10,8 @@ use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::LazyLock;
 use threshold_execution::small_execution::prss::PRSSSetup;
 
@@ -118,6 +122,129 @@ where
     migrate_to_0_13_10(priv_storage, kms_type).await?;
     // Remove old keys with legacy epoch id.
     remove_old_keys_for_0_13_20(priv_storage, kms_type).await?;
+    Ok(())
+}
+
+pub async fn migrate_to_0_15_x<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+    migration_config: &MigrationConfig,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    // No migration to 0.14 done, so no need to do old migration here
+
+    if kms_type == KMSType::Centralized {
+        tracing::info!("No migration needed for centralized KMS");
+        return Ok(());
+    }
+
+    // Check and parse the migration information
+    let migration_map = parse_migration_map(migration_config)?;
+    // Next update the actual storage
+    for (cur_context, epoch_list) in migration_map {
+        for cur_epoch in epoch_list {
+            let prss = read_versioned_at_request_id::<_, PRSSSetupCombined>(
+                priv_storage,
+                &cur_epoch.into(),
+                #[expect(deprecated)]
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await?;
+            let epoch = EpochData {
+                context_id: cur_context,
+                prss,
+            };
+            store_versioned_at_request_id(
+                priv_storage,
+                &cur_epoch.into(),
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// TODO Placeholder method to ensure we remember to clean up upgraded material at the next verison
+#[allow(dead_code)]
+pub async fn migrate_to_0_16_x<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    remove_old_prss_data(priv_storage, kms_type).await?;
+    Ok(())
+}
+
+/// Parse the migration config into a map of context IDs to epoch IDs, ensuring that each epoch ID is unique and each context ID is unique.
+/// Also validates that the default context ID and default epoch ID are present in the migration config.
+fn parse_migration_map(
+    migration_config: &MigrationConfig,
+) -> anyhow::Result<std::collections::HashMap<ContextId, Vec<EpochId>>> {
+    let mut seen_epochs = std::collections::HashSet::new();
+    let mut context_to_epoch_map = HashMap::new();
+    for association in &migration_config.context_associations {
+        let context_id = ContextId::from_str(&association.context_id)
+            .map_err(|e| anyhow::anyhow!("Invalid context id {}: {}", association.context_id, e))?;
+        if association.epoch_ids.is_empty() {
+            anyhow::bail!(
+                "Context ID {} has no associated epoch IDs in migration config",
+                association.context_id
+            );
+        }
+        let mut cur_epochs = Vec::new();
+        for epoch_id in &association.epoch_ids {
+            let epoch_id = EpochId::from_str(epoch_id)
+                .map_err(|e| anyhow::anyhow!("Invalid epoch ID {}: {}", epoch_id, e))?;
+            if !seen_epochs.insert(epoch_id) {
+                anyhow::bail!("Duplicate epoch ID {} found in migration config", epoch_id);
+            }
+            cur_epochs.push(epoch_id);
+        }
+        context_to_epoch_map.insert(context_id, cur_epochs);
+    }
+    match context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT) {
+        Some(default) => {
+            if !default.contains(&DEFAULT_EPOCH_ID) {
+                anyhow::bail!(
+                    "Default epoch ID {} should be part of the migration config for default context ID {}",
+                    *DEFAULT_EPOCH_ID,
+                    *DEFAULT_MPC_CONTEXT
+                );
+            }
+        }
+        None => anyhow::bail!(
+            "Default context ID {} should be part of the migration config",
+            *DEFAULT_MPC_CONTEXT
+        ),
+    }
+    Ok(context_to_epoch_map)
+}
+
+async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()> {
+    if kms_type == KMSType::Centralized {
+        tracing::info!("No PRSS data to remove for centralized KMS");
+        return Ok(());
+    }
+
+    #[expect(deprecated)]
+    let data_ids = priv_storage
+        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+        .await?;
+    for cur_id in data_ids {
+        #[expect(deprecated)]
+        priv_storage
+            .delete_data(&cur_id, &PrivDataType::PrssSetupCombined.to_string())
+            .await?;
+    }
     Ok(())
 }
 
