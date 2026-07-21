@@ -777,6 +777,7 @@ impl DKGParams {
             }
             None => config,
         };
+        let config = config.use_dedicated_oprf_key(true);
         config.build()
     }
 }
@@ -1675,6 +1676,127 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
                 packing_ks_polynomial_size: PolynomialSize(256),
                 packing_ks_glwe_dimension: GlweDimension(1),
                 lwe_per_glwe: LweCiphertextCount(128),
+                packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(3),
+                ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+                message_modulus: MessageModulus(4),
+                carry_modulus: CarryModulus(4),
+            }),
+        }),
+        rerand_configuration: Some(
+            tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
+        ),
+    },
+    secret_key_deviations: None,
+};
+
+/// Reshare-test parameters: a small, self-consistent variant of
+/// [`PARAMS_TEST_BK_SNS`] whose secret keys all have **distinct** sizes, so a
+/// reshare round-trip uniquely pins every reconstructed component (in particular
+/// regular vs SnS compression, and compute vs SnS GLWE). Small enough to reshare
+/// through the in-memory test network, unlike the production `BC_PARAMS_SNS`.
+///
+/// Distinct secret-key sizes:
+/// - compute LWE (and OPRF): `lwe_dimension` = 1
+/// - encryption CPK: `encryption_lwe_dimension` = 32
+/// - compute GLWE: 1 × 256 = 256
+/// - SnS GLWE: 2 × 256 = 512
+/// - regular compression: 1 × 128 = 128
+/// - SnS compression: 1 × 64 = 64
+///
+/// Test/bench only — deliberately not reachable over the gRPC `FheParameter` enum.
+#[cfg(any(test, feature = "testing"))]
+pub const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
+    dkg_mode: DkgMode::Z128,
+    sec: 128,
+    meta: MetaParameters {
+        backend: Backend::Cpu,
+        compute_parameters: AtomicPatternParameters::Standard(PBSParameters::PBS(
+            ClassicPBSParameters {
+                lwe_dimension: LweDimension(1),
+                glwe_dimension: GlweDimension(1),
+                polynomial_size: PolynomialSize(256),
+                lwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
+                glwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
+                pbs_base_log: DecompositionBaseLog(24),
+                pbs_level: DecompositionLevelCount(1),
+                ks_base_log: DecompositionBaseLog(37),
+                ks_level: DecompositionLevelCount(1),
+                message_modulus: MessageModulus(4),
+                carry_modulus: CarryModulus(4),
+                max_noise_level: MaxNoiseLevel::new(5),
+                log2_p_fail: -64f64,
+                ciphertext_modulus: CiphertextModulus::new_native(),
+                encryption_key_choice: EncryptionKeyChoice::Big,
+                modulus_switch_noise_reduction_params:
+                    ModulusSwitchType::DriftTechniqueNoiseReduction(
+                        ModulusSwitchNoiseReductionParams {
+                            modulus_switch_zeros_count: LweCiphertextCount(10),
+                            ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                            ms_r_sigma_factor: RSigmaFactor(9.75539320076416),
+                            ms_input_variance: Variance(1.92631390716519e-10),
+                        },
+                    ),
+            },
+        )),
+        // Distinct encryption-CPK size (32) so the encryption key is pinned
+        // separately from the compute LWE key.
+        dedicated_compact_public_key_parameters: Some(DedicatedCompactPublicKeyParameters {
+            pke_params: CompactPublicKeyEncryptionParameters {
+                encryption_lwe_dimension: LweDimension(32),
+                encryption_noise_distribution: DynamicDistribution::new_t_uniform(0),
+                message_modulus: MessageModulus(4),
+                carry_modulus: CarryModulus(4),
+                ciphertext_modulus: CiphertextModulus::new_native(),
+                expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+                zk_scheme: SupportedCompactPkeZkScheme::V2,
+            },
+            ksk_params: ShortintKeySwitchingParameters {
+                ks_level: DecompositionLevelCount(1),
+                ks_base_log: DecompositionBaseLog(37),
+                destination_key: EncryptionKeyChoice::Small,
+            },
+            re_randomization_parameters: None,
+        }),
+        // Regular compression: 1 × 128 = 128.
+        compression_parameters: Some(CompressionParameters::Classic(ClassicCompressionParameters {
+            br_level: DecompositionLevelCount(1),
+            br_base_log: DecompositionBaseLog(24),
+            packing_ks_level: DecompositionLevelCount(1),
+            packing_ks_base_log: DecompositionBaseLog(27),
+            packing_ks_polynomial_size: PolynomialSize(128),
+            packing_ks_glwe_dimension: GlweDimension(1),
+            lwe_per_glwe: LweCiphertextCount(128),
+            storage_log_modulus: tfhe::core_crypto::prelude::CiphertextModulusLog(9),
+            packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(0),
+        })),
+        noise_squashing_parameters: Some(MetaNoiseSquashingParameters {
+            // SnS GLWE: 2 × 256 = 512 (distinct from the compute GLWE size 256).
+            parameters: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
+                glwe_dimension: GlweDimension(2),
+                glwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
+                polynomial_size: PolynomialSize(256),
+                decomp_base_log: DecompositionBaseLog(33),
+                decomp_level_count: DecompositionLevelCount(2),
+                ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+                modulus_switch_noise_reduction_params:
+                    ModulusSwitchType::DriftTechniqueNoiseReduction(
+                        ModulusSwitchNoiseReductionParams {
+                            modulus_switch_zeros_count: LweCiphertextCount(8),
+                            ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                            ms_r_sigma_factor: RSigmaFactor(9.2),
+                            ms_input_variance: Variance(2.182718682903484e-224),
+                        },
+                    ),
+                message_modulus: MessageModulus(4),
+                carry_modulus: CarryModulus(4),
+            }),
+            // SnS compression: 1 × 64 = 64 (distinct from regular compression 128).
+            compression_parameters: Some(NoiseSquashingCompressionParameters {
+                packing_ks_level: DecompositionLevelCount(1),
+                packing_ks_base_log: DecompositionBaseLog(61),
+                packing_ks_polynomial_size: PolynomialSize(64),
+                packing_ks_glwe_dimension: GlweDimension(1),
+                lwe_per_glwe: LweCiphertextCount(64),
                 packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(3),
                 ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
                 message_modulus: MessageModulus(4),
