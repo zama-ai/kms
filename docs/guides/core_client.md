@@ -598,7 +598,7 @@ Optional arguments:
  - `--epoch-id <EPOCH_ID>`: Epoch ID the original request was made with, used to derive the `extra_data` the external signature is bound to. Defaults to the built-in default epoch when omitted; must match the epoch of the original request or verification fails.
  - `--no-verify`: Skip all verification of the fetched responses (both the internal KMS-node signatures and the external signature) and just return them.
 
-Upon success, `public-decrypt` prints phased timing lines and a result line formatted as `<message> - "request_id": "<REQUEST_ID>"`. In rate mode (`--rate`/`--duration`), it prints `PUBLIC_DECRYPT_METRICS {json}` (and does not print per-request response vectors).
+Upon success, `public-decrypt` prints phased timing lines and a result line formatted as `<message> - "request_id": "<REQUEST_ID>"`. In rate mode (`--rate`/`--duration`), it prints `PUBLIC_DECRYPT_METRICS {json}`.
 
 Recall that `PublicDecryptionResponse` follows this format:
 ```proto

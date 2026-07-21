@@ -475,6 +475,14 @@ jobs:
             -p "s3-config-map-name=${S3_CONFIG_MAP_NAME}"
           )
 
+          # Expand the rate scenarios (perf-scenarios.toml) into the workflow in place, before the image-tag sed below.
+          # Fails here if a scenario is malformed.
+          echo "Expanding rate scenarios into ${WORKFLOW_TEMPLATE}..."
+          python3 ci/perf-testing/generate-perf-workflow.py \
+            --scenarios ci/perf-testing/perf-scenarios.toml \
+            --template "${WORKFLOW_TEMPLATE}" \
+            -o "${WORKFLOW_TEMPLATE}"
+
           # Update the workflow template with the current image tag
           echo "Using image tags: core=${KMS_CORE_IMAGE_TAG}, client=${KMS_CORE_CLIENT_IMAGE_TAG}"
           echo "Updating workflow template ${WORKFLOW_TEMPLATE} — core: ${KMS_CORE_IMAGE_TAG}, client: ${KMS_CORE_CLIENT_IMAGE_TAG}"
