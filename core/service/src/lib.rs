@@ -35,6 +35,9 @@ pub mod vault;
 
 #[cfg(feature = "non-wasm")]
 pub use kms_grpc::utils::tonic_result::BoxedStatus;
+// Exported for backwards compatibility tests
+#[cfg(feature = "non-wasm")]
+pub use engine::threshold::service::EpochData;
 
 /// Truncate s to a maximum of 128 chars.
 pub(crate) fn top_n_chars(mut s: String) -> String {
