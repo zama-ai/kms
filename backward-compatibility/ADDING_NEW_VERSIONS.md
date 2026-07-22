@@ -2,7 +2,8 @@
 
 ## Quick Start
 
-When adding a new KMS version (e.g., v0.16.0), follow these steps:
+
+When adding a new KMS version (e.g., v0.14.0), follow these steps:
 
 ### Step 1: Check Dependency Compatibility
 
@@ -10,10 +11,10 @@ Before adding a new version, verify it's compatible with existing generator vers
 
 ```bash
 # Check key dependencies in the new release
-curl -s "https://raw.githubusercontent.com/zama-ai/kms/v0.16.0/Cargo.toml" | grep -E "serde|alloy|tfhe"
+curl -s "https://raw.githubusercontent.com/zama-ai/kms/v0.14.0/Cargo.toml" | grep -E "serde|alloy|tfhe"
 
-# Compare with the most recent deterministic generator (currently v0.15.0)
-grep -E "serde|alloy|tfhe" backward-compatibility/generate-v0.15.0/Cargo.toml
+# Compare with the most recent deterministic generator (currently v0.14.0)
+grep -E "serde|alloy|tfhe" backward-compatibility/generate-v0.14.0/Cargo.toml
 ```
 
 **Key dependencies to check:**
@@ -24,24 +25,24 @@ grep -E "serde|alloy|tfhe" backward-compatibility/generate-v0.15.0/Cargo.toml
 
 ### Step 2A: If Dependencies Are Compatible
 
-Add the version to the most recent compatible deterministic generator (e.g., `generate-v0.15.0`):
+Add the version to the most recent compatible deterministic generator (e.g., `generate-v0.14.0`):
 
-1. **Add dependencies** to `backward-compatibility/generate-v0.15.0/Cargo.toml`:
+1. **Add dependencies** to `backward-compatibility/generate-v0.14.0/Cargo.toml`:
 ```toml
-kms_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.16.0" }
-kms_grpc_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.16.0" }
-algebra_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "v0.16.0" }
-threshold_execution_0_16_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "v0.16.0", features = ["testing"] }
+kms_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.14.0" }
+kms_grpc_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.14.0" }
+algebra_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "v0.14.0" }
+threshold_execution_0_14_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "v0.14.0", features = ["testing"] }
 # and so on, see the examples in kms/backward-compatibility/generate-vX.X.X/Cargo.toml
 ```
 
-2. **Create** `backward-compatibility/generate-v0.15.0/src/data_0_16.rs` implementing `KMSCoreVersion` trait
+2. **Create** `backward-compatibility/generate-v0.14.0/src/data_0_14.rs` implementing `KMSCoreVersion` trait
 
-3. **Update** `backward-compatibility/generate-v0.15.0/src/main.rs` to generate data for v0.16.0
+3. **Update** `backward-compatibility/generate-v0.14.0/src/main.rs` to generate data for v0.14.0
 
 4. **Update** root `Makefile`:
-   - Add v0.16.0 to `DETERMINISTIC_BWC_VERSIONS`
-   - Add a `generate-backward-compatibility-v0.16.0` target if this version has its own generator crate
+   - Add v0.14.0 to `DETERMINISTIC_BWC_VERSIONS`
+   - Add a `generate-backward-compatibility-v0.14.0` target if this version has its own generator crate
 
 5. **Generate the data**:
 ```bash
