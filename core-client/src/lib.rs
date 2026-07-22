@@ -31,11 +31,11 @@ use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
 use core::str;
-use kms_grpc::identifiers::EpochId;
+use kms_grpc::identifiers::RequestId;
 use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::{ContextId, KeyId, RequestId};
+use kms_grpc::{ContextId, EpochId, KeyId};
 use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{
@@ -881,13 +881,6 @@ pub struct DestroyMpcContextParameters {
     /// The context ID to use for the MPC context to destroy.
     #[clap(long)]
     pub context_id: ContextId,
-
-    /// Comma-separated epoch IDs associated with the context, to be destroyed alongside it
-    /// (e.g. `--epoch-ids=<a>,<b>,<c>`). Operators must obtain the full set out of band: the KMS
-    /// destroys exactly the epochs listed here, and any epoch left out keeps its secret shares on
-    /// disk (hazmat).
-    #[clap(long, value_delimiter = ',')]
-    pub epoch_ids: Vec<EpochId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -2778,11 +2771,8 @@ pub async fn execute_cmd(
                 ),
             )]
         }
-        CCCommand::DestroyMpcContext(DestroyMpcContextParameters {
-            context_id,
-            epoch_ids,
-        }) => {
-            do_destroy_mpc_context(&core_endpoints_req, context_id, epoch_ids).await?;
+        CCCommand::DestroyMpcContext(DestroyMpcContextParameters { context_id }) => {
+            do_destroy_mpc_context(&core_endpoints_req, context_id).await?;
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),

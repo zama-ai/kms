@@ -12,7 +12,7 @@ use crate::{
     cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
+        threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
         utils::verify_public_key_digest_from_bytes,
     },
     util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},
@@ -74,33 +74,37 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         Arc::clone(&self.inner.private_storage)
     }
 
-    /// Write the PRSS info to the storage backend.
+    /// Write the epoch data to the storage backend.
     /// No actions are taken on failure, but the error is returned to the caller for potential handling.
-    pub async fn write_prss_info(
+    pub async fn write_epoch_data(
         &self,
         epoch_id: &EpochId,
-        prss_info: &PRSSSetupCombined,
+        epoch_data: &EpochData,
     ) -> anyhow::Result<()> {
-        // No public data so we just use PRSSSetupCombined
         self.inner
-            .write_all::<PRSSSetupCombined, PRSSSetupCombined>(
-                &(*epoch_id).into(), // using epoch_id as req_id since PRSS info is stored under this directly
+            .write_all::<EpochData, EpochData>(
+                &(*epoch_id).into(), // using epoch_id as req_id since epoch data is stored under this directly
                 None,
-                None, // no public data for PRSS info
-                Some((prss_info, PrivDataType::PrssSetupCombined)),
+                None, // no public data for epoch info
+                Some((epoch_data, PrivDataType::EpochData)),
                 true,
                 OP_NEW_EPOCH,
             )
             .await
-            .map_err(|e| anyhow::anyhow!("Storing PRSS failed with error: {e}"))
+            .map_err(|e| anyhow::anyhow!("Storing epoch data failed with error: {e}"))
     }
 
-    /// Read all PRSS info from storage
-    pub async fn read_all_prss_info(
-        &self,
-    ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
+    /// Read all epoch data from the storage backend.
+    /// The result is a map of epoch IDs to their corresponding epoch data.
+    /// That is, epochs are flattened and NOT indexed by their associated context ID.
+    pub async fn read_all_epoch_data(&self) -> anyhow::Result<HashMap<EpochId, EpochData>> {
         let priv_storage = self.inner.private_storage.lock().await;
-        read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
+        let intermediate_res: HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::EpochData.to_string()).await?;
+        Ok(intermediate_res
+            .into_iter()
+            .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
+            .collect())
     }
 
     /// Write the CRS to the storage backend (for use in connection with resharing).

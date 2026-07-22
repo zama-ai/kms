@@ -88,7 +88,7 @@ where
     PrivS: StorageExt + Sync + Send,
 {
     // Ensure old migration is done
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     migrate_to_0_13_x(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
         // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
@@ -379,6 +379,7 @@ where
     let prss: PRSSSetupCombined = match read_versioned_at_request_id(
         priv_storage,
         &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+        #[expect(deprecated)]
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await
@@ -396,12 +397,14 @@ where
         priv_storage,
         &(*DEFAULT_EPOCH_ID).into(),
         &prss,
+        #[expect(deprecated)]
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await?;
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+            #[expect(deprecated)]
             &PrivDataType::PrssSetupCombined.to_string(),
         )
         .await?;
@@ -1236,6 +1239,7 @@ mod tests {
             storage
                 .data_exists(
                     &epoch_id.into(),
+                    #[expect(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),
                 )
                 .await
@@ -1458,6 +1462,7 @@ mod tests {
             &mut storage,
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
             &prss_combined,
+            #[expect(deprecated)]
             &PrivDataType::PrssSetupCombined.to_string(),
         )
         .await
@@ -1474,6 +1479,7 @@ mod tests {
             storage
                 .data_exists(
                     &(*DEFAULT_EPOCH_ID).into(),
+                    #[expect(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),
                 )
                 .await
@@ -1482,7 +1488,9 @@ mod tests {
         assert!(
             !storage
                 .data_exists(
+                    #[allow(deprecated)]
                     &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+                    #[expect(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),
                 )
                 .await
@@ -1988,7 +1996,7 @@ mod tests {
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Threshold)
             .await
             .unwrap();
@@ -2016,7 +2024,7 @@ mod tests {
             .await
             .unwrap();
 
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
@@ -2034,11 +2042,11 @@ mod tests {
     async fn test_migrate_to_0_13_x_empty_storage() {
         let mut storage = RamStorage::new();
         // Should succeed with no data to migrate
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Threshold)
             .await
             .unwrap();
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
