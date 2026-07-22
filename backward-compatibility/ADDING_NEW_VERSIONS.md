@@ -65,23 +65,23 @@ Create a new generator crate for the incompatible version:
 For example:
 
 ```bash
-cp -r backward-compatibility/generate-v0.15.0 backward-compatibility/generate-v0.16.0
+cp -r backward-compatibility/generate-v0.13.20 backward-compatibility/generate-v0.14.0
 ```
 
-2. **Update** `backward-compatibility/generate-v0.16.0/Cargo.toml`:
-   - Package name: `backward-compatibility-generate-v0-16-0` (use dashes, include patch version)
-   - Package version: `0.16.0` (matches the KMS version exactly)
-   - Update all KMS dependencies to v0.16.0 (or to the release commit if the tag is not available yet)
-   - Update dependency versions (serde, alloy, tfhe) to match v0.16.0's requirements
-   - Update the `[[bin]]` name to `backward-compatibility-generate-v0-16-0`
+2. **Update** `backward-compatibility/generate-v0.14.0/Cargo.toml`:
+   - Package name: `backward-compatibility-generate-v0-14-0` (use dashes, include patch version)
+   - Package version: `0.14.0` (matches the KMS version exactly)
+   - Update all KMS dependencies to v0.14.0 (or to the release commit if the tag is not available yet)
+   - Update dependency versions (serde, alloy, tfhe) to match v0.14.0's requirements
+   - Update the `[[bin]]` name to `backward-compatibility-generate-v0-14-0`
 
 3. **Update** the copied source files:
-   - Rename `backward-compatibility/generate-v0.16.0/src/data_0_15.rs` to `data_0_16.rs`
-   - Change imports from `kms_0_15_0`, `kms_grpc_0_15_0`, and sibling aliases to their `0_16_0` names
-   - Update `VERSION_NUMBER` to `"0.16.0"`
-   - Rename the `V0_15_0` / `KmsV0_15_0` / … structs to their `0_16_0` names
-   - Update `src/lib.rs` and `src/main.rs` module names and imports to use `data_0_16`
-   - Fix any API changes between v0.15.0 and v0.16.0
+   - Rename `backward-compatibility/generate-v0.14.0/src/data_0_13.rs` to `data_0_14.rs`
+   - Change imports from `kms_0_13_20`, `kms_grpc_0_13_20`, and sibling aliases to their `0_14_0` names
+   - Update `VERSION_NUMBER` to `"0.14.0"`
+   - Rename the `V0_13_20` / `KmsV0_13_20` / … structs to their `0_14_0` name
+   - Update `src/lib.rs` and `src/main.rs` module names and imports to use `data_0_14`
+   - Fix any API changes between v0.13.20 and v0.14.0
 
 4. **Update** root `Cargo.toml` to exclude the new generator:
 ```toml
