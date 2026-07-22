@@ -33,6 +33,13 @@ pub(crate) const S3_MULTIPART_MIN_PART_SIZE: usize = 5 * 1024 * 1024;
 
 const _: () = assert!(S3_MULTIPART_PART_SIZE >= S3_MULTIPART_MIN_PART_SIZE);
 
+// A maximal `SAFE_SER_SIZE_LIMIT` payload must fit within S3's 10,000-part cap
+// at this part size. Guards the production config (128 parts today) at compile
+// time so a future bump to the size limit or drop in part size fails the build
+// instead of surfacing only at `CompleteMultipartUpload`, after the whole
+// object has been uploaded.
+const _: () = assert!(SAFE_SER_SIZE_LIMIT.div_ceil(S3_MULTIPART_PART_SIZE as u64) <= 10_000);
+
 /// Queue depth between the serializing task and the uploader thread; peak
 /// in-flight memory is roughly `(3 + capacity) * part_size`: the buffer being
 /// filled, the one held by a blocking send, the queued one, and the one the
@@ -1521,6 +1528,15 @@ mod tests {
                 .unwrap();
         }
 
+        // Coverage note: the serialization-error abort arm is exercised below,
+        // and the create-failure arm by `s3_multipart_uploader_failure_propagates`.
+        // The remaining two abort arms in `s3_finish_put` — a mid-stream
+        // `upload_part` failure and a `CompleteMultipartUpload` failure — cannot
+        // be triggered against a real MinIO without a fault-injection seam: the
+        // writer only ever emits valid, adequately sized parts, so neither an
+        // undersized-part reject nor a mid-stream part error occurs on the happy
+        // path. Both arms are correct by construction (abort iff an `upload_id`
+        // was obtained) and share the abort helper the tested arms use.
         #[tokio::test]
         async fn s3_multipart_abort_on_error() {
             use std::io::Write;
@@ -1800,4 +1816,101 @@ fn test_find_region() {
     let url = "http://dev-s3-mock:9000".to_string();
     let region = find_region_from_s3_url(&url).unwrap();
     assert_eq!(region.as_str(), "us-east-1");
+}
+
+/// Unit tests for [`S3PartWriter`]'s buffering that need no S3/MinIO (so they
+/// run in ordinary CI, unlike the `s3_tests`-gated suite above). They assert on
+/// the writer's local state only; the single-PUT paths never spill, and the one
+/// spilling test points the (spawned, retry-disabled) uploader at a refused
+/// local port and never awaits it.
+#[cfg(test)]
+mod part_writer_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn refused_config() -> aws_sdk_s3::Config {
+        aws_sdk_s3::config::Builder::new()
+            .behavior_version(aws_config::BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "test",
+                "test",
+                None,
+                None,
+                "part-writer-test",
+            ))
+            // Nothing listens here, so a spilled part's upload fails at once.
+            .endpoint_url("http://127.0.0.1:1")
+            .retry_config(aws_sdk_s3::config::retry::RetryConfig::disabled())
+            .force_path_style(true)
+            .build()
+    }
+
+    fn writer(part_size: usize) -> S3PartWriter {
+        S3PartWriter::new(refused_config(), "bucket", "key", part_size)
+    }
+
+    /// A single write fills the buffer up to `part_size` but never spills: a
+    /// spill fires only when more bytes arrive after the buffer is full, and a
+    /// write caps at the remaining capacity so the buffer never overflows.
+    #[test]
+    fn write_fills_to_part_size_without_spilling() {
+        let part_size = S3_MULTIPART_MIN_PART_SIZE;
+        let mut w = writer(part_size);
+        let n = w.write(&vec![0u8; part_size + 100]).unwrap();
+        assert_eq!(n, part_size, "a write caps at the remaining part capacity");
+        assert_eq!(w.buf.len(), part_size);
+        assert!(w.pipeline.is_none(), "filling the buffer must not spill");
+        assert_eq!(w.total_written, part_size as u64);
+    }
+
+    /// A payload that fits in one buffer finishes on the single-PUT fast path.
+    #[test]
+    fn sub_part_payload_finishes_single() {
+        let mut w = writer(S3_MULTIPART_MIN_PART_SIZE);
+        w.write_all(&[0u8; 1024]).unwrap();
+        assert!(w.pipeline.is_none());
+        assert_eq!(w.total_written, 1024);
+        match w.finish(true) {
+            PartWriterOutcome::Single(buf) => assert_eq!(buf.len(), 1024),
+            PartWriterOutcome::Multipart(_) => panic!("small payload must stay single-PUT"),
+        }
+    }
+
+    /// A payload of exactly one part also stays single-PUT: serialization ends
+    /// before any further write can trigger the spill-on-next-write rule.
+    #[test]
+    fn exact_part_payload_finishes_single() {
+        let part_size = S3_MULTIPART_MIN_PART_SIZE;
+        let mut w = writer(part_size);
+        w.write_all(&vec![0u8; part_size]).unwrap();
+        assert!(w.pipeline.is_none());
+        match w.finish(true) {
+            PartWriterOutcome::Single(buf) => assert_eq!(buf.len(), part_size),
+            PartWriterOutcome::Multipart(_) => panic!("exact-part payload must stay single-PUT"),
+        }
+    }
+
+    /// One byte past a full buffer spills the full `part_size` part and engages
+    /// the pipeline, leaving only the overflow buffered. `finish` is
+    /// intentionally not called: with the pipeline engaged its tail send would
+    /// block on the (dead) uploader; dropping the writer closes the channel and
+    /// lets the uploader thread exit.
+    #[test]
+    fn crossing_part_boundary_engages_pipeline() {
+        let part_size = S3_MULTIPART_MIN_PART_SIZE;
+        let mut w = writer(part_size);
+        w.write_all(&vec![0u8; part_size]).unwrap();
+        assert!(
+            w.pipeline.is_none(),
+            "a full-but-not-exceeded buffer has not spilled yet"
+        );
+        w.write_all(&[7u8; 1]).unwrap();
+        assert!(
+            w.pipeline.is_some(),
+            "exceeding one part must engage the multipart pipeline"
+        );
+        assert_eq!(w.buf.len(), 1, "only the overflow byte stays buffered");
+        assert_eq!(w.total_written, part_size as u64 + 1);
+    }
 }
