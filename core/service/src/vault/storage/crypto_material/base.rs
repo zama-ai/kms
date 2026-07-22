@@ -1103,7 +1103,7 @@ where
 }
 
 /// Update the meta store based on the result of a storage operation, and log and update the metrics in case of an error.
-/// If the meta store is updated successfully, then the orginal storage result is returned.
+/// If the meta store is updated successfully, then the original storage result is returned.
 /// If the meta store update fails, then a MetaStoreError is returned, which includes the original StorageError.
 ///
 /// When `backup_is_best_effort` is true, an `Err(StorageError::Backup)` outcome is recorded as a
