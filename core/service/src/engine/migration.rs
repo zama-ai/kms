@@ -133,7 +133,7 @@ pub async fn migrate_to_0_15_x<PrivS>(
 where
     PrivS: StorageExt + Sync + Send,
 {
-    // No migration to 0.14 done, but previous version did use migrate_to_0_13_20 so we keep it for compelteness
+    // No migration to 0.14 done, but previous version did use migrate_to_0_13_20 so we keep it for completeness
     migrate_to_0_13_20(priv_storage, kms_type).await?;
     migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await
 }
