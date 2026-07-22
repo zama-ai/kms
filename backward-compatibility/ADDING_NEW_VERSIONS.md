@@ -2,7 +2,6 @@
 
 ## Quick Start
 
-
 When adding a new KMS version (e.g., v0.14.0), follow these steps:
 
 ### Step 1: Check Dependency Compatibility
