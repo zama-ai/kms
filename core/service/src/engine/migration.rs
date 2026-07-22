@@ -10,7 +10,7 @@ use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::LazyLock;
 use threshold_execution::small_execution::prss::PRSSSetup;
@@ -207,6 +207,52 @@ where
 {
     // Check and parse the migration information
     let migration_map = parse_migration_map(migration_config)?;
+
+    // Reconcile the config against what is actually on disk before writing anything. Every legacy
+    // PrssSetupCombined epoch must be listed in the config, and every configured epoch must exist on
+    // disk. Failing here (rather than mid-write) prevents two operator-mapping mistakes: an
+    // under-listed epoch would be silently dropped and then permanently lost when the 0.16 migration
+    // deletes the legacy PRSS data, while an over-listed epoch would crash the per-epoch read below.
+    #[expect(deprecated)]
+    let stored_epochs: HashSet<EpochId> = priv_storage
+        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+        .await?
+        .into_iter()
+        .map(EpochId::from)
+        .collect();
+    let configured_epochs: HashSet<EpochId> = migration_map.values().flatten().copied().collect();
+
+    let not_in_config: Vec<EpochId> = stored_epochs
+        .difference(&configured_epochs)
+        .copied()
+        .collect();
+    if !not_in_config.is_empty() {
+        anyhow::bail!(
+            "Migration config does not cover {} stored epoch(s) with PRSS data: {}. Every stored epoch must be associated with exactly one context.",
+            not_in_config.len(),
+            not_in_config
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    let not_on_disk: Vec<EpochId> = configured_epochs
+        .difference(&stored_epochs)
+        .copied()
+        .collect();
+    if !not_on_disk.is_empty() {
+        anyhow::bail!(
+            "Migration config references {} epoch(s) that have no PRSS data on disk: {}.",
+            not_on_disk.len(),
+            not_on_disk
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
     let num_contexts = migration_map.len();
     let mut migrated_epochs = 0usize;
     // Next update the actual storage
