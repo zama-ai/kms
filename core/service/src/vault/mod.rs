@@ -104,7 +104,10 @@ impl Vault {
                 .await?;
             // Epoched types (e.g. FheKeyInfo) are backed up under
             // <backup_id>/<data_type>/<epoch_id>/<data_id> and are not visible to
-            // `all_data_ids`, so they must be enumerated per epoch.
+            // `all_data_ids`, so they must be enumerated per epoch. Enumerating
+            // epochs also fixes a latent bug: the earlier `remove_old_backup`
+            // deleted only `all_data_ids` entries and left epoched backup
+            // material orphaned.
             let epoch_ids = self
                 .storage
                 .all_epoch_ids_for_data(&vault_data_type.to_string())
