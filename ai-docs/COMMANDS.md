@@ -112,7 +112,7 @@ Regenerate for a single deterministic version:
 make generate-backward-compatibility-v0.15.0
 ```
 
-Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, `v0.13.20` and `v0.14.0` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.
+Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, and `v0.13.20` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.
 
 Remove generated BC data for deterministic versions only — frozen data dirs and all shared `.ron` files are preserved:
 

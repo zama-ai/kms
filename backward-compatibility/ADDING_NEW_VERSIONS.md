@@ -62,7 +62,7 @@ Create a new generator crate for the incompatible version:
 
 1. **Copy the closest previous generator**:
 
-For eaxample:
+For example:
 
 ```bash
 cp -r backward-compatibility/generate-v0.15.0 backward-compatibility/generate-v0.16.0
@@ -126,7 +126,7 @@ make test-backward-compatibility-local
 | `generate-v0.13.0` | `backward-compatibility-generate-v0-13-0` | v0.13.0 | — | Frozen |
 | `generate-v0.13.10` | `backward-compatibility-generate-v0-13-10` | v0.13.10 | — | Frozen |
 | `generate-v0.13.20` | `backward-compatibility-generate-v0-13-20` | v0.13.20 | — | Frozen |
-| `generate-v0.14.0` | `backward-compatibility-generate-v0-14-0` | v0.14.0 | tfhe-versionable 0.8.0, tfhe 1.6.2, alloy 1.6.0, serde 1.0.228 | Frozen |
+| `generate-v0.14.0` | `backward-compatibility-generate-v0-14-0` | v0.14.0 | tfhe-versionable 0.8.0, tfhe 1.6.2, alloy 1.6.0, serde 1.0.228 | Deterministic |
 | `generate-v0.15.0` | `backward-compatibility-generate-v0-15-0` | v0.15.0 | tfhe-versionable 0.8.0, tfhe 1.6.2, alloy 1.6.0, serde 1.0.228 | Deterministic |
 
 **Note**: v0.11.0 and v0.11.1 require separate generators due to incompatible alloy and tfhe versions.
