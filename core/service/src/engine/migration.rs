@@ -2582,8 +2582,8 @@ mod tests {
     #[tokio::test]
     async fn test_threshold_prss_to_epoch_stored_epoch_missing_from_config_errors() {
         let mut storage = RamStorage::new();
-        // Two epochs have PRSS on disk, but the config only lists the default one (DEFAULT_EPOCH_ID). 
-        // The unlisted epoch must be rejected before any write, so it can never be silently dropped 
+        // Two epochs have PRSS on disk, but the config only lists the default one (DEFAULT_EPOCH_ID).
+        // The unlisted epoch must be rejected before any write, so it can never be silently dropped
         // (and then lost when the 0.16 migration deletes the legacy PRSS).
         store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
         store_combined_prss_at_epoch(&mut storage, &LEGACY_DEFAULT_EPOCH_ID, 4, 1).await;
