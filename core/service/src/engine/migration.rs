@@ -138,7 +138,7 @@ where
     migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await
 }
 
-/// TODO Placeholder method to ensure we remember to clean up upgraded material at the next verison
+/// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
 #[allow(dead_code)]
 pub async fn migrate_to_0_16_x<PrivS>(
     priv_storage: &mut PrivS,
