@@ -2579,6 +2579,74 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn test_threshold_prss_to_epoch_stored_epoch_missing_from_config_errors() {
+        let mut storage = RamStorage::new();
+        // Two epochs have PRSS on disk, but the config only lists the default one (DEFAULT_EPOCH_ID). 
+        // The unlisted epoch must be rejected before any write, so it can never be silently dropped 
+        // (and then lost when the 0.16 migration deletes the legacy PRSS).
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+        store_combined_prss_at_epoch(&mut storage, &LEGACY_DEFAULT_EPOCH_ID, 4, 1).await;
+
+        let err = threshold_prss_to_epoch(&mut storage, &default_migration_config())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not cover"), "unexpected error: {err}");
+        assert!(
+            err.contains(&LEGACY_DEFAULT_EPOCH_ID.to_string()),
+            "error should name the uncovered epoch: {err}"
+        );
+
+        // Coverage is checked before any write, so no EpochData must have been produced.
+        assert!(
+            storage
+                .all_data_ids(&PrivDataType::EpochData.to_string())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_threshold_prss_to_epoch_configured_epoch_missing_on_disk_errors() {
+        let mut storage = RamStorage::new();
+        // Only the default epoch has PRSS on disk, but the config also lists an extra epoch under
+        // the default context. The phantom epoch must be rejected up front rather than crashing
+        // mid-write on the missing read.
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+
+        let config = migration_config(vec![(
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec![
+                DEFAULT_EPOCH_ID.to_string(),
+                LEGACY_DEFAULT_EPOCH_ID.to_string(),
+            ],
+        )]);
+
+        let err = threshold_prss_to_epoch(&mut storage, &config)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no PRSS data on disk"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains(&LEGACY_DEFAULT_EPOCH_ID.to_string()),
+            "error should name the phantom epoch: {err}"
+        );
+
+        // No partial migration should have happened.
+        assert!(
+            storage
+                .all_data_ids(&PrivDataType::EpochData.to_string())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     // ── Tests for migrate_prss_to_epoch ──
 
     #[tokio::test]
