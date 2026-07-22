@@ -1540,6 +1540,67 @@ async fn write_backup_keys_write_failure_custodian_vault() {
     );
 }
 
+#[tokio::test]
+async fn write_backup_keys_duplicate_keeps_existing_backup() {
+    // A duplicate means the recovery material already existed and this call wrote nothing,
+    // so write_backup_keys must NOT purge the backup vault under that context id — that data
+    // may be a live backup. Regression test: the purge previously ran unconditionally on every
+    // error, so it also deleted pre-existing data on a duplicate.
+    let recovery = dummy_recovery_material("write_backup_keys_duplicate");
+    let req_id = recovery.custodian_context().context_id;
+
+    let mut vault = Vault {
+        storage: StorageProxy::Ram(RamStorage::new()),
+        keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id).await),
+    };
+    // Plant a pre-existing backup entry under the context id.
+    let data_id = derive_request_id("write_backup_keys_duplicate_data").unwrap();
+    let planted_path =
+        VaultDataType::CustodianBackupData(req_id, PrivDataType::SigningKey).to_string();
+    vault
+        .storage
+        .store_bytes(&[1, 2, 3], &data_id, &planted_path)
+        .await
+        .unwrap();
+
+    let storage = CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), Some(vault));
+    // Make the recovery material already present so write_all reports a duplicate.
+    {
+        let mut pub_s = storage.public_storage.lock().await;
+        pub_s
+            .store_bytes(
+                b"existing",
+                &req_id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let meta_store = MetaStore::new_unlimited();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
+    assert_eq!(
+        storage
+            .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+            .await,
+        Err(StorageError::Duplicate),
+    );
+
+    // The pre-existing backup data must survive the duplicate.
+    let vault = storage.get_backup_vault().unwrap();
+    let vault = vault.lock().await;
+    assert!(
+        vault
+            .storage
+            .data_exists(&data_id, &planted_path)
+            .await
+            .unwrap(),
+        "a duplicate must not purge pre-existing backup vault data"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn write_backup_keys_purge_failure_keeps_write_error() {

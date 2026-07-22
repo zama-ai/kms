@@ -831,14 +831,19 @@ where
             )
             .await;
         if let Err(write_err) = res {
-            // Note that we also care about a BackupError here, since we are actually setting up the initial backup
-            // Something went wrong so we will also purge what this setup wrote to the backup vault.
+            // Note that we also care about a BackupError here, since we are actually setting up the initial backup.
+            // Purge what this setup wrote to the backup vault — the caller re-encrypts the current
+            // material into the vault under `req_id` before this method, so on failure those entries
+            // must be rolled back. The one exception is a duplicate: then this call wrote nothing and
+            // the material under `req_id` pre-existed (possibly a live backup), so it must be kept.
             // The write error is kept in all cases: neither a successful purge nor a purge failure
             // (which is only logged) may mask the root cause recorded in the meta store.
-            if let Err(e) = vault.lock().await.purge_backup(&req_id).await {
-                tracing::error!(
-                    "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
-                );
+            if !matches!(write_err, StorageError::Duplicate) {
+                if let Err(e) = vault.lock().await.purge_backup(&req_id).await {
+                    tracing::error!(
+                        "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
+                    );
+                }
             }
             // Only a backup failure leaves the recovery material in public storage: on a
             // write failure write_all already purged it, and on a duplicate it pre-existed
