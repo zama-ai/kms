@@ -838,12 +838,12 @@ where
             // the material under `req_id` pre-existed (possibly a live backup), so it must be kept.
             // The write error is kept in all cases: neither a successful purge nor a purge failure
             // (which is only logged) may mask the root cause recorded in the meta store.
-            if !matches!(write_err, StorageError::Duplicate) {
-                if let Err(e) = vault.lock().await.purge_backup(&req_id).await {
-                    tracing::error!(
-                        "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
-                    );
-                }
+            if !matches!(write_err, StorageError::Duplicate)
+                && let Err(e) = vault.lock().await.purge_backup(&req_id).await
+            {
+                tracing::error!(
+                    "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
+                );
             }
             // Only a backup failure leaves the recovery material in public storage: on a
             // write failure write_all already purged it, and on a duplicate it pre-existed
