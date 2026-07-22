@@ -147,7 +147,10 @@ impl S3Storage {
         Ok(())
     }
 
-    /// Deletes the object at the given key, if it exists. Does not fail if the object does not exist or if the deletion fails.
+    /// Deletes the object at the given key. `DeleteObject` is idempotent on S3, so this
+    /// succeeds when the object does not exist, but a genuine deletion failure is now
+    /// propagated to the caller instead of being logged and swallowed. Callers that must
+    /// guarantee erasure (e.g. custodian-context destruction) rely on this to fail closed.
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",
@@ -155,19 +158,51 @@ impl S3Storage {
             key
         );
 
-        // Attempt S3 deletion but don't fail on errors
-        if let Err(e) = self
-            .s3_client
+        self.s3_client
             .delete_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
             .await
-        {
-            tracing::warn!("S3 delete failed: {:?}", e);
-        }
+            .map_err(|e| anyhow::anyhow!("S3 delete failed for key {key}: {e}"))?;
 
         Ok(())
+    }
+
+    /// List every object key (from `contents`) and common prefix (from `common_prefixes`)
+    /// under `prefix`, following `ListObjectsV2` continuation tokens so the result is the
+    /// full listing rather than a single (≤1000-entry) page. Keys and prefixes are trimmed.
+    async fn list_all(&self, prefix: &str) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+        let mut keys = Vec::new();
+        let mut common_prefixes = Vec::new();
+        let mut continuation_token = None;
+        loop {
+            let result = self
+                .s3_client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .delimiter("/")
+                .prefix(prefix)
+                .set_continuation_token(continuation_token)
+                .send()
+                .await?;
+            for cur_res in result.contents() {
+                if let Some(key) = &cur_res.key {
+                    keys.push(key.trim().to_string());
+                }
+            }
+            for cur_res in result.common_prefixes() {
+                if let Some(p) = &cur_res.prefix {
+                    common_prefixes.push(p.trim().to_string());
+                }
+            }
+            if result.is_truncated().unwrap_or(false) {
+                continuation_token = result.next_continuation_token().map(str::to_string);
+            } else {
+                break;
+            }
+        }
+        Ok((keys, common_prefixes))
     }
 }
 
@@ -208,23 +243,14 @@ impl StorageReader for S3Storage {
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
-        let mut ids = HashSet::new();
-        let result = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .delimiter("/")
-            .prefix(format!("{}/{}/", self.prefix, data_type))
-            .send()
+        let (keys, _) = self
+            .list_all(&format!("{}/{}/", self.prefix, data_type))
             .await?;
-        for cur_res in result.contents() {
-            if let Some(key) = &cur_res.key {
-                let trimmed_key = key.trim();
-                // Find the elements with the right prefix
-                // Find the id of file which is always the last segment when splitting on "/"
-                if let Some(cur_id) = trimmed_key.split('/').next_back() {
-                    ids.insert(RequestId::from_str(cur_id)?);
-                }
+        let mut ids = HashSet::new();
+        for key in keys {
+            // The id is always the last segment when splitting the key on "/".
+            if let Some(cur_id) = key.split('/').next_back() {
+                ids.insert(RequestId::from_str(cur_id)?);
             }
         }
         Ok(ids)
@@ -270,49 +296,32 @@ impl StorageReaderExt for S3Storage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
-        let mut ids = HashSet::new();
-        let result = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .delimiter("/")
-            .prefix(format!("{}/{}/{}/", self.prefix, data_type, epoch_id))
-            .send()
+        let (keys, _) = self
+            .list_all(&format!("{}/{}/{}/", self.prefix, data_type, epoch_id))
             .await?;
-        for cur_res in result.contents() {
-            if let Some(key) = &cur_res.key {
-                let trimmed_key = key.trim();
-                // Find the elements with the right prefix
-                // Find the id of file which is always the last segment when splitting on "/"
-                if let Some(cur_id) = trimmed_key.split('/').next_back() {
-                    ids.insert(RequestId::from_str(cur_id)?);
-                }
+        let mut ids = HashSet::new();
+        for key in keys {
+            // The id is always the last segment when splitting the key on "/".
+            if let Some(cur_id) = key.split('/').next_back() {
+                ids.insert(RequestId::from_str(cur_id)?);
             }
         }
         Ok(ids)
     }
 
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
-        let mut ids = HashSet::new();
-        let result = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .delimiter("/")
-            .prefix(format!("{}/{}/", self.prefix, data_type))
-            .send()
+        let (_, common_prefixes) = self
+            .list_all(&format!("{}/{}/", self.prefix, data_type))
             .await?;
+        let mut ids = HashSet::new();
         // With delimiter="/", epoch_ids appear as "directories" in common_prefixes,
         // not as objects in contents()
-        for cur_res in result.common_prefixes() {
-            if let Some(key) = &cur_res.prefix {
-                let trimmed_key = key.trim();
-                // Ensure we only count "directories" by checking for the trailing "/"
-                if trimmed_key.ends_with('/') {
-                    // Remove the '/' at the end and take the last segment after splitting on "/" to get epoch_id
-                    if let Some(cur_id) = trimmed_key.trim_end_matches('/').split('/').next_back() {
-                        ids.insert(EpochId::from_str(cur_id)?);
-                    }
+        for key in common_prefixes {
+            // Ensure we only count "directories" by checking for the trailing "/"
+            if key.ends_with('/') {
+                // Remove the '/' at the end and take the last segment after splitting on "/" to get epoch_id
+                if let Some(cur_id) = key.trim_end_matches('/').split('/').next_back() {
+                    ids.insert(EpochId::from_str(cur_id)?);
                 }
             }
         }

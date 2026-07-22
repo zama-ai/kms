@@ -263,8 +263,11 @@ where
             })?;
         let mut guarded_backup_storage = guarded_backup_storage_ref.lock().await;
 
-        // There is nothing we can do if deletion fails here.
-        // Note that it cannot fail if the context does not exist.
+        // Fail closed: `delete_custodian_context_at_id` only removes the recovery material
+        // once every backed-up object for the context has been confirmed erased. If it
+        // returns an error we propagate it and, crucially, do NOT drop the context from the
+        // meta store below, so the operator retains a retryable degraded state instead of a
+        // context that reports successful destruction while backups linger in storage.
         delete_custodian_context_at_id(
             &mut *guarded_pub_storage,
             &mut guarded_backup_storage,

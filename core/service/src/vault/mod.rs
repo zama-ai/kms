@@ -70,10 +70,23 @@ impl Vault {
     }
 
     /// Method for removing an old custodian backup identified by `backup_id`.
-    /// This is based on the id of the backup, and removes all the backed up information under `backup_id`.
-    /// An error will be returned if the backup exists but could not be deleted or if `backup_id` is the _current_ backup id.
-    /// An info log is produced for each data type that is not found in the backup.
+    ///
+    /// Removes *all* backed-up information stored under `backup_id`, covering both the
+    /// non-epoch namespace (`<backup_id>/<type>/<id>`) and the epoch namespace
+    /// (`<backup_id>/<type>/<epoch>/<id>`) used for epoch-scoped material such as
+    /// [`PrivDataType::FheKeyInfo`], [`PrivDataType::FhePrivateKey`] and
+    /// [`PrivDataType::CrsInfo`].
+    ///
+    /// The method fails closed: after deleting, it re-enumerates every namespace and
+    /// returns an error if any object still remains. Callers therefore only proceed to
+    /// delete recovery material / drop lifecycle state once erasure is confirmed complete,
+    /// so a partial deletion is retried rather than reported as a successful destruction.
+    ///
+    /// An error is also returned if `backup_id` is the _current_ backup id, or if this is
+    /// not a custodian (secret-sharing) backup vault.
     async fn remove_old_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
+        // Only secret-sharing (custodian) backup vaults support per-backup-id removal, and
+        // we must never wipe the backup that is currently in use.
         match self.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
                 if secret_share_keychain.get_current_backup_id()? == *backup_id {
@@ -81,29 +94,86 @@ impl Vault {
                         "remove_old_backup cannot be called on the current backup id"
                     ));
                 }
-                for cur_type in PrivDataType::iter() {
-                    let vault_data_type = VaultDataType::CustodianBackupData(*backup_id, cur_type);
-                    let ids = self
-                        .storage
-                        .all_data_ids(&vault_data_type.to_string())
-                        .await?;
-                    if ids.is_empty() {
-                        tracing::info!(
-                            "No data found for backup id {backup_id} and data type {cur_type}"
-                        );
-                    }
-                    for cur_id in ids {
-                        self.storage
-                            .delete_data(&cur_id, &vault_data_type.to_string())
-                            .await?;
-                    }
-                }
-                Ok(())
             }
-            _ => Err(anyhow!(
-                "remove_old_backup can only be called on custodian backup vaults"
-            )),
+            _ => {
+                return Err(anyhow!(
+                    "remove_old_backup can only be called on custodian backup vaults"
+                ));
+            }
         }
+
+        // We address the storage directly with the fully-qualified
+        // `CustodianBackupData(backup_id, ..)` data type rather than going through the
+        // Vault's `StorageReaderExt`/`StorageExt` methods: those resolve the data type
+        // against the *current* backup id and would therefore target the wrong namespace
+        // when erasing a retired context.
+        for cur_type in PrivDataType::iter() {
+            let vault_data_type =
+                VaultDataType::CustodianBackupData(*backup_id, cur_type).to_string();
+
+            // Non-epoch objects.
+            for cur_id in self.storage.all_data_ids(&vault_data_type).await? {
+                self.storage.delete_data(&cur_id, &vault_data_type).await?;
+            }
+
+            // Epoch-scoped objects.
+            for epoch_id in self
+                .storage
+                .all_epoch_ids_for_data(&vault_data_type)
+                .await?
+            {
+                for cur_id in self
+                    .storage
+                    .all_data_ids_at_epoch(&epoch_id, &vault_data_type)
+                    .await?
+                {
+                    self.storage
+                        .delete_data_at_epoch(&cur_id, &epoch_id, &vault_data_type)
+                        .await?;
+                }
+            }
+        }
+
+        // Fail closed: confirm nothing survived before the caller is allowed to delete the
+        // recovery material and drop lifecycle state.
+        let mut residual = Vec::new();
+        for cur_type in PrivDataType::iter() {
+            let vault_data_type =
+                VaultDataType::CustodianBackupData(*backup_id, cur_type).to_string();
+
+            let remaining_non_epoch = self.storage.all_data_ids(&vault_data_type).await?;
+            if !remaining_non_epoch.is_empty() {
+                residual.push(format!(
+                    "{} non-epoch object(s) for data type {cur_type}",
+                    remaining_non_epoch.len()
+                ));
+            }
+
+            for epoch_id in self
+                .storage
+                .all_epoch_ids_for_data(&vault_data_type)
+                .await?
+            {
+                let remaining_epoch = self
+                    .storage
+                    .all_data_ids_at_epoch(&epoch_id, &vault_data_type)
+                    .await?;
+                if !remaining_epoch.is_empty() {
+                    residual.push(format!(
+                        "{} object(s) for data type {cur_type} at epoch {epoch_id}",
+                        remaining_epoch.len()
+                    ));
+                }
+            }
+        }
+        if !residual.is_empty() {
+            return Err(anyhow!(
+                "remove_old_backup did not fully erase backup id {backup_id}; residual data remains: {}",
+                residual.join(", ")
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -489,7 +559,9 @@ pub mod tests {
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
     use crate::vault::storage::file::FileStorage;
-    use crate::vault::storage::{Storage, StorageExt, StorageReader, StorageReaderExt, StorageType};
+    use crate::vault::storage::{
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType,
+    };
     use aes_prng::AesRng;
     use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
