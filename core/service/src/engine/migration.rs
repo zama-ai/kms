@@ -317,6 +317,12 @@ fn parse_migration_map(
             }
             cur_epochs.push(epoch_id);
         }
+        if context_to_epoch_map.contains_key(&context_id) {
+            anyhow::bail!(
+                "Duplicate context ID {} found in migration config",
+                association.context_id
+            );
+        }
         context_to_epoch_map.insert(context_id, cur_epochs);
     }
     match context_to_epoch_map.get(&DEFAULT_MPC_CONTEXT) {
