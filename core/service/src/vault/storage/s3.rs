@@ -147,10 +147,10 @@ impl S3Storage {
         Ok(())
     }
 
-    /// Deletes the object at the given key. `DeleteObject` is idempotent on S3, so this
-    /// succeeds when the object does not exist, but a genuine deletion failure is now
-    /// propagated to the caller instead of being logged and swallowed. Callers that must
-    /// guarantee erasure (e.g. custodian-context destruction) rely on this to fail closed.
+    /// Deletes the object at the given key.
+    ///
+    /// This operation is idempotent on S3, so this succeeds when the object
+    /// does not exist.
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",

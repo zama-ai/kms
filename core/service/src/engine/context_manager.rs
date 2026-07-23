@@ -263,7 +263,7 @@ where
             })?;
         let mut guarded_backup_storage = guarded_backup_storage_ref.lock().await;
 
-        // Fail closed: `delete_custodian_context_at_id` only removes the recovery material
+        // `delete_custodian_context_at_id` only removes the recovery material
         // once every backed-up object for the context has been confirmed erased. If it
         // returns an error we propagate it and, crucially, do NOT drop the context from the
         // meta store below, so the operator retains a retryable degraded state instead of a

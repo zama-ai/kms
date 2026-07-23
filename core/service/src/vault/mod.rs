@@ -134,7 +134,7 @@ impl Vault {
             }
         }
 
-        // Fail closed: confirm nothing survived before the caller is allowed to delete the
+        // confirm nothing survived before the caller is allowed to delete the
         // recovery material and drop lifecycle state.
         let mut residual = Vec::new();
         for cur_type in PrivDataType::iter() {
@@ -639,16 +639,7 @@ pub mod tests {
     }
 
     /// Regression test for the epoch-namespace gap in custodian context destruction.
-    ///
-    /// `remove_old_backup` (the first thing `delete_custodian_context_at_id` does when a
-    /// custodian context is retired) enumerates and deletes backups with the non-epoch-aware
-    /// [`StorageReader::all_data_ids`] / `delete_data` APIs. Epoch-scoped backup material
-    /// (`FheKeyInfo`, `FhePrivateKey`, `CrsInfo`) is written under
-    /// `<backup_id>/<type>/<epoch_id>/<data_id>`, which those APIs never see. So retiring a
-    /// context reports success while leaving epoch-scoped ciphertexts recoverable in storage.
-    ///
-    /// This test fails on the current (buggy) code and should pass once `remove_old_backup`
-    /// enumerates and deletes epoch-scoped objects too.
+    /// Details can be found in https://github.com/zama-ai/kms-internal/issues/3110.
     #[tokio::test]
     async fn test_remove_old_backup_deletes_epoch_scoped_data() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -698,6 +689,14 @@ pub mod tests {
         // Sanity: both objects are present under the old context before retirement.
         let old_data_type =
             VaultDataType::CustodianBackupData(old_backup_id, data_type).to_string();
+        assert!(
+            vault
+                .storage
+                .data_exists(&non_epoch_item, &old_data_type)
+                .await
+                .unwrap(),
+            "non-epoch backup should exist before destruction"
+        );
         assert!(
             vault
                 .storage
