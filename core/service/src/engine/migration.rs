@@ -139,7 +139,7 @@ where
 }
 
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn migrate_to_0_16_x<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -161,20 +161,6 @@ where
 {
     if kms_type == KMSType::Centralized {
         tracing::info!("No migration needed for centralized KMS");
-        return Ok(());
-    }
-    // If any EpochData already exists the migration has run before, so this restart is a no-op.
-    //
-    // This guard also prevents resurrecting destroyed epochs: destroying an epoch removes its
-    // EpochData but not the legacy PrssSetupCombined (that is only removed in the 0.16 migration),
-    // so without this check a restart would re-create the destroyed epoch from the lingering PRSS
-    // data. The guard holds because epoch destruction refuses to remove the last remaining epoch,
-    // so at least one EpochData always survives once the migration has run.
-    let data_ids = priv_storage
-        .all_data_ids(&PrivDataType::EpochData.to_string())
-        .await?;
-    if !data_ids.is_empty() {
-        tracing::info!("Epoch data migration already done, skipping");
         return Ok(());
     }
     let inner_migration_conf = match migration_config {
@@ -258,6 +244,18 @@ where
     // Next update the actual storage
     for (cur_context, epoch_list) in migration_map {
         for cur_epoch in epoch_list {
+            // Check that we did not already do the migration of this epoch
+            if priv_storage
+                .data_exists(&cur_epoch.into(), &PrivDataType::EpochData.to_string())
+                .await?
+            {
+                tracing::info!(
+                    "Epoch {} under context {} already migrated, skipping",
+                    cur_epoch,
+                    cur_context
+                );
+                continue;
+            }
             let prss = read_versioned_at_request_id::<_, PRSSSetupCombined>(
                 priv_storage,
                 &cur_epoch.into(),
