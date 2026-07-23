@@ -474,10 +474,10 @@ macro_rules! impl_identifiers {
         }
 
         impl_identifier_conversion!($request_id, $key_id);
-        impl_identifier_conversion!($key_id, $request_id);
         impl_identifier_conversion!($request_id, $context_id);
-        impl_identifier_conversion!($context_id, $request_id);
         impl_identifier_conversion!($request_id, $epoch_id);
+        impl_identifier_conversion!($key_id, $request_id);
+        impl_identifier_conversion!($context_id, $request_id);
         impl_identifier_conversion!($epoch_id, $request_id);
     };
 }
