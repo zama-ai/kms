@@ -1,7 +1,7 @@
 use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
-    safe_read_element_versioned, safe_write_element_versioned, write_bytes,
+    safe_read_element_versioned, safe_write_element_versioned, sweep_stale_partials, write_bytes,
 };
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::vault::storage_prefix_safety;
@@ -37,6 +37,8 @@ impl FileStorage {
     /// {extra_prefix} is {storage_prefix} if it is Some,
     /// otherwise it is set to {storage_type}.
     /// All missing paths are created during this process.
+    /// Construction also sweeps stale partial-write temp files left under the
+    /// storage root by hard-crashed processes (see `sweep_stale_partials`).
     pub fn new(
         path: Option<&Path>,
         storage_type: StorageType,
@@ -54,9 +56,9 @@ impl FileStorage {
             None => env::current_dir()?.join(KEY_PATH_PREFIX).join(extra_prefix),
         };
         fs::create_dir_all(&path)?;
-        Ok(Self {
-            path: path.canonicalize()?,
-        })
+        let path = path.canonicalize()?;
+        sweep_stale_partials(&path);
+        Ok(Self { path })
     }
 
     fn item_path(&self, data_id: &RequestId, data_type: &str) -> PathBuf {
@@ -702,5 +704,51 @@ pub mod tests {
             !epoch_dir.exists(),
             "Epoch directory should be removed after deleting the last file"
         );
+    }
+
+    #[tokio::test]
+    async fn filestorage_new_sweeps_stale_partials() {
+        use crate::util::file_handling::partial_file_name;
+        use std::ffi::OsStr;
+        // Cannot be a live pid; see the twin constant in the file_handling tests.
+        const NEVER_LIVE_PID: u32 = 999_999_999;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        let data = TestType { i: 13 };
+        let data_type = "TestType";
+        let req_id = derive_request_id("sweep_plain").unwrap();
+        storage.store_data(&data, &req_id, data_type).await.unwrap();
+
+        // Plant orphans of a dead process next to plain and epoch data, plus an
+        // in-flight partial of this very process.
+        let type_dir = storage.root_dir().join(data_type);
+        let epoch_dir = type_dir.join("epoch1");
+        fs::create_dir_all(&epoch_dir).unwrap();
+        let orphan_plain =
+            type_dir.join(partial_file_name(OsStr::new("orphan"), NEVER_LIVE_PID, 3));
+        let orphan_epoch =
+            epoch_dir.join(partial_file_name(OsStr::new("orphan"), NEVER_LIVE_PID, 4));
+        let inflight = type_dir.join(partial_file_name(
+            OsStr::new("inflight"),
+            std::process::id(),
+            5,
+        ));
+        for planted in [&orphan_plain, &orphan_epoch, &inflight] {
+            fs::write(planted, b"junk").unwrap();
+        }
+
+        // Re-opening the same root sweeps dead-pid partials only.
+        let storage2 = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        assert!(!orphan_plain.exists(), "plain orphan not swept");
+        assert!(!orphan_epoch.exists(), "epoch orphan not swept");
+        assert!(inflight.exists(), "in-flight partial of a live pid removed");
+
+        // Real data survives and listings are unchanged.
+        let read_back: TestType = storage2.read_data(&req_id, data_type).await.unwrap();
+        assert_eq!(read_back, data);
+        let ids = storage2.all_data_ids(data_type).await.unwrap();
+        assert!(ids.contains(&req_id));
+        assert_eq!(ids.len(), 1);
     }
 }

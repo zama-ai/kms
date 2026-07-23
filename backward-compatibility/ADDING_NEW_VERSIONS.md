@@ -62,7 +62,7 @@ Create a new generator crate for the incompatible version:
 
 1. **Copy the closest previous generator**:
 
-For eaxample:
+For example:
 
 ```bash
 cp -r backward-compatibility/generate-v0.13.20 backward-compatibility/generate-v0.14.0
@@ -73,11 +73,13 @@ cp -r backward-compatibility/generate-v0.13.20 backward-compatibility/generate-v
    - Package version: `0.14.0` (matches the KMS version exactly)
    - Update all KMS dependencies to v0.14.0 (or to the release commit if the tag is not available yet)
    - Update dependency versions (serde, alloy, tfhe) to match v0.14.0's requirements
+   - Update the `[[bin]]` name to `backward-compatibility-generate-v0-14-0`
 
 3. **Update** the copied source files:
    - Rename `backward-compatibility/generate-v0.14.0/src/data_0_13.rs` to `data_0_14.rs`
    - Change imports from `kms_0_13_20`, `kms_grpc_0_13_20`, and sibling aliases to their `0_14_0` names
    - Update `VERSION_NUMBER` to `"0.14.0"`
+   - Rename the `V0_13_20` / `KmsV0_13_20` / … structs to their `0_14_0` name
    - Update `src/lib.rs` and `src/main.rs` module names and imports to use `data_0_14`
    - Fix any API changes between v0.13.20 and v0.14.0
 
@@ -122,7 +124,7 @@ make test-backward-compatibility-local
 | `generate-v0.13.0` | `backward-compatibility-generate-v0-13-0` | v0.13.0 | — | Frozen |
 | `generate-v0.13.10` | `backward-compatibility-generate-v0-13-10` | v0.13.10 | — | Frozen |
 | `generate-v0.13.20` | `backward-compatibility-generate-v0-13-20` | v0.13.20 | — | Frozen |
-| `generate-v0.14.0` | `backward-compatibility-generate-v0-14-0` | v0.14.0 | tfhe-versionable 0.7.0, tfhe 1.6.1, alloy 1.4.1, serde 1.0.228 | Deterministic |
+| `generate-v0.14.0` | `backward-compatibility-generate-v0-14-0` | v0.14.0 | tfhe-versionable 0.8.0, tfhe 1.6.2, alloy 1.6.0, serde 1.0.228 | Deterministic |
 
 **Note**: v0.11.0 and v0.11.1 require separate generators due to incompatible alloy and tfhe versions.
 

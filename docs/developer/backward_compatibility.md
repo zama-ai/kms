@@ -70,6 +70,7 @@ However, this does not allow changes to be made to the test metadata scheme itse
 - `backward-compatibility/generate-v0.13.10` - For KMS v0.13.10
 - `backward-compatibility/generate-v0.13.20` - For KMS v0.13.20
 - `backward-compatibility/generate-v0.14.0` - For KMS v0.14.0
+- `backward-compatibility/generate-v0.15.0` - For KMS v0.15.0
 
 Each generator uses the exact dependencies from its target KMS version.
 
@@ -93,6 +94,9 @@ make generate-backward-compatibility-v0.13.20
 
 # Generate only v0.14.0 data
 make generate-backward-compatibility-v0.14.0
+
+# Generate only v0.15.0 data
+make generate-backward-compatibility-v0.15.0
 
 ```
 WARNING: Frozen-version targets are for exceptional investigation only. They can produce non-deterministic bytes and may append duplicate metadata with older generator code. Changes based on generating a frozen version should NEVER be committed to the repo.
@@ -410,8 +414,8 @@ See [`backward-compatibility/ADDING_NEW_VERSIONS.md`](../../backward-compatibili
 2. Update `Cargo.toml`: package name, version, and KMS dependencies
 3. Update `src/data_0_11.rs`: imports and `VERSION_NUMBER`
 4. Add to `Makefile`:
-   - Append the new version number (e.g. `0.14.0`) to `DETERMINISTIC_BWC_VERSIONS`. **Do not** add it to `FROZEN_BWC_VERSIONS` — that list is closed at `0.13.20`.
-   - Add a `generate-backward-compatibility-v0.14.0` recipe matching the existing pattern.
+   - Append the new version number (e.g. `0.16.0`) to `DETERMINISTIC_BWC_VERSIONS`. **Do not** add it to `FROZEN_BWC_VERSIONS` — that list is closed at `0.13.20`.
+   - Add a `generate-backward-compatibility-v0.16.0` recipe matching the existing pattern.
    - Add the crate to the root `Cargo.toml` exclude list.
 5. Test: `make generate-backward-compatibility-all`
 
