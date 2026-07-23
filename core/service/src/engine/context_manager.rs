@@ -204,6 +204,14 @@ where
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await?;
+        InternalCustodianContext::validate_nodes(&custodian_context).map_err(|e| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                Some(custodian_context_id),
+                anyhow::anyhow!("Invalid custodian context: {e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
@@ -2276,6 +2284,91 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_new_custodian_context_rejects_duplicate_cryptographic_identities() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let custodian_meta_store = MetaStore::new(100, 10);
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            custodian_meta_store.clone(),
+            session_maker,
+            false,
+        );
+
+        let mut rng = AesRng::seed_from_u64(43);
+        let mut setup_messages = Vec::new();
+        for role in 1..=3 {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_, public_enc_key) = enc.keygen().unwrap();
+            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            setup_messages.push(InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(role),
+                name: format!("Custodian-{role}"),
+                random_value: [role as u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key,
+                public_verf_key,
+            });
+        }
+
+        let mut duplicate_encryption_key = setup_messages.clone();
+        duplicate_encryption_key[1].public_enc_key =
+            duplicate_encryption_key[0].public_enc_key.clone();
+        let mut duplicate_verification_key = setup_messages;
+        duplicate_verification_key[1].public_verf_key =
+            duplicate_verification_key[0].public_verf_key.clone();
+
+        for (context_id, messages, expected_error) in [
+            (
+                RequestId::from_bytes([23u8; 32]),
+                duplicate_encryption_key,
+                "Duplicate custodian encryption key found in custodian context",
+            ),
+            (
+                RequestId::from_bytes([24u8; 32]),
+                duplicate_verification_key,
+                "Duplicate custodian verification key found in custodian context",
+            ),
+        ] {
+            let context = CustodianContext {
+                custodian_nodes: messages
+                    .into_iter()
+                    .map(|message| message.try_into().unwrap())
+                    .collect(),
+                custodian_context_id: Some(context_id.into()),
+                threshold: 1,
+            };
+            let request = Request::new(NewCustodianContextRequest {
+                new_custodian_context: Some(context),
+                mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            });
+
+            let error = context_manager
+                .new_custodian_context(request)
+                .await
+                .expect_err("duplicate custodian cryptographic identities must be rejected");
+            assert_eq!(error.code(), tonic::Code::InvalidArgument);
+            assert!(error.internal_err().to_string().contains(expected_error));
+            assert!(!custodian_meta_store.read().await.has_existed(&context_id));
+
+            let guarded_pub_storage = crypto_storage.public_storage.lock().await;
+            assert!(
+                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
+                    &*guarded_pub_storage,
+                    &context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .is_err(),
+                "rejected custodian context {context_id} must not create recovery material"
+            );
+        }
+    }
+
     // Test to sanity check the overall flow of construction of material needed for backup
     #[tokio::test]
     async fn test_gen_recovery_request_payloads() {
@@ -2284,13 +2377,15 @@ mod tests {
         let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
-        let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
+        let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
+        let mnemonic2 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
+        let mnemonic3 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let custodian1: Custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
+            custodian_from_seed_phrase(&mnemonic1, Role::indexed_from_one(1)).unwrap();
         let custodian2: Custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
+            custodian_from_seed_phrase(&mnemonic2, Role::indexed_from_one(2)).unwrap();
         let custodian3: Custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(3)).unwrap();
+            custodian_from_seed_phrase(&mnemonic3, Role::indexed_from_one(3)).unwrap();
         let setup_msg_1 = custodian1
             .generate_setup_message(&mut rng, "Custodian-1".to_string())
             .unwrap();

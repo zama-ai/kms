@@ -259,7 +259,8 @@ in server config and unified behind `KeychainProxy`
   seed phrase. A custodian context must already be installed before a node
   can be switched to this mode; the usual flow is to boot on the AWS KMS
   keychain, provision custodians, then restart against the secret-sharing
-  keychain.
+  keychain. New custodian contexts are rejected unless every custodian
+  encryption key and every custodian verification key is unique.
 
 Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the

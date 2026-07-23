@@ -219,7 +219,7 @@ The key material of each custodian must then be communicated with operators (whi
 More specifically the following steps must be done:
 
 1. Set up custodians.
-  This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool.
+  This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool. Custodians must use distinct seed phrases so that every encryption key and verification key in the resulting context is unique.
   This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
 2. Add a new custodian context.
   After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).

@@ -933,34 +933,33 @@ mod tests {
     fn validate_recovery_validation_material() {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let (_dec_key, enc_key) = {
+            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            encryption.keygen().unwrap()
+        };
         let backup_id = derive_request_id("test").unwrap();
-        // Dummy payload; but needs to be a properly serialized payload
-        let payload = CustodianSetupMessagePayload {
-            header: HEADER.to_string(),
-            random_value: [4_u8; 32],
-            timestamp: SystemTime::now(),
-            public_enc_key: enc_key.clone(),
-            verification_key: verf_key.clone(),
-        };
-        let mut payload_serial = Vec::new();
-        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-        let setup_msg1 = CustodianSetupMessage {
-            custodian_role: 1,
-            name: "Custodian-1".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg2 = CustodianSetupMessage {
-            custodian_role: 2,
-            name: "Custodian-2".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg3 = CustodianSetupMessage {
-            custodian_role: 3,
-            name: "Custodian-3".to_string(),
-            payload: payload_serial.clone(),
-        };
+        let mut custodian_nodes = Vec::new();
+        for role in 1..=3 {
+            let (_, custodian_enc_key) = {
+                let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                encryption.keygen().unwrap()
+            };
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let payload = CustodianSetupMessagePayload {
+                header: HEADER.to_string(),
+                random_value: [4_u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key: custodian_enc_key,
+                verification_key: custodian_verf_key,
+            };
+            let mut payload_serial = Vec::new();
+            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+            custodian_nodes.push(CustodianSetupMessage {
+                custodian_role: role,
+                name: format!("Custodian-{role}"),
+                payload: payload_serial,
+            });
+        }
         let mut commitments = BTreeMap::new();
         commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
         commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
@@ -977,7 +976,7 @@ mod tests {
         cts.insert(Role::indexed_from_one(2), cts_out.clone());
         cts.insert(Role::indexed_from_one(3), cts_out.clone());
         let custodian_context = CustodianContext {
-            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
+            custodian_nodes,
             custodian_context_id: Some(backup_id.into()),
             threshold: 1,
         };
