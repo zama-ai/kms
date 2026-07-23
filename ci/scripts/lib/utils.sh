@@ -14,8 +14,8 @@ build_container() {
     log_info "Building and Loading Docker Images"
     log_info "========================================="
 
-    # Use RUST_IMAGE_VERSION from environment or default
-    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.97.1}"
+    # Use RUST_IMAGE_VERSION from environment, or the version pinned in rust-toolchain.toml
+    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-$(grep 'channel' "${REPO_ROOT}/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')}"
 
     #-------------------------------------------------------------------------
     # Build and load core-service

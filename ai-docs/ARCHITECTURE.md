@@ -275,7 +275,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.97.1`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
+- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
