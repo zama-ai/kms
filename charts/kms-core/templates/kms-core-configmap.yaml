@@ -215,6 +215,14 @@ data:
     num_rayon_threads = {{ .Values.kmsCore.thresholdMode.rayonNumThreads }}
     num_tokio_threads = {{ .Values.kmsCore.thresholdMode.tokioWorkerThreads }}
 
+    {{- if .Values.kmsCore.migration.contextAssociations }}
+      {{- range .Values.kmsCore.migration.contextAssociations }}
+    [[migration.context_associations]]
+    context_id = {{ .contextId | quote }}
+    epoch_ids = {{ .epochIds | toJson }}
+      {{- end }}
+    {{- end }}
+
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
   enclave.json: |
     {
