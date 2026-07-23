@@ -10,6 +10,7 @@ use super::{
 ///
 /// Builds the vanishing polynomial V(Z) = ∏_j (Z - alpha_j) once, then recovers each
 /// L_i = V / (Z - alpha_i) by deflation (see [vanishing_poly()] and [deflate_root()]).
+/// WARNING: The function requires that `points.len() >= 2`
 pub fn lagrange_numerators<F: Ring>(points: &[F]) -> Vec<Poly<F>> {
     let v = vanishing_poly(points);
     points
@@ -118,6 +119,7 @@ fn sanity_check_decoding<F: Field>(
 /// `error_normalizer[i] = -α_i · L_i(α_i)` (`L_i` being the Lagrange numerator for point `i`).
 /// These depend only on the point set, so callers that decode many syndromes over the same points
 /// should compute them once and reuse them.
+/// WARNING: The function requires that `x_alpha.len() >= 2`
 pub(crate) fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
     let lagrange = lagrange_numerators(x_alpha);
     let x_alpha_inv = x_alpha.iter().map(|x| x.invert()).collect();
@@ -132,6 +134,7 @@ pub(crate) fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
 //NIST: Level Zero Operation
 /// Decode a given syndrome poly in the field, given precomputed `error_normalizer`
 /// from [`field_decode_hints`] and RS value r = n - v.
+/// WARNING: The function requires that `x_alpha_inv.len() >= 2`
 pub(crate) fn decode_syndrome<F: Field>(
     syndrome: Poly<F>,
     r: usize,

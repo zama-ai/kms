@@ -614,7 +614,7 @@ pub(crate) fn vanishing_poly<F: Ring>(points: &[F]) -> Poly<F> {
 /// Divide out the linear factor `(Z - root)` to drop the degree by one. Computes `v / (Z - root)` by synthetic division.
 ///
 /// `root` must be a root of `v` (exact, zero-remainder division); `v` must be canonical, so the quotient has degree
-/// `deg(v) - 1`. `v` must have degree at least 1.
+/// WARNING: `deg(v) - 1`. `v` must have degree at least 1.
 pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
     // This is provably the case for the current 2 callsites.
     debug_assert!(
@@ -640,6 +640,7 @@ pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
 ///
 /// Builds the vanishing polynomial `V` once and deflates each root. The denominator `L_i(x_i) = ∏_{j != i}(x_i - x_j)`
 /// is just `L_i` evaluated at `x_i`.
+/// WARNING: This function requires `points.len() >= 2`
 pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
     let v = vanishing_poly(points);
     points
