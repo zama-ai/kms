@@ -626,8 +626,8 @@ pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
     let vc = &v.coefs;
     let deg = vc.len() - 1;
     let mut coefs = vec![F::ZERO; deg];
-    coefs[deg - 1] = vc[deg]; // leading coef drops straight down
-    for k in (0..deg - 1).rev() {
+    coefs[deg - 1] = vc[deg]; // leading coef drops straight down since the result, `coef`, is one degree lower than the input
+    for k in (0..deg - 1).rev() { // iterate from highest coefficients to lowest in the incremental result
         coefs[k] = vc[k + 1] + root * coefs[k + 1];
     }
     debug_assert!(vc[0] + root * coefs[0] == F::ZERO, "remainder must vanish");
@@ -646,7 +646,9 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
     points
         .iter()
         .map(|&xi| {
+            // Observe that `li` is the numerator of the basis polynomial
             let li = deflate_root(&v, xi); // L_i(Z) = V / (Z - x_i)
+            // Observe `inv` is the denominator, already inverted
             let inv = li.eval(&xi).invert(); // 1/ L_i(x_i)
             li * &inv
         })
