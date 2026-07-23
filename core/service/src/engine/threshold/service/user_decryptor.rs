@@ -612,7 +612,7 @@ impl<
                 )
             })?;
         Ok(Response::new(UserDecryptionResponse {
-            signature: sig.sig.to_vec(),
+            signature: sig.to_bytes(),
             external_signature,
             payload: Some(payload),
             extra_data,

@@ -1,12 +1,10 @@
 //! ML-DSA (FIPS 204) signing backend, generic over the parameter set.
-//!
-//! ML-DSA implements the `signature` v3 `Signer`/`Verifier` traits (imported
-//! here directly from `ml_dsa`), distinct from the v2.2 traits used by the
-//! ECDSA and ed25519 backends.
 
+use super::SigningScheme;
+use core::marker::PhantomData;
 use hashing::DomainSep;
 use ml_dsa::{
-    B32, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
+    B32, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
     SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
 };
 
@@ -19,34 +17,35 @@ pub fn keygen_from_seed<P: MlDsaParams>(seed: &[u8; SEED_LEN]) -> MlDsaSigningKe
     MlDsaSigningKey::<P>::from_seed(&seed)
 }
 
-/// Derive the ML-DSA verification key from the signing key.
-pub fn verifying_key<P: MlDsaParams>(sk: &MlDsaSigningKey<P>) -> MlDsaVerifyingKey<P> {
-    sk.verifying_key()
-}
+/// Marker type for the ML-DSA signature scheme with parameter set `P`.
+pub struct MlDsa<P>(PhantomData<P>);
 
-/// Sign `dsep ‖ msg`, returning the FIPS 204 signature encoding for `P`.
-pub fn sign<P: MlDsaParams>(
-    dsep: &DomainSep,
-    msg: &[u8],
-    sk: &MlDsaSigningKey<P>,
-) -> anyhow::Result<Vec<u8>> {
-    let signed = [&dsep[..], msg].concat();
-    let sig: MlDsaSignature<P> = sk
-        .try_sign(&signed)
-        .map_err(|e| anyhow::anyhow!("ML-DSA signing failed: {e}"))?;
-    Ok(sig.to_vec())
-}
+impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
+    type SigningKey = MlDsaSigningKey<P>;
+    type VerificationKey = MlDsaVerifyingKey<P>;
 
-/// Verify an ML-DSA signature over `dsep ‖ msg`.
-pub fn verify<P: MlDsaParams>(
-    dsep: &DomainSep,
-    msg: &[u8],
-    sig: &[u8],
-    vk: &MlDsaVerifyingKey<P>,
-) -> anyhow::Result<()> {
-    let sig = MlDsaSignature::<P>::try_from(sig)
-        .map_err(|e| anyhow::anyhow!("could not decode ML-DSA signature: {e}"))?;
-    let signed = [&dsep[..], msg].concat();
-    vk.verify(&signed, &sig)
-        .map_err(|e| anyhow::anyhow!("ML-DSA verification failed: {e}"))
+    fn sign(dsep: &DomainSep, msg: &[u8], sk: &MlDsaSigningKey<P>) -> anyhow::Result<Vec<u8>> {
+        let signed = [&dsep[..], msg].concat();
+        let sig: MlDsaSignature<P> = sk
+            .try_sign(&signed)
+            .map_err(|e| anyhow::anyhow!("ML-DSA signing failed: {e}"))?;
+        Ok(sig.to_vec())
+    }
+
+    fn verify(
+        dsep: &DomainSep,
+        msg: &[u8],
+        sig: &[u8],
+        vk: &MlDsaVerifyingKey<P>,
+    ) -> anyhow::Result<()> {
+        let sig = MlDsaSignature::<P>::try_from(sig)
+            .map_err(|e| anyhow::anyhow!("could not decode ML-DSA signature: {e}"))?;
+        let signed = [&dsep[..], msg].concat();
+        vk.verify(&signed, &sig)
+            .map_err(|e| anyhow::anyhow!("ML-DSA verification failed: {e}"))
+    }
+
+    fn verifying_key(sk: &MlDsaSigningKey<P>) -> anyhow::Result<MlDsaVerifyingKey<P>> {
+        Ok(sk.verifying_key())
+    }
 }

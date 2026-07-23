@@ -415,9 +415,7 @@ fn validate_public_decrypt_meta_data(
         return Ok(false);
     }
 
-    let sig = Signature {
-        sig: k256::ecdsa::Signature::from_slice(signature)?,
-    };
+    let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
 
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
     let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
@@ -1455,7 +1453,7 @@ mod tests {
         // use a bad signature (signed with wrong private key)
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
@@ -1466,7 +1464,7 @@ mod tests {
         // use a bad signature (malformed signature)
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-            // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
+            // The signature is malformed because it's using bincode to serialize instead of `signature.to_bytes()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
             assert!(
@@ -1494,7 +1492,7 @@ mod tests {
 
             let bad_signature =
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let bad_signature_buf = bad_signature.sig.to_vec();
+            let bad_signature_buf = bad_signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &bad_signature_buf, None,)
@@ -1520,7 +1518,7 @@ mod tests {
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
@@ -1542,7 +1540,7 @@ mod tests {
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
@@ -1564,7 +1562,7 @@ mod tests {
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
@@ -1575,7 +1573,7 @@ mod tests {
         // happy path
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
+            let signature_buf = signature.to_bytes(); // NOTE: signatures are not serialized with bincode
 
             assert!(
                 validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
@@ -1630,7 +1628,7 @@ mod tests {
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             let external_signature = compute_external_pt_signature(
                 &sk0,
@@ -1656,7 +1654,7 @@ mod tests {
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             let external_signature = compute_external_pt_signature(
                 &sk1,
@@ -1731,7 +1729,7 @@ mod tests {
                 let payload_buf = bc2wrap::serialize(&payload).unwrap();
                 let signature =
                     &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-                let signature_buf = signature.sig.to_vec();
+                let signature_buf = signature.to_bytes();
 
                 PublicDecryptionResponse {
                     signature: signature_buf,
@@ -1841,7 +1839,7 @@ mod tests {
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             let external_signature = compute_external_pt_signature(
                 &sk0,
@@ -1871,7 +1869,7 @@ mod tests {
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             let external_signature = compute_external_pt_signature(
                 &sk1,
@@ -2060,7 +2058,7 @@ mod tests {
         let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
 
         let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-        let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
+        let signature_buf = signature.to_bytes(); // NOTE: signatures are not serialized with bincode
 
         let external_signature = compute_external_pt_signature(
             &sk0,
