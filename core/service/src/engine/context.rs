@@ -19,6 +19,7 @@ use crate::{
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
+const ERR_DUPLICATE_SIGNER_ADDRESSES: &str = "Duplicate signer addresses found in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
 
@@ -517,6 +518,31 @@ impl ContextInfo {
                         self.context_id()
                     )
                 })?;
+        }
+
+        // Primary and extra signer addresses must be globally unique within the context.
+        let mut signer_addresses = Vec::new();
+        for node in &self.mpc_nodes {
+            for signer_address in node
+                .signer_address
+                .iter()
+                .chain(node.extra_signer_addresses.iter())
+            {
+                if let Some((_, first_party_id)) = signer_addresses
+                    .iter()
+                    .find(|(address, _)| address == signer_address)
+                {
+                    return Err(anyhow::anyhow!(
+                        "{} {}: address {} is assigned to party IDs {} and {}",
+                        ERR_DUPLICATE_SIGNER_ADDRESSES,
+                        self.context_id(),
+                        signer_address.0,
+                        first_party_id,
+                        node.party_id
+                    ));
+                }
+                signer_addresses.push((*signer_address, node.party_id));
+            }
         }
 
         if self.mpc_nodes.len() == 1 {
