@@ -106,6 +106,12 @@ impl<Z> Poly<Z> {
         }
     }
 
+    /// Return coefficients as a mutable slice.
+    #[inline(always)]
+    pub(crate) fn coefs_mut(&mut self) -> &mut [Z] {
+        &mut self.coefs
+    }
+
     pub fn get_mut(&mut self, idx: usize) -> &mut Z
     where
         Z: Zero + Copy,
@@ -312,7 +318,7 @@ where
     /// Note that this polynomial is *not* compressed!
     /// The caller should make sure compress is called
     /// at the end of the operation that uses this zero polynoimal.
-    fn zeros(n: usize) -> Self {
+    pub(crate) fn zeros(n: usize) -> Self {
         Poly {
             coefs: vec![F::ZERO; n],
         }

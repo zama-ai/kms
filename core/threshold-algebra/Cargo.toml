@@ -36,3 +36,7 @@ harness = false
 [[bench]]
 name = "matrix"
 harness = false
+
+[[bench]]
+name = "syndrome"
+harness = false

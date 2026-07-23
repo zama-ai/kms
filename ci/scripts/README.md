@@ -68,8 +68,8 @@ For local development with Kind:
 # Build and load images into Kind cluster
 ./deploy.sh --target kind-local --build
 
-# Use specific Rust version
-RUST_IMAGE_VERSION=1.97 ./deploy.sh --target kind-local --build
+# Override the Rust version (defaults to the version pinned in rust-toolchain.toml)
+RUST_IMAGE_VERSION=<rust-version> ./deploy.sh --target kind-local --build
 ```
 
 The build process will:

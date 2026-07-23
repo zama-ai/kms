@@ -5,9 +5,9 @@ use crate::{
     poly::Poly,
     structure_traits::{
         BaseRing, Derive, FromU128, Invert, One, QuotientMaximalIdeal, Ring,
-        RingWithExceptionalSequence, Sample, Solve, Solve1, Syndrome, ZConsts, Zero,
+        RingWithExceptionalSequence, Sample, Solve, Solve1, ZConsts, Zero,
     },
-    syndrome::{lagrange_numerators, syndrome_decoding_z2},
+    syndrome::{decode_syndrome, field_decode_hints, lagrange_numerators},
 };
 use error_utils::anyhow_error_and_log;
 
@@ -20,6 +20,7 @@ use crate::{
     sharing::shamir::{ShamirFieldPoly, ShamirSharings},
     sharing::share::Share,
 };
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
@@ -34,6 +35,219 @@ use std::{
 };
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::Zeroize;
+
+/// Precompute for Reed–Solomon syndrome computation and decoding over the ring `ResiduePoly<Z, EXTENSION_DEGREE>`.
+///
+/// Every field here depends only on the ordered set of party [`Role`]s holding the shares — and the threshold `t`,
+/// never on share values. It is built once per committee with [`Self::new`] and reused across every sharing reshared
+/// against that committee (in resharing: one context per key component, shared by all elements of that component).
+///
+/// The fields are all computed together here in [`Self::new`] but consumed far apart in [`Self::compute`],
+/// [`Self::decode`], and [`Self::deltas`].
+/// Note that `new` embeds the same parties **two different ways**:
+///   * as ring points `αᵢ = embed(roleᵢ)`, which drive the syndrome mat-vec in [`Self::compute`];
+///   * as field points `roleᵢ` in the quotient field (`GF16`), which drive the per-bit field decode in [`Self::decode`].
+///
+/// **NOTE**: the shares passed to [`Self::compute`] must be in the **same order** as `parties` was in [`Self::new`] —
+/// index `i` lines up across `alpha_powers`, `inv_denoms`, and `sharing.shares`.
+pub struct SyndromeContext<Z: BaseRing, const EXTENSION_DEGREE: usize>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+{
+    /// Committee size `n`.
+    party_count: usize,
+    /// RS redundancy `r = n − (t + 1)`: the number of syndrome coefficients.
+    pub r: usize,
+    /// `alpha_powers[i][j] = αᵢʲ` for `j ∈ 0..r` (exponents `0..=r−1`), where `αᵢ = embed(roleᵢ)` is party `i`'s ring
+    /// point: the Vandermonde weights of the syndrome map. Read as `alpha_powers[i][j]` in [`Self::compute`].
+    alpha_powers: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    /// `inv_denoms[i] = 1 / Lᵢ(αᵢ) = 1 / ∏_{j≠i}(αᵢ − αⱼ)`, the inverse Lagrange denominator for party `i`. The second
+    /// factor of each syndrome term in [`Self::compute`] (`numerator * inv_denoms[i]`).
+    inv_denoms: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    /// `deltas[i] = δᵢ(0) = Lᵢ(0) / Lᵢ(αᵢ)`, the coefficient mapping party `i`'s share to its contribution at
+    /// evaluation point `0`. Unused here; exposed via [`Self::deltas`] so `reshare.rs` can build its reconstruction
+    /// coefficients without recomputing numerators.
+    deltas: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    /// Field-level inverse party points `1 / roleᵢ` (in the quotient field). Committee-invariant hint passed to
+    /// `decode_syndrome` in [`Self::decode`] for the error-location root search.
+    x_inv: Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+    /// Field-level error-magnitude factors `−roleᵢ · Lᵢ(roleᵢ)`. The second committee-invariant hint passed to
+    /// `decode_syndrome` in [`Self::decode`]; per error it is multiplied by the `ω/σ′` term.
+    error_normalizer:
+        Vec<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+}
+
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> SyndromeContext<Z, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+{
+    /// Build the committee-invariant precompute for `parties` (the ordered committee) and `threshold`.
+    ///
+    /// Runs once per committee. The steps are grouped by where the data is used (field-level decode hints, ring-level
+    /// syndrome weights, and the `deltas` handed to `reshare.rs`). See the type-level docs for the meaning of each
+    /// field.
+    pub fn new(parties: &[Role], threshold: usize) -> Result<Self> {
+        let party_count = parties.len();
+        // RS redundancy r = n − (t + 1); needs room for the parity, i.e. the committee must satisfy n > t + 1.
+        let r = party_count.checked_sub(threshold + 1).ok_or_else(|| {
+            anyhow!(
+                "committee size {party_count} is smaller than threshold + 1 = {}",
+                threshold + 1
+            )
+        })?;
+        // r == 0 (committee size exactly t + 1) leaves no redundancy: there are no syndrome coefficients, so error
+        // correction is impossible. Reject it here rather than let the empty syndrome surface as a downstream panic
+        // (`chunks_exact(0)` in `reshare.rs`) or an `r - 1` underflow in the `alpha_powers` precompute below.
+        if r == 0 {
+            return Err(anyhow!(
+                "committee size {party_count} equals threshold + 1 = {}: no RS redundancy, error correction is impossible",
+                threshold + 1
+            ));
+        }
+
+        // --- Field-level decode hints (consumed per bit-plane by `decode_syndrome` in `decode`) ---
+        // The parties as points of the quotient field (the field syndrome decoding runs in).
+        let parties_as_field_points = parties
+            .iter()
+            .map(RingWithExceptionalSequence::embed_role_to_exceptional_sequence)
+            .collect::<Result<Vec<_>>>()?;
+
+        // x_inv[i] = 1/roleᵢ (root search) and error_normalizer[i] = −roleᵢ·Lᵢ(roleᵢ) (error magnitude).
+        let (x_inv, error_normalizer) = field_decode_hints(&parties_as_field_points);
+
+        // --- Ring-level syndrome weights (consumed by the mat-vec in `compute`) ---
+        // The same parties, now embedded as ring points αᵢ = embed(roleᵢ). Ordering invariant: the shares passed to
+        // `compute` must line up, in order, with these `parties`.
+        let parties = parties
+            .iter()
+            .map(ResiduePoly::embed_role_to_exceptional_sequence)
+            .collect::<Result<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>>()?;
+        // Lagrange numerators Lᵢ(Z) = ∏_{j≠i}(Z − αⱼ) (the Lᵢ of Eq. 15 in the spec).
+        let lagrange_numerators = lagrange_numerators(&parties);
+        // alpha_powers[i][j] = αᵢʲ for j ∈ 0..r — the Vandermonde weights. `compute` only reads exponents up to r − 1,
+        // so we stop there (`compute_powers_list` yields `max_exponent + 1` powers per party, i.e. exponents 0..=r−1).
+        let alpha_powers = compute_powers_list(&parties, r - 1);
+        // inv_denoms[i] = 1 / Lᵢ(αᵢ): evaluate each numerator at its own point, then invert once.
+        let inv_denoms: Vec<ResiduePoly<Z, EXTENSION_DEGREE>> = parties
+            .iter()
+            .zip(&lagrange_numerators)
+            .map(|(alpha_i, ell_i)| ell_i.eval(alpha_i).invert())
+            .collect::<Result<_>>()?;
+
+        // --- Reconstruction coefficients for `reshare.rs` (exposed via `deltas`) ---
+        // δᵢ(0) = Lᵢ(0) / Lᵢ(αᵢ), reusing the numerators and inverse denominators just built.
+        let zero = ResiduePoly::get_from_exceptional_sequence(0)?;
+        let deltas: Vec<ResiduePoly<Z, EXTENSION_DEGREE>> = lagrange_numerators
+            .iter()
+            .zip(&inv_denoms)
+            .map(|(l_i, inv)| l_i.eval(&zero) * *inv)
+            .collect();
+
+        Ok(Self {
+            party_count,
+            r,
+            alpha_powers,
+            inv_denoms,
+            deltas,
+            x_inv,
+            error_normalizer,
+        })
+    }
+
+    /// Compute the syndrome polynomial given the [`ShamirSharings`].
+    pub fn compute(
+        &self,
+        sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    ) -> Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>> {
+        // This doesn't protect against a same-sized but wrong-order share. Callers **must** ensure the shares match up.
+        debug_assert_eq!(
+            sharing.shares.len(),
+            self.party_count,
+            "sharing size must match the committee that the hints were built for"
+        );
+        // `Poly::zeros` is safe here because the computation writes exactly `r` coefficients so no need to resize as we
+        // go.
+        let mut res = Poly::zeros(self.r);
+        // Compute syndrome coefficients: share values divided by the lagrange poly evaluation at each party ID's ring embedding
+        for (j, out) in res.coefs_mut().iter_mut().enumerate() {
+            let mut coef = ResiduePoly::ZERO;
+            for i in 0..sharing.shares.len() {
+                let y = sharing.shares[i].value();
+                coef += y * self.alpha_powers[i][j] * self.inv_denoms[i];
+            }
+            *out = coef;
+        }
+
+        Ok(res)
+    }
+
+    /// Decode the error in the given syndrome polynomial
+    pub fn decode(
+        &self,
+        mut syn_poly: Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    ) -> Result<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>> {
+        // sum up the error vectors here
+        let mut e_res = vec![ResiduePoly::ZERO; self.party_count];
+        // If all parties are honest, the syndrome poly is zero => bail early
+        if syn_poly.is_zero() {
+            return Ok(e_res);
+        }
+
+        //  compute s_e^(j)/p mod p and decode
+        for bit_idx in 0..Z::BIT_LENGTH {
+            let sliced_syndrome_coefs: Vec<_> = syn_poly
+                .coefs()
+                .iter()
+                // TODO(dp): bit_compose looks slow, should be very quick. Defer to later, but check the impl. #3097
+                .map(|c| c.bit_compose(bit_idx))
+                .collect();
+
+            let sliced_syndrome = ShamirFieldPoly::from_coefs(sliced_syndrome_coefs);
+            // If this plane happened to be error free, save us the remaining work for this bit.
+            if sliced_syndrome.is_zero() {
+                continue;
+            }
+            // bit error in this for this bit-idx
+            let ej = decode_syndrome(sliced_syndrome, self.r, &self.x_inv, &self.error_normalizer);
+
+            // lift bit error into the ring
+            let lifted_e = ej
+                .iter()
+                .map(|e| ResiduePoly::bit_lift(*e, bit_idx))
+                .collect::<Result<Vec<_>>>()?;
+
+            // Add the lifted e^(j) to e
+            // Accumulate this plane's error; `zip_eq` will not panic unless `decode_syndrome` is broken.
+            for (e_res_e, lifted_e_e) in e_res.iter_mut().zip_eq(lifted_e.iter()) {
+                *e_res_e += *lifted_e_e;
+            }
+            // correction term in the ring (inside parenthesis in syndrome update)
+            let correction_shares = lifted_e
+                .iter()
+                .enumerate()
+                .map(|(idx, val)| Share::new(Role::indexed_from_zero(idx), *val))
+                .collect_vec();
+            let corrected_shamir = ShamirSharings {
+                shares: correction_shares,
+            };
+            let syndrome_correction = self.compute(&corrected_shamir)?;
+
+            // update syndrome with correction value
+            syn_poly = syn_poly - syndrome_correction;
+            // Check if all error content is absorbed and exit the loop early if that is the case.
+            if syn_poly.is_zero() {
+                break;
+            }
+        }
+
+        Ok(e_res)
+    }
+
+    /// Return a slice to the pre-computed delta_i's evaluated at zero.
+    pub fn deltas(&self) -> &[ResiduePoly<Z, EXTENSION_DEGREE>] {
+        &self.deltas
+    }
+}
 
 /// Represents an element Z_{2^bitlen}[X]/F[X]
 /// for F[X] of given EXTENSION_DEGREE.
@@ -581,109 +795,6 @@ where
         }
 
         Ok(ResiduePoly { coefs })
-    }
-}
-
-impl<Z: BaseRing, const EXTENSION_DEGREE: usize> Syndrome for ResiduePoly<Z, EXTENSION_DEGREE>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
-{
-    //NIST: Level Zero Operation (SynDecode + last step of correction)
-    // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
-    fn syndrome_decode(
-        mut syndrome_poly: Poly<Self>,
-        parties: &[Role],
-        threshold: usize,
-    ) -> anyhow::Result<Vec<Self>> {
-        let parties = parties.iter().map(|r| r.one_based()).collect_vec();
-        // sum up the error vectors here
-        let mut e_res: Vec<Self> = vec![Self::ZERO; parties.len()];
-
-        let ring_size: usize = Z::BIT_LENGTH;
-        //  compute s_e^(j)/p mod p and decode
-        for bit_idx in 0..ring_size {
-            let sliced_syndrome_coefs: Vec<_> = syndrome_poly
-                .coefs()
-                .iter()
-                .map(|c| c.bit_compose(bit_idx))
-                .collect();
-
-            let sliced_syndrome =
-                ShamirFieldPoly::<<Self as QuotientMaximalIdeal>::QuotientOutput>::from_coefs(
-                    sliced_syndrome_coefs,
-                );
-
-            // bit error in this for this bit-idx
-            let ej = syndrome_decoding_z2(&parties, &sliced_syndrome, threshold);
-
-            // lift bit error into the ring
-            let lifted_e: Vec<Self> = ej
-                .iter()
-                .map(|e| Self::bit_lift(*e, bit_idx))
-                .collect::<anyhow::Result<Vec<_>>>()?;
-
-            // add the lifted e^(j) to e
-            // May panic, but would imply a bug in `syndrome_decoding_z2`
-            for (e_res_e, lifted_e_e) in e_res.iter_mut().zip_eq(lifted_e.iter()) {
-                *e_res_e += *lifted_e_e;
-            }
-            // correction term in the ring (inside parenthesis in syndrome update)
-            let correction_shares = lifted_e
-                .iter()
-                .enumerate()
-                .map(|(idx, val)| Share::new(Role::indexed_from_zero(idx), *val))
-                .collect_vec();
-            let corrected_shamir = ShamirSharings {
-                shares: correction_shares,
-            };
-            let syndrome_correction = Self::syndrome_compute(&corrected_shamir, threshold)?;
-
-            // update syndrome with correction value
-            syndrome_poly = syndrome_poly - syndrome_correction;
-        }
-
-        Ok(e_res)
-    }
-
-    //NIST: Level Zero Operation (I believe this is "Equation 19")
-    // compute the syndrome in the GR from a given sharing and threshold
-    #[expect(clippy::needless_range_loop)]
-    fn syndrome_compute(
-        sharing: &ShamirSharings<Self>,
-        threshold: usize,
-    ) -> anyhow::Result<Poly<Self>> {
-        let n = sharing.shares.len();
-        let r = n - (threshold + 1);
-
-        let ys: Vec<_> = sharing.shares.iter().map(|share| share.value()).collect();
-
-        // embed party IDs into the ring
-        let parties: Vec<_> = sharing
-            .shares
-            .iter()
-            .map(|share| Self::embed_role_to_exceptional_sequence(&share.owner()))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // lagrange numerators from Eq.15
-        let lagrange_polys = lagrange_numerators(&parties);
-
-        let alpha_powers = compute_powers_list(&parties, r);
-        let mut res = Poly::zero();
-
-        // compute syndrome coefficients
-        for j in 0..r {
-            let mut coef = Self::ZERO;
-
-            for i in 0..n {
-                let numerator = ys[i] * alpha_powers[i][j];
-                let denom = lagrange_polys[i].eval(&parties[i]);
-                coef += numerator * denom.invert()?;
-            }
-
-            res.set_coef(j, coef);
-        }
-
-        Ok(res)
     }
 }
 
