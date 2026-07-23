@@ -722,6 +722,8 @@ A new MPC context can be created from a serialized context file or a TOML contex
 
 Every primary and extra signer address in the context must be unique, including addresses assigned to the same MPC node. The KMS rejects contexts containing any repeated signer address.
 
+For Nitro Enclave deployments, the context must include at least one trusted PCR value set. The PCR allowlist may be empty for non-enclave and mocked-enclave deployments.
+
 ```{bash}
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context serialized-context-path --input-path <path-to-context-file>
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> new-mpc-context context-toml --input-path <path-to-context-toml>

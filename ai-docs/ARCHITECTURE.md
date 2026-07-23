@@ -28,7 +28,7 @@ A single deployment mode is chosen at startup via the server configuration
 (centralized vs. threshold). The gRPC surface is shared between modes; a few
 RPCs (preprocessing, reshare) are only meaningful in threshold mode.
 
-The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. Before accepting a new context, the KMS validates its party configuration, including that every primary and extra signer address is unique across the context.
+The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. Before accepting a new context, the KMS validates its party configuration, including that every primary and extra signer address is unique across the context. Threshold KMS deployments using Nitro Enclave remote attestation also reject new contexts whose PCR allowlist is empty; non-enclave and mocked-enclave deployments permit an empty allowlist.
 
 The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 

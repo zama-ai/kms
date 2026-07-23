@@ -647,6 +647,7 @@ message MpcContext {
   // The expected PCR values of the KMS nodes in this context.
   // There may be more than one set of PCR values to support multiple trusted software builds,
   // which may be required during a transition period for software upgrades.
+  // This list must not be empty when the KMS uses Nitro Enclave remote attestation.
   repeated PcrValues pcr_values = 5;
 }
 
