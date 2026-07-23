@@ -106,8 +106,6 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Field of PrivateKeySet.glwe_secret_key_share_compression.
     // Covered via PrivateKeySetTest.
     "CompressionPrivateKeySharesEnum",
-    // TODO #(https://github.com/zama-ai/kms/pull/710) will be handled in this PR
-    "EpochData",
 ];
 
 fn cargo_metadata() -> Metadata {
