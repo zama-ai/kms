@@ -13,7 +13,7 @@ use crate::{
     engine::base::{CrsGenMetadata, KeyGenMetadata, derive_request_id},
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
-        Vault,
+        Vault, VaultDataType,
         storage::{Storage, StorageProxy, crypto_material::PublicKeySet},
     },
 };
@@ -1436,14 +1436,312 @@ async fn write_backup_keys_no_vault() {
 }
 
 #[tokio::test]
+async fn write_backup_keys_write_failure() {
+    // Public storage rejects every write while the backup-vault purge succeeds; the
+    // purge must not mask the write failure, so the meta store has to record the
+    // request as failed.
+    let storage = CryptoMaterialStorage::from(
+        FailingRamStorage::new(0),
+        RamStorage::new(),
+        Some(make_unencrypted_backup_vault()),
+    );
+    let recovery = dummy_recovery_material("write_backup_keys_write_failure");
+    let req_id = recovery.custodian_context().context_id;
+    let meta_store = MetaStore::new_unlimited();
+
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
+    assert_eq!(
+        storage
+            .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+            .await,
+        Err(StorageError::Writing),
+    );
+    assert!(matches!(
+        meta_store
+            .read()
+            .await
+            .retrieve(&req_id)
+            .expect("request should remain tracked in meta store"),
+        EntryState::Done(Err(_))
+    ));
+}
+
+#[tokio::test]
+async fn write_backup_keys_write_failure_custodian_vault() {
+    // Like write_backup_keys_write_failure, but against a custodian (secret-sharing
+    // keychain) vault, where entries live under `<context_id>/<data_type>/<data_id>`:
+    // the purge after the failed setup must delete exactly the entries of the failed
+    // context and the meta store must record the root-cause write error. The purge
+    // used to always fail on such vaults — masking the write error — because the
+    // generic per-request deletion cannot even parse public data types.
+    let recovery = dummy_recovery_material("write_backup_keys_write_failure_custodian");
+    let req_id = recovery.custodian_context().context_id;
+    let mut vault = Vault {
+        storage: StorageProxy::Ram(RamStorage::new()),
+        keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id).await),
+    };
+    // Plant a backup entry for the new context (as the re-encryption preceding
+    // write_backup_keys does) and one for an older context that must survive.
+    let data_id = derive_request_id("write_backup_keys_write_failure_custodian_data").unwrap();
+    let planted_path =
+        VaultDataType::CustodianBackupData(req_id, PrivDataType::SigningKey).to_string();
+    let other_id = derive_request_id("write_backup_keys_write_failure_custodian_old").unwrap();
+    let other_path =
+        VaultDataType::CustodianBackupData(other_id, PrivDataType::SigningKey).to_string();
+    vault
+        .storage
+        .store_bytes(&[1, 2, 3], &data_id, &planted_path)
+        .await
+        .unwrap();
+    vault
+        .storage
+        .store_bytes(&[4, 5, 6], &data_id, &other_path)
+        .await
+        .unwrap();
+
+    let storage =
+        CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), Some(vault));
+    let meta_store = MetaStore::new_unlimited();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
+    assert_eq!(
+        storage
+            .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+            .await,
+        Err(StorageError::Writing),
+    );
+    assert!(matches!(
+        meta_store
+            .read()
+            .await
+            .retrieve(&req_id)
+            .expect("request should remain tracked in meta store"),
+        EntryState::Done(Err(_))
+    ));
+    // The failed context's entries are purged, other backups are untouched.
+    let vault = storage.get_backup_vault().unwrap();
+    let vault = vault.lock().await;
+    assert!(
+        !vault
+            .storage
+            .data_exists(&data_id, &planted_path)
+            .await
+            .unwrap()
+    );
+    assert!(
+        vault
+            .storage
+            .data_exists(&data_id, &other_path)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn write_backup_keys_duplicate_keeps_existing_backup() {
+    // A duplicate means the recovery material already existed and this call wrote nothing,
+    // so write_backup_keys must NOT purge the backup vault under that context id — that data
+    // may be a live backup. Regression test: the purge previously ran unconditionally on every
+    // error, so it also deleted pre-existing data on a duplicate.
+    let recovery = dummy_recovery_material("write_backup_keys_duplicate");
+    let req_id = recovery.custodian_context().context_id;
+
+    let mut vault = Vault {
+        storage: StorageProxy::Ram(RamStorage::new()),
+        keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id).await),
+    };
+    // Plant a pre-existing backup entry under the context id.
+    let data_id = derive_request_id("write_backup_keys_duplicate_data").unwrap();
+    let planted_path =
+        VaultDataType::CustodianBackupData(req_id, PrivDataType::SigningKey).to_string();
+    vault
+        .storage
+        .store_bytes(&[1, 2, 3], &data_id, &planted_path)
+        .await
+        .unwrap();
+
+    let storage = CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), Some(vault));
+    // Make the recovery material already present so write_all reports a duplicate.
+    {
+        let mut pub_s = storage.public_storage.lock().await;
+        pub_s
+            .store_bytes(
+                b"existing",
+                &req_id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let meta_store = MetaStore::new_unlimited();
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
+    assert_eq!(
+        storage
+            .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+            .await,
+        Err(StorageError::Duplicate),
+    );
+
+    // The pre-existing backup data must survive the duplicate.
+    let vault = storage.get_backup_vault().unwrap();
+    let vault = vault.lock().await;
+    assert!(
+        vault
+            .storage
+            .data_exists(&data_id, &planted_path)
+            .await
+            .unwrap(),
+        "a duplicate must not purge pre-existing backup vault data"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn write_backup_keys_purge_failure_keeps_write_error() {
+    // Even when the backup-vault purge itself fails after a failed write, the meta
+    // store and the caller must still see the root-cause write error, not a purging one.
+    use crate::vault::storage::{StorageType, file::FileStorage};
+    use std::os::unix::fs::PermissionsExt;
+
+    let recovery = dummy_recovery_material("write_backup_keys_purge_failure");
+    let req_id = recovery.custodian_context().context_id;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let backup_storage =
+        FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
+    let backup_root = backup_storage.root_dir().to_path_buf();
+    let mut vault = Vault {
+        storage: StorageProxy::from(backup_storage),
+        keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id).await),
+    };
+    let data_id = derive_request_id("write_backup_keys_purge_failure_data").unwrap();
+    vault
+        .store_bytes(&[1, 2, 3], &data_id, &PrivDataType::SigningKey.to_string())
+        .await
+        .unwrap();
+
+    // Make the entry's directory read-only so the purge cannot delete the entry.
+    let entry_dir = backup_root
+        .join(req_id.to_string())
+        .join(PrivDataType::SigningKey.to_string());
+    let saved = std::fs::metadata(&entry_dir).unwrap().permissions();
+    let mut read_only = saved.clone();
+    read_only.set_mode(0o555);
+    std::fs::set_permissions(&entry_dir, read_only).unwrap();
+    // Root ignores directory permissions; skip the assertions if the purge
+    // failure cannot be induced.
+    let probe = entry_dir.join(".probe");
+    let perms_enforced = std::fs::File::create(&probe).is_err();
+    let _ = std::fs::remove_file(&probe);
+
+    let outcome = if perms_enforced {
+        let storage =
+            CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), Some(vault));
+        let meta_store = MetaStore::new_unlimited();
+        let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+            .await
+            .unwrap();
+        Some((
+            storage
+                .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+                .await,
+            meta_store,
+        ))
+    } else {
+        None
+    };
+
+    // Always restore permissions so the tempdir can be cleaned up.
+    std::fs::set_permissions(&entry_dir, saved).unwrap();
+
+    if let Some((res, meta_store)) = outcome {
+        assert_eq!(res, Err(StorageError::Writing));
+        assert!(matches!(
+            meta_store
+                .read()
+                .await
+                .retrieve(&req_id)
+                .expect("request should remain tracked in meta store"),
+            EntryState::Done(Err(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn write_backup_keys_backup_failure() {
+    // Public storage is healthy but the backup pass fails: the planted signing-key
+    // entry cannot be deserialized when update_backup_vault copies it into the vault.
+    // Setting up the backup is the whole point of write_backup_keys, so the meta
+    // store must record the request as failed, not fall back to the best-effort
+    // backup handling used for ordinary key material, and the recovery material the
+    // public write already persisted must be purged rather than left behind.
+    let storage = CryptoMaterialStorage::from(
+        RamStorage::new(),
+        RamStorage::new(),
+        Some(make_unencrypted_backup_vault()),
+    );
+    {
+        let mut priv_s = storage.private_storage.lock().await;
+        priv_s
+            .store_bytes(
+                &[1, 2, 3],
+                &derive_request_id("write_backup_keys_backup_failure_bad").unwrap(),
+                &PrivDataType::SigningKey.to_string(),
+            )
+            .await
+            .unwrap();
+    }
+    let recovery = dummy_recovery_material("write_backup_keys_backup_failure");
+    let req_id = recovery.custodian_context().context_id;
+    let meta_store = MetaStore::new_unlimited();
+
+    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+        .await
+        .unwrap();
+    assert_eq!(
+        storage
+            .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+            .await,
+        Err(StorageError::Backup),
+    );
+    // The recovery material written before the backup pass failed must not survive: on
+    // restart the latest RecoveryMaterial id decides the active custodian context, and a
+    // leftover also blocks retrying the same context id via the duplicate check.
+    assert!(
+        !storage
+            .public_storage
+            .lock()
+            .await
+            .data_exists(&req_id, &PubDataType::RecoveryMaterial.to_string())
+            .await
+            .unwrap()
+    );
+    assert!(matches!(
+        meta_store
+            .read()
+            .await
+            .retrieve(&req_id)
+            .expect("request should remain tracked in meta store"),
+        EntryState::Done(Err(_))
+    ));
+}
+
+#[tokio::test]
 async fn update_meta_store_storage_outcomes() {
-    // All three "happy" paths through update_meta_store, sharing one meta store with three req_ids:
-    //   - storage Ok                     -> meta cell becomes Ok and call returns Ok;
-    //   - storage Err(BackupError)       -> meta cell becomes Ok (we don't fail on backup errors)
-    //                                       but the original storage error is forwarded;
-    //   - storage Err(WritingError)      -> meta cell becomes Err and the same error is forwarded.
+    // The four paths through update_meta_store, sharing one meta store with four req_ids:
+    //   - storage Ok                             -> meta cell becomes Ok and call returns Ok;
+    //   - storage Err(BackupError), best-effort  -> meta cell becomes Ok (we don't fail on backup errors)
+    //                                               but the original storage error is forwarded;
+    //   - storage Err(BackupError), not best-effort -> meta cell becomes Err and the error is forwarded;
+    //   - storage Err(WritingError)              -> meta cell becomes Err and the same error is forwarded.
     let req_ok = derive_request_id("ums_ok").unwrap();
     let req_backup = derive_request_id("ums_backup").unwrap();
+    let req_backup_fatal = derive_request_id("ums_backup_fatal").unwrap();
     let req_writing = derive_request_id("ums_writing").unwrap();
     let meta_store = MetaStore::new_unlimited();
 
@@ -1453,11 +1751,14 @@ async fn update_meta_store_storage_outcomes() {
     let permit_backup = add_req_to_meta_store(&meta_store, &req_backup, TEST_METRIC)
         .await
         .unwrap();
+    let permit_backup_fatal = add_req_to_meta_store(&meta_store, &req_backup_fatal, TEST_METRIC)
+        .await
+        .unwrap();
     let permit_writing = add_req_to_meta_store(&meta_store, &req_writing, TEST_METRIC)
         .await
         .unwrap();
     assert!(
-        update_meta_store(Ok(()), 42_u32, &meta_store, permit_ok, TEST_METRIC)
+        update_meta_store(Ok(()), 42_u32, &meta_store, permit_ok, true, TEST_METRIC)
             .await
             .is_ok()
     );
@@ -1467,6 +1768,19 @@ async fn update_meta_store_storage_outcomes() {
             7_u32,
             &meta_store,
             permit_backup,
+            true,
+            TEST_METRIC,
+        )
+        .await,
+        Err(StorageError::Backup),
+    );
+    assert_eq!(
+        update_meta_store(
+            Err(StorageError::Backup),
+            9_u32,
+            &meta_store,
+            permit_backup_fatal,
+            false,
             TEST_METRIC,
         )
         .await,
@@ -1478,6 +1792,7 @@ async fn update_meta_store_storage_outcomes() {
             0_u32,
             &meta_store,
             permit_writing,
+            true,
             TEST_METRIC,
         )
         .await,
@@ -1494,6 +1809,11 @@ async fn update_meta_store_storage_outcomes() {
             .await
             .unwrap(),
         7
+    );
+    assert!(
+        retrieve_from_meta_store::<u32>(&meta_store, &req_backup_fatal, TEST_METRIC)
+            .await
+            .is_err(),
     );
     assert!(
         retrieve_from_meta_store::<u32>(&meta_store, &req_writing, TEST_METRIC)

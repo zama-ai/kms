@@ -3,7 +3,9 @@ use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
-use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
+use crate::cryptography::encryption::{
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
@@ -27,6 +29,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::{
@@ -327,6 +330,20 @@ where
             )
         })?;
 
+        // Snapshot the keychain's current backup state before we mutate it, so a setup
+        // that fails before its recovery material is persisted can be rolled back
+        // (see `rollback_failed_custodian_setup`).
+        let previous_backup_state: Option<(RequestId, UnifiedPublicEncKey)> = {
+            let guarded_backup_vault = backup_vault.lock().await;
+            match guarded_backup_vault.keychain.as_ref() {
+                Some(KeychainProxy::SecretSharing(secret_share_keychain)) => secret_share_keychain
+                    .get_current_backup_id()
+                    .ok()
+                    .zip(secret_share_keychain.get_backup_enc_key().ok()),
+                _ => None,
+            }
+        };
+
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
         // We keep the result so we can update the meta-store with an appropriate error in case of failure.
@@ -373,6 +390,8 @@ where
         }
         .await;
         if let Err(e) = prep {
+            self.rollback_failed_custodian_setup(inner_context.context_id, previous_backup_state)
+                .await;
             update_err_req_in_meta_store(
                 &self.custodian_meta_store,
                 meta_permit,
@@ -383,13 +402,22 @@ where
             return Err(e);
         }
         // Then store the results (consumes the permit, recording success or error).
-        self.crypto_storage
+        // `write_backup_keys` records the failure in the meta store itself; we still roll
+        // back the keychain and purge the freshly written backup so a failed setup does not
+        // leave the vault encrypted under a context whose recovery material was never persisted.
+        if let Err(e) = self
+            .crypto_storage
             .write_backup_keys(
                 recovery_validation,
                 Arc::clone(&self.custodian_meta_store),
                 meta_permit,
             )
-            .await?;
+            .await
+        {
+            self.rollback_failed_custodian_setup(inner_context.context_id, previous_backup_state)
+                .await;
+            return Err(e.into());
+        }
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
             inner_context.context_id,
@@ -397,6 +425,58 @@ where
             inner_context.custodian_nodes.len()
         );
         Ok(())
+    }
+
+    /// Roll back a custodian-context setup that failed before its recovery material was
+    /// persisted, so the vault is not left in an unrecoverable state.
+    ///
+    /// `failed_context_id` is the id of the context whose setup failed; the backup material
+    /// re-encrypted under it by the overwriting `update_backup_vault` pass is purged.
+    /// `previous_backup_state` is the keychain's `(context_id, backup_enc_key)` snapshot taken
+    /// before the setup began; the keychain is restored to it (or reset to uninitialized when
+    /// `None`) so later backups are encrypted under a key whose recovery material still exists.
+    /// The previous context's backup material lives under its own id and is left untouched.
+    ///
+    /// This is a no-op when the vault has no secret-sharing keychain, or when the previous
+    /// context id already equals `failed_context_id` — the latter means the setup was rejected
+    /// before mutating any state (e.g. a duplicate context id), so purging it would destroy the
+    /// live backup.
+    async fn rollback_failed_custodian_setup(
+        &self,
+        failed_context_id: RequestId,
+        previous_backup_state: Option<(RequestId, UnifiedPublicEncKey)>,
+    ) {
+        let Some(backup_vault) = self.crypto_storage.backup_vault.as_ref() else {
+            return;
+        };
+        let mut guarded_backup_vault = backup_vault.lock().await;
+        // Only secret-sharing (custodian) vaults carry the state a custodian setup mutates.
+        if !matches!(
+            guarded_backup_vault.keychain.as_ref(),
+            Some(KeychainProxy::SecretSharing(_))
+        ) {
+            return;
+        }
+        // A setup rejected before any mutation leaves the current context id as the previous one;
+        // purging it would destroy the live backup, so there is nothing to roll back.
+        if previous_backup_state
+            .as_ref()
+            .is_some_and(|(prev_id, _)| *prev_id == failed_context_id)
+        {
+            return;
+        }
+        // Purge the backup material the failed setup re-encrypted under the new context id.
+        if let Err(e) = guarded_backup_vault.purge_backup(&failed_context_id).await {
+            tracing::error!(
+                "Failed to purge backup vault while rolling back custodian context {failed_context_id}: {e}"
+            );
+        }
+        // Restore the keychain to the pre-setup state.
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+            guarded_backup_vault.keychain.as_mut()
+        {
+            secret_share_keychain.restore_backup_enc_key(previous_backup_state);
+        }
     }
 }
 
@@ -2074,6 +2154,8 @@ mod tests {
         });
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        // Keep a handle on the backup vault so we can inspect the rollback after the failure.
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage,
@@ -2087,6 +2169,44 @@ mod tests {
             response.is_err(),
             "Expected custodian context creation to fail when backup update fails"
         );
+
+        // The failed setup must be rolled back: the in-memory keychain must not be left
+        // pointing at the failed context (it started uninitialized here), and no backup
+        // material may be left re-encrypted under the failed context id — otherwise later
+        // backups would be encrypted under a key whose recovery material never persisted.
+        {
+            use crate::vault::VaultDataType;
+            use crate::vault::storage::StorageReader;
+            use strum::IntoEnumIterator;
+
+            let guarded_backup_vault = backup_vault.lock().await;
+            match guarded_backup_vault.keychain.as_ref() {
+                Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
+                    assert!(
+                        secret_share_keychain.get_current_backup_id().is_err(),
+                        "keychain backup id must be reset after a failed setup"
+                    );
+                    assert!(
+                        secret_share_keychain.get_backup_enc_key().is_err(),
+                        "keychain backup enc key must be reset after a failed setup"
+                    );
+                }
+                _ => panic!("expected a secret-sharing keychain in the backup vault"),
+            }
+            for cur_type in PrivDataType::iter() {
+                let vault_data_type =
+                    VaultDataType::CustodianBackupData(context_id, cur_type).to_string();
+                assert!(
+                    guarded_backup_vault
+                        .storage
+                        .all_data_ids(&vault_data_type)
+                        .await
+                        .unwrap()
+                        .is_empty(),
+                    "no leaked backup data may remain under the failed context id for {cur_type}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
