@@ -15,7 +15,7 @@ build_container() {
     log_info "========================================="
 
     # Use RUST_IMAGE_VERSION from environment or default
-    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.97}"
+    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.97.1}"
 
     #-------------------------------------------------------------------------
     # Build and load core-service

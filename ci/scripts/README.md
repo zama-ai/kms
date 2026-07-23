@@ -69,7 +69,7 @@ For local development with Kind:
 ./deploy.sh --target kind-local --build
 
 # Use specific Rust version
-RUST_IMAGE_VERSION=1.97 ./deploy.sh --target kind-local --build
+RUST_IMAGE_VERSION=1.97.1 ./deploy.sh --target kind-local --build
 ```
 
 The build process will:
