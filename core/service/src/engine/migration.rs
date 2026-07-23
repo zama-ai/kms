@@ -2961,8 +2961,8 @@ mod tests {
             .unwrap();
     }
 
-    // S3 storage tests
-    #[cfg(feature = "s3_tests")]
+    // S3 storage tests, run against an in-process mock S3 (no MinIO) via `create_s3_storage`.
+    #[cfg(all(feature = "non-wasm", feature = "testing"))]
     mod s3_tests {
         use super::*;
         use crate::vault::storage::s3::create_s3_storage;
