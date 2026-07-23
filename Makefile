@@ -39,7 +39,7 @@ FROZEN_BWC_VERSIONS := 0.11.0 0.11.1 0.13.0 0.13.10 0.13.20
 
 # Deterministic — re-running produces byte-identical output.
 # `generate-backward-compatibility-all` cleans and regenerates these.
-DETERMINISTIC_BWC_VERSIONS := 0.14.0
+DETERMINISTIC_BWC_VERSIONS := 0.14.0 0.15.0
 
 # Derived data-dir paths (e.g. 0.14.0 -> backward-compatibility/data/0_14_0)
 DETERMINISTIC_BWC_DIRS := $(addprefix backward-compatibility/data/,$(subst .,_,$(DETERMINISTIC_BWC_VERSIONS)))
@@ -62,6 +62,9 @@ generate-backward-compatibility-v0.13.20:
 
 generate-backward-compatibility-v0.14.0:
 	cd backward-compatibility/generate-v0.14.0 && cargo run --release
+
+generate-backward-compatibility-v0.15.0:
+	cd backward-compatibility/generate-v0.15.0 && cargo run --release
 
 generate-backward-compatibility-all: clean-backward-compatibility-data $(addprefix generate-backward-compatibility-v,$(DETERMINISTIC_BWC_VERSIONS))
 	@echo "Generated backward compatibility data for deterministic versions: $(DETERMINISTIC_BWC_VERSIONS)"
