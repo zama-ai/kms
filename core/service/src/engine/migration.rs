@@ -139,7 +139,7 @@ where
 }
 
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
-#[expect(dead_code)]
+#[allow(dead_code)]
 pub async fn migrate_to_0_16_x<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -2649,6 +2649,70 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn test_threshold_prss_to_epoch_skips_already_migrated_epoch() {
+        let mut storage = RamStorage::new();
+
+        // Two epochs under the default context both still have their legacy combined PRSS on disk
+        // (the 0.16 migration that deletes it has not run yet). The default epoch was already
+        // migrated on an earlier, partially-completed run — its EpochData already exists — while the
+        // second epoch has not been. Re-running must migrate only the second epoch and must never
+        // overwrite the already-migrated one.
+        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+        store_combined_prss_at_epoch(&mut storage, &LEGACY_DEFAULT_EPOCH_ID, 4, 1).await;
+
+        // Pre-existing EpochData for the default epoch, tagged with a sentinel party count (9) that
+        // differs from the combined PRSS on disk (4) so any accidental overwrite would be detectable.
+        let already_migrated = EpochData {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            prss: make_test_prss_combined(9, 2),
+        };
+        store_versioned_at_request_id(
+            &mut storage,
+            &(*DEFAULT_EPOCH_ID).into(),
+            &already_migrated,
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let config = migration_config(vec![(
+            DEFAULT_MPC_CONTEXT.to_string(),
+            vec![
+                DEFAULT_EPOCH_ID.to_string(),
+                LEGACY_DEFAULT_EPOCH_ID.to_string(),
+            ],
+        )]);
+
+        threshold_prss_to_epoch(&mut storage, &config)
+            .await
+            .unwrap();
+
+        // The already-migrated epoch is left untouched: still the sentinel 9-party EpochData, not
+        // the 4-party PRSS that lingers alongside it on disk.
+        let kept: EpochData = read_versioned_at_request_id(
+            &storage,
+            &(*DEFAULT_EPOCH_ID).into(),
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(kept.prss.num_parties, 9);
+        assert_eq!(kept.prss.threshold, 2);
+
+        // The second epoch is freshly migrated from its combined PRSS.
+        let migrated: EpochData = read_versioned_at_request_id(
+            &storage,
+            &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(migrated.context_id, *DEFAULT_MPC_CONTEXT);
+        assert_eq!(migrated.prss.num_parties, 4);
+        assert_eq!(migrated.prss.threshold, 1);
     }
 
     // ── Tests for migrate_prss_to_epoch ──

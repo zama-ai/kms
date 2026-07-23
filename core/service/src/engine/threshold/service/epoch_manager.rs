@@ -2302,6 +2302,87 @@ pub(crate) mod tests {
         }
     }
 
+    /// A destroyed epoch must also drop any lingering legacy `PrssSetupCombined` stored under its
+    /// epoch id as it might otherwise be resurrected on the next restart by the migration code.
+    #[tokio::test]
+    async fn test_destroy_epoch_removes_legacy_prss() {
+        let mut rng = AesRng::seed_from_u64(43);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_id = *DEFAULT_EPOCH_ID;
+
+        let epoch = dummy_epoch_data(*DEFAULT_MPC_CONTEXT);
+        epoch_manager
+            .session_maker
+            .add_epoch(epoch_id, epoch.clone())
+            .await;
+
+        // A "keeper" epoch so the target is not the last remaining one (`destroy_epoch` refuses to
+        // remove the final epoch).
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .session_maker
+            .add_epoch(keeper_epoch_id, epoch.clone())
+            .await;
+
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let mut priv_storage = private_storage.lock().await;
+            // The current epoch data, plus a lingering legacy combined PRSS at the same epoch id
+            // (as left behind by a pre-0.16 install where the legacy PRSS is not yet deleted).
+            store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &epoch_id.into(),
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &epoch_id.into(),
+                &epoch.prss,
+                #[expect(deprecated)]
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let priv_storage = epoch_manager.crypto_storage.get_private_storage();
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&epoch_id, &priv_storage, &epoch_manager.session_maker)
+        .await
+        .unwrap();
+
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+
+        // Both the epoch data and the legacy combined PRSS must be gone, so nothing can revive the
+        // epoch on the next restart.
+        let priv_storage = priv_storage.lock().await;
+        assert!(
+            !priv_storage
+                .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                .await
+                .unwrap(),
+            "EpochData must be deleted"
+        );
+        assert!(
+            !priv_storage
+                .data_exists(
+                    &epoch_id.into(),
+                    #[expect(deprecated)]
+                    &PrivDataType::PrssSetupCombined.to_string(),
+                )
+                .await
+                .unwrap(),
+            "legacy PrssSetupCombined must be deleted so migration cannot resurrect the epoch"
+        );
+    }
+
     #[tokio::test]
     async fn test_destroy_epoch_not_found() {
         let mut rng = AesRng::seed_from_u64(42);
