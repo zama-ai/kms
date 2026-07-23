@@ -11,7 +11,7 @@ impl CryptoMaterialReader for ContextInfo {
     where
         S: StorageReader + Send + Sync + 'static,
     {
-        read_context_at_id(storage, &(*request_id).into())
+        read_context_at_id(storage, &request_id.into())
             .await
             .map_err(|e| {
                 anyhow_error_and_warn_log(format!(

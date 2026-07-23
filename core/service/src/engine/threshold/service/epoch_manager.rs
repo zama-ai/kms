@@ -1136,7 +1136,7 @@ impl<
         // sees the epoch and can finish the deletion.
         if let Err(e) = delete_at_request_id(
             &mut (*priv_storage_guard),
-            &(*epoch_id).into(),
+            &epoch_id.into(),
             &PrivDataType::EpochData.to_string(),
         )
         .await
@@ -1149,7 +1149,7 @@ impl<
         // Also delete legacy data to avoid it coming back on migration at restart.
         if let Err(e) = delete_at_request_id(
             &mut (*priv_storage_guard),
-            &(*epoch_id).into(),
+            &epoch_id.into(),
             #[expect(deprecated)]
             &PrivDataType::PrssSetupCombined.to_string(),
         )
@@ -1224,7 +1224,7 @@ impl<
             new_epoch_id
         );
 
-        let verified_previous_epoch = verify_epoch_info(&(*new_epoch_id).into(), previous_epoch)?;
+        let verified_previous_epoch = verify_epoch_info(&new_epoch_id.into(), previous_epoch)?;
 
         // Fetch CRS (also parties from set 1 even if they don't actually need it, but they should fetch it from their storage anyway so no big deal)
         let new_epoch_id_as_request_id = (*new_epoch_id).into();
@@ -1799,7 +1799,7 @@ pub(crate) mod tests {
 
             store_versioned_at_request_id(
                 &mut (*guarded_private_storage),
-                &(*epoch_id).into(),
+                &epoch_id.into(),
                 &epoch,
                 &PrivDataType::EpochData.to_string(),
             )
@@ -2586,7 +2586,7 @@ pub(crate) mod tests {
             }
             store_versioned_at_request_id(
                 &mut (*priv_storage),
-                &(*epoch_id).into(),
+                &epoch_id.into(),
                 &epoch,
                 &PrivDataType::EpochData.to_string(),
             )
@@ -2632,7 +2632,7 @@ pub(crate) mod tests {
             }
             assert!(
                 !priv_storage
-                    .data_exists(&(*epoch_id).into(), &PrivDataType::EpochData.to_string())
+                    .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
                     .await
                     .unwrap(),
                 "PRSS setup should be gone for {epoch_id}"
