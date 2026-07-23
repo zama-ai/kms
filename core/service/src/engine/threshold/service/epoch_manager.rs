@@ -1132,7 +1132,7 @@ impl<
         // Delete the epoch data (stored under epoch_id as a request_id) only once every key/CRS
         // meta data deletion above has succeeded. The epoch data (which holds the PRSS setup) is what
         // resurrects the epoch after a restart — the session maker is rebuilt from epoch-data
-        // storage on startup — he=nce eeping the epoch data for last guarantees a restarted node still
+        // storage on startup — hence keeping the epoch data for last guarantees a restarted node still
         // sees the epoch and can finish the deletion.
         if let Err(e) = delete_at_request_id(
             &mut (*priv_storage_guard),
