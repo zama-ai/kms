@@ -83,7 +83,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) -> anyhow::Result<()> {
         self.inner
             .write_all::<EpochData, EpochData>(
-                &(*epoch_id).into(), // using epoch_id as req_id since epoch data is stored under this directly
+                &(epoch_id.into()), // using epoch_id as req_id since epoch data is stored under this directly
                 None,
                 None, // no public data for epoch info
                 Some((epoch_data, PrivDataType::EpochData)),

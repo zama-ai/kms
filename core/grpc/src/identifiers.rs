@@ -455,43 +455,30 @@ macro_rules! impl_identifiers {
         impl_identifier_common!($context_id);
         impl_identifier_common!($epoch_id);
 
-        // Implement conversions between request_id and the rest
-        // Both types have the same internal representation, so we can just copy the bytes
-        impl From<$request_id> for $key_id {
-            fn from(other: $request_id) -> Self {
-                Self(other.into_bytes())
-            }
+        // Implement conversions between request_id and the rest.
+        // Both types have the same internal representation, so we can just copy the bytes.
+        macro_rules! impl_identifier_conversion {
+            ($from:ident, $to:ident) => {
+                impl From<$from> for $to {
+                    fn from(other: $from) -> Self {
+                        Self(other.into_bytes())
+                    }
+                }
+
+                impl From<&$from> for $to {
+                    fn from(other: &$from) -> Self {
+                        Self(*other.as_bytes())
+                    }
+                }
+            };
         }
 
-        impl From<$key_id> for $request_id {
-            fn from(other: $key_id) -> Self {
-                Self(other.into_bytes())
-            }
-        }
-
-        impl From<$request_id> for $context_id {
-            fn from(other: $request_id) -> Self {
-                Self(other.into_bytes())
-            }
-        }
-
-        impl From<$context_id> for $request_id {
-            fn from(other: $context_id) -> Self {
-                Self(other.into_bytes())
-            }
-        }
-
-        impl From<$request_id> for $epoch_id {
-            fn from(other: $request_id) -> Self {
-                Self(other.into_bytes())
-            }
-        }
-
-        impl From<$epoch_id> for $request_id {
-            fn from(other: $epoch_id) -> Self {
-                Self(other.into_bytes())
-            }
-        }
+        impl_identifier_conversion!($request_id, $key_id);
+        impl_identifier_conversion!($key_id, $request_id);
+        impl_identifier_conversion!($request_id, $context_id);
+        impl_identifier_conversion!($context_id, $request_id);
+        impl_identifier_conversion!($request_id, $epoch_id);
+        impl_identifier_conversion!($epoch_id, $request_id);
     };
 }
 

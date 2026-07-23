@@ -2431,7 +2431,7 @@ mod tests {
     ) {
         store_versioned_at_request_id(
             storage,
-            &(*epoch_id).into(),
+            &(epoch_id.into()),
             &make_test_prss_combined(num_parties, threshold),
             #[expect(deprecated)]
             &PrivDataType::PrssSetupCombined.to_string(),
