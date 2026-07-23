@@ -118,10 +118,19 @@ impl S3Storage {
             .await;
         match result {
             Ok(_) => Ok(true),
-            Err(sdk_error) => match sdk_error.as_service_error().map(|e| e.is_not_found()) {
-                Some(_) => Ok(false),
-                None => Err(sdk_error.into()),
-            },
+            // Only a genuine "not found" error means the object is absent. Any
+            // other error (403 Access Denied, 500, 503 Slow Down, ...) must
+            // propagate so callers.
+            Err(sdk_error) => {
+                if sdk_error
+                    .as_service_error()
+                    .is_some_and(|e| e.is_not_found())
+                {
+                    Ok(false)
+                } else {
+                    Err(sdk_error.into())
+                }
+            }
         }
     }
 
