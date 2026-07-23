@@ -134,6 +134,7 @@ console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better 
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
 crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }  # Big integer operations for crypto - LOW RISK: RustCrypto org
 dashmap = "=6.2.1"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
+ed25519-dalek = { version = "=3.0.0", features = ["zeroize"] }  # EdDSA (ed25519) signatures for native Solana verification (issue #3078) - LOW RISK: dalek-cryptography, de-facto standard audited ed25519 impl, 173M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
 escargot = "=0.5.15" # Interact with cargo without spawning external processes. MEDIUM RISK: single maintainer, 8M downloads, test-only dependency.
 futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
@@ -146,6 +147,7 @@ iam-rs = { version = "=0.0.23" } # AWS IAM policy parser/generator - HIGH RISK: 
 itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
 k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ downloads
 minijinja = { version = "=2.20.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
+ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "zeroize"] }  # ML-DSA (FIPS 204) post-quantum signatures for hybrid PQ signing (issue #3078) - MEDIUM RISK: RustCrypto org, new standard implementation, but no security audit
 ml-kem = { version = "=0.2.3", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team

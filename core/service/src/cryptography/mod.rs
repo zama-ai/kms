@@ -5,6 +5,7 @@ pub mod error;
 pub mod hybrid_ml_kem;
 pub mod internal_crypto_types;
 pub mod signatures;
+pub mod signing_schemes;
 // Allow our deprecated modules for now as we need to be backwards compatible
 #[allow(deprecated)]
 pub mod encryption;

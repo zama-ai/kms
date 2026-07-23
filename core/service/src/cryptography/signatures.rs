@@ -32,8 +32,14 @@ pub enum SigningSchemeTypeVersions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
 #[versionize(SigningSchemeTypeVersions)]
 pub enum SigningSchemeType {
+    // WARNING: Do not reorder or remove variants; the discriminant is what
+    // gets persisted through `SigningSchemeTypeVersions::V0`. New schemes must
+    // be appended.
     Ecdsa256k1,
-    // Eventually we will support post quantum signatures as well
+    Ed25519,
+    MlDsa44, // NIST level 2
+    MlDsa65, // NIST level 3
+    MlDsa87, // NIST level 5
 }
 
 impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
@@ -41,6 +47,10 @@ impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
         // Map the gRPC enum to your local enum
         match value {
             kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 => SigningSchemeType::Ecdsa256k1,
+            kms_grpc::kms::v1::SigningSchemeType::Ed25519 => SigningSchemeType::Ed25519,
+            kms_grpc::kms::v1::SigningSchemeType::Mldsa44 => SigningSchemeType::MlDsa44,
+            kms_grpc::kms::v1::SigningSchemeType::Mldsa65 => SigningSchemeType::MlDsa65,
+            kms_grpc::kms::v1::SigningSchemeType::Mldsa87 => SigningSchemeType::MlDsa87,
         }
     }
 }
@@ -50,6 +60,10 @@ impl TryFrom<i32> for SigningSchemeType {
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(SigningSchemeType::Ecdsa256k1),
+            1 => Ok(SigningSchemeType::Ed25519),
+            2 => Ok(SigningSchemeType::MlDsa44),
+            3 => Ok(SigningSchemeType::MlDsa65),
+            4 => Ok(SigningSchemeType::MlDsa87),
             // Future signing schemes can be added here
             _ => Err(anyhow::anyhow!(
                 "Unsupported SigningSchemeType: {:?}",
