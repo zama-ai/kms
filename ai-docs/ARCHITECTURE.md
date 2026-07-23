@@ -196,7 +196,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
   `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
-  existing per-epoch deletion) before forgetting the context, so retiring a
+  existing per-epoch deletion) before forgetting the context and removing its
+  TLS trust-root references. Trust roots shared with another live context are
+  retained. This ensures retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
   of truth for which epochs belong to a context. In-memory lifecycle leases
   serialize creation against destruction: `NewMpcEpoch` holds shared leases for

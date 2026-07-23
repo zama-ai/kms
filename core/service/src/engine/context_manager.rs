@@ -1008,13 +1008,19 @@ async fn atomic_update_context<
         (Ok(_), Ok(_)) => (),
         _ => {
             // Rollback if any operation failed
-            // first delete the context from storage
+            // First delete the context from storage.
             let storage_ref = crypto_storage.private_storage.clone();
             let mut guarded_priv_storage = storage_ref.lock().await;
             _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+            drop(guarded_priv_storage);
 
-            // next delete the context from session maker
-            session_maker.remove_context(context_id).await;
+            // Then remove the context from the session maker and TLS verifier.
+            session_maker
+                .remove_context(context_id)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to remove context during atomic update rollback: {e}")
+                })?;
             return Err(anyhow::anyhow!("Failed to atomically update context"));
         }
     }
@@ -1114,12 +1120,10 @@ where
             ));
         }
 
+        // Delete persisted state first. This operation is idempotent, so a failure during the
+        // subsequent in-memory cleanup can be retried while the context is still live.
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-        self.session_maker.remove_context(&context_id).await;
-
-        // There is nothing we can do if deletion fails here.
-        // Note that it cannot fail if the context does not exist.
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| {
@@ -1127,6 +1131,19 @@ where
                     OP_DESTROY_MPC_CONTEXT,
                     Some(context_id.into()),
                     anyhow::anyhow!("Failed to delete context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        drop(guarded_priv_storage);
+
+        self.session_maker
+            .remove_context(&context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    e,
                     tonic::Code::Internal,
                 )
             })?;
