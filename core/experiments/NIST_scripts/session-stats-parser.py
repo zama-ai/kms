@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parse session_stats from per-run folders and emit aggregated CSVs.
 
-Layout expected at ``input_dir`` (the campaign folder produced by
+Layout expected at each ``input_dir`` (the campaign folder produced by
 ``threshold-test-params.sh`` or the local archive scp'd back by the
 ``bench_nist`` shutdown script):
 
@@ -14,12 +14,23 @@ Layout expected at ``input_dir`` (the campaign folder produced by
             session_stats_<i>.txt
         ...
 
-Each per-run subfolder is one chronologically-distinct run. ``BENCH_PARAMS.txt``
-declares the run's identity and the operation schedule (``PROTOCOL``,
-``SESSION_TYPE``, ``HAS_PRSS_INIT`` / ``HAS_CRS`` / ``HAS_RESHARE``,
-``DDEC_MODES``). The ``session_stats_*.txt`` files are flat lists of
-``name=...,role=...,...`` metric lines in the order the parties emitted them
-(which matches the operation schedule, so matching is positional).
+The parser walks each input_dir recursively, so it can be pointed at
+either a single campaign or a parent directory that contains many
+sibling campaigns. Multiple ``input_dir`` arguments can be supplied on the
+CLI to explicitly union heterogeneous sources.
+
+Each per-run subfolder is one chronologically-distinct run.
+``BENCH_PARAMS.txt`` declares the run's identity and the operation
+schedule (``PROTOCOL``, ``SESSION_TYPE``, ``HAS_PRSS_INIT`` /
+``HAS_CRS`` / ``HAS_RESHARE``, ``DDEC_MODES``, plus fleet identity
+``NUM_PARTIES`` / ``REGIONS`` / ``MACHINE_TYPE``). The
+``session_stats_*.txt`` files are flat lists of
+``name=...,role=...,...`` metric lines in the order the parties
+emitted them (which matches the operation schedule, so matching is
+positional). ``-mem`` runs pair with their non-mem twins by
+``(experiment_name, num_parties, regions, machine_type)`` so multiple
+campaigns sharing an experiment name (e.g. same params run on both
+LAN and WAN fleets) don't cross-contaminate memory columns.
 
 Output (one set per invocation, written next to the campaign folder or to
 ``--output-dir``):
@@ -48,8 +59,10 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-# TFHE message types and their bit widths. bool is reported with bit_width = 1.
-TFHE_TYPES = ["bool", "u4", "u8", "u16", "u32", "u64"]
+# Bit width of the message for each TFHE message type. bool is 1 bit. The
+# parser validates every ``CTXT_TYPES`` entry against this table; to add a
+# new message type, extend it here and at the bench-script's
+# ``CTXT_TYPES_LIST`` together.
 TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "bool": 1,
     "u4": 4,
@@ -57,13 +70,80 @@ TFHE_TYPE_TO_BIT_WIDTH: Dict[str, int] = {
     "u16": 16,
     "u32": 32,
     "u64": 64,
+    "u128": 128
 }
-# Bit widths kept in the aggregated TDecOne/TDecTwo CSVs. u128 is intentionally dropped.
-TDEC_BIT_WIDTHS = [1, 4, 8, 16, 32, 64]
 
-# Parallelism factors of the BGV ``DDEC_PARALLEL_N`` benchmark lines, one row
-# per factor in the BGV TDec CSV.
-BGV_DDEC_PARALLEL_FACTORS = [1, 2, 4, 8, 16, 32]
+# Parallelism factors for BGV's ``DDEC_PARALLEL_N`` benchmark lines come
+# from each run's BENCH_PARAMS.txt (the ``BGV_DDEC_PARALLEL`` field). The
+# parser uses the per-run list to size both the expected schedule and the
+# rows emitted in ``BGV_TDec_*.csv``.
+
+
+# ---------------------------------------------------------------------------
+# Parameter set -> bits per LWE block
+# ---------------------------------------------------------------------------
+#
+# A TFHE radix ciphertext is a vector of LWE ciphertexts, one per "block". The
+# number of bits a block carries is determined by the parameter set's
+# message_modulus: bits_per_block = log2(message_modulus). Two groups across
+# the parameter sets the kms scripts can use (see
+# core/threshold-execution/src/tfhe_internals/parameters.rs::to_param, and the
+# raw MessageModulus values in raw_parameters.rs):
+#
+#   * NIST_PARAMS_P8_* (4 variants): MessageModulus = 2 -> 1 bit / block
+#   * Everything else (NIST_PARAMS_P32_*, BC_PARAMS*, BC_PARAMS_NIGEL*,
+#     PARAMS_TEST_BK_SNS):              MessageModulus = 4 -> 2 bits / block
+#
+# So a u64 message is 64 LWE blocks under P8 params but only 32 under
+# everything else. ``bool`` is always one LWE block regardless of params.
+# Mirrors the kms helper ``fhe_types_to_num_blocks`` in core/grpc/src/rpc_types.rs.
+PARAMS_TO_BITS_PER_BLOCK: Dict[str, int] = {
+    "nist-params-p8-no-sns-fglwe": 1,
+    "nist-params-p8-sns-fglwe":    1,
+    "nist-params-p8-no-sns-lwe":   1,
+    "nist-params-p8-sns-lwe":      1,
+    "nist-params-p32-no-sns-fglwe": 2,
+    "nist-params-p32-sns-fglwe":    2,
+    "nist-params-p32-no-sns-lwe":   2,
+    "nist-params-p32-sns-lwe":      2,
+    "bc-params-no-sns":         2,
+    "bc-params-sns":            2,
+    "bc-params-nigel-no-sns":   2,
+    "bc-params-nigel-sns":      2,
+    "params-test-bk-sns":       2,
+}
+
+
+def _bits_per_block(params: str) -> int:
+    """Bits per LWE block for ``params``.
+
+    Raises ``ValueError`` if ``params`` isn't in ``PARAMS_TO_BITS_PER_BLOCK``;
+    we refuse to guess because the value directly affects every TDec
+    throughput cell in the CSV (LWE blocks/sec). Add the new parameter set to
+    the table — read its ``MessageModulus`` from
+    ``core/threshold-execution/src/tfhe_internals/parameters.rs::to_param``
+    and store ``log2(message_modulus)``.
+    """
+    bpb = PARAMS_TO_BITS_PER_BLOCK.get(params.lower())
+    if bpb is None:
+        raise ValueError(
+            f"Unknown PARAMS={params!r}; cannot compute LWE-block throughput. "
+            f"Add it to PARAMS_TO_BITS_PER_BLOCK in session-stats-parser.py "
+            f"(known values: {sorted(PARAMS_TO_BITS_PER_BLOCK)})."
+        )
+    return bpb
+
+
+def _num_blocks(bit_width: int, bits_per_block: int) -> int:
+    """Number of LWE blocks a message of ``bit_width`` decomposes into.
+
+    ``bool`` is always one block regardless of bits_per_block. All other
+    supported widths (4, 8, 16, 32, 64) are clean multiples of 1 or 2 bits;
+    we use ceil-div as a safety net if an odd width is ever added.
+    """
+    if bit_width <= 1:
+        return 1
+    return -(-bit_width // bits_per_block)
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +171,35 @@ class BenchParams:
     num_sessions: int
     percentage_offline: int
     params: str  # TFHE parameter set name; "" for bgv
+    # Fleet identity — recorded by bench_nist (REGIONS=…, MACHINE_TYPE=…
+    # in BENCH_PARAMS.txt) and by the kms reproducible scripts. Missing
+    # in older archives; empty string on those. Used together with
+    # ``experiment_name`` and ``num_parties`` to key the -mem-pairing
+    # lookup so cross-folder campaigns don't collide (see
+    # ``_campaign_key``).
+    regions: str
+    machine_type: str
     ddec_modes: List[str]  # e.g. ["noise-flood-small", "bit-dec-small"]
+    # Message types swept inside each DDEC mode for this run. Recorded in
+    # BENCH_PARAMS.txt as ``CTXT_TYPES`` (space-separated, in the order the
+    # bench script's DDEC loop iterates). Every entry must be a key of
+    # ``TFHE_TYPE_TO_BIT_WIDTH``; ``parse_bench_params`` raises on unknown
+    # entries. Older BENCH_PARAMS.txt files without a ``CTXT_TYPES`` line
+    # fall back to the historical sweep (``["bool", "u4", "u8", "u16",
+    # "u32", "u64"]``).
+    ctxt_types: List[str]
+    # CRS sweep: when non-empty, the run emits one CRS_GEN_<UPPER_PARAMS>
+    # line per entry in order (used by the standalone crs_reproducible.sh
+    # script). When empty and ``has_crs`` is set, the run emits a single
+    # plain ``CRS_GEN`` line using ``params``.
+    crs_params: List[str]
+    # BGV parallelism factors swept by the DDEC step (one ``DDEC_PARALLEL_N``
+    # line per entry, one row per entry in BGV_TDec_*.csv). Recorded in
+    # BENCH_PARAMS.txt as ``BGV_DDEC_PARALLEL`` (space-separated ints).
+    # Required for BGV runs; empty for TFHE.
+    bgv_ddec_parallel: List[int]
     has_prss_init: bool
+    has_dkg: bool
     has_crs: bool
     has_reshare: bool
 
@@ -102,6 +209,21 @@ def _truthy(value: str, default: bool) -> bool:
     value = value.strip()
     if not value:
         return default
+    return value.lower() not in ("0", "false", "no", "off")
+
+
+def _required_bool(raw: Dict[str, str], key: str, folder: str) -> bool:
+    """Read a required boolean field from raw BENCH_PARAMS.txt; raise if
+    missing or empty. Used for the schedule-shaping fields
+    (HAS_PRSS_INIT / HAS_DKG / HAS_CRS / HAS_RESHARE) which every bench
+    script writes explicitly — leaving them implicit would silently
+    misshape the expected operation schedule.
+    """
+    value = raw.get(key, "").strip()
+    if not value:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} is missing required field {key}"
+        )
     return value.lower() not in ("0", "false", "no", "off")
 
 
@@ -141,13 +263,65 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
         return None
 
     protocol = raw.get("PROTOCOL", "tfhe").lower()
-    # TFHE runs do CRS + Reshare; BGV doesn't. The script-side writer can
-    # override either flag if a particular run skips one of those phases.
-    has_crs_default = protocol == "tfhe"
-    has_reshare_default = protocol == "tfhe"
 
     ddec_modes_raw = raw.get("DDEC_MODES", "")
     ddec_modes = [m for m in ddec_modes_raw.split() if m]
+
+    crs_params_raw = raw.get("CRS_PARAMS", "")
+    crs_params = [p for p in crs_params_raw.split() if p]
+
+    ctxt_types_raw = raw.get("CTXT_TYPES", "")
+    ctxt_types = [t for t in ctxt_types_raw.split() if t]
+    for t in ctxt_types:
+        if t not in TFHE_TYPE_TO_BIT_WIDTH:
+            raise ValueError(
+                f"Unknown CTXT_TYPES entry {t!r} in {folder!r}/BENCH_PARAMS.txt; "
+                f"add it to TFHE_TYPE_TO_BIT_WIDTH (known: {sorted(TFHE_TYPE_TO_BIT_WIDTH)})."
+            )
+
+    bgv_ddec_parallel_raw = raw.get("BGV_DDEC_PARALLEL", "")
+    bgv_ddec_parallel: List[int] = []
+    for token in bgv_ddec_parallel_raw.split():
+        try:
+            n = int(token)
+        except ValueError:
+            raise ValueError(
+                f"BGV_DDEC_PARALLEL in {folder!r}/BENCH_PARAMS.txt has non-integer "
+                f"entry {token!r}; expected a space-separated list of positive ints."
+            )
+        if n <= 0:
+            raise ValueError(
+                f"BGV_DDEC_PARALLEL in {folder!r}/BENCH_PARAMS.txt has non-positive "
+                f"entry {n}; expected positive ints."
+            )
+        bgv_ddec_parallel.append(n)
+
+    # Schedule-shaping booleans — every bench script writes these explicitly,
+    # so we refuse to guess.
+    has_prss_init = _required_bool(raw, "HAS_PRSS_INIT", folder)
+    has_dkg = _required_bool(raw, "HAS_DKG", folder)
+    has_crs = _required_bool(raw, "HAS_CRS", folder)
+    has_reshare = _required_bool(raw, "HAS_RESHARE", folder)
+
+    # Cross-field consistency: any run with DDEC modes must list which TFHE
+    # message types it sweeps; any run with HAS_CRS=1 must list the parameter
+    # sets the sweep covers (even single-CRS runs declare it as a one-entry
+    # list, so the parser's CRS row emission has a uniform shape).
+    if ddec_modes and not ctxt_types:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} has DDEC_MODES={ddec_modes_raw!r} "
+            f"but no CTXT_TYPES list."
+        )
+    if has_crs and not crs_params:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} has HAS_CRS=1 but no CRS_PARAMS "
+            f"list (single-CRS runs should write CRS_PARAMS=<the params>)."
+        )
+    if protocol == "bgv" and not bgv_ddec_parallel:
+        raise ValueError(
+            f"BENCH_PARAMS.txt in {folder!r} has PROTOCOL=bgv but no "
+            f"BGV_DDEC_PARALLEL list (e.g. '1 2 4 8 16 32')."
+        )
 
     return BenchParams(
         experiment_name=raw.get("EXPERIMENT_NAME", os.path.basename(folder)),
@@ -162,9 +336,15 @@ def parse_bench_params(folder: str) -> Optional[BenchParams]:
         percentage_offline=_maybe_int(raw.get("PERCENTAGE_OFFLINE", ""), 100),
         params=raw.get("PARAMS", ""),
         ddec_modes=ddec_modes,
-        has_prss_init=_truthy(raw.get("HAS_PRSS_INIT", ""), True),
-        has_crs=_truthy(raw.get("HAS_CRS", ""), has_crs_default),
-        has_reshare=_truthy(raw.get("HAS_RESHARE", ""), has_reshare_default),
+        ctxt_types=ctxt_types,
+        crs_params=crs_params,
+        bgv_ddec_parallel=bgv_ddec_parallel,
+        has_prss_init=has_prss_init,
+        has_dkg=has_dkg,
+        has_crs=has_crs,
+        has_reshare=has_reshare,
+        regions=raw.get("REGIONS", "").strip(),
+        machine_type=raw.get("MACHINE_TYPE", "").strip(),
     )
 
 
@@ -185,20 +365,36 @@ def _mode_to_label_prefix(mode: str) -> str:
     return mode.upper().replace("-", "_")
 
 
+def _crs_label_for(params: str) -> str:
+    """Schedule label for a CRS_GEN line tied to a specific parameter set.
+
+    Used when CRS gen is swept over multiple parameter sets in one run
+    (standalone ``crs_reproducible.sh``); the single-CRS case keeps the
+    plain ``CRS_GEN`` label for backward compatibility.
+    """
+    return f"CRS_GEN_{params.upper().replace('-', '_')}"
+
+
 def _build_tfhe_labels(bp: BenchParams) -> List[str]:
     labels: List[str] = []
     if bp.has_prss_init:
         labels.extend(["PRSS_INIT_Z64", "PRSS_INIT_Z128"])
-    labels.extend(["DKG_PREPROC", "DKG"])
+    if bp.has_dkg:
+        labels.extend(["DKG_PREPROC", "DKG"])
     if bp.has_crs:
-        labels.append("CRS_GEN")
+        # One labeled CRS_GEN line per parameter set in the order the
+        # bench script swept them. Single-CRS runs (e.g. bench_nist's
+        # one-pass CRS) list a single entry. parse_bench_params already
+        # validated CRS_PARAMS is non-empty when has_crs.
+        for p in bp.crs_params:
+            labels.append(_crs_label_for(p))
     if bp.has_reshare:
         # Reshare emits two consecutive session-stats lines: the preprocessing
         # phase followed by the online phase.
         labels.extend(["RESHARE_PREPROC", "RESHARE"])
     for mode in bp.ddec_modes:
         prefix = _mode_to_label_prefix(mode)
-        for tfhe_type in TFHE_TYPES:
+        for tfhe_type in bp.ctxt_types:
             labels.append(f"{prefix}_{tfhe_type}_PREPROC")
             labels.append(f"{prefix}_{tfhe_type}_DDEC")
     return labels
@@ -208,8 +404,9 @@ def _build_bgv_labels(bp: BenchParams) -> List[str]:
     labels: List[str] = []
     if bp.has_prss_init:
         labels.extend(["PRSS_INIT_LEVEL_ONE", "PRSS_INIT_LEVEL_KSW"])
-    labels.extend(["DKG_PREPROC", "DKG"])
-    for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
+    if bp.has_dkg:
+        labels.extend(["DKG_PREPROC", "DKG"])
+    for parallel_n in bp.bgv_ddec_parallel:
         labels.append(f"DDEC_PARALLEL_{parallel_n}")
     return labels
 
@@ -376,33 +573,26 @@ def _select_party_files(
 ) -> List[str]:
     """Choose which party files participate in the cross-party average.
 
-    On malicious runs we expect one party's log to be short or malformed.
-    We rank by the number of well-formed metric lines and keep the top
-    ``num_parties - 1`` files. On honest runs we keep every file that has
-    the expected line count; mismatches are warned about and the run is
-    dropped by the caller.
+    On malicious runs party 1 (``session_stats_1.txt``) is always the
+    malicious party — all bench scripts configure the first party as the
+    adversary. We unconditionally drop that file and average over the
+    remaining ``num_parties - 1`` honest parties. On honest runs we keep
+    every file; mismatches are warned about and the run is dropped by
+    the caller.
     """
     party_files = sorted(glob.glob(os.path.join(folder, "session_stats_*.txt")))
     if not party_files:
         return []
 
     if bp.malicious and bp.num_parties > 1:
-        target = bp.num_parties - 1
-        if len(party_files) > target:
-            # Rank by metric-line count, keep the top ``target`` files.
-            ranked = sorted(
-                party_files,
-                key=lambda p: len(parse_session_stats_file(p)),
-                reverse=True,
-            )
-            kept = ranked[:target]
-            dropped = ranked[target:]
+        malicious_file = os.path.join(folder, "session_stats_1.txt")
+        if malicious_file in party_files:
+            party_files = [p for p in party_files if p != malicious_file]
             logger.warning(
                 "run=%s identified as malicious; dropping %s from averaging",
                 bp.experiment_name,
-                dropped,
+                malicious_file,
             )
-            party_files = kept
 
     return party_files
 
@@ -542,20 +732,43 @@ class Run:
 
 
 def discover_runs(input_dir: str, spread_threshold: float) -> List[Run]:
-    """Scan ``input_dir`` for per-run subfolders and aggregate each one."""
+    """Recursively scan ``input_dir`` for per-run folders and aggregate
+    each one.
+
+    A "per-run folder" is any directory that contains a
+    ``BENCH_PARAMS.txt`` file. The walk descends until it hits such a
+    folder, then treats it as a leaf (doesn't descend further into it).
+    That lets the parser be pointed either at a single campaign folder
+    (the historical layout, still a leaf-level parent) or at a
+    collection of campaigns (e.g. ``NIST-RESULTS/July/`` which holds
+    six sibling campaigns).
+
+    Real-path deduplication guards against symlink loops and against
+    the same run being picked up twice when a caller supplies a
+    directory alongside a symlink into it.
+    """
     runs: List[Run] = []
-    for entry in sorted(os.listdir(input_dir)):
-        full = os.path.join(input_dir, entry)
-        if not os.path.isdir(full):
+    seen: set = set()
+    # Sort entries at each level for stable output ordering.
+    for root, dirs, files in os.walk(input_dir, followlinks=True):
+        dirs.sort()
+        real = os.path.realpath(root)
+        if real in seen:
+            dirs[:] = []
             continue
-        bp = parse_bench_params(full)
-        if bp is None:
-            logger.warning("Skipping %s: no readable BENCH_PARAMS.txt", full)
-            continue
-        aggs = aggregate_run(full, bp, spread_threshold)
-        if aggs is None:
-            continue
-        runs.append(Run(folder=full, params=bp, aggregates=aggs))
+        if "BENCH_PARAMS.txt" in files:
+            seen.add(real)
+            bp = parse_bench_params(root)
+            if bp is None:
+                logger.warning("Skipping %s: no readable BENCH_PARAMS.txt", root)
+                # Don't descend into a run folder even on parse failure.
+                dirs[:] = []
+                continue
+            aggs = aggregate_run(root, bp, spread_threshold)
+            dirs[:] = []  # per-run folders are leaves in the search tree
+            if aggs is None:
+                continue
+            runs.append(Run(folder=root, params=bp, aggregates=aggs))
     return runs
 
 
@@ -568,27 +781,75 @@ def _base_experiment_name(name: str) -> str:
     return name
 
 
-def split_runs(runs: List[Run]) -> Tuple[List[Run], Dict[str, Run]]:
+# A "campaign identity" tuple: two runs with the same key are the same
+# physical benchmark (possibly one -mem, one non-mem). Different fleet
+# sizes, regions, or machine types produce different campaigns even if
+# they share the experiment name — this matters as soon as the parser
+# is invoked over multiple sibling campaign folders (e.g. the July
+# archive contains 4p + 10p, LAN + WAN runs with identical
+# experiment_names but different fleet identities).
+CampaignKey = Tuple[str, int, str, str]  # (base_experiment, num_parties, regions, machine_type)
+
+
+def _campaign_key(bp: "BenchParams") -> CampaignKey:
+    return (
+        _base_experiment_name(bp.experiment_name),
+        bp.num_parties,
+        bp.regions,
+        bp.machine_type,
+    )
+
+
+def split_runs(runs: List[Run]) -> Tuple[List[Run], Dict[CampaignKey, Run]]:
     """Partition runs into (row-producing non-mem runs, mem index).
 
-    ``mem_index[base_experiment_name]`` is the matching mem-run aggregate for
-    that experiment, or absent when no mem run was found.
+    ``mem_index[campaign_key]`` is the matching mem-run aggregate for
+    that (experiment, num_parties, regions, machine_type) tuple, or
+    absent when no mem run was found. Keying on the full campaign
+    tuple (rather than just experiment_name) prevents cross-campaign
+    collisions when the parser is invoked over multiple sibling
+    campaign folders that share experiment_names.
     """
     non_mem: List[Run] = []
-    mem: Dict[str, Run] = {}
+    mem: Dict[CampaignKey, Run] = {}
     for r in runs:
         if r.params.measure_memory:
-            base = _base_experiment_name(r.params.experiment_name)
-            if base in mem:
+            key = _campaign_key(r.params)
+            if key in mem:
                 logger.warning(
-                    "Two mem runs share base experiment name %s; keeping the first.",
-                    base,
+                    "Two mem runs share campaign key %s (folders: %s and %s); "
+                    "keeping the first.",
+                    key, mem[key].folder, r.folder,
                 )
                 continue
-            mem[base] = r
+            mem[key] = r
         else:
             non_mem.append(r)
     return non_mem, mem
+
+
+def warn_unpaired_mem_runs(
+        non_mem: List[Run], mem_index: Dict[CampaignKey, Run]) -> None:
+    """Log a warning for every non-mem run without a matching -mem twin
+    (its memory columns will be ``-1`` / empty in the output CSV) and
+    every -mem run whose non-mem twin is missing (its numbers are
+    consumed by ``_peak_mem_kb_for`` but never produce a CSV row on
+    their own — silent otherwise). Purely informational; useful when
+    combining folders where you *expect* every twin to be present.
+    """
+    non_mem_keys = {_campaign_key(r.params) for r in non_mem}
+    for r in non_mem:
+        if _campaign_key(r.params) not in mem_index:
+            logger.warning(
+                "Non-mem run %s has no matching -mem twin; peak_mem columns "
+                "will be empty.", r.folder,
+            )
+    for key, r in mem_index.items():
+        if key not in non_mem_keys:
+            logger.warning(
+                "-mem run %s has no non-mem twin; its measurements won't "
+                "appear in any CSV row.", r.folder,
+            )
 
 
 def _find_operation(aggs: List[AggregatedOperation], label: str) -> Optional[AggregatedOperation]:
@@ -643,6 +904,12 @@ META_HEADERS = [
     "num_sessions",
     "percentage_offline",
     "num_ctxts_per_batch",
+    # Fleet identity — appended (not inserted mid-column) so downstream
+    # spreadsheets built against the old column order still align on
+    # the first six columns. Empty on runs from older archives whose
+    # BENCH_PARAMS.txt didn't record REGIONS / MACHINE_TYPE.
+    "regions",
+    "machine_type",
 ]
 
 
@@ -654,6 +921,25 @@ def _meta_cells(bp: BenchParams) -> List[object]:
         bp.num_sessions,
         bp.percentage_offline,
         bp.num_ctxts,
+        bp.regions,
+        bp.machine_type,
+    ]
+
+
+def _meta_cells_with_params(bp: BenchParams, override_params: str) -> List[object]:
+    """Like ``_meta_cells`` but with ``bp.params`` replaced by
+    ``override_params``. Used for CRS sweep rows where each row in the same
+    run carries its own param-set name in the ``params`` column.
+    """
+    return [
+        bp.experiment_name,
+        bp.session_type,
+        override_params,
+        bp.num_sessions,
+        bp.percentage_offline,
+        bp.num_ctxts,
+        bp.regions,
+        bp.machine_type,
     ]
 
 
@@ -691,7 +977,8 @@ TWO_PHASE_HEADERS = [
 TDEC_HEADERS = [
     "malicious",
     "num_parties",
-    "num_ctxt",  # bit-width of the message — kept for historical reasons
+    "ptxt_type",  # message type name (bool, u4, u8, u16, u32, u64) — from BENCH_PARAMS.txt CTXT_TYPES
+    "num_ctxt",  # number of LWE ciphertexts (blocks) per message — depends on PARAMS
     "offline_avg_latency_ms",
     "offline_throughput_per_sec",
     "online_avg_latency_ms",
@@ -729,11 +1016,17 @@ def _has_offline_phase(preproc: AggregatedOperation) -> bool:
     return preproc.avg_num_rounds != 0
 
 
-def _throughput_bits_per_sec(bit_width: int, per_ctxt_latency_ms: float) -> float:
-    """Throughput in bits/sec given per-ciphertext latency in ms and message bit width."""
-    if per_ctxt_latency_ms <= 0:
+def _throughput_lwe_per_sec(num_blocks: int, per_radix_latency_ms: float) -> float:
+    """LWE-blocks-per-second throughput.
+
+    The ``per_radix_latency_ms`` is the time for one full radix ciphertext
+    (covering all ``num_blocks`` LWE-block decryptions). Multiplying by
+    ``num_blocks`` converts to LWE-blocks-per-second; multiplying by 1000
+    converts ms to seconds.
+    """
+    if per_radix_latency_ms <= 0:
         return 0.0
-    return bit_width * 1000.0 / per_ctxt_latency_ms
+    return num_blocks * 1000.0 / per_radix_latency_ms
 
 
 def _two_phase_row(
@@ -747,17 +1040,36 @@ def _two_phase_row(
     Memory cells are filled from ``mem_run`` when available and default to
     ``-1`` otherwise. Offline cells become ``-1`` when the preproc line has
     ``num_rounds == 0`` (means the run skipped real preprocessing).
+
+    DKG preprocessing is often run on only a subset of the offline material
+    (``percentage_offline < 100``) to keep wall-clock manageable. The session
+    stats then report the time/rounds/bytes for that subset, so we scale the
+    four offline metric cells by ``100 / percentage_offline`` to project to a
+    full offline phase. Rounds stays integer. Memory cells are NOT scaled —
+    peak allocator usage doesn't grow with the offline workload count.
+    Scaling only applies to ``DKG_PREPROC``; other preproc labels (Reshare,
+    DDEC preproc) already run their full offline phase.
     """
     offline_present = _has_offline_phase(preproc)
     offline_max_mem, offline_avg_mem = _peak_mem_kb_for(preproc.label, mem_run)
     online_max_mem, online_avg_mem = _peak_mem_kb_for(online.label, mem_run)
+
+    if preproc.label == "DKG_PREPROC" and bp.percentage_offline > 0:
+        offline_scale = 100.0 / bp.percentage_offline
+    else:
+        offline_scale = 1.0
+    offline_time = preproc.avg_time_active_ms * offline_scale
+    offline_rounds = int(round(preproc.avg_num_rounds * offline_scale))
+    offline_sent = preproc.avg_network_sent_B * offline_scale
+    offline_recv = preproc.avg_network_received_B * offline_scale
+
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        preproc.avg_time_active_ms if offline_present else -1,
-        preproc.avg_num_rounds if offline_present else -1,
-        preproc.avg_network_sent_B if offline_present else -1,
-        preproc.avg_network_received_B if offline_present else -1,
+        offline_time if offline_present else -1,
+        offline_rounds if offline_present else -1,
+        offline_sent if offline_present else -1,
+        offline_recv if offline_present else -1,
         offline_max_mem if offline_present else -1,
         offline_avg_mem if offline_present else -1,
         online.avg_time_active_ms,
@@ -771,36 +1083,64 @@ def _two_phase_row(
 
 def _tdec_one_row(
     bp: BenchParams,
-    bit_width: int,
+    ptxt_type: str,
+    num_blocks: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
     mem_run: Optional[Run],
 ) -> List[object]:
     """Row for ``TFHE_TDecOne_*`` (NOISE_FLOOD).
 
-    Offline is the PREPROC line (``-1`` when its ``num_rounds`` is 0); online
-    is the sum of PREPROC + DDEC (latency, rounds, bytes summed; throughput
-    recomputed from the summed per-ctxt latency).
+    The online column depends on whether the PREPROC line did real work
+    (detected by ``num_rounds != 0``):
+
+      * **Offline phase present** (e.g. ``noise-flood-large``, where the
+        preprocessing has its own rounds): offline cells carry the PREPROC
+        line's metrics, online cells carry just the DDEC line's metrics —
+        the two phases are reported separately, same shape as TDecTwo.
+      * **No offline phase** (e.g. ``noise-flood-small`` where PREPROC has
+        ``num_rounds == 0``): offline cells are ``-1`` and online cells
+        carry ``PREPROC + DDEC`` (the residual PREPROC cost folds into the
+        online column because there's no separate phase to attribute it to).
+
+    ``num_blocks`` is the LWE ciphertext count for this message type under
+    the run's parameter set; it goes into the ``num_ctxt`` column and into
+    the throughput math (LWE blocks per second =
+    ``num_blocks * 1000 / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
-    online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
-    online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
-    online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
-    online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
     ddec_max_mem, _ = _peak_mem_kb_for(ddec.label, mem_run)
-    if offline_max_mem == -1 and ddec_max_mem == -1:
-        online_max_mem: float = -1
+
+    if offline_present:
+        # Two phases, reported separately.
+        online_latency_ms = ddec.avg_time_active_ms
+        online_rounds = ddec.avg_num_rounds
+        online_bytes_sent = ddec.avg_network_sent_B
+        online_bytes_received = ddec.avg_network_received_B
+        # Online phase's memory = DDEC's peak only (PREPROC ran separately).
+        online_max_mem: float = ddec_max_mem
     else:
-        online_max_mem = max(offline_max_mem, ddec_max_mem)
+        # PREPROC has no rounds (folded online); sum its residual cost in.
+        online_latency_ms = preproc.avg_time_active_ms + ddec.avg_time_active_ms
+        online_rounds = preproc.avg_num_rounds + ddec.avg_num_rounds
+        online_bytes_sent = preproc.avg_network_sent_B + ddec.avg_network_sent_B
+        online_bytes_received = preproc.avg_network_received_B + ddec.avg_network_received_B
+        # Online phase's memory = peak across the folded PREPROC + DDEC.
+        if offline_max_mem == -1 and ddec_max_mem == -1:
+            online_max_mem = -1
+        else:
+            online_max_mem = max(offline_max_mem, ddec_max_mem)
+
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        bit_width,
+        ptxt_type,
+        num_blocks,
         preproc.avg_time_active_ms if offline_present else -1,
-        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        _throughput_lwe_per_sec(num_blocks, preproc.avg_time_active_ms) if offline_present else -1,
         online_latency_ms,
-        _throughput_bits_per_sec(bit_width, online_latency_ms),
+        _throughput_lwe_per_sec(num_blocks, online_latency_ms),
         preproc.avg_num_rounds if offline_present else -1,
         online_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
@@ -814,7 +1154,8 @@ def _tdec_one_row(
 
 def _tdec_two_row(
     bp: BenchParams,
-    bit_width: int,
+    ptxt_type: str,
+    num_blocks: int,
     preproc: AggregatedOperation,
     ddec: AggregatedOperation,
     mem_run: Optional[Run],
@@ -822,7 +1163,10 @@ def _tdec_two_row(
     """Row for ``TFHE_TDecTwo_*`` (BIT_DEC).
 
     Offline is the PREPROC line (``-1`` when ``num_rounds`` is 0); online is
-    the DDEC line.
+    the DDEC line. ``num_blocks`` is the LWE ciphertext count for this message
+    type under the run's parameter set; it goes into the ``num_ctxt`` column
+    and into the throughput math (LWE blocks per second = ``num_blocks * 1000
+    / per_radix_latency_ms``).
     """
     offline_present = _has_offline_phase(preproc)
     offline_max_mem, _ = _peak_mem_kb_for(preproc.label, mem_run)
@@ -830,11 +1174,12 @@ def _tdec_two_row(
     return [
         1 if bp.malicious else 0,
         bp.num_parties,
-        bit_width,
+        ptxt_type,
+        num_blocks,
         preproc.avg_time_active_ms if offline_present else -1,
-        _throughput_bits_per_sec(bit_width, preproc.avg_time_active_ms) if offline_present else -1,
+        _throughput_lwe_per_sec(num_blocks, preproc.avg_time_active_ms) if offline_present else -1,
         ddec.avg_time_active_ms,
-        _throughput_bits_per_sec(bit_width, ddec.avg_time_active_ms),
+        _throughput_lwe_per_sec(num_blocks, ddec.avg_time_active_ms),
         preproc.avg_num_rounds if offline_present else -1,
         ddec.avg_num_rounds,
         preproc.avg_network_sent_B if offline_present else -1,
@@ -855,7 +1200,7 @@ def _write_csv(path: str, headers: List[str], rows: List[List[object]]) -> None:
 
 def _emit_rows(
     runs: List[Run],
-    mem_index: Dict[str, Run],
+    mem_index: Dict[CampaignKey, Run],
 ) -> Tuple[
     List[List[object]],  # crs
     List[List[object]],  # keygen (tfhe)
@@ -885,29 +1230,35 @@ def _emit_rows(
 
     for r in sorted_runs:
         bp = r.params
-        mem_run = mem_index.get(_base_experiment_name(bp.experiment_name))
+        mem_run = mem_index.get(_campaign_key(bp))
 
         if bp.protocol == "tfhe":
-            # CRS
+            # CRS — one row per entry in bp.crs_params (every CRS-producing
+            # run lists them, even bench_nist's single-CRS flow). Each row
+            # carries that entry's param name in the metadata trailer.
             if bp.has_crs:
-                crs_op = _find_operation(r.aggregates, "CRS_GEN")
-                if crs_op is not None:
-                    crs_max_mem, _ = _peak_mem_kb_for("CRS_GEN", mem_run)
-                    crs_rows.append([
-                        1 if bp.malicious else 0,
-                        bp.num_parties,
-                        crs_op.avg_time_active_ms,
-                        crs_op.avg_num_rounds,
-                        crs_op.avg_network_sent_B,
-                        crs_op.avg_network_received_B,
-                        crs_max_mem,
-                    ] + _meta_cells(bp))
+                for p in bp.crs_params:
+                    label = _crs_label_for(p)
+                    crs_op = _find_operation(r.aggregates, label)
+                    if crs_op is not None:
+                        crs_max_mem, _ = _peak_mem_kb_for(label, mem_run)
+                        crs_rows.append([
+                            1 if bp.malicious else 0,
+                            bp.num_parties,
+                            crs_op.avg_time_active_ms,
+                            crs_op.avg_num_rounds,
+                            crs_op.avg_network_sent_B,
+                            crs_op.avg_network_received_B,
+                            crs_max_mem,
+                        ] + _meta_cells_with_params(bp, p))
 
-            # KeyGen
-            preproc = _find_operation(r.aggregates, "DKG_PREPROC")
-            dkg = _find_operation(r.aggregates, "DKG")
-            if preproc is not None and dkg is not None:
-                keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
+            # KeyGen (only when the run actually did DKG; standalone CRS runs
+            # skip this).
+            if bp.has_dkg:
+                preproc = _find_operation(r.aggregates, "DKG_PREPROC")
+                dkg = _find_operation(r.aggregates, "DKG")
+                if preproc is not None and dkg is not None:
+                    keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
 
             # Reshare
             if bp.has_reshare:
@@ -920,36 +1271,50 @@ def _emit_rows(
             # one ddec mode pair (noise-flood-X + bit-dec-X) matching its
             # session type; we pick the matching uppercase prefix from
             # session_type and look up the per-tfhe-type PREPROC/DDEC pairs.
-            session_upper = bp.session_type.upper() if bp.session_type else ""
-            nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
-            bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
+            # Skipped entirely when the run has no DDEC modes (e.g. standalone
+            # CRS runs), which also lets PARAMS be empty without tripping the
+            # LWE-block lookup.
+            if bp.ddec_modes:
+                session_upper = bp.session_type.upper() if bp.session_type else ""
+                nf_prefix = f"NOISE_FLOOD_{session_upper}" if session_upper else None
+                bd_prefix = f"BIT_DEC_{session_upper}" if session_upper else None
 
-            for tfhe_type in TFHE_TYPES:
-                bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
-                if bit_width not in TDEC_BIT_WIDTHS:
-                    continue
+                # Bits per LWE block is parameter-set dependent. Compute once
+                # per run; ``_num_blocks(bit_width, bits_per_block)`` converts
+                # the message bit-width into the LWE-block count that goes into
+                # both the ``num_ctxt`` column and the throughput math.
+                bits_per_block = _bits_per_block(bp.params)
 
-                if nf_prefix is not None:
-                    nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
-                    nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
-                    if nf_pp is not None and nf_dd is not None:
-                        tdec_one_rows.append(_tdec_one_row(bp, bit_width, nf_pp, nf_dd, mem_run))
+                for tfhe_type in bp.ctxt_types:
+                    bit_width = TFHE_TYPE_TO_BIT_WIDTH[tfhe_type]
+                    num_blocks = _num_blocks(bit_width, bits_per_block)
 
-                if bd_prefix is not None:
-                    bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
-                    bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
-                    if bd_pp is not None and bd_dd is not None:
-                        tdec_two_rows.append(_tdec_two_row(bp, bit_width, bd_pp, bd_dd, mem_run))
+                    if nf_prefix is not None:
+                        nf_pp = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_PREPROC")
+                        nf_dd = _find_operation(r.aggregates, f"{nf_prefix}_{tfhe_type}_DDEC")
+                        if nf_pp is not None and nf_dd is not None:
+                            tdec_one_rows.append(
+                                _tdec_one_row(bp, tfhe_type, num_blocks, nf_pp, nf_dd, mem_run)
+                            )
+
+                    if bd_prefix is not None:
+                        bd_pp = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_PREPROC")
+                        bd_dd = _find_operation(r.aggregates, f"{bd_prefix}_{tfhe_type}_DDEC")
+                        if bd_pp is not None and bd_dd is not None:
+                            tdec_two_rows.append(
+                                _tdec_two_row(bp, tfhe_type, num_blocks, bd_pp, bd_dd, mem_run)
+                            )
 
         elif bp.protocol == "bgv":
-            # BGV KeyGen
-            preproc = _find_operation(r.aggregates, "DKG_PREPROC")
-            dkg = _find_operation(r.aggregates, "DKG")
-            if preproc is not None and dkg is not None:
-                bgv_keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
+            # BGV KeyGen (only when the run actually did DKG).
+            if bp.has_dkg:
+                preproc = _find_operation(r.aggregates, "DKG_PREPROC")
+                dkg = _find_operation(r.aggregates, "DKG")
+                if preproc is not None and dkg is not None:
+                    bgv_keygen_rows.append(_two_phase_row(bp, preproc, dkg, mem_run))
 
-            # BGV TDec — one row per parallelism factor.
-            for parallel_n in BGV_DDEC_PARALLEL_FACTORS:
+            # BGV TDec — one row per parallelism factor in bp.bgv_ddec_parallel.
+            for parallel_n in bp.bgv_ddec_parallel:
                 label = f"DDEC_PARALLEL_{parallel_n}"
                 ddec = _find_operation(r.aggregates, label)
                 if ddec is None:
@@ -984,7 +1349,7 @@ def write_campaign_csvs(
     output_dir: str,
     suffix: str,
     runs: List[Run],
-    mem_index: Dict[str, Run],
+    mem_index: Dict[CampaignKey, Run],
 ) -> None:
     """Emit the seven CSVs for one campaign into ``output_dir``."""
     os.makedirs(output_dir, exist_ok=True)
@@ -1010,8 +1375,21 @@ def main() -> None:
         )
     )
     parser.add_argument(
-        "input_dir",
-        help="Campaign folder containing per-run subfolders (each with BENCH_PARAMS.txt + session_stats_<i>.txt).",
+        "input_dirs",
+        nargs="+",
+        metavar="input_dir",
+        help=(
+            "One or more campaign folders to scan (recursively) for "
+            "per-run subfolders. Each subfolder must contain a "
+            "BENCH_PARAMS.txt + session_stats_<i>.txt files. Multiple "
+            "inputs are unioned before aggregation, so you can point at "
+            "a single campaign, at a parent that contains many, or at "
+            "several sibling folders explicitly. -mem runs are paired "
+            "with their non-mem twins by (experiment_name, num_parties, "
+            "regions, machine_type) — so combining campaigns with the "
+            "same experiment name but different fleet sizes/regions "
+            "keeps their memory data correctly associated."
+        ),
     )
     parser.add_argument(
         "output_suffix",
@@ -1050,18 +1428,29 @@ def main() -> None:
         level=logging.WARNING if args.warn else logging.ERROR,
     )
 
-    if not os.path.isdir(args.input_dir):
-        logger.error("input_dir %s is not a directory", args.input_dir)
+    bad = [d for d in args.input_dirs if not os.path.isdir(d)]
+    if bad:
+        for d in bad:
+            logger.error("input_dir %s is not a directory", d)
         sys.exit(1)
 
-    output_dir = args.output_dir if args.output_dir is not None else args.input_dir
+    # Default output goes next to the first input (matches historical
+    # single-input behaviour). Pass --output-dir explicitly when
+    # unioning multiple campaigns so the CSVs don't land inside one
+    # of them.
+    output_dir = args.output_dir if args.output_dir is not None else args.input_dirs[0]
 
-    all_runs = discover_runs(args.input_dir, args.spread_warning_threshold)
+    all_runs: List[Run] = []
+    for d in args.input_dirs:
+        all_runs.extend(discover_runs(d, args.spread_warning_threshold))
     if not all_runs:
-        logger.error("No usable per-run folders found under %s", args.input_dir)
+        logger.error(
+            "No usable per-run folders found under %s", ", ".join(args.input_dirs),
+        )
         sys.exit(1)
 
     non_mem_runs, mem_index = split_runs(all_runs)
+    warn_unpaired_mem_runs(non_mem_runs, mem_index)
     write_campaign_csvs(output_dir, args.output_suffix, non_mem_runs, mem_index)
     print(
         f"Wrote CSVs to {output_dir} from {len(non_mem_runs)} row-producing runs "
