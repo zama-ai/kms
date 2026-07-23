@@ -1,26 +1,22 @@
 use super::{
-    poly::Poly,
+    matrix::compute_powers_list,
+    poly::{Poly, deflate_root, vanishing_poly},
+    sharing::shamir::ShamirFieldPoly,
     structure_traits::{Field, Ring},
 };
-use std::ops::Neg;
 
-/// computes all polys L_i(Z) = \prod_{i \neq j} (Z - alpha_j) for the given list of points.
-/// this is the numerator part of [lagrange_polynomials()]
-pub(crate) fn lagrange_numerators<F: Ring + Neg<Output = F>>(points: &[F]) -> Vec<Poly<F>> {
-    let polys: Vec<_> = points
+/// Computes all polys L_i(Z) = ∏_{j ≠ i} (Z - alpha_j) for the given list of points.
+/// This is the numerator part of the Lagrange basis (see [`crate::poly::lagrange_polynomials`]).
+///
+/// Builds the vanishing polynomial V(Z) = ∏_j (Z - alpha_j) once, then recovers each
+/// L_i = V / (Z - alpha_i) by deflation (see [vanishing_poly()] and [deflate_root()]).
+/// WARNING: The function requires that `points.len() >= 2`
+pub fn lagrange_numerators<F: Ring>(points: &[F]) -> Vec<Poly<F>> {
+    let v = vanishing_poly(points);
+    points
         .iter()
-        .enumerate()
-        .map(|(i, _xi)| {
-            let mut numerator = Poly::one();
-            for (j, xj) in points.iter().enumerate() {
-                if i != j {
-                    numerator = numerator * Poly::from_coefs(vec![-*xj, F::ONE]);
-                }
-            }
-            numerator
-        })
-        .collect();
-    polys
+        .map(|&alpha| deflate_root(&v, alpha))
+        .collect()
 }
 
 /// debug function that computes f(Z) = product_{p in points}(1 - pZ), only available in debug builds
@@ -123,6 +119,7 @@ fn sanity_check_decoding<F: Field>(
 /// `error_normalizer[i] = -α_i · L_i(α_i)` (`L_i` being the Lagrange numerator for point `i`).
 /// These depend only on the point set, so callers that decode many syndromes over the same points
 /// should compute them once and reuse them.
+/// WARNING: The function requires that `x_alpha.len() >= 2`
 pub(crate) fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
     let lagrange = lagrange_numerators(x_alpha);
     let x_alpha_inv = x_alpha.iter().map(|x| x.invert()).collect();
@@ -137,6 +134,7 @@ pub(crate) fn field_decode_hints<F: Field>(x_alpha: &[F]) -> (Vec<F>, Vec<F>) {
 //NIST: Level Zero Operation
 /// Decode a given syndrome poly in the field, given precomputed `error_normalizer`
 /// from [`field_decode_hints`] and RS value r = n - v.
+/// WARNING: The function requires that `x_alpha_inv.len() >= 2`
 pub(crate) fn decode_syndrome<F: Field>(
     syndrome: Poly<F>,
     r: usize,
