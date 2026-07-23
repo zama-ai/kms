@@ -497,11 +497,11 @@ pub async fn read_context_at_id<S: StorageReader>(
 
 pub async fn delete_context_at_id<S: Storage>(
     storage: &mut S,
-    request_id: &ContextId,
+    context_id: &ContextId,
 ) -> anyhow::Result<()> {
     delete_at_request_id(
         storage,
-        &request_id.into(),
+        &context_id.into(),
         &PrivDataType::ContextInfo.to_string(),
     )
     .await

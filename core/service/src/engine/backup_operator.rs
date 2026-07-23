@@ -516,7 +516,7 @@ where
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
         .read_data(
-            &(*custodian_context_id).into(),
+            &custodian_context_id.into(),
             &PubDataType::RecoveryMaterial.to_string(),
         )
         .await?;
