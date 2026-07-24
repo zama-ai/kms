@@ -691,17 +691,13 @@ enum PkeSchemeType {
 }
 
 enum SigningSchemeType {
-  // WARNING: keep these values and their numbering in lock-step with the
-  // `SigningSchemeType` enum in `core/service/src/cryptography/signing/mod.rs`
-  // (both the enum ordering and its `From`/`TryFrom<i32>` mappings). Only append.
+  // WARNING: only append to this type!
+  // Furthermore, keep these values and their numbering in lock-step with the
+  // `SigningSchemeType` enum in `core/service/src/cryptography/signing/mod.rs`.
   ECDSA256K1 = 0;
-  // EdDSA over ed25519, used for native verification on Solana.
   ED25519 = 1;
-  // ML-DSA (FIPS 204) post-quantum signatures, parameter set 44 (NIST level 2).
   MLDSA44 = 2;
-  // ML-DSA (FIPS 204) post-quantum signatures, parameter set 65 (NIST level 3).
   MLDSA65 = 3;
-  // ML-DSA (FIPS 204) post-quantum signatures, parameter set 87 (NIST level 5).
   MLDSA87 = 4;
 }
 

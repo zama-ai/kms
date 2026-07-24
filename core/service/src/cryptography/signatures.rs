@@ -8,14 +8,15 @@
 //! (and the `core-client` / WASM / backward-compatibility consumers) are
 //! unaffected. Prefer the `signing` paths in new code.
 
-// TODO I think we should just do the refactor
+// TODO#(3078) this should be done before finishing 3078, but since things might change in the rest of the sub-issues wait until the last sub issue of 3078 to do so.
 pub use crate::cryptography::signing::ecdsa::{
     ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PrivateSigKeyVersions, PublicSigKey,
     PublicSigKeyVersions, SIG_SIZE, compute_eip712_signature, gen_sig_keys,
     recover_address_from_ext_signature,
 };
 pub use crate::cryptography::signing::{
-    HasSigningScheme, Signature, SignatureVersions, SigningSchemeType, SigningSchemeTypeVersions,
+    HasSigningScheme, Signature, SignatureVersions, SigningError, SigningSchemeType,
+    SigningSchemeTypeVersions,
 };
 
 pub(crate) use crate::cryptography::signing::ecdsa::{
