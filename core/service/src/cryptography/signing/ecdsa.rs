@@ -1,10 +1,6 @@
 //! ECDSA over secp256k1 signing backend.
-//!
-//! Home of the ECDSA key types ([`PublicSigKey`], [`PrivateSigKey`]), the
-//! EIP-712 helpers, the low-level `internal_sign` / `internal_verify_sig` /
-//! `check_normalized` primitives, and `impl SigningScheme for Ecdsa256k1`.
 
-use super::{HasSigningScheme, Signature, SigningScheme, SigningSchemeType};
+use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -24,8 +20,6 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
-
-// ============================== verification key =============================
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum PublicSigKeyVersions {
@@ -453,16 +447,24 @@ impl SigningScheme for Ecdsa256k1 {
     type SigningKey = PrivateSigKey;
     type VerificationKey = PublicSigKey;
 
-    fn sign(dsep: &DomainSep, msg: &[u8], sk: &PrivateSigKey) -> anyhow::Result<Vec<u8>> {
-        Ok(internal_sign(dsep, msg, sk)?.to_bytes())
+    fn sign(dsep: &DomainSep, msg: &[u8], sk: &PrivateSigKey) -> Result<Vec<u8>, SigningError> {
+        internal_sign(dsep, msg, sk)
+            .map(|s| s.to_bytes())
+            .map_err(|e| SigningError::Sign(e.to_string()))
     }
 
-    fn verify(dsep: &DomainSep, msg: &[u8], sig: &[u8], vk: &PublicSigKey) -> anyhow::Result<()> {
+    fn verify(
+        dsep: &DomainSep,
+        msg: &[u8],
+        sig: &[u8],
+        vk: &PublicSigKey,
+    ) -> Result<(), SigningError> {
         let signature = Signature::new(SigningSchemeType::Ecdsa256k1, sig.to_vec());
         internal_verify_sig(dsep, msg, &signature, vk)
+            .map_err(|e| SigningError::Verify(e.to_string()))
     }
 
-    fn verifying_key(sk: &PrivateSigKey) -> anyhow::Result<PublicSigKey> {
+    fn verifying_key(sk: &PrivateSigKey) -> Result<PublicSigKey, SigningError> {
         Ok(sk.verf_key())
     }
 }

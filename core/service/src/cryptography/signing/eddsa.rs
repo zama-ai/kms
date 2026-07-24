@@ -1,6 +1,6 @@
 //! EdDSA over ed25519 signing backend.
 
-use super::SigningScheme;
+use super::{SigningError, SigningScheme};
 use ed25519_dalek::{
     Signature as Ed25519Signature, Signer, SigningKey as Ed25519SigningKey,
     VerifyingKey as Ed25519VerifyingKey,
@@ -25,9 +25,11 @@ impl SigningScheme for Ed25519 {
     type SigningKey = Ed25519SigningKey;
     type VerificationKey = Ed25519VerifyingKey;
 
-    fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> anyhow::Result<Vec<u8>> {
+    fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> Result<Vec<u8>, SigningError> {
         let signed = [&dsep[..], msg].concat();
-        let sig: Ed25519Signature = sk.try_sign(&signed)?;
+        let sig: Ed25519Signature = sk
+            .try_sign(&signed)
+            .map_err(|e| SigningError::Sign(e.to_string()))?;
         Ok(sig.to_bytes().to_vec())
     }
 
@@ -36,13 +38,13 @@ impl SigningScheme for Ed25519 {
         msg: &[u8],
         sig: &[u8],
         vk: &Ed25519VerifyingKey,
-    ) -> anyhow::Result<()> {
-        let bytes: [u8; SIG_SIZE] = sig.try_into().map_err(|_| {
-            anyhow::anyhow!(
-                "expected {SIG_SIZE}-byte ed25519 signature, got {}",
-                sig.len()
-            )
-        })?;
+    ) -> Result<(), SigningError> {
+        let bytes: [u8; SIG_SIZE] =
+            sig.try_into()
+                .map_err(|_| SigningError::InvalidSignatureLength {
+                    expected: SIG_SIZE,
+                    actual: sig.len(),
+                })?;
         let ed_sig = Ed25519Signature::from_bytes(&bytes);
         let signed = [&dsep[..], msg].concat();
         // `verify_strict` (not `verify`) rejects non-canonical `s` and
@@ -50,10 +52,10 @@ impl SigningScheme for Ed25519 {
         // non-malleable here — matching the low-`s` normalization the ECDSA
         // backend enforces via `check_normalized`.
         vk.verify_strict(&signed, &ed_sig)
-            .map_err(|e| anyhow::anyhow!("ed25519 verification failed: {e}"))
+            .map_err(|e| SigningError::Verify(e.to_string()))
     }
 
-    fn verifying_key(sk: &Ed25519SigningKey) -> anyhow::Result<Ed25519VerifyingKey> {
+    fn verifying_key(sk: &Ed25519SigningKey) -> Result<Ed25519VerifyingKey, SigningError> {
         Ok(sk.verifying_key())
     }
 }
@@ -90,8 +92,11 @@ mod tests {
         let vk = Ed25519::verifying_key(&sk).unwrap();
 
         let err = Ed25519::verify(DSEP, b"hello", &[0u8; SIG_SIZE - 1], &vk).unwrap_err();
-        assert!(err.to_string().contains("ed25519 signature"));
-        assert!(Ed25519::verify(DSEP, b"hello", &[0u8; SIG_SIZE + 1], &vk).is_err());
+        assert!(matches!(err, SigningError::InvalidSignatureLength { .. }));
+        assert!(matches!(
+            Ed25519::verify(DSEP, b"hello", &[0u8; SIG_SIZE + 1], &vk),
+            Err(SigningError::InvalidSignatureLength { .. })
+        ));
     }
 
     /// A tampered message, a tampered signature, and a wrong domain separator all reject.

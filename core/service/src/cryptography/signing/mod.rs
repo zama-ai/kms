@@ -1,8 +1,7 @@
 //! Multi-scheme signing support (issue #3078).
 //!
 //! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
-//! internally. The module is ungated: all schemes must eventually be available
-//! in the wasm verifier, and ECDSA is already used there.
+//! internally.
 
 pub mod ecdsa;
 pub mod eddsa;
@@ -21,6 +20,46 @@ use serde::{Deserialize, Serialize};
 use strum_macros::Display;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
+use thiserror::Error;
+
+/// Errors produced by the multi-scheme signing API.
+#[derive(Debug, Error)]
+pub enum SigningError {
+    /// A signature was verified against a key of a different scheme.
+    #[error("signature scheme {signature:?} does not match verification key scheme {key:?}")]
+    SchemeMismatch {
+        /// The scheme the signature claims to have been produced under.
+        signature: SigningSchemeType,
+        /// The scheme of the verification key it was checked against.
+        key: SigningSchemeType,
+    },
+    /// The signature byte length is wrong for its scheme.
+    #[error("invalid signature length: expected {expected} bytes, got {actual}")]
+    InvalidSignatureLength {
+        /// The length the scheme requires.
+        expected: usize,
+        /// The length that was actually supplied.
+        actual: usize,
+    },
+    /// The signature bytes could not be decoded into the scheme's signature type.
+    #[error("malformed signature: {0}")]
+    MalformedSignature(String),
+    /// An ECDSA signature was not in low-`s` (BIP-0062) normalized form.
+    #[error("signature is not normalized (low-s): {0}")]
+    NotNormalized(String),
+    /// The backend failed to produce a signature.
+    #[error("signing failed: {0}")]
+    Sign(String),
+    /// Signature verification failed (cryptographically invalid or tampered).
+    #[error("verification failed: {0}")]
+    Verify(String),
+    /// Deriving a verification key from a signing key failed.
+    #[error("could not derive verification key: {0}")]
+    KeyDerivation(String),
+    /// An integer discriminant did not correspond to any known signing scheme.
+    #[error("unsupported signing scheme discriminant: {0}")]
+    UnknownScheme(i32),
+}
 
 /// Trait for any value that is tied to a concrete signature scheme.
 pub trait HasSigningScheme {
@@ -35,9 +74,7 @@ pub enum SigningSchemeTypeVersions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
 #[versionize(SigningSchemeTypeVersions)]
 pub enum SigningSchemeType {
-    // WARNING: Do not reorder or remove variants; the discriminant is what
-    // gets persisted through `SigningSchemeTypeVersions::V0`. New schemes must
-    // be appended.
+    // WARNING: Do not reorder or remove variants; only append.
     Ecdsa256k1,
     Ed25519,
     MlDsa44, // NIST level 2
@@ -58,12 +95,12 @@ impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
 }
 
 impl TryFrom<i32> for SigningSchemeType {
-    type Error = anyhow::Error;
+    type Error = SigningError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         kms_grpc::kms::v1::SigningSchemeType::try_from(value)
             .map(SigningSchemeType::from)
-            .map_err(|_| anyhow::anyhow!("Unsupported SigningSchemeType: {:?}", value))
+            .map_err(|_| SigningError::UnknownScheme(value))
     }
 }
 
@@ -76,7 +113,7 @@ pub trait SigningScheme {
     type VerificationKey;
 
     /// Sign `dsep ‖ msg`, returning the scheme's standard signature encoding.
-    fn sign(dsep: &DomainSep, msg: &[u8], sk: &Self::SigningKey) -> anyhow::Result<Vec<u8>>;
+    fn sign(dsep: &DomainSep, msg: &[u8], sk: &Self::SigningKey) -> Result<Vec<u8>, SigningError>;
 
     /// Verify a signature over `dsep ‖ msg`.
     fn verify(
@@ -84,10 +121,10 @@ pub trait SigningScheme {
         msg: &[u8],
         sig: &[u8],
         vk: &Self::VerificationKey,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), SigningError>;
 
     /// Derive the verification key from the signing key if possible, otherwise return an error.
-    fn verifying_key(sk: &Self::SigningKey) -> anyhow::Result<Self::VerificationKey>;
+    fn verifying_key(sk: &Self::SigningKey) -> Result<Self::VerificationKey, SigningError>;
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
@@ -165,7 +202,7 @@ impl UnifiedPrivateSigKey {
     ///
     /// Currently always `Ok` (every supported scheme can derive it); fallible so
     /// a future scheme that cannot may error rather than panic.
-    pub fn verifying_key(&self) -> anyhow::Result<UnifiedPublicSigKey> {
+    pub fn verifying_key(&self) -> Result<UnifiedPublicSigKey, SigningError> {
         Ok(match self {
             UnifiedPrivateSigKey::Ecdsa256k1(sk) => {
                 UnifiedPublicSigKey::Ecdsa256k1(Ecdsa256k1::verifying_key(sk)?)
@@ -213,7 +250,7 @@ pub fn unified_sign(
     dsep: &DomainSep,
     msg: &[u8],
     sk: &UnifiedPrivateSigKey,
-) -> anyhow::Result<Signature> {
+) -> Result<Signature, SigningError> {
     let scheme = sk.signing_scheme_type();
     let sig = match sk {
         UnifiedPrivateSigKey::Ecdsa256k1(sk) => Ecdsa256k1::sign(dsep, msg, sk)?,
@@ -234,15 +271,13 @@ pub fn unified_verify(
     msg: &[u8],
     sig: &Signature,
     vk: &UnifiedPublicSigKey,
-    // TODO we should add a proper error type for this
-) -> anyhow::Result<()> {
+) -> Result<(), SigningError> {
     let key_scheme = vk.signing_scheme_type();
     if sig.scheme != key_scheme {
-        anyhow::bail!(
-            "signature scheme {:?} does not match verification key scheme {:?}",
-            sig.scheme,
-            key_scheme
-        );
+        return Err(SigningError::SchemeMismatch {
+            signature: sig.scheme,
+            key: key_scheme,
+        });
     }
     let bytes = sig.as_bytes();
     match vk {

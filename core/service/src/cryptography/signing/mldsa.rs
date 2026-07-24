@@ -1,6 +1,6 @@
 //! ML-DSA (FIPS 204) signing backend, generic over the parameter set.
 
-use super::SigningScheme;
+use super::{SigningError, SigningScheme};
 use core::marker::PhantomData;
 use hashing::DomainSep;
 use ml_dsa::{
@@ -24,11 +24,15 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
     type SigningKey = MlDsaSigningKey<P>;
     type VerificationKey = MlDsaVerifyingKey<P>;
 
-    fn sign(dsep: &DomainSep, msg: &[u8], sk: &MlDsaSigningKey<P>) -> anyhow::Result<Vec<u8>> {
+    fn sign(
+        dsep: &DomainSep,
+        msg: &[u8],
+        sk: &MlDsaSigningKey<P>,
+    ) -> Result<Vec<u8>, SigningError> {
         let signed = [&dsep[..], msg].concat();
         let sig: MlDsaSignature<P> = sk
             .try_sign(&signed)
-            .map_err(|e| anyhow::anyhow!("ML-DSA signing failed: {e}"))?;
+            .map_err(|e| SigningError::Sign(e.to_string()))?;
         Ok(sig.to_vec())
     }
 
@@ -37,15 +41,15 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
         msg: &[u8],
         sig: &[u8],
         vk: &MlDsaVerifyingKey<P>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), SigningError> {
         let sig = MlDsaSignature::<P>::try_from(sig)
-            .map_err(|e| anyhow::anyhow!("could not decode ML-DSA signature: {e}"))?;
+            .map_err(|e| SigningError::MalformedSignature(e.to_string()))?;
         let signed = [&dsep[..], msg].concat();
         vk.verify(&signed, &sig)
-            .map_err(|e| anyhow::anyhow!("ML-DSA verification failed: {e}"))
+            .map_err(|e| SigningError::Verify(e.to_string()))
     }
 
-    fn verifying_key(sk: &MlDsaSigningKey<P>) -> anyhow::Result<MlDsaVerifyingKey<P>> {
+    fn verifying_key(sk: &MlDsaSigningKey<P>) -> Result<MlDsaVerifyingKey<P>, SigningError> {
         Ok(sk.verifying_key())
     }
 }
@@ -83,7 +87,7 @@ mod tests {
         assert!(MlDsa::<P>::verify(DSEP, b"hello", &bad, &vk).is_err());
 
         let err = MlDsa::<P>::verify(DSEP, b"hello", &[0u8; 10], &vk).unwrap_err();
-        assert!(err.to_string().contains("decode ML-DSA signature"));
+        assert!(matches!(err, SigningError::MalformedSignature(_)));
     }
 
     #[test]
