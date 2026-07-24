@@ -552,7 +552,6 @@ impl SessionMaker {
 
     /// Removes a context from both the TLS verifier and the session context map.
     pub(crate) async fn remove_context(&self, context_id: &ContextId) -> anyhow::Result<()> {
-        let mut context_map = self.context_map.write().await;
         if let Some(verifier) = &self.verifier {
             let verifier_context_id = context_id.derive_session_id().map_err(|e| {
                 anyhow::anyhow!(
@@ -564,6 +563,7 @@ impl SessionMaker {
             })?;
         }
 
+        let mut context_map = self.context_map.write().await;
         context_map.remove(context_id);
         Ok(())
     }
