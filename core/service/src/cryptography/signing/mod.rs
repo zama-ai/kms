@@ -18,7 +18,6 @@ use ml_dsa::{
 use mldsa::MlDsa;
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
-use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
 
@@ -127,21 +126,15 @@ pub trait SigningScheme {
     fn verifying_key(sk: &Self::SigningKey) -> Result<Self::VerificationKey, SigningError>;
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum SignatureVersions {
-    V0(Signature),
-}
-
 /// A digital signature together with the scheme that produced it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SignatureVersions)]
+///
+/// Not `Versionize`: a `Signature` is never persisted or `safe_serialize`d — it
+/// only ever crosses the wire as its raw, scheme-specific bytes (see
+/// [`Signature::to_bytes`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature {
     pub(crate) scheme: SigningSchemeType,
     pub(crate) sig: Vec<u8>,
-}
-
-impl Named for Signature {
-    const NAME: &'static str = "Signature";
 }
 
 impl Signature {

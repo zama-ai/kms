@@ -15,8 +15,7 @@ pub use crate::cryptography::signing::ecdsa::{
     recover_address_from_ext_signature,
 };
 pub use crate::cryptography::signing::{
-    HasSigningScheme, Signature, SignatureVersions, SigningError, SigningSchemeType,
-    SigningSchemeTypeVersions,
+    HasSigningScheme, Signature, SigningError, SigningSchemeType, SigningSchemeTypeVersions,
 };
 
 pub(crate) use crate::cryptography::signing::ecdsa::{
