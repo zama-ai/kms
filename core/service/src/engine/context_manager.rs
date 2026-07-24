@@ -1017,10 +1017,11 @@ async fn atomic_update_context<
         _ => {
             // Rollback if any operation failed
             // First delete the context from storage.
-            let storage_ref = crypto_storage.private_storage.clone();
-            let mut guarded_priv_storage = storage_ref.lock().await;
-            _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
-            drop(guarded_priv_storage);
+            {
+                let storage_ref = crypto_storage.private_storage.clone();
+                let mut guarded_priv_storage = storage_ref.lock().await;
+                _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+            }
 
             // Then remove the context from the session maker and TLS verifier.
             session_maker
@@ -1130,19 +1131,20 @@ where
 
         // Delete persisted state first. This operation is idempotent, so a failure during the
         // subsequent in-memory cleanup can be retried while the context is still live.
-        let storage_ref = self.inner.crypto_storage.private_storage.clone();
-        let mut guarded_priv_storage = storage_ref.lock().await;
-        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_MPC_CONTEXT,
-                    Some(context_id.into()),
-                    anyhow::anyhow!("Failed to delete context: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        drop(guarded_priv_storage);
+        {
+            let storage_ref = self.inner.crypto_storage.private_storage.clone();
+            let mut guarded_priv_storage = storage_ref.lock().await;
+            delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+                .await
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_DESTROY_MPC_CONTEXT,
+                        Some(context_id.into()),
+                        anyhow::anyhow!("Failed to delete context: {e}"),
+                        tonic::Code::Internal,
+                    )
+                })?;
+        }
 
         self.session_maker
             .remove_context(&context_id)
@@ -1286,6 +1288,12 @@ mod tests {
     use tonic::Request;
 
     const DUMMY_SIGNING_KEY_REQ_ID: [u8; 32] = [1u8; 32];
+    const EXPECTED_ERR_DUPLICATE_SIGNER_ADDRESSES: &str =
+        "Duplicate signer addresses found in context";
+    const EXPECTED_ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEY: &str =
+        "Duplicate custodian encryption key found in custodian context";
+    const EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY: &str =
+        "Duplicate custodian verification key found in custodian context";
 
     async fn setup_crypto_storage(
         make_default_context: bool,
@@ -1686,7 +1694,7 @@ mod tests {
                 error
                     .internal_err()
                     .to_string()
-                    .contains("Duplicate signer addresses found in context")
+                    .contains(EXPECTED_ERR_DUPLICATE_SIGNER_ADDRESSES)
             );
 
             let guarded_priv_storage = crypto_storage.private_storage.lock().await;
@@ -2326,12 +2334,12 @@ mod tests {
             (
                 RequestId::from_bytes([23u8; 32]),
                 duplicate_encryption_key,
-                "Duplicate custodian encryption key found in custodian context",
+                EXPECTED_ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEY,
             ),
             (
                 RequestId::from_bytes([24u8; 32]),
                 duplicate_verification_key,
-                "Duplicate custodian verification key found in custodian context",
+                EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY,
             ),
         ] {
             let context = CustodianContext {

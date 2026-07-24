@@ -114,7 +114,7 @@ impl SoftwareVersion {
 ///
 /// This newtype exists solely to implement [`tfhe_versionable::Versionize`] for
 /// [`alloy_primitives::Address`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SignerAddress(pub Address);
 impl_generic_versionize!(SignerAddress);
 
@@ -521,16 +521,15 @@ impl ContextInfo {
         }
 
         // Primary and extra signer addresses must be globally unique within the context.
-        let mut signer_addresses = Vec::new();
+        let mut signer_addresses = std::collections::HashMap::new();
         for node in &self.mpc_nodes {
             for signer_address in node
                 .signer_address
                 .iter()
                 .chain(node.extra_signer_addresses.iter())
             {
-                if let Some((_, first_party_id)) = signer_addresses
-                    .iter()
-                    .find(|(address, _)| address == signer_address)
+                if let Some(first_party_id) =
+                    signer_addresses.insert(*signer_address, node.party_id)
                 {
                     return Err(anyhow::anyhow!(
                         "{} {}: address {} is assigned to party IDs {} and {}",
@@ -541,7 +540,6 @@ impl ContextInfo {
                         node.party_id
                     ));
                 }
-                signer_addresses.push((*signer_address, node.party_id));
             }
         }
 
