@@ -630,7 +630,7 @@ pub(crate) fn vanishing_poly<F: Ring>(points: &[F]) -> Poly<F> {
 /// as q_{k−1} = v_k + root * q_k, where v_k, q_k are the k-th coefficients of v(Z) and q(Z) respectively.
 pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
     // This is provably the case for the current 2 callsites.
-    debug_assert!(
+    assert!(
         v.coefs.len() >= 2,
         "deflate_root requires deg(v) >= 1, got {:?}",
         v.coefs.len()
@@ -643,7 +643,7 @@ pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
         // iterate from highest coefficients to lowest in the incremental result since qc[k+1] has already been fully computed
         qc[k] = vc[k + 1] + root * qc[k + 1]; // I.e. q_{k−1} = v_k + root * q_k  
     }
-    debug_assert!(vc[0] + root * qc[0] == F::ZERO, "remainder must vanish");
+    assert!(vc[0] + root * qc[0] == F::ZERO, "remainder must vanish");
     // Invariant: coefs is canonical because the leading coef == vc[deg] (nonzero)
     Poly::from_coefs_unchecked(qc)
 }
