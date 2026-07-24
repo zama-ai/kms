@@ -120,7 +120,7 @@ impl S3Storage {
             Ok(_) => Ok(true),
             // Only a genuine "not found" error means the object is absent. Any
             // other error (403 Access Denied, 500, 503 Slow Down, ...) must
-            // propagate so callers.
+            // propagate to callers.
             Err(sdk_error) => {
                 if sdk_error
                     .as_service_error()
