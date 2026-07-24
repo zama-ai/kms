@@ -239,7 +239,8 @@ where
         // Ensure we are not destroying the only backup vault there exists.
         if meta_store_guard
             .get_successful_completed_request_ids()
-            .len()
+            .take(2)
+            .count()
             < 2
         {
             return Err(MetricedError::new(

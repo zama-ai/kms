@@ -4420,6 +4420,7 @@ dependencies = [
  "ciborium",
  "clap",
  "console_error_panic_hook",
+ "criterion",
  "enum_dispatch",
  "futures-util",
  "hex",

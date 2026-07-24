@@ -38,6 +38,7 @@
 use crate::engine::utils::MetricedError;
 use anyhow::anyhow;
 use kms_grpc::RequestId;
+use std::collections::hash_map;
 use std::fmt::{self};
 use std::sync::Weak;
 use std::{
@@ -464,51 +465,66 @@ impl<T> MetaStore<T> {
         &mut self,
         request_id: &RequestId,
     ) -> Result<MetaStorePermit<T>, MetaStoreError> {
+        // Fast path — store below capacity (always true for an unlimited store, and for a bounded store that has not
+        // yet filled).
+        //
+        // The capacity-full path below uses a two-probe form because eviction mutates `storage`, which cannot coexist
+        // with a held `VacantEntry`.
+        if self.storage.len() < self.capacity {
+            return match self.storage.entry(*request_id) {
+                hash_map::Entry::Occupied(_) => Err(MetaStoreError::AlreadyExists {
+                    req_id: *request_id,
+                }),
+                hash_map::Entry::Vacant(slot) => {
+                    let (entry, claim) = StoredEntry::new_pending();
+                    let permit = MetaStorePermit::new(*request_id, claim, self.reaper_tx.clone());
+                    slot.insert(entry);
+                    Ok(permit)
+                }
+            };
+        }
+
+        // Capacity-full path — must evict, which mutates `storage` on its own, so existence is checked up front (before
+        // evicting) and the insert happens at the end.
         if self.storage.contains_key(request_id) {
             return Err(MetaStoreError::AlreadyExists {
                 req_id: *request_id,
             });
         }
-        if self.storage.len() >= self.capacity {
-            if self.complete_queue.len() <= self.min_cache {
-                return Err(MetaStoreError::CapacityFull {
-                    req_id: *request_id,
-                });
-            } else {
-                // Evict the oldest completed entry that has no outstanding
-                // permit. A `Done` entry can be permit-held (via `reserve` /
-                // `lock_entry`); evicting it would pull storage out from under
-                // the holder, so we skip held entries (`strong_count > 1`).
-                let evict_pos = {
-                    let storage = &self.storage;
-                    self.complete_queue.iter().position(|id| {
-                        storage
-                            .get(id)
-                            .is_some_and(|e| e.status() == EntryStatus::Done && !e.is_permit_held())
-                    })
-                };
-                let Some(pos) = evict_pos else {
-                    // Every completed entry is currently reserved, so there is
-                    // nothing safe to evict; treat the store as full.
-                    return Err(MetaStoreError::CapacityFull {
-                        req_id: *request_id,
-                    });
-                };
-                let Some(old_request_id) = self.complete_queue.remove(pos) else {
-                    let msg =
-                        format!("complete_queue index {pos} vanished while inserting {request_id}");
-                    tracing::error!(msg);
-                    return Err(MetaStoreError::Invariant(msg));
-                };
-                if self.storage.remove(&old_request_id).is_none() {
-                    self.complete_queue.insert(pos, old_request_id);
-                    let msg = format!(
-                        "failed to remove old element {old_request_id} from storage while inserting {request_id}"
-                    );
-                    tracing::error!(msg);
-                    return Err(MetaStoreError::Invariant(msg));
-                }
-            }
+        if self.complete_queue.len() <= self.min_cache {
+            return Err(MetaStoreError::CapacityFull {
+                req_id: *request_id,
+            });
+        }
+        // Evict the oldest completed entry that has no outstanding permit. A `Done` entry can be permit-held (via
+        // `reserve` / `lock_entry`); evicting it would pull storage out from under the holder, so we skip held entries
+        // (`strong_count > 1`).
+        let evict_pos = {
+            let storage = &self.storage;
+            self.complete_queue.iter().position(|id| {
+                storage
+                    .get(id)
+                    .is_some_and(|e| e.status() == EntryStatus::Done && !e.is_permit_held())
+            })
+        };
+        let Some(pos) = evict_pos else {
+            // Every completed entry is currently reserved, so there is nothing safe to evict; treat the store as full.
+            return Err(MetaStoreError::CapacityFull {
+                req_id: *request_id,
+            });
+        };
+        let Some(old_request_id) = self.complete_queue.remove(pos) else {
+            let msg = format!("complete_queue index {pos} vanished while inserting {request_id}");
+            tracing::error!(msg);
+            return Err(MetaStoreError::Invariant(msg));
+        };
+        if self.storage.remove(&old_request_id).is_none() {
+            self.complete_queue.insert(pos, old_request_id);
+            let msg = format!(
+                "failed to remove old element {old_request_id} from storage while inserting {request_id}"
+            );
+            tracing::error!(msg);
+            return Err(MetaStoreError::Invariant(msg));
         }
         let (entry, claim) = StoredEntry::new_pending();
         let permit = MetaStorePermit::new(*request_id, claim, self.reaper_tx.clone());
@@ -566,6 +582,17 @@ impl<T> MetaStore<T> {
     fn update(
         &mut self,
         update: Result<T, String>,
+        permit: MetaStorePermit<T>,
+    ) -> Result<(), MetaStoreError> {
+        self.update_arc(update.map(Arc::new), permit)
+    }
+
+    /// Like [`update`](Self::update), but takes the value already wrapped in an
+    /// `Arc`. This lets the caller allocate *before* acquiring the store lock,
+    /// keeping the allocation out of the globally-serialized critical section.
+    fn update_arc(
+        &mut self,
+        update: Result<Arc<T>, String>,
         mut permit: MetaStorePermit<T>,
     ) -> Result<(), MetaStoreError> {
         // We own the outcome from here on, so a later drop must not reap.
@@ -578,7 +605,7 @@ impl<T> MetaStore<T> {
         if entry.status() != EntryStatus::Pending {
             return Err(MetaStoreError::CannotUpdate { req_id });
         }
-        entry.set_complete(update.map(Arc::new));
+        entry.set_complete(update);
         self.complete_queue.push_back(req_id);
         // `permit` (and its Arc<()>) dropped at end of scope.
         Ok(())
@@ -662,6 +689,30 @@ impl<T> MetaStore<T> {
         self.storage.get(request_id).map(EntryState::from)
     }
 
+    /// Remove one completed request while preserving the completion order.
+    fn remove_completed(&mut self, request_id: &RequestId) -> Result<(), MetaStoreError> {
+        if self.complete_queue.front() == Some(request_id) {
+            self.complete_queue.pop_front();
+            return Ok(());
+        }
+        if self.complete_queue.back() == Some(request_id) {
+            self.complete_queue.pop_back();
+            return Ok(());
+        }
+        let position = self
+            .complete_queue
+            .iter()
+            .position(|id| id == request_id)
+            .ok_or_else(|| {
+                let msg =
+                    format!("completed element {request_id} is missing from the completion queue");
+                tracing::error!(msg);
+                MetaStoreError::Invariant(msg)
+            })?;
+        let _ = self.complete_queue.remove(position);
+        Ok(())
+    }
+
     /// Mark an existing entry as deleted, regardless of whether it was Pending
     /// or Done. Consumes the permit. Returns the previous state. If the previous
     /// state was `Done`, the entry is also removed from the completion queue.
@@ -681,7 +732,7 @@ impl<T> MetaStore<T> {
         entry.set_deleted();
         self.deleted_set.insert(req_id);
         if was_done {
-            self.complete_queue.retain(|id| id != &req_id);
+            self.remove_completed(&req_id)?;
         }
         Ok(prev)
     }
@@ -722,7 +773,7 @@ impl<T> MetaStore<T> {
         entry.set_deleted();
         self.deleted_set.insert(*request_id);
         if was_done {
-            self.complete_queue.retain(|id| id != request_id);
+            self.remove_completed(request_id)?;
         }
         Ok(prev)
     }
@@ -795,7 +846,7 @@ impl<T> MetaStore<T> {
         // Reset to a fresh `Pending` (with a new, empty result channel): drop it
         // from the completion queue and install a new claim, then hand back a
         // permit (mirroring `insert`).
-        self.complete_queue.retain(|id| id != req_id);
+        self.remove_completed(req_id)?;
         let (entry, claim) = StoredEntry::new_pending();
         self.storage.insert(*req_id, entry);
         Ok(MetaStorePermit::new(*req_id, claim, self.reaper_tx.clone()))
@@ -835,11 +886,10 @@ impl<T> MetaStore<T> {
             .saturating_sub(self.deleted_set.len())
     }
 
-    /// Get successfully completed request IDs.
-    /// That is, requests that have been processed correctly.
-    /// This thus excludes request IDs that have been deleted, are pending, or have failed.
-    /// WARNING: This is a slow operation
-    pub(crate) fn get_successful_completed_request_ids(&self) -> Vec<RequestId> {
+    /// Iterate over successfully completed request IDs in completion order.
+    pub(crate) fn get_successful_completed_request_ids(
+        &self,
+    ) -> impl Iterator<Item = RequestId> + '_ {
         self.complete_queue
             .iter()
             .filter_map(|id| match self.storage.get(id) {
@@ -852,22 +902,18 @@ impl<T> MetaStore<T> {
                     None
                 }
             })
-            .collect()
     }
 
-    /// Get processing request IDs (not yet completed)
-    /// WARNING: This is a slow operation
-    pub(crate) fn get_processing_request_ids(&self) -> Vec<RequestId> {
+    /// Iterate over request IDs that are still processing.
+    pub(crate) fn get_processing_request_ids(&self) -> impl Iterator<Item = RequestId> + '_ {
         self.storage
             .iter()
             .filter(|(_, e)| e.status() == EntryStatus::Pending)
             .map(|(id, _)| *id)
-            .collect()
     }
 
-    /// Get failed request IDs (completed with errors)
-    /// WARNING: This is a slow operation
-    pub(crate) fn get_failed_request_ids(&self) -> Vec<RequestId> {
+    /// Iterate over failed request IDs in completion order.
+    pub(crate) fn get_failed_request_ids(&self) -> impl Iterator<Item = RequestId> + '_ {
         self.complete_queue
             .iter()
             .filter_map(|id| match self.storage.get(id) {
@@ -878,7 +924,6 @@ impl<T> MetaStore<T> {
                     None
                 }
             })
-            .collect()
     }
 
     /// Get deleted request IDs (requests that have been tombstoned).
@@ -1025,7 +1070,8 @@ pub(crate) async fn update_ok_req_in_meta_store<T>(
     request_metric: &'static str,
 ) -> bool {
     let req_id = permit.req_id;
-    match meta_store.write().await.update(Ok(result), permit) {
+    let result = Arc::new(result);
+    match meta_store.write().await.update_arc(Ok(result), permit) {
         Ok(()) => true,
         Err(e) => {
             MetricedError::handle_unreturnable_error(request_metric, Some(req_id), e);
@@ -1372,6 +1418,28 @@ mod tests {
     }
 
     #[test]
+    fn remove_completed_preserves_order_and_reports_missing_entries() {
+        let ids = [
+            derive_request_id("remove-front").unwrap(),
+            derive_request_id("remove-middle").unwrap(),
+            derive_request_id("remove-back").unwrap(),
+        ];
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
+        store.complete_queue.extend(ids);
+
+        store.remove_completed(&ids[1]).unwrap();
+        assert_eq!(store.complete_queue, VecDeque::from([ids[0], ids[2]]));
+        store.remove_completed(&ids[2]).unwrap();
+        store.remove_completed(&ids[0]).unwrap();
+        assert!(store.complete_queue.is_empty());
+
+        assert!(matches!(
+            store.remove_completed(&ids[0]),
+            Err(MetaStoreError::Invariant(_))
+        ));
+    }
+
+    #[test]
     fn sunshine() {
         let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
@@ -1570,12 +1638,12 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("lock-done-del").unwrap();
         insert_done_ok(&mut store, &id, "v");
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
         let permit = store.lock_entry(&id).unwrap();
         let prev = store.delete(permit).unwrap();
         assert!(matches!(prev, EntryState::Done(Ok(_))));
         assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
-        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 0);
     }
 
     #[test]
@@ -1611,14 +1679,14 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("try-del-done").unwrap();
         insert_done_ok(&mut store, &id, "payload");
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
         let prev = store.try_delete(&id).unwrap();
         match prev {
             EntryState::Done(Ok(arc)) => assert_eq!(arc.as_ref(), "payload"),
             other => panic!("expected Done(Ok), got {other}"),
         }
         assert!(matches!(store.retrieve(&id), Some(EntryState::Deleted)));
-        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 0);
     }
 
     #[test]
@@ -1629,10 +1697,10 @@ mod tests {
         let id = derive_request_id("reserve-fresh").unwrap();
         let permit = reserve(&mut store, &id).unwrap();
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
-        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 0);
         store.finalize(permit, "v1".to_string()).unwrap();
         assert_done_ok(&store, &id, &"v1".to_string());
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
     }
 
     #[test]
@@ -1647,7 +1715,7 @@ mod tests {
         assert_done_ok(&store, &id, &"v1".to_string());
         store.finalize(permit, "v2".to_string()).unwrap();
         assert_done_ok(&store, &id, &"v2".to_string());
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
     }
 
     #[test]
@@ -1706,7 +1774,7 @@ mod tests {
         let permit = reserve(&mut store, &id).unwrap();
         store.abort_reservation(permit);
         assert_done_ok(&store, &id, &"original".to_string());
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
         // Released: it can be reserved again afterwards.
         assert!(reserve(&mut store, &id).is_ok());
     }
@@ -1723,7 +1791,7 @@ mod tests {
         let permit = reserve(&mut store, &id).unwrap(); // adopts the orphan
         store.finalize(permit, "adopted".to_string()).unwrap();
         assert_done_ok(&store, &id, &"adopted".to_string());
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
     }
 
     #[test]
@@ -1825,14 +1893,14 @@ mod tests {
 
         assert_eq!(store.get_capacity(), usize::MAX);
         assert_eq!(store.get_total_count(), 2);
-        assert_eq!(store.get_successful_completed_request_ids().len(), 2);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 2);
         assert_eq!(store.get_processing_count(), 0);
         assert!(store.has_existed(&a));
         assert!(store.has_existed(&b));
         assert_done_ok(&store, &a, &"A".to_string());
         assert_done_ok(&store, &b, &"B".to_string());
 
-        let completed = store.get_successful_completed_request_ids();
+        let completed: Vec<_> = store.get_successful_completed_request_ids().collect();
         assert_eq!(completed.len(), 2);
         assert!(completed.contains(&a) && completed.contains(&b));
     }
@@ -1853,19 +1921,19 @@ mod tests {
         // Aggregate counts.
         assert_eq!(store.get_total_count(), 4);
         // Only the `ok` entry is a success; the `err` entry is excluded.
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
         assert_eq!(store.get_processing_count(), 2);
 
         // Successful vs processing partition (failures are not successes).
-        let completed = store.get_successful_completed_request_ids();
+        let completed: Vec<_> = store.get_successful_completed_request_ids().collect();
         assert_eq!(completed, vec![ok]);
 
-        let processing = store.get_processing_request_ids();
+        let processing: Vec<_> = store.get_processing_request_ids().collect();
         assert_eq!(processing.len(), 2);
         assert!(processing.contains(&pending1) && processing.contains(&pending2));
 
         // Failed entries are the Done(Err) subset of the completed set.
-        let failed = store.get_failed_request_ids();
+        let failed: Vec<_> = store.get_failed_request_ids().collect();
         assert_eq!(failed, vec![err]);
 
         // No deletions yet.
@@ -1886,7 +1954,7 @@ mod tests {
         assert_eq!(store.get_deleted_count(), 1);
         assert!(store.get_deleted_request_ids().any(|id| *id == gone));
         // The deleted entry leaves the completed queue; the survivor stays.
-        let completed = store.get_successful_completed_request_ids();
+        let completed: Vec<_> = store.get_successful_completed_request_ids().collect();
         assert_eq!(completed, vec![kept]);
     }
 
@@ -1904,7 +1972,7 @@ mod tests {
         // storage holds pending + done + tombstone = 3, but only the single
         // Pending entry counts as processing (the tombstone is excluded).
         assert_eq!(store.get_total_count(), 3);
-        assert_eq!(store.get_successful_completed_request_ids().len(), 1);
+        assert_eq!(store.get_successful_completed_request_ids().count(), 1);
         assert_eq!(store.get_processing_count(), 1);
 
         // Deleting the remaining Pending entry drops processing to zero, while the
@@ -1957,7 +2025,7 @@ mod tests {
                 .read()
                 .await
                 .get_successful_completed_request_ids()
-                .len(),
+                .count(),
             1
         );
 
@@ -1972,7 +2040,7 @@ mod tests {
                 .read()
                 .await
                 .get_successful_completed_request_ids()
-                .len(),
+                .count(),
             1
         );
 
@@ -1987,7 +2055,7 @@ mod tests {
                 .read()
                 .await
                 .get_successful_completed_request_ids()
-                .len(),
+                .count(),
             1
         );
     }
@@ -2026,7 +2094,7 @@ mod tests {
                 .read()
                 .await
                 .get_successful_completed_request_ids()
-                .len(),
+                .count(),
             1
         );
     }
@@ -2070,9 +2138,9 @@ mod tests {
         drop(permit); // abandoned: claim strong_count drops back to 1
         assert!(store.fail_if_orphaned(&id, "abandoned".to_string()));
         assert_done_err(&store, &id, "abandoned");
-        assert!(store.get_successful_completed_request_ids().is_empty());
+        assert_eq!(store.get_successful_completed_request_ids().count(), 0);
         assert_eq!(store.get_processing_count(), 0);
-        assert_eq!(store.get_failed_request_ids(), vec![id]);
+        assert_eq!(store.get_failed_request_ids().collect::<Vec<_>>(), vec![id]);
     }
 
     /// While a permit is still live the entry must not be reaped: this guards an
@@ -2199,15 +2267,15 @@ mod tests {
         let mut store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let id = derive_request_id("redo").unwrap();
         insert_done_err(&mut store, &id, "boom");
-        assert_eq!(store.get_failed_request_ids(), vec![id]);
+        assert_eq!(store.get_failed_request_ids().collect::<Vec<_>>(), vec![id]);
 
         let permit = store
             .redo_failed(&id)
             .expect("a failed entry should be retryable");
         // Back in flight: no longer completed/failed.
         assert!(matches!(store.retrieve(&id), Some(EntryState::Pending)));
-        assert_eq!(store.get_successful_completed_request_ids().len(), 0);
-        assert!(store.get_failed_request_ids().is_empty());
+        assert_eq!(store.get_successful_completed_request_ids().count(), 0);
+        assert_eq!(store.get_failed_request_ids().count(), 0);
 
         // The retry can now complete.
         store.update(Ok("recovered".to_string()), permit).unwrap();
