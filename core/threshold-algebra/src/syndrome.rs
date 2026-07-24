@@ -1,7 +1,5 @@
 use super::{
-    matrix::compute_powers_list,
     poly::{Poly, deflate_root, vanishing_poly},
-    sharing::shamir::ShamirFieldPoly,
     structure_traits::{Field, Ring},
 };
 
