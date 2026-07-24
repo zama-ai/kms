@@ -230,6 +230,12 @@ impl HasSigningScheme for PrivateSigKey {
     }
 }
 
+// Marker only: the `sk: WrappedSigningKey` field is `ZeroizeOnDrop`, so dropping
+// a `PrivateSigKey` wipes its key material. Not derived because that would
+// generate a `Drop` impl, which conflicts with the other macros on this type
+// (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
+impl ZeroizeOnDrop for PrivateSigKey {}
+
 #[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);

@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::Display;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Errors produced by the multi-scheme signing API.
 #[derive(Debug, Error)]
@@ -216,6 +217,39 @@ impl UnifiedPrivateSigKey {
     }
 }
 
+impl Zeroize for UnifiedPrivateSigKey {
+    fn zeroize(&mut self) {
+        match self {
+            // `PrivateSigKey` wipes its inner key material in place.
+            UnifiedPrivateSigKey::Ecdsa256k1(sk) => sk.zeroize(),
+            // The ed25519 and ML-DSA signing keys expose no in-place `zeroize`;
+            // they only wipe through their zeroizing `Drop`. Overwriting the key
+            // with a fresh dummy drops — and thereby wipes — the real secret in
+            // place.
+            UnifiedPrivateSigKey::Ed25519(sk) => {
+                *sk = eddsa::keygen_from_seed(&[0u8; eddsa::SEED_LEN])
+            }
+            UnifiedPrivateSigKey::MlDsa44(sk) => {
+                **sk = mldsa::keygen_from_seed::<MlDsa44>(&[0u8; mldsa::SEED_LEN])
+            }
+            UnifiedPrivateSigKey::MlDsa65(sk) => {
+                **sk = mldsa::keygen_from_seed::<MlDsa65>(&[0u8; mldsa::SEED_LEN])
+            }
+            UnifiedPrivateSigKey::MlDsa87(sk) => {
+                **sk = mldsa::keygen_from_seed::<MlDsa87>(&[0u8; mldsa::SEED_LEN])
+            }
+        }
+    }
+}
+
+// Marker only, not derived: the boxed ML-DSA keys implement neither
+// `Zeroize` nor `ZeroizeOnDrop` (the `zeroize` crate covers `Box<[T]>`, not
+// `Box<T>`), so the derive macro cannot prove the bound. The invariant holds
+// regardless: every variant's key material wipes itself when dropped — ECDSA
+// via its `WrappedSigningKey: ZeroizeOnDrop` field, ed25519 and ML-DSA via
+// their own zeroizing `Drop` — so dropping the enum zeroizes the secret.
+impl ZeroizeOnDrop for UnifiedPrivateSigKey {}
+
 /// A verification key tagged with the scheme it belongs to.
 #[allow(clippy::large_enum_variant)]
 pub enum UnifiedPublicSigKey {
@@ -354,6 +388,21 @@ mod tests {
         assert!(
             unified_verify(DSEP, msg, &mldsa_sig, &ecdsa_key.verifying_key().unwrap()).is_err()
         );
+    }
+
+    /// `zeroize` wipes the key material of every scheme: signing after it
+    /// produces a different signature than before (the secret has changed).
+    #[test]
+    fn zeroize_wipes_every_scheme() {
+        let mut rng = AesRng::seed_from_u64(11);
+        let msg = b"zeroize must overwrite the signing key";
+        for mut sk in all_private_keys(&mut rng) {
+            let scheme = sk.signing_scheme_type();
+            let before = unified_sign(DSEP, msg, &sk).unwrap();
+            sk.zeroize();
+            let after = unified_sign(DSEP, msg, &sk).unwrap();
+            assert_ne!(before, after, "{scheme:?} key was not wiped by zeroize");
+        }
     }
 
     /// The ECDSA arm must produce the same bytes as the legacy `internal_sign`.
