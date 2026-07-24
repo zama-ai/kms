@@ -328,7 +328,6 @@ impl Signature {
     }
 }
 
-
 /// Compute the signature on message based on the server's signing key.
 ///
 /// Returns an `Ecdsa256k1`-tagged [`Signature`]; concretely r || s.

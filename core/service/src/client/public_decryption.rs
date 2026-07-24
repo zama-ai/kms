@@ -109,7 +109,8 @@ impl Client {
                 cur_resp.payload.to_owned(),
                 "No payload in current response!".to_string(),
             )?;
-            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
+            let sig =
+                Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
 
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys

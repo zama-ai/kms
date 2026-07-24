@@ -676,7 +676,11 @@ fn check_format_and_signature(
     unsigncryption_key
         .sender_verf_key
         .pk()
-        .verify(&msg_signed[..], &sig.ecdsa_sig().map_err(|e| CryptographyError::VerificationError(e.to_string()))?)
+        .verify(
+            &msg_signed[..],
+            &sig.ecdsa_sig()
+                .map_err(|e| CryptographyError::VerificationError(e.to_string()))?,
+        )
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 

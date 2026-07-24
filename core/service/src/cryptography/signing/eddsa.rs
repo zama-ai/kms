@@ -38,7 +38,10 @@ impl SigningScheme for Ed25519 {
         vk: &Ed25519VerifyingKey,
     ) -> anyhow::Result<()> {
         let bytes: [u8; SIG_LEN] = sig.try_into().map_err(|_| {
-            anyhow::anyhow!("expected {SIG_LEN}-byte ed25519 signature, got {}", sig.len())
+            anyhow::anyhow!(
+                "expected {SIG_LEN}-byte ed25519 signature, got {}",
+                sig.len()
+            )
         })?;
         let ed_sig = Ed25519Signature::from_bytes(&bytes);
         let signed = [&dsep[..], msg].concat();
