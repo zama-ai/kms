@@ -49,3 +49,47 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
         Ok(sk.verifying_key())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aes_prng::AesRng;
+    use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
+    use rand::{RngCore, SeedableRng};
+
+    const DSEP: &DomainSep = b"MLDSATST";
+
+    fn seed<R: RngCore>(rng: &mut R) -> [u8; SEED_LEN] {
+        let mut s = [0u8; SEED_LEN];
+        rng.fill_bytes(&mut s);
+        s
+    }
+
+    /// Round-trips, and rejects a tampered message, a wrong domain separator,
+    /// a tampered signature, and a malformed (too short) signature.
+    fn exercise<P: MlDsaParams>(seed_u64: u64) {
+        let mut rng = AesRng::seed_from_u64(seed_u64);
+        let sk = keygen_from_seed::<P>(&seed(&mut rng));
+        let vk = MlDsa::<P>::verifying_key(&sk).unwrap();
+
+        let sig = MlDsa::<P>::sign(DSEP, b"hello", &sk).unwrap();
+        MlDsa::<P>::verify(DSEP, b"hello", &sig, &vk).unwrap();
+
+        assert!(MlDsa::<P>::verify(DSEP, b"HELLO", &sig, &vk).is_err());
+        assert!(MlDsa::<P>::verify(b"OTHERDSP", b"hello", &sig, &vk).is_err());
+
+        let mut bad = sig.clone();
+        bad[0] ^= 0x01;
+        assert!(MlDsa::<P>::verify(DSEP, b"hello", &bad, &vk).is_err());
+
+        let err = MlDsa::<P>::verify(DSEP, b"hello", &[0u8; 10], &vk).unwrap_err();
+        assert!(err.to_string().contains("decode ML-DSA signature"));
+    }
+
+    #[test]
+    fn all_param_sets() {
+        exercise::<MlDsa44>(1);
+        exercise::<MlDsa65>(2);
+        exercise::<MlDsa87>(3);
+    }
+}

@@ -93,7 +93,13 @@ The service crate is the main surface area. Key subdirectories under
   [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
-  chain verification).
+  chain verification). Signing lives under
+  [cryptography/signing/](core/service/src/cryptography/signing/): a
+  scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
+  (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
+  ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
+  `unified_sign`/`unified_verify` entry points. The historic
+  `cryptography::signatures` path is now a re-export facade.
 - [client/](core/service/src/client/) and
   [testing/](core/service/src/testing/) — client-side helpers and
   test-only wiring.

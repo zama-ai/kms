@@ -61,17 +61,9 @@ impl TryFrom<i32> for SigningSchemeType {
     type Error = anyhow::Error;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(SigningSchemeType::Ecdsa256k1),
-            1 => Ok(SigningSchemeType::Ed25519),
-            2 => Ok(SigningSchemeType::MlDsa44),
-            3 => Ok(SigningSchemeType::MlDsa65),
-            4 => Ok(SigningSchemeType::MlDsa87),
-            _ => Err(anyhow::anyhow!(
-                "Unsupported SigningSchemeType: {:?}",
-                value
-            )),
-        }
+        kms_grpc::kms::v1::SigningSchemeType::try_from(value)
+            .map(SigningSchemeType::from)
+            .map_err(|_| anyhow::anyhow!("Unsupported SigningSchemeType: {:?}", value))
     }
 }
 

@@ -282,7 +282,7 @@ impl Visitor<'_> for PrivateSigKeyVisitor {
     type Value = WrappedSigningKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("A public verification key for ECDSA signatures using secp256k1")
+        formatter.write_str("A private signing key for ECDSA signatures using secp256k1")
     }
 
     fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
