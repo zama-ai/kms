@@ -593,18 +593,27 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
 }
 
 /// Build the vanishing polynomial `V(Z) = ∏_j (Z - points[j])` (monic, degree `points.len()`).
+/// We do so iteratively, starting from the low to the high coefficients, so that the leading coefficient is always 1 (monic).
+/// Then for each subsequent point, we multiply the running product by `(Z - alpha)`.
+/// That is, we use the recursion for coefficient of degree k: c'_k = c_{k−1} − alpha * c_k,
+/// where c'_k is the new coefficient of degree k after multiplying by `(Z - alpha)`.
+/// Concretely we observe that the coefficient c_{k−1} comes from the Z * part and the −alpha * c_k from the −alpha * part.
 pub(crate) fn vanishing_poly<F: Ring>(points: &[F]) -> Poly<F> {
     // Master poly V(Z) = ∏_j (Z - alpha_j), low-to-high, monic, degree n.
     let mut coefs = Vec::with_capacity(points.len() + 1);
+    // The leading coefficient is always 1 (monic), so we can start with that.
     coefs.push(F::ONE);
+    // Proceed iteratively, multiplying the running product by (Z - alpha) for each point.
     for &alpha in points {
-        coefs.push(F::ONE); // leading coef is always 1 (monic), no multiply needed
+        // Add the next leading coefficient (which is again 1) to start with
+        coefs.push(F::ONE);
         let m = coefs.len() - 1;
-        // Multiply the running product by (Z − alpha): coefₖ <- coefₖ₋₁ − alpha·coefₖ.
-        // Walk high to low so coefₖ₋₁ still holds its pre-update value when we read it.
+        // Multiply the running product by (Z − alpha): coef[k] <- coef[k-1] − alpha * coef[k].
+        // Walk high to low so coef[k-1] still holds its pre-update value when we read it, thus allow in-place updates.
         for k in (1..m).rev() {
             coefs[k] = coefs[k - 1] - alpha * coefs[k];
         }
+        // Handle the constant term separately since it has no coefₖ₋₁ to read from.
         coefs[0] = -(alpha * coefs[0]);
     }
     // coefs is canonical because it's monic and the leading coef is F::ONE
@@ -615,6 +624,10 @@ pub(crate) fn vanishing_poly<F: Ring>(points: &[F]) -> Poly<F> {
 ///
 /// `root` must be a root of `v` (exact, zero-remainder division); `v` must be canonical, so the quotient has degree
 /// WARNING: `deg(v) - 1`. `v` must have degree at least 1.
+///
+/// The computation is iterative and in-place and computes q(Z) = v(Z) / (Z - root) by synthetic division.
+/// More concretely q(Z) is computed incrementally, from most significant, to least significant coefficient,
+/// as q_{k−1} = v_k + root * q_k, where v_k, q_k are the k-th coefficients of v(Z) and q(Z) respectively.
 pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
     // This is provably the case for the current 2 callsites.
     debug_assert!(
@@ -622,17 +635,17 @@ pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
         "deflate_root requires deg(v) >= 1, got {:?}",
         v.coefs.len()
     );
-    // Each L_i = V / (Z - alpha_i) via synthetic division (deflation).
-    let vc = &v.coefs;
+    let vc = &v.coefs; // The coefficients of v(Z)
     let deg = vc.len() - 1;
-    let mut coefs = vec![F::ZERO; deg];
-    coefs[deg - 1] = vc[deg]; // leading coef drops straight down since the result, `coef`, is one degree lower than the input
-    for k in (0..deg - 1).rev() { // iterate from highest coefficients to lowest in the incremental result
-        coefs[k] = vc[k + 1] + root * coefs[k + 1];
+    let mut qc = vec![F::ZERO; deg]; // The coefficients of q(Z)
+    qc[deg - 1] = vc[deg]; // leading coefficient drops straight down since the result, q(Z), is one degree lower than the input v(Z)
+    for k in (0..deg - 1).rev() {
+        // iterate from highest coefficients to lowest in the incremental result since qc[k+1] has already been fully computed
+        qc[k] = vc[k + 1] + root * qc[k + 1]; // I.e. q_{k−1} = v_k + root * q_k  
     }
-    debug_assert!(vc[0] + root * coefs[0] == F::ZERO, "remainder must vanish");
+    debug_assert!(vc[0] + root * qc[0] == F::ZERO, "remainder must vanish");
     // Invariant: coefs is canonical because the leading coef == vc[deg] (nonzero)
-    Poly::from_coefs_unchecked(coefs)
+    Poly::from_coefs_unchecked(qc)
 }
 
 /// Compute the Lagrange basis polynomials for the given points: `basis_i(Z) = L_i(Z) / L_i(x_i)` where `L_i = V / (Z -
