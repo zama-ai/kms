@@ -79,21 +79,24 @@ where
 
         let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)?;
-        anyhow::ensure!(
-            !require_pcr_allowlist || !new_context.pcr_values.is_empty(),
-            "PCR values are required for context {} in enclave deployments",
-            new_context.context_id()
-        );
         // verify new context
-        let my_role = self.extract_my_role_from_context(&new_context).await?;
+        let my_role = self
+            .verify_context_and_extract_my_role(&new_context, require_pcr_allowlist)
+            .await?;
 
         Ok((my_role, new_context))
     }
 
-    async fn extract_my_role_from_context(
+    async fn verify_context_and_extract_my_role(
         &self,
         context: &ContextInfo,
+        require_pcr_allowlist: bool,
     ) -> anyhow::Result<Option<Role>> {
+        anyhow::ensure!(
+            !require_pcr_allowlist || !context.pcr_values.is_empty(),
+            "PCR values are required for context {} in enclave deployments",
+            context.context_id()
+        );
         let storage_ref = self.crypto_storage.private_storage.clone();
         let guarded_priv_storage = storage_ref.lock().await;
         context.verify(&(*guarded_priv_storage)).await
@@ -956,7 +959,11 @@ where
 
         let mut loaded_count = 0;
         for context in &contexts {
-            let my_role = match self.inner.extract_my_role_from_context(context).await {
+            let my_role = match self
+                .inner
+                .verify_context_and_extract_my_role(context, self.require_pcr_allowlist)
+                .await
+            {
                 Ok(role) => role,
                 Err(e) => {
                     tracing::warn!(
@@ -979,7 +986,7 @@ where
         }
         if loaded_count == 0 {
             tracing::warn!(
-                "Failed to load any of the MPC contexts from storage. Server is likely in recovery mode."
+                "Failed to load any MPC contexts from storage. Server may be in recovery mode or all stored contexts failed validation."
             );
         } else if loaded_count < contexts.len() {
             tracing::warn!(
@@ -1798,6 +1805,97 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kms_context_load_requires_pcr_allowlist_for_enclave_deployment() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let context_without_pcr_id = ContextId::from_bytes([32u8; 32]);
+        let context_with_pcr_id = ContextId::from_bytes([33u8; 32]);
+        let make_context = |context_id, pcr_values| ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                signer_address: Some(SignerAddress(verification_key.address())),
+                external_url: "https://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values,
+        };
+
+        // Persist both contexts without enforcing enclave PCR policy, as could happen before an
+        // existing deployment enables automatic attested TLS.
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                MetaStore::new(100, 10),
+                session_maker,
+                false,
+            );
+            let pcr_values = vec![threshold_networking::tls::ReleasePCRValues {
+                pcr0: vec![0u8; 48],
+                pcr1: vec![1u8; 48],
+                pcr2: vec![2u8; 48],
+            }];
+            for context in [
+                make_context(context_without_pcr_id, vec![]),
+                make_context(context_with_pcr_id, pcr_values),
+            ] {
+                let request = Request::new(NewMpcContextRequest {
+                    new_context: Some(context.try_into().unwrap()),
+                });
+                context_manager.new_mpc_context(request).await.unwrap();
+            }
+        }
+
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            MetaStore::new(100, 10),
+            session_maker,
+            true,
+        );
+        context_manager
+            .load_mpc_context_from_storage()
+            .await
+            .unwrap();
+
+        assert_eq!(context_manager.session_maker.context_count().await, 1);
+        assert!(
+            !context_manager
+                .session_maker
+                .context_exists(&context_without_pcr_id)
+                .await
+        );
+        assert!(
+            context_manager
+                .session_maker
+                .context_exists(&context_with_pcr_id)
+                .await
+        );
+
+        let guarded_priv_storage = crypto_storage.private_storage.lock().await;
+        for context_id in [context_without_pcr_id, context_with_pcr_id] {
+            read_context_at_id(&*guarded_priv_storage, &context_id)
+                .await
+                .expect("loading must not delete stored contexts");
         }
     }
 

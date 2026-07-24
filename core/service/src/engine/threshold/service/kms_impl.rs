@@ -525,7 +525,7 @@ where
     PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    let require_pcr_allowlist = config.requires_pcr_allowlist_for_new_context();
+    let require_pcr_allowlist = config.requires_pcr_allowlist();
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;

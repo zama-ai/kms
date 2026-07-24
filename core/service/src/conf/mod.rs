@@ -48,8 +48,8 @@ pub struct CoreConfig {
 }
 
 impl CoreConfig {
-    /// Whether newly submitted MPC contexts must contain trusted PCR values.
-    pub(crate) fn requires_pcr_allowlist_for_new_context(&self) -> bool {
+    /// Whether MPC contexts must contain trusted PCR values.
+    pub(crate) fn requires_pcr_allowlist(&self) -> bool {
         let uses_auto_tls = self
             .threshold
             .as_ref()
@@ -539,9 +539,9 @@ mod tests {
     }
 
     #[test]
-    fn test_requires_pcr_allowlist_for_new_context() {
+    fn test_requires_pcr_allowlist() {
         let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
-        assert!(!core_config.requires_pcr_allowlist_for_new_context());
+        assert!(!core_config.requires_pcr_allowlist());
 
         core_config.threshold.as_mut().unwrap().tls = Some(TlsConf::Auto {
             eif_signing_cert: None,
@@ -550,12 +550,12 @@ mod tests {
             renew_slack_after_expiration: None,
             renew_fail_retry_timeout: None,
         });
-        assert!(core_config.requires_pcr_allowlist_for_new_context());
+        assert!(core_config.requires_pcr_allowlist());
 
         #[cfg(feature = "insecure")]
         {
             core_config.mock_enclave = Some(true);
-            assert!(!core_config.requires_pcr_allowlist_for_new_context());
+            assert!(!core_config.requires_pcr_allowlist());
         }
     }
 
