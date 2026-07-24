@@ -88,6 +88,9 @@ serde_json.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
+# pid-liveness check for the startup sweep of orphaned partial-write files in
+# vault/storage; already a production dependency via `observability`.
+sysinfo = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -138,7 +141,6 @@ proptest.workspace = true
 rstest.workspace = true
 serde = { workspace = true, features = ["derive"] }
 syn = { workspace = true }
-sysinfo.workspace = true
 tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
@@ -162,6 +164,7 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
+    "dep:sysinfo",
     "dep:tempfile",
     "dep:test-utils",
     "dep:thread-handles",

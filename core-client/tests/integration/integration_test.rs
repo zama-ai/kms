@@ -10,6 +10,7 @@ use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
+use kms_lib::conf::{ContextEpochAssociation, MigrationConfig};
 use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT};
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
@@ -156,6 +157,12 @@ fn build_test_core_config(
         }),
         internal_config: None,
         mock_enclave: Some(true),
+        migration: Some(MigrationConfig {
+            context_associations: vec![ContextEpochAssociation {
+                context_id: DEFAULT_MPC_CONTEXT.to_string(),
+                epoch_ids: vec![DEFAULT_EPOCH_ID.to_string()],
+            }],
+        }),
     }
 }
 

@@ -41,8 +41,45 @@ pub struct CoreConfig {
     pub threshold: Option<ThresholdPartyConf>,
     #[validate(nested)]
     pub internal_config: Option<InternalConfig>,
+    #[validate(nested)]
+    pub migration: Option<MigrationConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+/// One-time migration input associating existing epochs with the context they belong to.
+///
+/// Before the epoch↔context association existed, epoch data was persisted without a context
+/// reference. Upgrading such a deployment requires attaching each legacy epoch to its owning
+/// context. This mapping supplies that information to the migration step in
+/// [`crate::engine::migration`]. It is consumed once and, because the migration is idempotent,
+/// becomes a no-op on subsequent startups.
+///
+/// IDs are hex-encoded strings (with or without a `0x` prefix); the migration code parses them
+/// into [`kms_grpc::identifiers::ContextId`] / [`kms_grpc::identifiers::EpochId`].
+///
+/// Should be removed in version 0.16.x or above
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationConfig {
+    /// One entry per context, each listing the epochs that belong to that context.
+    #[serde(default)]
+    #[validate(nested)]
+    pub context_associations: Vec<ContextEpochAssociation>,
+}
+
+/// A single context together with the epochs associated with it.
+///
+/// Each epoch is associated with exactly one context, so a given epoch ID must not appear under
+/// more than one [`ContextEpochAssociation`].
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ContextEpochAssociation {
+    /// Hex-encoded context ID that owns `epoch_ids`.
+    #[validate(length(min = 1))]
+    pub context_id: String,
+    /// Hex-encoded epoch IDs belonging to `context_id`.
+    pub epoch_ids: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
