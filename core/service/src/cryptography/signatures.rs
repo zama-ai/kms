@@ -8,7 +8,7 @@
 //! (and the `core-client` / WASM / backward-compatibility consumers) are
 //! unaffected. Prefer the `signing` paths in new code.
 
-// TODO#(3078) this should be done before finishing 3078, but since things might change in the rest of the sub-issues wait until the last sub issue of 3078 to do so.
+// TODO(#3078): Do this before finishing #3078, but wait until the last sub-issue since the signing surface may still change.
 pub use crate::cryptography::signing::ecdsa::{
     ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PrivateSigKeyVersions, PublicSigKey,
     PublicSigKeyVersions, SIG_SIZE, compute_eip712_signature, gen_sig_keys,
