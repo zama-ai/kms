@@ -1,6 +1,9 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
-    poly::{BitWiseEval, Poly, gao_decoding, gao_decoding_with_field_hints, lagrange_polynomials},
+    poly::{
+        BitWiseEval, Poly, gao_decoding, gao_decoding_with_field_hints, lagrange_polynomials,
+        vanishing_poly,
+    },
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
@@ -80,20 +83,12 @@ impl<F: Field> FieldHints<F> {
         } else {
             lagrange_polynomials(&embedded_points)
         };
-        let vanishing_poly = Self::compute_vanishing_poly(&embedded_points);
+        let vanishing_poly = vanishing_poly(&embedded_points);
         Ok(Self {
             embedded_points,
             lagrange_polys,
             vanishing_poly,
         })
-    }
-
-    fn compute_vanishing_poly(points: &[F]) -> Poly<F> {
-        let mut g = Poly::one();
-        for xi in points.iter() {
-            g = g * Poly::from_coefs(vec![-*xi, F::ONE]);
-        }
-        g
     }
 }
 
