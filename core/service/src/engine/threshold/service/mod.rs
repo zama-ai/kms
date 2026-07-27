@@ -17,6 +17,10 @@ pub use kms_impl::*;
 // Module components
 mod crs_generator;
 pub(crate) mod epoch_manager;
+// Re-exported so the epoch data type is reachable outside the crate (e.g. the
+// backward-compatibility generators and tests) without exposing the rest of the
+// epoch manager internals.
+pub use epoch_manager::EpochData;
 //mod initiator;
 mod key_generator;
 mod preprocessor;

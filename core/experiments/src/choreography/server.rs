@@ -2,7 +2,7 @@ use crate::conf::party::PartyConf;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
+    structure_traits::{Derive, ErrorCorrect, Invert, Solve},
 };
 use observability::telemetry::make_span;
 use std::sync::Arc;
@@ -30,8 +30,8 @@ pub async fn run<const EXTENSION_DEGREE: usize>(
     routing_helper: impl ChoreoRoutingHelper<EXTENSION_DEGREE>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
     let my_role: Role = settings.protocol().host().into();
 

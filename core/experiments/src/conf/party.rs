@@ -338,32 +338,36 @@ mod tests {
         assert!(r.is_err());
     }
 
-    // Sets process-wide env vars; safe under nextest because each test runs
-    // in its own process, so the mutations are not visible to siblings.
+    // Sets process-wide env vars. These mutations are visible to any sibling
+    // test running in the same process, and `init_conf` layers env vars on top
+    // of file config, so they would override the values the file-based tests
+    // (e.g. `test_party_conf_no_peers`) load. To keep this test isolated
+    // regardless of the test runner's process model, it uses a dedicated
+    // `DDECENV` prefix that no other test reads from.
     #[test]
     fn test_party_conf_with_env() {
         unsafe {
-            env::set_var("DDEC__PROTOCOL__HOST__ADDRESS", "p3");
-            env::set_var("DDEC__PROTOCOL__HOST__PORT", "50000");
-            env::set_var("DDEC__PROTOCOL__HOST__ID", "3");
-            env::set_var("DDEC__PROTOCOL__HOST__CHOREOPORT", "60000");
-            env::set_var("DDEC__CERTPATHS__CERT", "/path/to/cert");
-            env::set_var("DDEC__CERTPATHS__KEY", "/path/to/key");
-            env::set_var("DDEC__CERTPATHS__CALIST", "/path/one,/path/two");
-            env::set_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
-            env::set_var("DDEC__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
+            env::set_var("DDECENV__PROTOCOL__HOST__ADDRESS", "p3");
+            env::set_var("DDECENV__PROTOCOL__HOST__PORT", "50000");
+            env::set_var("DDECENV__PROTOCOL__HOST__ID", "3");
+            env::set_var("DDECENV__PROTOCOL__HOST__CHOREOPORT", "60000");
+            env::set_var("DDECENV__CERTPATHS__CERT", "/path/to/cert");
+            env::set_var("DDECENV__CERTPATHS__KEY", "/path/to/key");
+            env::set_var("DDECENV__CERTPATHS__CALIST", "/path/one,/path/two");
+            env::set_var("DDECENV__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
+            env::set_var("DDECENV__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
 
-            env::set_var("DDEC__NET_CONF__MESSAGE_LIMIT", "60");
-            env::set_var("DDEC__NET_CONF__MULTIPLIER", "2.2");
-            env::set_var("DDEC__NET_CONF__MAX_INTERVAL", "4");
-            env::set_var("DDEC__NET_CONF__MAX_ELAPSED_TIME", "200");
-            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT", "20");
-            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK", "200");
-            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS", "2300");
-            env::set_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE", "3258");
+            env::set_var("DDECENV__NET_CONF__MESSAGE_LIMIT", "60");
+            env::set_var("DDECENV__NET_CONF__MULTIPLIER", "2.2");
+            env::set_var("DDECENV__NET_CONF__MAX_INTERVAL", "4");
+            env::set_var("DDECENV__NET_CONF__MAX_ELAPSED_TIME", "200");
+            env::set_var("DDECENV__NET_CONF__NETWORK_TIMEOUT", "20");
+            env::set_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK", "200");
+            env::set_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK_SNS", "2300");
+            env::set_var("DDECENV__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE", "3258");
         }
         let party_conf: PartyConf = Settings::builder()
-            .env_prefix("DDEC")
+            .env_prefix("DDECENV")
             .build()
             .init_conf()
             .unwrap();
@@ -390,24 +394,24 @@ mod tests {
         );
 
         unsafe {
-            env::remove_var("DDEC__PROTOCOL__HOST__ADDRESS");
-            env::remove_var("DDEC__PROTOCOL__HOST__PORT");
-            env::remove_var("DDEC__PROTOCOL__HOST__ID");
-            env::remove_var("DDEC__PROTOCOL__HOST__CHOREOPORT");
-            env::remove_var("DDEC__CERTPATHS__CERT");
-            env::remove_var("DDEC__CERTPATHS__KEY");
-            env::remove_var("DDEC__CERTPATHS__CALIST");
-            env::remove_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME");
-            env::remove_var("DDEC__TELEMETRY__TRACING_ENDPOINT");
+            env::remove_var("DDECENV__PROTOCOL__HOST__ADDRESS");
+            env::remove_var("DDECENV__PROTOCOL__HOST__PORT");
+            env::remove_var("DDECENV__PROTOCOL__HOST__ID");
+            env::remove_var("DDECENV__PROTOCOL__HOST__CHOREOPORT");
+            env::remove_var("DDECENV__CERTPATHS__CERT");
+            env::remove_var("DDECENV__CERTPATHS__KEY");
+            env::remove_var("DDECENV__CERTPATHS__CALIST");
+            env::remove_var("DDECENV__TELEMETRY__TRACING_SERVICE_NAME");
+            env::remove_var("DDECENV__TELEMETRY__TRACING_ENDPOINT");
 
-            env::remove_var("DDEC__NET_CONF__MESSAGE_LIMIT");
-            env::remove_var("DDEC__NET_CONF__MULTIPLIER");
-            env::remove_var("DDEC__NET_CONF__MAX_INTERVAL");
-            env::remove_var("DDEC__NET_CONF__MAX_ELAPSED_TIME");
-            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT");
-            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK");
-            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
-            env::remove_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
+            env::remove_var("DDECENV__NET_CONF__MESSAGE_LIMIT");
+            env::remove_var("DDECENV__NET_CONF__MULTIPLIER");
+            env::remove_var("DDECENV__NET_CONF__MAX_INTERVAL");
+            env::remove_var("DDECENV__NET_CONF__MAX_ELAPSED_TIME");
+            env::remove_var("DDECENV__NET_CONF__NETWORK_TIMEOUT");
+            env::remove_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK");
+            env::remove_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
+            env::remove_var("DDECENV__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
         }
     }
 }

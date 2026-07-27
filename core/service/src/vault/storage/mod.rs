@@ -474,7 +474,7 @@ pub async fn store_context_at_id<S: Storage>(
 ) -> anyhow::Result<()> {
     store_versioned_at_request_id(
         storage,
-        &(*context_id).into(),
+        &context_id.into(),
         context_info,
         &PrivDataType::ContextInfo.to_string(),
     )
@@ -489,7 +489,7 @@ pub async fn read_context_at_id<S: StorageReader>(
 ) -> anyhow::Result<context::ContextInfo> {
     read_versioned_at_request_id(
         storage,
-        &(*context_id).into(),
+        &context_id.into(),
         &PrivDataType::ContextInfo.to_string(),
     )
     .await
@@ -497,11 +497,11 @@ pub async fn read_context_at_id<S: StorageReader>(
 
 pub async fn delete_context_at_id<S: Storage>(
     storage: &mut S,
-    request_id: &ContextId,
+    context_id: &ContextId,
 ) -> anyhow::Result<()> {
     delete_at_request_id(
         storage,
-        &(*request_id).into(),
+        &context_id.into(),
         &PrivDataType::ContextInfo.to_string(),
     )
     .await

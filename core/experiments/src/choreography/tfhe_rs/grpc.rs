@@ -20,7 +20,9 @@ use crate::allocator::MEM_ALLOCATOR;
 use aes_prng::AesRng;
 use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
-use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
+use algebra::structure_traits::{
+    Derive, ErrorCorrect, FromU128, Invert, QuotientMaximalIdeal, Ring, Solve,
+};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
@@ -330,8 +332,10 @@ impl<
     >
 where
     // Ring requirements for both Z64 and Z128 polynomials
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
@@ -554,8 +558,10 @@ impl<
     >
 where
     // Ring requirements for both Z64 and Z128 polynomials
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,

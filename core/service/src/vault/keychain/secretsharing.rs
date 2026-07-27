@@ -226,6 +226,7 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             PrivDataType::PrssSetup => unwrapped_dec_key
                 .decrypt(&backup_ct.ciphertext)
                 .map_err(|e| anyhow::anyhow!("Could not decrypt backed up PRSS setup legacy {e}")),
+            #[expect(deprecated)]
             PrivDataType::PrssSetupCombined => unwrapped_dec_key
                 .decrypt(&backup_ct.ciphertext)
                 .map_err(|e| {
@@ -238,6 +239,13 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
                         anyhow::anyhow!(
                             "Could not decrypt backed up secret shared context info {e}"
                         )
+                    })
+            }
+            PrivDataType::EpochData => {
+                unwrapped_dec_key
+                    .decrypt(&backup_ct.ciphertext)
+                    .map_err(|e| {
+                        anyhow::anyhow!("Could not decrypt backed up secret shared epoch data {e}")
                     })
             }
         }

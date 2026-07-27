@@ -251,7 +251,7 @@ impl std::str::FromStr for PubDataType {
 }
 
 impl fmt::Display for PubDataType {
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PubDataType::PublicKey => write!(f, "PublicKey"),
@@ -278,7 +278,8 @@ impl Default for PubDataType {
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrivDataTypeVersions {
     V0(PrivDataTypeV0),
-    V1(PrivDataType),
+    V1(PrivDataTypeV1),
+    V2(PrivDataType),
 }
 
 /// PrivDataType
@@ -300,7 +301,25 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     #[deprecated(
-        note = "Use PrssSetupCombined instead, but this is still because we need to read legacy data"
+        note = "Use EpochData instead, but this is still there to avoid semantic change in the storage format"
+    )]
+    PrssSetup,
+    #[deprecated(
+        note = "Use EpochData instead, but this is still there because we need to read legacy data"
+    )]
+    PrssSetupCombined,
+    ContextInfo,
+    EpochData,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
+pub enum PrivDataTypeV1 {
+    SigningKey,
+    FheKeyInfo, // Only for the threshold case
+    CrsInfo,
+    FhePrivateKey, // Only used for the centralized case
+    #[deprecated(
+        note = "Use PrssSetupCombined instead, but this is still there to avoid semantic change in the storage format"
     )]
     PrssSetup,
     PrssSetupCombined,
@@ -317,16 +336,32 @@ pub enum PrivDataTypeV0 {
     ContextInfo, // MPC context information
 }
 
-impl Upgrade<PrivDataType> for PrivDataTypeV0 {
+impl Upgrade<PrivDataTypeV1> for PrivDataTypeV0 {
     type Error = std::convert::Infallible;
+    fn upgrade(self) -> Result<PrivDataTypeV1, Self::Error> {
+        Ok(match self {
+            PrivDataTypeV0::SigningKey => PrivDataTypeV1::SigningKey,
+            PrivDataTypeV0::FheKeyInfo => PrivDataTypeV1::FheKeyInfo,
+            PrivDataTypeV0::CrsInfo => PrivDataTypeV1::CrsInfo,
+            PrivDataTypeV0::FhePrivateKey => PrivDataTypeV1::FhePrivateKey,
+            #[expect(deprecated)]
+            PrivDataTypeV0::PrssSetup => PrivDataTypeV1::PrssSetup,
+            PrivDataTypeV0::ContextInfo => PrivDataTypeV1::ContextInfo,
+        })
+    }
+}
+impl Upgrade<PrivDataType> for PrivDataTypeV1 {
+    type Error = UnversionizeError;
     fn upgrade(self) -> Result<PrivDataType, Self::Error> {
         Ok(match self {
-            PrivDataTypeV0::SigningKey => PrivDataType::SigningKey,
-            PrivDataTypeV0::FheKeyInfo => PrivDataType::FheKeyInfo,
-            PrivDataTypeV0::CrsInfo => PrivDataType::CrsInfo,
-            PrivDataTypeV0::FhePrivateKey => PrivDataType::FhePrivateKey,
-            PrivDataTypeV0::PrssSetup => PrivDataType::PrssSetup,
-            PrivDataTypeV0::ContextInfo => PrivDataType::ContextInfo,
+            PrivDataTypeV1::SigningKey => PrivDataType::SigningKey,
+            PrivDataTypeV1::FheKeyInfo => PrivDataType::FheKeyInfo,
+            PrivDataTypeV1::CrsInfo => PrivDataType::CrsInfo,
+            PrivDataTypeV1::FhePrivateKey => PrivDataType::FhePrivateKey,
+            #[expect(deprecated)]
+            PrivDataTypeV1::PrssSetup => PrivDataType::PrssSetup,
+            PrivDataTypeV1::PrssSetupCombined => PrivDataType::PrssSetupCombined,
+            PrivDataTypeV1::ContextInfo => PrivDataType::ContextInfo,
         })
     }
 }
@@ -340,8 +375,10 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             #[expect(deprecated)]
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            #[expect(deprecated)]
             PrivDataType::PrssSetupCombined => write!(f, "PrssSetupCombined"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+            PrivDataType::EpochData => write!(f, "EpochData"),
         }
     }
 }

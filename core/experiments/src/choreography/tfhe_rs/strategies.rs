@@ -6,7 +6,7 @@ use crate::choreography::server::ChoreoRoutingHelper;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
+    structure_traits::{Derive, ErrorCorrect, Invert, QuotientMaximalIdeal, Solve},
 };
 use threshold_execution::{
     malicious_execution::zk::ceremony::DroppingCeremony,
@@ -118,8 +118,10 @@ pub struct DefaultChoreoRoutingHelper;
 impl<const EXTENSION_DEGREE: usize> ChoreoRoutingHelper<EXTENSION_DEGREE>
     for DefaultChoreoRoutingHelper
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
 {
     fn add_to_router<L>(
         &self,

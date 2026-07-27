@@ -1,6 +1,6 @@
 name: kms-core
 description: A helm chart to distribute and deploy the Zama KMS core service.
-version: 1.8.3
+version: 1.9.0   # 1.9.x for release 0.15.x
 appVersion: 0.14.0   # Minimum kms version to run this chart
 apiVersion: v2
 keywords:

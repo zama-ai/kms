@@ -347,13 +347,13 @@ mod tests {
     use crate::{
         PRSSConversions,
         base_ring::{Z64, Z128},
-        galois_rings::common::{TryFromWrapper, pack_residue_poly},
+        galois_rings::common::{SyndromeContext, TryFromWrapper, pack_residue_poly},
         poly::Poly,
         sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{ErrorCorrect, Sample, Syndrome},
+        structure_traits::{ErrorCorrect, Sample},
     };
     use aes_prng::AesRng;
     use itertools::Itertools;
@@ -512,8 +512,9 @@ mod tests {
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
 
                 // try syndrome decoding without errors
-                let syndrome_poly = ResiduePolyF5::<$z>::syndrome_compute(&sharings, t).unwrap();
-                let errors = ResiduePolyF5::<$z>::syndrome_decode(syndrome_poly, party_ids, t).unwrap();
+                let syn_ctx = SyndromeContext::new(&party_ids, t).unwrap();
+                let syndrome_poly = syn_ctx.compute(&sharings).unwrap();
+                let errors = syn_ctx.decode(syndrome_poly).unwrap();
                 assert_eq!(errors, vec![ResiduePolyF5::ZERO; n]); // should be all-zero
 
                 // add 1 error now
@@ -530,8 +531,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 1 error
-                let syndrome_poly = ResiduePolyF5::<$z>::syndrome_compute(&bad_shares, t).unwrap();
-                let decoded_errors = ResiduePolyF5::<$z>::syndrome_decode(syndrome_poly, party_ids, t).unwrap();
+                let syndrome_poly = syn_ctx.compute(&bad_shares).unwrap();
+                let decoded_errors = syn_ctx.decode(syndrome_poly).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
 
@@ -546,8 +547,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 2 errors
-                let syndrome_poly = ResiduePolyF5::<$z>::syndrome_compute(&bad_shares, t).unwrap();
-                let decoded_errors = ResiduePolyF5::<$z>::syndrome_decode(syndrome_poly, party_ids, t).unwrap();
+                let syndrome_poly = syn_ctx.compute(&bad_shares).unwrap();
+                let decoded_errors = syn_ctx.decode(syndrome_poly).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
             }
@@ -573,8 +574,9 @@ mod tests {
 
                 // try syndrome decoding without errors
                 let parties = sharings.shares.iter().map(|s| s.owner()).collect_vec();
-                let syndrome_poly = ResiduePolyF5::<$z>::syndrome_compute(&sharings, t).unwrap();
-                let errors = ResiduePolyF5::<$z>::syndrome_decode(syndrome_poly, &parties, t).unwrap();
+                let syn_ctx = SyndromeContext::new(&parties, t).unwrap();
+                let syndrome_poly = syn_ctx.compute(&sharings).unwrap();
+                let errors = syn_ctx.decode(syndrome_poly).unwrap();
                 assert_eq!(errors, vec![ResiduePolyF5::ZERO; n]); // should be all-zero
 
                 // add 1 error now
@@ -591,8 +593,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 1 error where the error term is 53
-                let syndrome_poly = ResiduePolyF5::<$z>::syndrome_compute(&bad_shares, t).unwrap();
-                let decoded_errors = ResiduePolyF5::<$z>::syndrome_decode(syndrome_poly, &parties, t).unwrap();
+                let syndrome_poly = syn_ctx.compute(&bad_shares).unwrap();
+                let decoded_errors = syn_ctx.decode(syndrome_poly).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
 
@@ -607,8 +609,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 2 errors where the error terms are 53 and 54
-                let syndrome_poly = ResiduePolyF5::<$z>::syndrome_compute(&bad_shares, t).unwrap();
-                let decoded_errors = ResiduePolyF5::<$z>::syndrome_decode(syndrome_poly, &parties, t).unwrap();
+                let syndrome_poly = syn_ctx.compute(&bad_shares).unwrap();
+                let decoded_errors = syn_ctx.decode(syndrome_poly).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
             }
@@ -625,7 +627,8 @@ mod tests {
                 let mut sharings = ShamirSharings::share(&mut rng, residue_secret, n, t).unwrap();
 
                 // syndrome computation without errors
-                let recon = ResiduePolyF5::<$z>::syndrome_compute(&sharings, t).unwrap();
+                let syn_ctx = SyndromeContext::new(&sharings.shares.iter().map(Share::owner).collect_vec(), t).unwrap();
+                let recon = syn_ctx.compute(&sharings).unwrap();
                 tracing::debug!("Syndrome Output = {:?}", recon);
                 assert_eq!(recon, Poly::<ResiduePolyF5<$z>>::zero()); // should be zero without errors
 
@@ -642,7 +645,7 @@ mod tests {
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
 
                 // syndrome computation with errors
-                let recon = ResiduePolyF5::<$z>::syndrome_compute(&sharings, t).unwrap();
+                let recon = syn_ctx.compute(&sharings).unwrap();
                 tracing::debug!("Syndrome Output = {:?}", recon);
                 assert_ne!(recon, Poly::<ResiduePolyF5<$z>>::zero()); // should not be zero with errors
             }
