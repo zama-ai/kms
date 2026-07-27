@@ -17,7 +17,7 @@ use ml_dsa::{
 };
 use mldsa::MlDsa;
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumCount, EnumIter};
 use strum_macros::Display;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
@@ -80,7 +80,18 @@ pub enum SigningSchemeTypeVersions {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumIter, Versionize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumIter,
+    EnumCount,
+    Versionize,
 )]
 #[versionize(SigningSchemeTypeVersions)]
 pub enum SigningSchemeType {
@@ -297,8 +308,8 @@ fn scheme_wire_tag(scheme: SigningSchemeType) -> i32 {
 impl PrivateSigKey {
     /// The signing key to use for `scheme`.
     ///
-    /// For [`SigningSchemeType::Ecdsa256k1`] this returns the persisted key
-    /// itself — it is already an ECDSA key and is the node's primary,
+    /// For [`SigningSchemeType::Ecdsa256k1`] this yields the persisted key's own
+    /// material — it is already an ECDSA key and is the node's primary,
     /// on-chain-registered identity (its Ethereum address), so it must be used
     /// as-is rather than re-derived. For every other scheme the key is
     /// deterministically derived from this key via a domain-separated KDF
@@ -307,9 +318,29 @@ impl PrivateSigKey {
     pub fn derive_signing_key(
         &self,
         scheme: SigningSchemeType,
+    ) -> Result<&UnifiedPrivateSigKey, SigningError> {
+        let slot = self.derived_key_slot(scheme);
+        if let Some(key) = slot.get() {
+            return Ok(key);
+        }
+        // Cache miss: derive once and memoize.
+        let derived = self.derive_signing_key_uncached(scheme)?;
+        let _ = slot.set(derived);
+        Ok(slot
+            .get()
+            .expect("cache slot was populated by this call or a concurrent one"))
+    }
+
+    /// Derive the signing key for `scheme` without consulting or populating the
+    /// cache.
+    fn derive_signing_key_uncached(
+        &self,
+        scheme: SigningSchemeType,
     ) -> Result<UnifiedPrivateSigKey, SigningError> {
         match scheme {
-            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPrivateSigKey::Ecdsa256k1(self.clone())),
+            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPrivateSigKey::Ecdsa256k1(
+                PrivateSigKey::new(self.raw_signing_key().clone()),
+            )),
             _ => self.derive_independent_signing_key(scheme),
         }
     }
@@ -510,7 +541,7 @@ mod tests {
             assert_eq!(derived_sk.signing_scheme_type(), scheme);
             assert_eq!(derived_vk.signing_scheme_type(), scheme);
 
-            let sig = unified_sign(DSEP, msg, &derived_sk).unwrap();
+            let sig = unified_sign(DSEP, msg, derived_sk).unwrap();
             unified_verify(DSEP, msg, &sig, &derived_vk)
                 .unwrap_or_else(|e| panic!("{scheme:?} derived key should verify: {e}"));
             assert!(unified_verify(DSEP, b"tampered", &sig, &derived_vk).is_err());
@@ -532,9 +563,36 @@ mod tests {
                 .unwrap()
                 .verifying_key()
                 .unwrap();
-            let sig = unified_sign(DSEP, msg, &sk_a).unwrap();
+            let sig = unified_sign(DSEP, msg, sk_a).unwrap();
             unified_verify(DSEP, msg, &sig, &vk_b)
                 .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
+        }
+    }
+
+    /// `derive_signing_key` memoizes: repeated calls return the same cached
+    /// instance, and a (warm) clone shares that cache rather than re-deriving.
+    #[test]
+    fn derived_keys_are_cached_and_shared_across_clones() {
+        let mut rng = AesRng::seed_from_u64(909);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+
+        for scheme in SigningSchemeType::iter() {
+            let first = sk.derive_signing_key(scheme).unwrap();
+            let second = sk.derive_signing_key(scheme).unwrap();
+            // A second call is served from the cache, not re-derived.
+            assert!(
+                std::ptr::eq(first, second),
+                "{scheme:?} was re-derived instead of served from the cache"
+            );
+
+            // A clone shares the same `Arc`-backed warm cache, so it serves the
+            // identical already-derived instance.
+            let clone = sk.clone();
+            let from_clone = clone.derive_signing_key(scheme).unwrap();
+            assert!(
+                std::ptr::eq(first, from_clone),
+                "{scheme:?} clone did not share the warmed cache"
+            );
         }
     }
 
