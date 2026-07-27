@@ -256,7 +256,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 
 - **Unit tests** live alongside the source (`#[cfg(test)]`).
 - **Integration tests** live in each crate's `tests/` directory, notably
-  `core/service/tests/` and `core/experiments/tests/integration_redis.rs`.
+  `core/service/tests/`.
 - **Backward-compatibility tests** live under
   [backward-compatibility/](backward-compatibility/); per-version generator
   crates produce frozen test vectors that current-version loaders must
@@ -266,7 +266,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   the compose files at the repo root
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
   `docker-compose-core-centralized.yml`) for a local multi-party network
-  plus S3-mock, Redis, and telemetry sidecars.
+  plus S3-mock, and telemetry sidecars.
 - **Cargo feature flags** — `testing` enables test-only APIs; `slow_tests`
   enables the long-running suite.
 

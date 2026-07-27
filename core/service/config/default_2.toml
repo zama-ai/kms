@@ -80,10 +80,6 @@ discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocess
 max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 2000
 
-# [threshold.preproc_redis]
-# host = "redis://127.0.0.1"
-
-
 [telemetry]
 tracing_service_name = "kms-threshold-2"
 # tracing_endpoint = "http://localhost:4317"

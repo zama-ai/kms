@@ -42,13 +42,13 @@ make lint-dylint
 
 ## Testing
 
-Typical test run — uses the `testing` feature, includes unit and integration tests (some integration tests need Redis running locally):
+Typical test run — uses the `testing` feature, includes unit and integration tests :
 
 ```
 cargo test -F testing
 ```
 
-Skip the integration tests that need Redis (unit tests only):
+Skip the integration tests (unit tests only):
 
 ```
 cargo test -F testing --lib
@@ -66,7 +66,7 @@ Narrow to a single test by name pattern, scoped to a crate:
 cargo test -F testing -p <crate> <pattern>
 ```
 
-Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
+Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/`.
 
 ## Backward compatibility
 

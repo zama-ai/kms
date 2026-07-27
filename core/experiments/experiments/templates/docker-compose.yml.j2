@@ -36,7 +36,6 @@ services:
       - DDEC__TELEMETRY__BATCH__MAX_CONCURRENT_EXPORTS=2
       - DDEC__TELEMETRY__BATCH__SCHEDULED_DELAY_MS=100
       - DDEC__TELEMETRY__BATCH__EXPORT_TIMEOUT_MS=5000
-      - DDEC__REDIS__HOST=redis://redis-p{{ i+1 }}:6379
       - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}-core1.pem
       - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}-core1.pem
       - DDEC__CERTPATHS__CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
@@ -54,9 +53,6 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
-  redis-p{{ i+1 }}:
-    image: redis/redis-stack:latest
-    command: redis-server --save "" --appendonly no --protected-mode no
     ports:
       - {{6379 + i+1}}:6379
 {% endfor %}

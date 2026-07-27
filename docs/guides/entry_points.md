@@ -42,7 +42,7 @@ As a developer this is probably the entry point you would want to use into the Z
 Still, if deploying the KMS Core purely as a gRPC service it is _essential_ to ensure that gRPC calls can _only_ be made _after_ any access control and request validation has been carried out, e.g. as discussed above.
 
 While ZWS offers a setup of the Zama KMS, it is also possible to host this yourself. In fact, it is possible to use the host chain and fhevm Gateway setup _with_ your own hosted instance of the Zama KMS. In fact the contracts on the fhevm Gateway are constructed to make this extremely easy, and hence ensure that the key manage never leaves your control.
-Still, observe that even hosting your own setup of the Zama KMS requires not only running $$n$$ instances of the KMS Core, but also the $$n$$ instances of the KMS Connector, Redis database, along with $$n$$ S3 buckets (although a local filesystem can be used instead of S3).
+Still, observe that even hosting your own setup of the Zama KMS requires not only running $$n$$ instances of the KMS Core, but also the $$n$$ instances of the KMS Connector, along with $$n$$ S3 buckets (although a local filesystem can be used instead of S3).
 
 ## Zama KMS abstract commands
 Below we go through the commands that can be executed at the Zama KMS gRPC endpoint. To access these using the gRPC endpoints we refer to the [API](../references/api/core_grpc.md) specification and for information on how try to run the server see [here on-perm installation](./on_prem_installation.md) and [here for SaaS usage](./saas_usage.md) and consult the [CLI Core Client README](../../core-client/README.md) for information on how to try to issue these commands locally.
@@ -50,8 +50,6 @@ Below we go through the commands that can be executed at the Zama KMS gRPC endpo
 ### Preprocessing
 Preprocessing is needed to generate correlated randomness which is used later, when you generate a FHE key set, or a Key Switching Key (KSK). Preprocessed material can only be used _once_ and hence needs to be generated every time you wish to generate an FHE key set.
 Calls to preprocessing requires key parameters, the specification of a unique `RequestId`, which is a 32-byte hex string. In case of the generation of a KSK the `RequestId` of the existing keys which the switching key needs to be from and to.
-
-Observe the preprocessed material is stored in Redis database in a deployed situation (although running a test setup the data can be stored in RAM).
 
 Observe that preprocessing is at a low abstraction level, hence it can only be found at the gRPC interface. I.e. if using the fhevm Gateway, there will be no such endpoint. Instead the key generation on the fhevm Gateway will ensure sufficient calls to the KMS Cores are made to preprocess the needed material.
 

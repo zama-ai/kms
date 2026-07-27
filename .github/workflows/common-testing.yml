@@ -19,10 +19,6 @@ on:
         type: string
         required: false
         default: ''
-      run-redis:
-        type: boolean
-        required: false
-        default: false
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
         # Injected verbatim into cargo invocations that need explicit package
@@ -147,13 +143,6 @@ jobs:
           # Save on main and on internal (non-fork) PRs so PR branches get a
           # warm cache; forks can't write to the cache anyway.
           save-if: ${{ github.ref == 'refs/heads/main' || github.event.pull_request.head.repo.fork == false }}
-
-      # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
-      - name: Setup Redis
-        if: ${{ inputs.run-redis }}
-        run: |
-          docker run -d -p 6379:6379 --name redis \
-            redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7
 
       # Fallback when no EFS path is supplied (e.g. the nightly caller in
       # main.yml): the job still needs fixtures, so generate the full
