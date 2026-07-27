@@ -1037,6 +1037,17 @@ impl KeyGenMetadata {
         }
     }
 
+    /// The preprocessing ID that was signed and stored when the key was generated.
+    ///
+    /// Returns `None` for [`KeyGenMetadata::LegacyV0`], which predates the field, so there is
+    /// nothing recorded to compare a request against.
+    pub fn preprocessing_id(&self) -> Option<&RequestId> {
+        match self {
+            KeyGenMetadata::Current(inner) => Some(&inner.preprocessing_id),
+            KeyGenMetadata::LegacyV0(_inner) => None,
+        }
+    }
+
     pub fn pub_data_types(&self) -> HashSet<PubDataType> {
         match self {
             KeyGenMetadata::Current(key_gen_metadata_inner) => key_gen_metadata_inner
@@ -1162,8 +1173,8 @@ pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadataInner, KeyGenMetadataInnerV0,
-        KeyGenMetadataInnerV1,
+        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata, KeyGenMetadataInner,
+        KeyGenMetadataInnerV0, KeyGenMetadataInnerV1,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
@@ -2140,6 +2151,26 @@ pub(crate) mod tests {
                 .collect::<BTreeMap<_, _>>(),
         );
         assert_eq!(upgraded_v2.external_signature, q126.external_signature);
+    }
+
+    #[test]
+    fn keygen_metadata_preprocessing_id() {
+        let mut rng = AesRng::seed_from_u64(890);
+        let key_id = RequestId::new_random(&mut rng);
+        let preprocessing_id = RequestId::new_random(&mut rng);
+
+        let current = KeyGenMetadata::new(
+            key_id,
+            preprocessing_id,
+            BTreeMap::new(),
+            vec![],
+            Vec::new(),
+        );
+        assert_eq!(current.preprocessing_id(), Some(&preprocessing_id));
+
+        // Legacy metadata predates the field, so there is nothing to report.
+        let legacy = KeyGenMetadata::LegacyV0(HashMap::new());
+        assert_eq!(legacy.preprocessing_id(), None);
     }
 
     #[test]
