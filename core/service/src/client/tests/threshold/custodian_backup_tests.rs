@@ -657,30 +657,30 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     .await;
 }
 
-/// Test that PRSS data (PrssSetupCombined) is present in the custodian backup vault
+/// Test that epoch data (EpochData) is present in the custodian backup vault
 /// after server startup with `ensure_default_prss: true`.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_prss_in_custodian_backup_threshold() {
+async fn test_epoch_in_custodian_backup_threshold() {
     let mut env =
-        ThresholdBackupTestEnv::new("test_prss_in_custodian_backup_threshold", 3, 1).await;
+        ThresholdBackupTestEnv::new("test_epoch_in_custodian_backup_threshold", 3, 1).await;
 
-    // PRSS is stored with epoch_id.into() as the request_id (non-epoched layout)
+    // Epoch is stored with epoch_id.into() as the request_id (non-epoched layout)
     let prss_req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
     let backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         env.test_path(),
         &env.req_new_cus,
         &prss_req_id,
-        &PrivDataType::PrssSetupCombined.to_string(),
+        &PrivDataType::EpochData.to_string(),
         env.backup_prefixes(),
     )
     .await;
     assert_eq!(
         backup.len(),
         ThresholdBackupTestEnv::AMOUNT_PARTIES,
-        "Expected one PRSS backup entry per party"
+        "Expected one epoch backup entry per party"
     );
     for entry in &backup {
-        assert_eq!(entry.priv_data_type, PrivDataType::PrssSetupCombined);
+        assert_eq!(entry.priv_data_type, PrivDataType::EpochData);
     }
 
     env.shutdown().await;

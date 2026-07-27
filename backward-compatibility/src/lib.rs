@@ -675,6 +675,32 @@ impl TestType for PrssSetupCombinedTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EpochDataTest {
+    pub test_filename: Cow<'static, str>,
+    pub prss_setup_64: Cow<'static, str>,
+    pub prss_setup_128: Cow<'static, str>,
+    pub role_i: usize,
+    pub amount: u8,
+    pub threshold: u8,
+    pub context_id: [u8; 32],
+}
+
+impl TestType for EpochDataTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "EpochData".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BackupCiphertextTest {
     pub test_filename: Cow<'static, str>,
     pub unified_cipher_filename: Cow<'static, str>,
@@ -941,6 +967,7 @@ pub enum TestMetadataKMS {
     KeyGenMetadataWithExtraData(KeyGenMetadataWithExtraDataTest),
     SigncryptionPayload(SigncryptionPayloadTest),
     PrssSetupCombined(PrssSetupCombinedTest),
+    EpochData(EpochDataTest),
     UnifiedSigncryptionKeyOwned(UnifiedSigncryptionKeyTest),
     UnifiedUnsigncryptionKeyOwned(UnifiedUnsigncryptionKeyTest),
     UnifiedSigncryption(UnifiedSigncryptionTest),

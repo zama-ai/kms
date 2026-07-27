@@ -116,19 +116,6 @@ pub trait QuotientMaximalIdeal: Ring {
     fn embed_quotient_exceptional_sequence(x: Self::QuotientOutput) -> anyhow::Result<Self>;
 }
 
-///Trait required to be able to reconstruct a shamir sharing
-pub trait Syndrome: Ring {
-    fn syndrome_decode(
-        syndrome_poly: Poly<Self>,
-        parties: &[Role],
-        threshold: usize,
-    ) -> anyhow::Result<Vec<Self>>;
-    fn syndrome_compute(
-        sharing: &ShamirSharings<Self>,
-        threshold: usize,
-    ) -> anyhow::Result<Poly<Self>>;
-}
-
 pub trait Invert: Sized {
     fn invert(self) -> anyhow::Result<Self>;
 }

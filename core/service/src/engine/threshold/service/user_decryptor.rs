@@ -32,7 +32,6 @@ use observability::{
     },
 };
 use rand::{CryptoRng, RngCore};
-use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
         DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
@@ -227,10 +226,8 @@ impl<
                 CiphertextFormat::SmallCompressed => keys.decompression_key(),
                 _ => None,
             };
-            let low_level_ct = spawn_compute_bound(move || {
-                deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
-            })
-            .await??;
+            let low_level_ct =
+                deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())?;
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
@@ -328,26 +325,21 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
-                    let rng = rng.clone();
-                    let signcryption_key_clone = Arc::clone(&signcryption_key);
-                    let link_clone = link.clone();
-
-                    let enc_res = spawn_compute_bound(move || {
+                    let enc_res = {
                         let mut rng = rng.lock().map_err(|_| {
                             CryptographyError::Other("Poisoned mutex guard".to_string())
                         })?;
-                        signcryption_key_clone.signcrypt_plaintext(
+                        signcryption_key.signcrypt_plaintext(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
                             &pdec_serialized,
                             fhe_type,
-                            &link_clone,
+                            &link,
                         )
-                    })
-                    .await??;
+                    }?;
 
                     tracing::debug!(
-                        "User decryption {req_id} in session {session_id} ccompleted for type {:?}. Inner thread took {:?} ms",
+                        "User decryption {req_id} in session {session_id} completed for type {:?}. Partial decrypt took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );

@@ -38,7 +38,7 @@ spec:
     - name: fhe-params
       value: "Test"
     - name: duration
-      value: "60"
+      value: "30"
     - name: max-in-flight
       value: "10000"
     - name: data-type
@@ -124,119 +124,81 @@ spec:
               - name: fhe-params
                 value: "Default"
 
-          - name: warmup-public-decrypt-euint64-req1
+          - name: pdec-rate-1100
             dependencies: ["crs-gen"]
-            template: run-test
-            continueOn:
-              failed: true
+            template: run-decrypt-rate
             arguments:
               parameters:
-              - name: test-name
-                value: "warmup-public-decrypt-euint64-req1"
-              - name: test-command
-                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
-              - name: fhe-params
-                value: "Default"
+              - name: kind
+                value: "pdec"
+              - name: rate
+                value: "1100"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "true"
 
-          - name: public-decrypt-euint64-req1
-            dependencies: ["warmup-public-decrypt-euint64-req1"]
-            template: run-test
-            continueOn:
-              failed: true
+          - name: pdec-rate-1300
+            dependencies: ["pdec-rate-1100"]
+            template: run-decrypt-rate
             arguments:
               parameters:
-              - name: test-name
-                value: "public-decrypt-euint64-req1"
-              - name: test-command
-                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
-              - name: fhe-params
-                value: "Default"
+              - name: kind
+                value: "pdec"
+              - name: rate
+                value: "1300"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "{{tasks.pdec-rate-1100.outputs.parameters.capacity-ok}}"
 
-          - name: public-decrypt-euint64-req10
-            dependencies: ["public-decrypt-euint64-req1"]
-            template: run-test
-            continueOn:
-              failed: true
+          - name: pdec-rate-1500
+            dependencies: ["pdec-rate-1300"]
+            template: run-decrypt-rate
             arguments:
               parameters:
-              - name: test-name
-                value: "public-decrypt-euint64-req10"
-              - name: test-command
-                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
-              - name: fhe-params
-                value: "Default"
-
-          - name: public-decrypt-euint64-req100
-            dependencies: ["public-decrypt-euint64-req10"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-              - name: test-name
-                value: "public-decrypt-euint64-req100"
-              - name: test-command
-                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
-              - name: fhe-params
-                value: "Default"
-
-          - name: public-decrypt-euint64-req500
-            dependencies: ["public-decrypt-euint64-req100"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-              - name: test-name
-                value: "public-decrypt-euint64-req500"
-              - name: test-command
-                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
-              - name: fhe-params
-                value: "Default"
-
-          - name: public-decrypt-euint64-req1000
-            dependencies: ["public-decrypt-euint64-req500"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-              - name: test-name
-                value: "public-decrypt-euint64-req1000"
-              - name: test-command
-                value: "public-decrypt from-args -d euint64 -k {{tasks.udec-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
-              - name: fhe-params
-                value: "Default"
+              - name: kind
+                value: "pdec"
+              - name: rate
+                value: "1500"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "{{tasks.pdec-rate-1300.outputs.parameters.capacity-ok}}"
 
           - name: udec-rate-2400
-            dependencies: ["udec-key-gen", "public-decrypt-euint64-req1000"]
-            template: run-udec-rate
+            dependencies: ["udec-key-gen", "pdec-rate-1500"]
+            template: run-decrypt-rate
             arguments:
               parameters:
+              - name: kind
+                value: "udec"
               - name: rate
                 value: "2400"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "true"
-
           - name: udec-rate-2700
             dependencies: ["udec-rate-2400"]
-            template: run-udec-rate
+            template: run-decrypt-rate
             arguments:
               parameters:
+              - name: kind
+                value: "udec"
               - name: rate
                 value: "2700"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
-
           - name: udec-rate-2750
             dependencies: ["udec-rate-2700"]
-            template: run-udec-rate
+            template: run-decrypt-rate
             arguments:
               parameters:
+              - name: kind
+                value: "udec"
               - name: rate
                 value: "2750"
               - name: key_id
@@ -251,11 +213,9 @@ spec:
               - "udec-preproc-key-gen"
               - "udec-key-gen"
               - "crs-gen"
-              - "public-decrypt-euint64-req1"
-              - "public-decrypt-euint64-req10"
-              - "public-decrypt-euint64-req100"
-              - "public-decrypt-euint64-req500"
-              - "public-decrypt-euint64-req1000"
+              - "pdec-rate-1100"
+              - "pdec-rate-1300"
+              - "pdec-rate-1500"
               - "udec-rate-2400"
               - "udec-rate-2700"
               - "udec-rate-2750"
@@ -272,21 +232,17 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.test-result}}"
               - name: test-result-crs-gen
                 value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-public-decrypt-req1
-                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-public-decrypt-req10
-                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-public-decrypt-req100
-                value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-public-decrypt-req500
-                value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-public-decrypt-req1000
-                value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
-              - name: test-result-2400
+              - name: test-result-pdec-1100
+                value: "{{tasks.pdec-rate-1100.outputs.parameters.test-result}}"
+              - name: test-result-pdec-1300
+                value: "{{tasks.pdec-rate-1300.outputs.parameters.test-result}}"
+              - name: test-result-pdec-1500
+                value: "{{tasks.pdec-rate-1500.outputs.parameters.test-result}}"
+              - name: test-result-udec-2400
                 value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
-              - name: test-result-2700
+              - name: test-result-udec-2700
                 value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
-              - name: test-result-2750
+              - name: test-result-udec-2750
                 value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
@@ -495,9 +451,10 @@ spec:
             memory: "96Gi"
             cpu: "64"
 
-    - name: run-udec-rate
+    - name: run-decrypt-rate
       inputs:
         parameters:
+        - name: kind
         - name: rate
         - name: key_id
         - name: previous-ok
@@ -505,13 +462,13 @@ spec:
         parameters:
         - name: test-result
           valueFrom:
-            path: /tmp/artifacts/udec-rate-{{inputs.parameters.rate}}.json
+            path: /tmp/artifacts/{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}.json
         - name: capacity-ok
           valueFrom:
-            path: /tmp/artifacts/udec-rate-{{inputs.parameters.rate}}.ok
+            path: /tmp/artifacts/{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}.ok
       metadata:
         labels:
-          test: udec-rate-{{inputs.parameters.rate}}
+          test: "{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}"
           app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
@@ -593,9 +550,29 @@ spec:
             object_folder="PUB-p13"
           EOF
 
-          test_name="udec-rate-{{inputs.parameters.rate}}"
+          kind="{{inputs.parameters.kind}}"
+          case "$kind" in
+            pdec)
+              command_name="public-decrypt"
+              metrics_marker="PUBLIC_DECRYPT_METRICS"
+              metrics_key="public_decrypt"
+              display_name="public decrypt"
+              ;;
+            udec)
+              command_name="user-decrypt"
+              metrics_marker="USER_DECRYPT_METRICS"
+              metrics_key="user_decrypt"
+              display_name="user decrypt"
+              ;;
+            *)
+              echo "Unsupported decrypt kind: $kind"
+              exit 1
+              ;;
+          esac
+
+          test_name="${kind}-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
-          test_command="user-decrypt from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
           mkdir -p /tmp/artifacts
 
           capture_net_snapshot() {
@@ -651,27 +628,70 @@ spec:
             ' /tmp/net-before.tsv /tmp/net-after.tsv
           }
 
+          allowed_failure_for_rate() {
+            case "$1:$2" in
+              pdec:1500|udec:2750) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          parameter_set_for_rate() {
+            case "$1:$2" in
+              # maxfail/maxshed are percentages of offered requests, not counts.
+              # pct is the minimum achieved_rate/target_rate percentage.
+              pdec:1100) echo "maxfail=0,maxshed=0,pct=98" ;;
+              pdec:1300) echo "maxfail=1,maxshed=1,pct=90" ;;
+              # 1.5k is an exploratory public-decrypt probe and may warn.
+              pdec:1500) echo "maxfail=10,maxshed=25,pct=70" ;;
+              udec:2400) echo "maxfail=0,maxshed=0,pct=98" ;;
+              udec:2700) echo "maxfail=1,maxshed=1,pct=95" ;;
+              # 2.75k probes just above the clean 2.7k run; outside-set results warn.
+              udec:2750) echo "maxfail=10,maxshed=25,pct=70" ;;
+              *) echo "maxfail=0,maxshed=0,pct=100" ;;
+            esac
+          }
+
+          parameter_value() {
+            echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
+          }
+
           if [ -z "$key_id" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "user_decrypt": {\n      "target_rate": %s,\n      "failed": 1\n    }\n  }\n}\n' \
+            parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
+            allowed_failure=false
+            if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
+              allowed_failure=true
+            fi
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "failed": 1,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              "$metrics_key" \
               "{{inputs.parameters.rate}}" \
+              "$parameter_set" \
+              "$allowed_failure" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Missing key_id from udec-key-gen; refusing to run user decrypt"
+            echo "Missing key_id from udec-key-gen; refusing to run $display_name"
             exit 0
           fi
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
-            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "user_decrypt": {\n      "target_rate": %s\n    }\n  }\n}\n' \
+            parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
+            allowed_failure=false
+            if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
+              allowed_failure=true
+            fi
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
               "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              "$metrics_key" \
               "{{inputs.parameters.rate}}" \
+              "$parameter_set" \
+              "$allowed_failure" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Skipping $test_name because a lower user decrypt rate did not produce valid metrics"
+            echo "Skipping $test_name because a lower $display_name rate did not produce valid metrics"
             exit 0
           fi
 
@@ -698,24 +718,24 @@ spec:
           capture_net_snapshot /tmp/net-after.tsv
 
           # Keep the last valid metrics line; normal logs may contain many JSON records.
-          user_decrypt_metrics=""
+          decrypt_metrics=""
           while IFS= read -r metrics_line; do
-            candidate="${metrics_line#*USER_DECRYPT_METRICS }"
+            candidate="${metrics_line#*${metrics_marker} }"
             # Accept only the raw println! JSON, not an escaped copy inside tracing JSON logs.
             if [[ "$candidate" == \{\"* ]] && [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
-              user_decrypt_metrics="$candidate"
+              decrypt_metrics="$candidate"
             fi
-          done < <(grep "USER_DECRYPT_METRICS " /tmp/test_logs.txt || true)
+          done < <(grep "$metrics_marker " /tmp/test_logs.txt || true)
 
-          if [[ -n "$user_decrypt_metrics" && "$user_decrypt_metrics" =~ \"failed\":([0-9]+) ]]; then
+          if [[ -n "$decrypt_metrics" && "$decrypt_metrics" =~ \"failed\":([0-9]+) ]]; then
             metrics_valid=true
             metrics_failed="${BASH_REMATCH[1]}"
-            if [[ "$user_decrypt_metrics" =~ \"shed\":([0-9]+) ]]; then
+            if [[ "$decrypt_metrics" =~ \"shed\":([0-9]+) ]]; then
               metrics_shed="${BASH_REMATCH[1]}"
             else
               metrics_shed=0
             fi
-            if [[ "$user_decrypt_metrics" =~ \"saturated\":(true|false) ]]; then
+            if [[ "$decrypt_metrics" =~ \"saturated\":(true|false) ]]; then
               metrics_saturated="${BASH_REMATCH[1]}"
             else
               metrics_saturated=true
@@ -725,30 +745,73 @@ spec:
             metrics_failed=1
             metrics_shed=0
             metrics_saturated=true
-            user_decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
-            echo "ERROR: no valid USER_DECRYPT_METRICS JSON with failed/shed/saturated found"
+            decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
+            echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
           fi
           network_metrics="$(network_metrics_suffix "$duration")"
+          parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
+          maxfail=$(parameter_value "$parameter_set" maxfail)
+          maxshed=$(parameter_value "$parameter_set" maxshed)
+          pct=$(parameter_value "$parameter_set" pct)
+          allowed_failure=false
+          if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
+            allowed_failure=true
+          fi
+          if [[ "$decrypt_metrics" =~ \"offered\":([0-9]+) ]]; then
+            metrics_offered="${BASH_REMATCH[1]}"
+          else
+            metrics_offered=0
+          fi
+          if [[ "$decrypt_metrics" =~ \"achieved_rate\":([-0-9.eE]+) ]]; then
+            metrics_achieved_rate="${BASH_REMATCH[1]}"
+          else
+            metrics_achieved_rate=0
+          fi
+          within_parameter_set=$(awk \
+            -v offered="$metrics_offered" \
+            -v failed="$metrics_failed" \
+            -v shed="$metrics_shed" \
+            -v achieved="$metrics_achieved_rate" \
+            -v target="{{inputs.parameters.rate}}" \
+            -v maxfail="$maxfail" \
+            -v maxshed="$maxshed" \
+            -v pct="$pct" '
+              BEGIN {
+                if (offered <= 0 || target <= 0) {
+                  print "false"
+                } else if ((failed * 100 / offered) <= maxfail &&
+                           (shed * 100 / offered) <= maxshed &&
+                           (achieved * 100 / target) >= pct) {
+                  print "true"
+                } else {
+                  print "false"
+                }
+              }')
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
-          user_decrypt_metrics="${user_decrypt_metrics%\}}${network_metrics}}"
+          limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
+          decrypt_metrics="${decrypt_metrics%\}}${network_metrics}${limit_metrics}}"
 
-          # Task success means "measurement exists"; the summary applies perf limits.
+          # Task success means "measurement exists"; capacity-ok gates the next rung.
           if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
             status="passed"
-            capacity_ok="true"
           else
             status="failed"
+          fi
+          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ]; then
+            capacity_ok="true"
+          else
             capacity_ok="false"
           fi
 
-          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "user_decrypt": %s\n  }\n}\n' \
+          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": %s\n  }\n}\n' \
             "$test_name" \
             "$test_command" \
             "$status" \
             "$test_exit" \
             "$duration" \
             "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            "$user_decrypt_metrics" \
+            "$metrics_key" \
+            "$decrypt_metrics" \
             > /tmp/artifacts/${test_name}.json
           echo "$capacity_ok" > /tmp/artifacts/${test_name}.ok
 
@@ -777,14 +840,12 @@ spec:
         - name: test-result-udec-preproc-key-gen
         - name: test-result-udec-key-gen
         - name: test-result-crs-gen
-        - name: test-result-public-decrypt-req1
-        - name: test-result-public-decrypt-req10
-        - name: test-result-public-decrypt-req100
-        - name: test-result-public-decrypt-req500
-        - name: test-result-public-decrypt-req1000
-        - name: test-result-2400
-        - name: test-result-2700
-        - name: test-result-2750
+        - name: test-result-pdec-1100
+        - name: test-result-pdec-1300
+        - name: test-result-pdec-1500
+        - name: test-result-udec-2400
+        - name: test-result-udec-2700
+        - name: test-result-udec-2750
         - name: tls
         - name: run_url
         - name: job_url
@@ -810,14 +871,12 @@ spec:
           echo '{{inputs.parameters.test-result-udec-preproc-key-gen}}' > /mnt/results/udec-preproc-key-gen.json
           echo '{{inputs.parameters.test-result-udec-key-gen}}' > /mnt/results/udec-key-gen.json
           echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-public-decrypt-req1}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-public-decrypt-req10}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-public-decrypt-req100}}' > /mnt/results/public-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-public-decrypt-req500}}' > /mnt/results/public-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-public-decrypt-req1000}}' > /mnt/results/public-decrypt-euint64-req1000.json
-          echo '{{inputs.parameters.test-result-2400}}' > /mnt/results/udec-rate-2400.json
-          echo '{{inputs.parameters.test-result-2700}}' > /mnt/results/udec-rate-2700.json
-          echo '{{inputs.parameters.test-result-2750}}' > /mnt/results/udec-rate-2750.json
+          echo '{{inputs.parameters.test-result-pdec-1100}}' > /mnt/results/pdec-rate-1100.json
+          echo '{{inputs.parameters.test-result-pdec-1300}}' > /mnt/results/pdec-rate-1300.json
+          echo '{{inputs.parameters.test-result-pdec-1500}}' > /mnt/results/pdec-rate-1500.json
+          echo '{{inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
+          echo '{{inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
+          echo '{{inputs.parameters.test-result-udec-2750}}' > /mnt/results/udec-rate-2750.json
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -825,7 +884,7 @@ spec:
           echo "Report generated: $(date -u)"
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
           echo "Preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
-          echo "UDEC decrypt FHE params: Default"
+          echo "Decrypt FHE params: Default"
           echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
 
@@ -841,8 +900,11 @@ spec:
 
           pdec_total=0
           pdec_passed=0
+          pdec_warned=0
           pdec_failed=0
+          pdec_skipped=0
           pdec_lines=""
+          pdec_raw_lines=""
 
           udec_total=0
           udec_passed=0
@@ -896,45 +958,155 @@ spec:
             esac
           }
 
-          append_udec_raw_line() {
-            udec_raw_lines="${udec_raw_lines}${1}\n"
+          inc_decrypt_counter() {
+            eval "${1}_${2}=\$((\${${1}_${2}} + 1))"
           }
 
-          allowed_failure_for_rate() {
+          append_decrypt_raw_line() {
             case "$1" in
-              2750) return 0 ;;
-              *) return 1 ;;
+              pdec) pdec_raw_lines="${pdec_raw_lines}${2}\n" ;;
+              udec) udec_raw_lines="${udec_raw_lines}${2}\n" ;;
             esac
           }
 
-          parameter_set_for_rate() {
-            case "$1" in
-              # maxfail/maxshed are percentages of offered requests, not counts.
-              # pct is the minimum achieved_rate/target_rate percentage.
-              2400) echo "maxfail=0,maxshed=0,pct=98" ;;
-              2700) echo "maxfail=1,maxshed=1,pct=95" ;;
-              # 2.75k probes just above the clean 2.7k run; outside-set results warn.
-              2750) echo "maxfail=10,maxshed=25,pct=70" ;;
-              *) echo "maxfail=0,maxshed=0,pct=100" ;;
+          summarize_decrypt_rates() {
+            kind="$1"
+            display="$2"
+            metrics_key="$3"
+            shift 3
+
+            case "$kind" in
+              pdec)
+                extra_failed_key="verification_failed"
+                timing_key="verification_ms"
+                timing_label="verify"
+                ;;
+              udec)
+                extra_failed_key="reconstruction_failed"
+                timing_key="reconstruction_ms"
+                timing_label="recon"
+                ;;
+              *)
+                echo "Unsupported decrypt summary kind: $kind"
+                return 1
+                ;;
             esac
+
+            echo "${display} perf tests:"
+            for rate in "$@"; do
+              result="/mnt/results/${kind}-rate-${rate}.json"
+              inc_decrypt_counter "$kind" total
+              if ! jq empty "$result" 2>/dev/null; then
+                inc_decrypt_counter "$kind" failed
+                line="$(status_label failed) ${rate}/s invalid result JSON"
+                echo "$line"
+                append_operation_line "$kind" "$line"
+                append_decrypt_raw_line "$kind" "$line"
+                continue
+              fi
+
+              status=$(jq -r '.status // empty' "$result")
+              target_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].target_rate // empty' "$result")
+              offered=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].offered // empty' "$result")
+              completed=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].completed // empty' "$result")
+              failed_requests=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].failed // empty' "$result")
+              shed=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].shed // empty' "$result")
+              achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].achieved_rate // empty' "$result")
+              saturated=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("saturated") then .saturated else "" end' "$result")
+              request_payload_mib_per_sec=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].request_payload_mib_per_sec // empty' "$result")
+              response_payload_mib_per_sec=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].response_payload_mib_per_sec // empty' "$result")
+              network_rx_gbps=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_gbps // empty' "$result")
+              network_tx_gbps=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_gbps // empty' "$result")
+              network_rx_dropped=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_dropped // 0' "$result")
+              network_tx_dropped=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_dropped // 0' "$result")
+              network_rx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_errors // 0' "$result")
+              network_tx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_errors // 0' "$result")
+              parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
+              within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
+              allowed_failure=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].allowed_failure // false' "$result")
+              extra_failed=$(jq -r --arg k "$metrics_key" --arg f "$extra_failed_key" '.performance_metrics[$k][$f] // 0' "$result")
+              p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p50 // empty' "$result")
+              p95=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p95 // empty' "$result")
+              p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p99 // empty' "$result")
+              timing_avg=$(jq -r --arg k "$metrics_key" --arg t "$timing_key" '.performance_metrics[$k][$t].avg // empty' "$result")
+              timing_p50=$(jq -r --arg k "$metrics_key" --arg t "$timing_key" '.performance_metrics[$k][$t].p50 // empty' "$result")
+              timing_p99=$(jq -r --arg k "$metrics_key" --arg t "$timing_key" '.performance_metrics[$k][$t].p99 // empty' "$result")
+
+              [ -n "$target_rate" ] || target_rate="$rate"
+              [ -n "$offered" ] || offered=0
+              [ -n "$completed" ] || completed=0
+              [ -n "$failed_requests" ] || failed_requests=0
+              [ -n "$shed" ] || shed=0
+              [ -n "$achieved_rate" ] || achieved_rate=0
+              [ -n "$saturated" ] || saturated=false
+              achieved_short="$(fmt_1 "$achieved_rate")"
+              p50_short="$(fmt_ms_2 "$p50")"
+              p95_short="$(fmt_ms_2 "$p95")"
+              p99_short="$(fmt_ms_2 "$p99")"
+              network_rx_short="$(fmt_1 "$network_rx_gbps")"
+              network_tx_short="$(fmt_1 "$network_tx_gbps")"
+
+              # WARN is accepted-but-degraded. The top rate for each decrypt type
+              # is an exploratory probe and can exceed its parameter set.
+              if [ "$status" = "skipped" ]; then
+                outcome=skipped
+                inc_decrypt_counter "$kind" skipped
+                line="$(status_label "$outcome") ${target_rate}/s skipped"
+              elif [ "$status" != "passed" ]; then
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s measurement failed"
+              elif [ "$within_parameter_set" = "true" ]; then
+                if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=passed
+                  inc_decrypt_counter "$kind" passed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
+              else
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
+              fi
+
+              if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
+                line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
+              fi
+              if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+                line="${line} fail=${failed_requests} shed=${shed} sat=${saturated}"
+              fi
+              if [ "$network_rx_errors" != "0" ] || [ "$network_tx_errors" != "0" ] || [ "$network_rx_dropped" != "0" ] || [ "$network_tx_dropped" != "0" ]; then
+                line="${line} net_err=${network_rx_errors}/${network_tx_errors} net_drop=${network_rx_dropped}/${network_tx_dropped}"
+              fi
+              if [ "$extra_failed" != "0" ]; then
+                line="${line} ${timing_label}_failed=${extra_failed}"
+              fi
+
+              echo "$line"
+              append_operation_line "$kind" "$line"
+              append_decrypt_raw_line "$kind" "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s ${timing_label}_avg=$(fmt_ms_2 "$timing_avg") ${timing_label}_p50=$(fmt_ms_2 "$timing_p50") ${timing_label}_p99=$(fmt_ms_2 "$timing_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
+            done
           }
 
-          parameter_value() {
-            echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
-          }
-
-          echo "Keygen, CRS, and public decrypt perf tests:"
+          echo "Keygen and CRS perf tests:"
           for result in \
             /mnt/results/preproc-key-gen.json \
             /mnt/results/key-gen.json \
             /mnt/results/udec-preproc-key-gen.json \
             /mnt/results/udec-key-gen.json \
-            /mnt/results/crs-gen.json \
-            /mnt/results/public-decrypt-euint64-req1.json \
-            /mnt/results/public-decrypt-euint64-req10.json \
-            /mnt/results/public-decrypt-euint64-req100.json \
-            /mnt/results/public-decrypt-euint64-req500.json \
-            /mnt/results/public-decrypt-euint64-req1000.json; do
+            /mnt/results/crs-gen.json; do
             result_name="$(basename "$result" .json)"
             operation="$(operation_for_test "$result_name")"
             if ! jq empty "$result" 2>/dev/null; then
@@ -943,7 +1115,6 @@ spec:
               case "$operation" in
                 keygen) keygen_total=$((keygen_total + 1)); keygen_failed=$((keygen_failed + 1)) ;;
                 crs) crs_total=$((crs_total + 1)); crs_failed=$((crs_failed + 1)) ;;
-                pdec) pdec_total=$((pdec_total + 1)); pdec_failed=$((pdec_failed + 1)) ;;
               esac
               echo "$line"
               append_operation_line "$operation" "$line"
@@ -978,16 +1149,6 @@ spec:
                 if [ "$exit_code" = "0" ]; then crs_passed=$((crs_passed + 1)); else crs_failed=$((crs_failed + 1)); fi
                 line="${label} ${test_name} ${duration}s"
                 ;;
-              pdec)
-                pdec_total=$((pdec_total + 1))
-                if [ "$exit_code" = "0" ]; then pdec_passed=$((pdec_passed + 1)); else pdec_failed=$((pdec_failed + 1)); fi
-                short_name="$(echo "$test_name" | sed 's/^public-decrypt-[^-]*-//')"
-                if [ -n "$throughput" ] && [ "$throughput" != "null" ]; then
-                  line="${label} ${short_name} $(fmt_1 "$throughput")/s p50=$(fmt_ms_2 "$p50_latency") p99=$(fmt_ms_2 "$p99_latency")"
-                else
-                  line="${label} ${short_name} ${duration}s"
-                fi
-                ;;
               *)
                 line="${label} ${test_name} ${duration}s"
                 ;;
@@ -1000,145 +1161,18 @@ spec:
           done
 
           echo ""
-          echo "User decrypt perf tests:"
-          for rate in 2400 2700 2750; do
-            result="/mnt/results/udec-rate-${rate}.json"
-            udec_total=$((udec_total + 1))
-            if ! jq empty "$result" 2>/dev/null; then
-              udec_failed=$((udec_failed + 1))
-              line="$(status_label failed) ${rate}/s invalid result JSON"
-              echo "$line"
-              append_operation_line udec "$line"
-              append_udec_raw_line "$line"
-              continue
-            fi
+          summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500
+          summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750
 
-            test_name=$(jq -r '.test_name // "unknown"' "$result")
-            status=$(jq -r '.status // empty' "$result")
-            exit_code=$(jq -r '.exit_code // "1"' "$result")
-            target_rate=$(jq -r '.performance_metrics.user_decrypt.target_rate // empty' "$result")
-            offered=$(jq -r '.performance_metrics.user_decrypt.offered // empty' "$result")
-            completed=$(jq -r '.performance_metrics.user_decrypt.completed // empty' "$result")
-            failed_requests=$(jq -r '.performance_metrics.user_decrypt.failed // empty' "$result")
-            shed=$(jq -r '.performance_metrics.user_decrypt.shed // empty' "$result")
-            achieved_rate=$(jq -r '.performance_metrics.user_decrypt.achieved_rate // empty' "$result")
-            saturated=$(jq -r '.performance_metrics.user_decrypt | if has("saturated") then .saturated else "" end' "$result")
-            request_payload_bytes=$(jq -r '.performance_metrics.user_decrypt.request_payload_bytes // empty' "$result")
-            request_payload_mib_per_sec=$(jq -r '.performance_metrics.user_decrypt.request_payload_mib_per_sec // empty' "$result")
-            request_payload_avg_bytes=$(jq -r '.performance_metrics.user_decrypt.request_payload_avg_bytes // empty' "$result")
-            response_payload_bytes=$(jq -r '.performance_metrics.user_decrypt.response_payload_bytes // empty' "$result")
-            response_payload_mib_per_sec=$(jq -r '.performance_metrics.user_decrypt.response_payload_mib_per_sec // empty' "$result")
-            response_payload_avg_bytes=$(jq -r '.performance_metrics.user_decrypt.response_payload_avg_bytes // empty' "$result")
-            network_rx_bytes=$(jq -r '.performance_metrics.user_decrypt.network.rx_bytes // empty' "$result")
-            network_tx_bytes=$(jq -r '.performance_metrics.user_decrypt.network.tx_bytes // empty' "$result")
-            network_rx_gbps=$(jq -r '.performance_metrics.user_decrypt.network.rx_gbps // empty' "$result")
-            network_tx_gbps=$(jq -r '.performance_metrics.user_decrypt.network.tx_gbps // empty' "$result")
-            network_rx_dropped=$(jq -r '.performance_metrics.user_decrypt.network.rx_dropped // 0' "$result")
-            network_tx_dropped=$(jq -r '.performance_metrics.user_decrypt.network.tx_dropped // 0' "$result")
-            network_rx_errors=$(jq -r '.performance_metrics.user_decrypt.network.rx_errors // 0' "$result")
-            network_tx_errors=$(jq -r '.performance_metrics.user_decrypt.network.tx_errors // 0' "$result")
-            reconstruction_failed=$(jq -r '.performance_metrics.user_decrypt.reconstruction_failed // 0' "$result")
-            p50=$(jq -r '.performance_metrics.user_decrypt.latency_ms.p50 // empty' "$result")
-            p95=$(jq -r '.performance_metrics.user_decrypt.latency_ms.p95 // empty' "$result")
-            p99=$(jq -r '.performance_metrics.user_decrypt.latency_ms.p99 // empty' "$result")
-            recon_avg=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.avg // empty' "$result")
-            recon_p50=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.p50 // empty' "$result")
-            recon_p99=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.p99 // empty' "$result")
-            recon_wall=$(jq -r '.performance_metrics.user_decrypt.reconstruction_ms.wall // empty' "$result")
-
-            [ -n "$target_rate" ] || target_rate="$rate"
-            [ -n "$offered" ] || offered=0
-            [ -n "$completed" ] || completed=0
-            [ -n "$failed_requests" ] || failed_requests=0
-            [ -n "$shed" ] || shed=0
-            [ -n "$achieved_rate" ] || achieved_rate=0
-            [ -n "$saturated" ] || saturated=false
-            achieved_short="$(fmt_1 "$achieved_rate")"
-            p50_short="$(fmt_ms_2 "$p50")"
-            p95_short="$(fmt_ms_2 "$p95")"
-            p99_short="$(fmt_ms_2 "$p99")"
-            network_rx_short="$(fmt_1 "$network_rx_gbps")"
-            network_tx_short="$(fmt_1 "$network_tx_gbps")"
-
-            # Parameter sets are per-rate because the top probe is intentionally near capacity.
-            parameter_set=$(parameter_set_for_rate "$rate")
-            maxfail=$(parameter_value "$parameter_set" maxfail)
-            maxshed=$(parameter_value "$parameter_set" maxshed)
-            pct=$(parameter_value "$parameter_set" pct)
-
-            # Any single limit outside the parameter set fails the scenario.
-            within_parameter_set=$(jq -n \
-              --argjson offered "$offered" \
-              --argjson failed_requests "$failed_requests" \
-              --argjson shed "$shed" \
-              --argjson achieved_rate "$achieved_rate" \
-              --argjson target_rate "$target_rate" \
-              --argjson maxfail "$maxfail" \
-              --argjson maxshed "$maxshed" \
-              --argjson pct "$pct" '
-                def pct_of($num; $den): if $den == 0 then 1000000 else ($num * 100 / $den) end;
-                ($offered > 0)
-                and (pct_of($failed_requests; $offered) <= $maxfail)
-                and (pct_of($shed; $offered) <= $maxshed)
-                and (($target_rate > 0) and (($achieved_rate * 100 / $target_rate) >= $pct))
-              ')
-
-            # WARN is accepted-but-degraded. 2750/s is an exploratory probe and
-            # is allowed to exceed its parameter set without failing the workflow.
-            if [ "$status" = "skipped" ]; then
-              outcome=skipped
-              udec_skipped=$((udec_skipped + 1))
-              line="$(status_label "$outcome") ${target_rate}/s skipped"
-            elif [ "$status" != "passed" ]; then
-              if allowed_failure_for_rate "$rate"; then
-                outcome=warned
-                udec_warned=$((udec_warned + 1))
-              else
-                outcome=failed
-                udec_failed=$((udec_failed + 1))
-              fi
-              line="$(status_label "$outcome") ${target_rate}/s measurement failed"
-            elif [ "$within_parameter_set" = "true" ]; then
-              if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
-                outcome=warned
-                udec_warned=$((udec_warned + 1))
-              else
-                outcome=passed
-                udec_passed=$((udec_passed + 1))
-              fi
-              line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
-            else
-              if allowed_failure_for_rate "$rate"; then
-                outcome=warned
-                udec_warned=$((udec_warned + 1))
-              else
-                outcome=failed
-                udec_failed=$((udec_failed + 1))
-              fi
-              line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
-            fi
-
-            if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
-              line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
-            fi
-            if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
-              line="${line} fail=${failed_requests} shed=${shed} sat=${saturated}"
-            fi
-            if [ "$network_rx_errors" != "0" ] || [ "$network_tx_errors" != "0" ] || [ "$network_rx_dropped" != "0" ] || [ "$network_tx_dropped" != "0" ]; then
-              line="${line} net_err=${network_rx_errors}/${network_tx_errors} net_drop=${network_rx_dropped}/${network_tx_dropped}"
-            fi
-            if [ "$reconstruction_failed" != "0" ]; then
-              line="${line} recon_failed=${reconstruction_failed}"
-            fi
-
-            echo "$line"
-            append_operation_line udec "$line"
-            append_udec_raw_line "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s recon_avg=$(fmt_ms_2 "$recon_avg") recon_p50=$(fmt_ms_2 "$recon_p50") recon_p99=$(fmt_ms_2 "$recon_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
-          done
-
-          finite_total=$((keygen_total + crs_total + pdec_total))
-          finite_passed=$((keygen_passed + crs_passed + pdec_passed))
-          finite_failed=$((keygen_failed + crs_failed + pdec_failed))
+          finite_total=$((keygen_total + crs_total))
+          finite_passed=$((keygen_passed + crs_passed))
+          finite_failed=$((keygen_failed + crs_failed))
+          pdec_accepted=$((pdec_passed + pdec_warned))
+          if [ $pdec_total -gt 0 ]; then
+            pdec_success_rate=$(( (pdec_accepted * 100) / pdec_total ))
+          else
+            pdec_success_rate=0
+          fi
           udec_accepted=$((udec_passed + udec_warned))
           if [ $udec_total -gt 0 ]; then
             udec_success_rate=$(( (udec_accepted * 100) / udec_total ))
@@ -1149,13 +1183,13 @@ spec:
           echo "----------------------------------------"
           echo "Keygen: ${keygen_passed}/${keygen_total} passed"
           echo "CRS: ${crs_passed}/${crs_total} passed"
-          echo "Public decrypt: ${pdec_passed}/${pdec_total} passed"
+          echo "Public decrypt: ${pdec_passed} passed, ${pdec_warned} warned, ${pdec_failed} failed, ${pdec_skipped} skipped (${pdec_success_rate}% accepted)"
           echo "User decrypt: ${udec_passed} passed, ${udec_warned} warned, ${udec_failed} failed, ${udec_skipped} skipped (${udec_success_rate}% accepted)"
           echo "=========================================="
 
-          if [ $finite_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
+          if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
             title="KMS perf failed"
-          elif [ $udec_warned -gt 0 ]; then
+          elif [ $pdec_warned -gt 0 ] || [ $udec_warned -gt 0 ]; then
             title="KMS perf passed with warnings"
           else
             title="KMS perf passed"
@@ -1164,12 +1198,17 @@ spec:
           slack_webhook_url=$(cat /etc/slack/url)
           keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
-          pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+          pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2200)"
+          if [ -n "$pdec_raw_text" ]; then
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
+          else
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+          fi
           udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
           if [ -n "$udec_raw_text" ]; then
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b\n*Raw data*\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
           else
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${udec_lines:-No user decrypt tests\n}")"
           fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
@@ -1179,7 +1218,7 @@ spec:
           # (core-img/client-img ARE live: <version>/<client-version> are sed-substituted at submit.)
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
-            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, udec params=Default, duration={{inputs.parameters.duration}}s, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
+            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
             "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
@@ -1218,7 +1257,7 @@ spec:
 
           curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
 
-          if [ $finite_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
+          if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
             exit 1
           fi
 
