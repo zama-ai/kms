@@ -325,8 +325,6 @@ service CoreServiceEndpoint {
   //
   // # Parameters
   // * `context_id` - Context ID of the MPC context to destroy.
-  // * `epoch_ids` - The epochs associated with the context that must be destroyed alongside it. May be empty for a
-  //   context that has no epochs; completeness is not verified by the KMS (see WARNING above).
   //
   // # Returns
   // * `epoch_ids` - The epochs associated with the context that was destroyed alongside the context. May be empty for a
@@ -335,7 +333,6 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
-  // * Each entry in `epoch_ids` must be a valid [`RequestId`].
   // ## Post-condition:
   // * The `context_id` in `request` and any `epoch_id` in the list returned in the response can no longer be used. 
   //   All MPC context data and epoch data associated with these ids, that may have existed, has been purged from both memory and disk.
