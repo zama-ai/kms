@@ -301,49 +301,26 @@ tls_subject = "kms-party"
         );
     }
 
-    #[cfg(feature = "s3_tests")]
+    /// Deterministic centralized key generation persists both the public and private signing keys
+    /// under the expected fixed handle.
+    ///
+    /// Formerly `central_s3`, which wrote the public vault to a live MinIO endpoint. The S3
+    /// storage layer is now covered by in-process mock unit tests
+    /// (`vault::storage::s3::tests`), so this exercises only the binary + config wiring against
+    /// the file backend.
     #[test]
     #[integration_test]
-    fn central_s3() {
-        use kms_lib::vault::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
-
-        // Unique S3 prefix per run so concurrent CI invocations of this test
-        // don't fight each other on the shared bucket.
-        let s3_prefix = format!(
-            "central_s3_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
+    fn central_deterministic_signing_keys() {
         let temp_dir_priv = tempdir().unwrap();
-
+        let temp_dir_pub = tempdir().unwrap();
         let config_dir = tempdir().unwrap();
-        let config_path = config_dir.path().join("kms-gen-keys.toml");
-        fs::write(
-            &config_path,
-            format!(
-                r#"
-[keygen]
-deterministic = true
-overwrite = true
-
-[aws]
-region = "{AWS_REGION}"
-s3_endpoint = "{AWS_S3_ENDPOINT}"
-
-[public_vault.storage.s3]
-bucket = "{BUCKET_NAME}"
-prefix = "{s3_prefix}"
-
-[private_vault.storage.file]
-path = "{private_path}"
-"#,
-                private_path = temp_dir_priv.path().display(),
-            ),
-        )
-        .unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "deterministic = true\noverwrite = true",
+            None,
+        );
         let output = kms_gen_keys_command()
             .arg("--config-file")
             .arg(config_path)
@@ -356,11 +333,11 @@ path = "{private_path}"
                 status = %output.status,
                 stdout = %log,
                 stderr = %err_log,
-                "kms-gen-keys centralized S3 integration command failed"
+                "kms-gen-keys centralized deterministic command failed"
             );
         }
         assert!(output.status.success());
-        assert!(log.contains("Successfully stored public centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
+        assert!(log.contains("Successfully stored public centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
         assert!(log.contains("Successfully stored private centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
     }
 }
