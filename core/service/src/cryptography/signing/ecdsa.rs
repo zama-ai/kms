@@ -21,6 +21,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
+/// The number of seed bytes consumed to build an ed25519 signing key.
+pub const SEED_LEN: usize = 32;
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum PublicSigKeyVersions {
     V0(PublicSigKey),
@@ -170,6 +173,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
 }
 
 // Drop manually implemented due to conflict with Versionize macro
+// TODO(#3078) Rename in the last subissue
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
@@ -221,6 +225,13 @@ impl PrivateSigKey {
     /// The raw secp256k1 signing key, for the crate-internal ECDSA backend.
     pub(crate) fn raw_signing_key(&self) -> &k256::ecdsa::SigningKey {
         &self.sk.0
+    }
+
+    pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Result<PrivateSigKey, SigningError> {
+        let key = k256::ecdsa::SigningKey::from_slice(seed).map_err(|e| {
+            SigningError::KeyDerivation(format!("Could not derive ecdsa key from seed: {e}"))
+        })?;
+        Ok(PrivateSigKey::new(key))
     }
 }
 
