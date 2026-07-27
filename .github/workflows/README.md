@@ -136,8 +136,6 @@ Two parallel entries on PRs:
 
 Schedule entry: `--release -F slow_tests nightly` — nightly-suffixed tests in release mode.
 
-(S3 storage tests now use in-process mocks — no MinIO sidecar — and run as part of the standard suite.)
-
 ### Test material
 
 Most test jobs depend on pre-generated FHE / signing material under `./test-material/`, produced by the `Generate Test Material` step in `common-testing.yml`. Jobs that don't need it pass `skip-test-material: true`. The `lfs:` input gates pulling Git-LFS-tracked `backward_compatibility_*.rs` fixtures — currently only `test-core-service` and `test-core-service-slow-threshold` set it. The btrfs CoW loopback (`/mnt/cow-scratch`) makes per-test material copies cheap (reflinks, not byte copies).

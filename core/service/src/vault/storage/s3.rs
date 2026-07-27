@@ -690,21 +690,11 @@ pub(crate) const MOCK_BUCKET: &str = "test-bucket";
 /// Build an [`S3Storage`] backed by a fresh in-memory mock S3 client, so the storage tests
 /// exercise the real `S3Storage` + `aws_sdk_s3` code paths with no network / MinIO.
 ///
+/// Lives outside [`tests`] because other modules' test suites (e.g. `engine::migration`) use it.
 /// Kept `async` to match the call sites (the previous MinIO-backed helper was async).
 #[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
-    create_s3_storage_with_store(mock_s3::new_store(), storage_type, prefix)
-}
-
-/// Like [`create_s3_storage`] but reuses an existing in-memory store, so several storage handles
-/// can share one logical bucket (used to read data back through a second client).
-#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
-pub(crate) fn create_s3_storage_with_store(
-    store: mock_s3::SharedStore,
-    storage_type: StorageType,
-    prefix: &str,
-) -> S3Storage {
-    let s3_client = mock_s3::build_mock_s3_client(store);
+    let s3_client = mock_s3::build_mock_s3_client(mock_s3::new_store());
     S3Storage::new(
         s3_client,
         MOCK_BUCKET.to_string(),
@@ -844,6 +834,14 @@ pub(crate) mod mock_s3 {
 #[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 mod tests {
     use super::*;
+    use aws_sdk_s3::error::ErrorMetadata;
+    use aws_sdk_s3::operation::{
+        head_object::{HeadObjectError, HeadObjectOutput},
+        list_objects_v2::ListObjectsV2Output,
+    };
+    use aws_sdk_s3::types::{Object, error::NotFound};
+    use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
+
     use crate::vault::storage::tests::{
         test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
         test_store_bytes_does_not_overwrite_existing_bytes,
@@ -948,39 +946,11 @@ mod tests {
         .await;
     }
 
-    /// `data_exists` maps a `head_object` "not found" service error to `Ok(false)` (rather than
-    /// propagating it), matching the "absent object" semantics callers rely on.
-    #[tokio::test]
-    async fn data_exists_maps_head_not_found_to_false() {
-        use aws_sdk_s3::operation::head_object::HeadObjectError;
-        use aws_sdk_s3::types::error::NotFound;
-        use aws_smithy_mocks::{RuleMode, mock, mock_client};
-
-        let head = mock!(aws_sdk_s3::Client::head_object)
-            .then_error(|| HeadObjectError::NotFound(NotFound::builder().build()));
-        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&head], |c| c
-            .force_path_style(true));
-        let storage =
-            S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap();
-
-        assert!(
-            !storage
-                .data_exists(&RequestId::default(), "PublicKey")
-                .await
-                .unwrap()
-        );
-    }
-
     /// `data_exists_at_key` distinguishes three `head_object` outcomes: success ⇒ `true`, a genuine
     /// "not found" service error ⇒ `false`, and any other service error (403/500/503/…) ⇒ propagated
     /// as `Err`, so a transient failure is never silently mistaken for an absent object.
     #[tokio::test]
     async fn data_exists_at_key_maps_head_errors() {
-        use aws_sdk_s3::error::ErrorMetadata;
-        use aws_sdk_s3::operation::head_object::{HeadObjectError, HeadObjectOutput};
-        use aws_sdk_s3::types::error::NotFound;
-        use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
-
         const KEY: &str = "PUB/PublicKey/some-object";
 
         // An `S3Storage` whose only mocked operation is `head_object`, served by `rule`.
@@ -1035,10 +1005,6 @@ mod tests {
     /// mock returns a single page, so this uses explicit multi-page rules).
     #[tokio::test]
     async fn list_all_follows_continuation_tokens() {
-        use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
-        use aws_sdk_s3::types::Object;
-        use aws_smithy_mocks::{RuleMode, mock, mock_client};
-
         let mut rng = rand::thread_rng();
         let id_a = RequestId::new_random(&mut rng);
         let id_b = RequestId::new_random(&mut rng);
