@@ -22,7 +22,7 @@ use crate::{
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
-    structure_traits::{ErrorCorrect, Invert, Syndrome},
+    structure_traits::{ErrorCorrect, Invert, QuotientMaximalIdeal},
 };
 use error_utils::anyhow_error_and_log;
 use threshold_types::role::TwoSetsRole;
@@ -115,8 +115,8 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         oprf_key_present: bool,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal;
 
     /// __THIS FUNCTION IS FOR PARTIES IN S1 ONLY__
     /// i.e. with Role [`TwoSetsRole::Set1`]
@@ -138,8 +138,8 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         oprf_key_present: bool,
     ) -> anyhow::Result<()>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal;
 
     /// __THIS FUNCTION IS FOR PARTIES IN S2 ONLY__
     /// i.e. with Role [`TwoSetsRole::Set2`]
@@ -165,8 +165,8 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         oprf_key_present: bool,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal;
 
     /// __THIS FUNCTION IS FOR PARTIES IN BOTH S1 AND S2__
     /// i.e. with Role [`TwoSetsRole::Both`]
@@ -194,8 +194,8 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         oprf_key_present: bool,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal;
 }
 
 #[derive(Default)]
@@ -222,8 +222,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         oprf_key_present: bool,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         reshare_sk::<SecureSameSetReshare<S>, _, _, _>(
             Expected(preproc128),
@@ -252,8 +252,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         oprf_key_present: bool,
     ) -> anyhow::Result<()>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         let _ = reshare_sk::<SecureTwoSetsReshareAsSet1<S>, _, _, _>(
             NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
@@ -286,8 +286,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         oprf_key_present: bool,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         let span = tracing::Span::current();
         span.record("sid", format!("{:?}", sessions.0.session_id()));
@@ -322,8 +322,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         oprf_key_present: bool,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         let span = tracing::Span::current();
         span.record("sid", format!("{:?}", sessions.0.session_id()));
@@ -355,8 +355,8 @@ pub(crate) async fn reshare_sk<
     oprf_key_present: bool,
 ) -> anyhow::Result<Option<PrivateKeySet<EXTENSION_DEGREE>>>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
 {
     let reshare = R::default();
     let mut input_share = input_share.into();
@@ -945,8 +945,8 @@ mod tests {
         remove_share: bool,
     ) -> anyhow::Result<()>
     where
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         ensure_test_data_setup();
         let num_parties = 7;
@@ -1067,8 +1067,8 @@ mod tests {
         threshold: TwoSetsThreshold,
     ) -> anyhow::Result<()>
     where
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         ensure_test_data_setup();
         let mut task = |mut common_session: GenericBaseSession<TwoSetsRole>,
@@ -1564,8 +1564,8 @@ mod tests {
         (Vec<u128>, Vec<u64>, Vec<u64>),
     )>
     where
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         // generate the key shares
         let mut rng = AesRng::seed_from_u64(4242);

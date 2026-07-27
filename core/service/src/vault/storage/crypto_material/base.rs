@@ -2,6 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
@@ -31,9 +32,10 @@ use crate::{
         },
     },
 };
+use kms_grpc::EpochId;
 use kms_grpc::{
     RequestId,
-    identifiers::{ContextId, EpochId},
+    identifiers::ContextId,
     rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics::METRICS;
@@ -464,11 +466,12 @@ where
                     }
                     // For other private data, we can delete at request level
                     // Observe we make the types explicit to ensure a compile error when a new type is added
-                    #[allow(deprecated)]
+                    #[expect(deprecated)]
                     PrivDataType::SigningKey
                     | PrivDataType::PrssSetup
                     | PrivDataType::PrssSetupCombined
-                    | PrivDataType::ContextInfo => {
+                    | PrivDataType::ContextInfo
+                    | PrivDataType::EpochData => {
                         let del_res = delete_at_request_id(
                             &mut (*priv_storage),
                             req_id,
@@ -604,11 +607,12 @@ where
             }
             // For other private data, we can delete at request level
             // Observe we make the types explicit to ensure a compile error when a new type is added
-            #[allow(deprecated)]
+            #[expect(deprecated)]
             PrivDataType::SigningKey
             | PrivDataType::PrssSetup
             | PrivDataType::PrssSetupCombined
-            | PrivDataType::ContextInfo => {
+            | PrivDataType::ContextInfo
+            | PrivDataType::EpochData => {
                 if let Err(e) = store_versioned_at_request_id(
                     &mut *priv_storage,
                     req_id,
@@ -1005,6 +1009,7 @@ where
                             .await?;
                         }
                         // Non epoched types
+                        #[expect(deprecated)]
                         PrivDataType::PrssSetupCombined => {
                             crate::engine::backup_operator::update_specific_backup_vault::<
                                 PrivS,
@@ -1046,6 +1051,15 @@ where
                             crate::engine::backup_operator::update_specific_backup_vault::<
                                 PrivS,
                                 ContextInfo,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
+                            )
+                            .await?;
+                        }
+                        PrivDataType::EpochData => {
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                EpochData,
                             >(
                                 &private_storage, &mut backup_vault, cur_type, overwrite
                             )

@@ -70,10 +70,23 @@ impl Vault {
     }
 
     /// Method for removing an old custodian backup identified by `backup_id`.
-    /// This is based on the id of the backup, and removes all the backed up information under `backup_id`.
-    /// An error will be returned if the backup exists but could not be deleted or if `backup_id` is the _current_ backup id.
-    /// An info log is produced for each data type that is not found in the backup.
+    ///
+    /// Removes *all* backed-up information stored under `backup_id`, covering both the
+    /// non-epoch namespace (`<backup_id>/<type>/<id>`) and the epoch namespace
+    /// (`<backup_id>/<type>/<epoch>/<id>`) used for epoch-scoped material such as
+    /// [`PrivDataType::FheKeyInfo`], [`PrivDataType::FhePrivateKey`] and
+    /// [`PrivDataType::CrsInfo`].
+    ///
+    /// The method fails closed: after deleting, it re-enumerates every namespace and
+    /// returns an error if any object still remains. Callers therefore only proceed to
+    /// delete recovery material / drop lifecycle state once erasure is confirmed complete,
+    /// so a partial deletion is retried rather than reported as a successful destruction.
+    ///
+    /// An error is also returned if `backup_id` is the _current_ backup id, or if this is
+    /// not a custodian (secret-sharing) backup vault.
     async fn remove_old_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
+        // Only secret-sharing (custodian) backup vaults support per-backup-id removal, and
+        // we must never wipe the backup that is currently in use.
         match self.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
                 if secret_share_keychain.get_current_backup_id()? == *backup_id {
@@ -81,29 +94,86 @@ impl Vault {
                         "remove_old_backup cannot be called on the current backup id"
                     ));
                 }
-                for cur_type in PrivDataType::iter() {
-                    let vault_data_type = VaultDataType::CustodianBackupData(*backup_id, cur_type);
-                    let ids = self
-                        .storage
-                        .all_data_ids(&vault_data_type.to_string())
-                        .await?;
-                    if ids.is_empty() {
-                        tracing::info!(
-                            "No data found for backup id {backup_id} and data type {cur_type}"
-                        );
-                    }
-                    for cur_id in ids {
-                        self.storage
-                            .delete_data(&cur_id, &vault_data_type.to_string())
-                            .await?;
-                    }
-                }
-                Ok(())
             }
-            _ => Err(anyhow!(
-                "remove_old_backup can only be called on custodian backup vaults"
-            )),
+            _ => {
+                return Err(anyhow!(
+                    "remove_old_backup can only be called on custodian backup vaults"
+                ));
+            }
         }
+
+        // We address the storage directly with the fully-qualified
+        // `CustodianBackupData(backup_id, ..)` data type rather than going through the
+        // Vault's `StorageReaderExt`/`StorageExt` methods: those resolve the data type
+        // against the *current* backup id and would therefore target the wrong namespace
+        // when erasing a retired context.
+        for cur_type in PrivDataType::iter() {
+            let vault_data_type =
+                VaultDataType::CustodianBackupData(*backup_id, cur_type).to_string();
+
+            // Non-epoch objects.
+            for cur_id in self.storage.all_data_ids(&vault_data_type).await? {
+                self.storage.delete_data(&cur_id, &vault_data_type).await?;
+            }
+
+            // Epoch-scoped objects.
+            for epoch_id in self
+                .storage
+                .all_epoch_ids_for_data(&vault_data_type)
+                .await?
+            {
+                for cur_id in self
+                    .storage
+                    .all_data_ids_at_epoch(&epoch_id, &vault_data_type)
+                    .await?
+                {
+                    self.storage
+                        .delete_data_at_epoch(&cur_id, &epoch_id, &vault_data_type)
+                        .await?;
+                }
+            }
+        }
+
+        // confirm nothing survived before the caller is allowed to delete the
+        // recovery material and drop lifecycle state.
+        let mut residual = Vec::new();
+        for cur_type in PrivDataType::iter() {
+            let vault_data_type =
+                VaultDataType::CustodianBackupData(*backup_id, cur_type).to_string();
+
+            let remaining_non_epoch = self.storage.all_data_ids(&vault_data_type).await?;
+            if !remaining_non_epoch.is_empty() {
+                residual.push(format!(
+                    "{} non-epoch object(s) for data type {cur_type}",
+                    remaining_non_epoch.len()
+                ));
+            }
+
+            for epoch_id in self
+                .storage
+                .all_epoch_ids_for_data(&vault_data_type)
+                .await?
+            {
+                let remaining_epoch = self
+                    .storage
+                    .all_data_ids_at_epoch(&epoch_id, &vault_data_type)
+                    .await?;
+                if !remaining_epoch.is_empty() {
+                    residual.push(format!(
+                        "{} object(s) for data type {cur_type} at epoch {epoch_id}",
+                        remaining_epoch.len()
+                    ));
+                }
+            }
+        }
+        if !residual.is_empty() {
+            return Err(anyhow!(
+                "remove_old_backup did not fully erase backup id {backup_id}; residual data remains: {}",
+                residual.join(", ")
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -489,9 +559,11 @@ pub mod tests {
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
     use crate::vault::storage::file::FileStorage;
-    use crate::vault::storage::{Storage, StorageType};
+    use crate::vault::storage::{
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType,
+    };
     use aes_prng::AesRng;
-    use kms_grpc::{RequestId, rpc_types::PrivDataType};
+    use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
 
     #[test]
@@ -564,5 +636,118 @@ pub mod tests {
             "Backup data file should be at <backup_root>/<custodian_context_id>/<data_type>/<request_id>, \
              expected: {expected_file:?}"
         );
+    }
+
+    /// Regression test for the epoch-namespace gap in custodian context destruction.
+    /// Details can be found in https://github.com/zama-ai/kms-internal/issues/3110.
+    #[tokio::test]
+    async fn test_remove_old_backup_deletes_epoch_scoped_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let backup_storage =
+            FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
+
+        // Build a secret-sharing backup vault.
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
+            .await
+            .unwrap();
+        let mut vault = Vault {
+            storage: crate::vault::storage::StorageProxy::from(backup_storage),
+            keychain: Some(KeychainProxy::SecretSharing(keychain)),
+        };
+
+        // The custodian context we will retire, and the one that becomes current after rotation.
+        let old_backup_id = derive_request_id("old_custodian_context").unwrap();
+        let current_backup_id = derive_request_id("current_custodian_context").unwrap();
+
+        // `FheKeyInfo` is one of the epoch-scoped private data types.
+        let data_type = PrivDataType::FheKeyInfo;
+        let epoch_id = EpochId::from_bytes([7u8; 32]);
+
+        // While `old_backup_id` is the current context, back up two objects: one epoch-scoped
+        // (as the real backup-sync path does via `store_data_at_epoch`) and one non-epoch object
+        // (a positive control proving `remove_old_backup` actually runs and deletes what it sees).
+        set_current_backup_id(&mut vault, old_backup_id, enc_key.clone());
+        let epoch_id_item = derive_request_id("epoch_backup_item").unwrap();
+        vault
+            .store_bytes_at_epoch(
+                b"epoch_secret",
+                &epoch_id_item,
+                &epoch_id,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+        let non_epoch_item = derive_request_id("non_epoch_backup_item").unwrap();
+        vault
+            .store_bytes(b"non_epoch_secret", &non_epoch_item, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Sanity: both objects are present under the old context before retirement.
+        let old_data_type =
+            VaultDataType::CustodianBackupData(old_backup_id, data_type).to_string();
+        assert!(
+            vault
+                .storage
+                .data_exists(&non_epoch_item, &old_data_type)
+                .await
+                .unwrap(),
+            "non-epoch backup should exist before destruction"
+        );
+        assert!(
+            vault
+                .storage
+                .data_exists_at_epoch(&epoch_id_item, &epoch_id, &old_data_type)
+                .await
+                .unwrap(),
+            "epoch-scoped backup should exist before destruction"
+        );
+
+        // Rotate: a new custodian context becomes current so the old one is allowed to be retired.
+        set_current_backup_id(&mut vault, current_backup_id, enc_key);
+
+        // Retire the old context. This is exactly what `delete_custodian_context_at_id` calls
+        // before deleting the recovery material and reporting a successful destruction.
+        vault.remove_old_backup(&old_backup_id).await.unwrap();
+
+        // Positive control: the non-epoch object was deleted, so `remove_old_backup` did run.
+        assert!(
+            vault
+                .storage
+                .all_data_ids(&old_data_type)
+                .await
+                .unwrap()
+                .is_empty(),
+            "non-epoch backup should have been deleted by remove_old_backup"
+        );
+
+        // The retirement guarantee: no backup object for the retired context may remain.
+        // BUG: the epoch-scoped object survives because `remove_old_backup` only looks at the
+        // non-epoch namespace, so this assertion currently fails.
+        let leftover = vault
+            .storage
+            .all_data_ids_from_all_epochs(&old_data_type)
+            .await
+            .unwrap();
+        assert!(
+            leftover.is_empty(),
+            "destroying a custodian context must erase epoch-scoped backups, \
+             but these survived: {leftover:?}"
+        );
+    }
+
+    /// Point the vault's secret-sharing keychain at `backup_id` as the current custodian context.
+    fn set_current_backup_id(
+        vault: &mut Vault,
+        backup_id: RequestId,
+        enc_key: crate::cryptography::encryption::UnifiedPublicEncKey,
+    ) {
+        match vault.keychain.as_mut() {
+            Some(KeychainProxy::SecretSharing(kc)) => kc.set_backup_enc_key(backup_id, enc_key),
+            _ => panic!("expected a secret sharing keychain"),
+        }
     }
 }
