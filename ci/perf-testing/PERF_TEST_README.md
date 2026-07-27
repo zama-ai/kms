@@ -15,6 +15,57 @@ The public- and user-decrypt tests offer a fixed number of requests per second
 for a fixed duration, then report whether the KMS kept up. The current CI suite
 uses this to measure how many decryptions per second the deployment can handle.
 
+## Managing rate scenarios
+
+The rates to test and their pass/fail limits live in [`perf-scenarios.toml`](perf-scenarios.toml). At submit time
+`generate-perf-workflow.py` expands it into the Argo workflow (filling the `# <<GENERATED:…>>` markers). That TOML
+file is the source of truth for both public- and user-decrypt rate ladders.
+
+```toml
+[defaults]              # applied to every rate unless the rate overrides it
+duration = 60           # measurement window, seconds
+pause = 10              # pause between rate scenarios
+maxfail = 0             # max failed requests, % of offered
+maxshed = 0             # max shed (rate-limited) requests, % of offered
+pct = 98                # min achieved/target rate, %
+allowfail = false       # false → a breach fails the run; true → warns only
+
+[scenarios.pdec]
+key = "udec-key-gen"    # task providing the decryption key
+after = ["crs-gen"]     # dependencies for the first rate
+rates = [
+  { rate = 1100 },
+  { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
+  { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
+
+[scenarios.udec]
+key = "udec-key-gen"
+after = ["pdec-rate-1500"]
+rates = [
+  { rate = 2400 },                                              # uses the defaults
+  { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },          # override some limits
+  { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
+```
+
+Rules:
+
+- every `rates` entry is an inline table with a `rate` key;
+- anything unspecified falls back to `[defaults]`;
+- `key` names the task that supplies the key ID; `after` is optional extra
+  dependency for the first rate of a ladder.
+
+`keygen`/`crs` are one-shot setup and not configured here.
+
+To preview the fully-expanded workflow locally:
+
+```bash
+python3 ci/perf-testing/generate-perf-workflow.py \
+  --scenarios ci/perf-testing/perf-scenarios.toml \
+  --template ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml -o -
+```
+
 ## Quick start
 
 To iterate on the decrypt tests, trigger the workflow with these values:
@@ -39,23 +90,9 @@ they produce are real regardless of this setting.
 
 ## Reading the results
 
-The public-decrypt test runs three scenarios, each sending `1 × euint64` for 30
-seconds:
-
-| Scenario | Rate | Budget (allowed slack) |
-| --- | ---: | --- |
-| stable | 1,100 req/s | no failures, no shedding, ≥98% of target rate |
-| near-limit | 1,300 req/s | ≤1% failures, ≤1% shed, ≥90% of target rate |
-| over-limit | 1,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
-
-The user-decrypt test also runs three scenarios, each sending `1 × euint64` for
-30 seconds:
-
-| Scenario | Rate | Budget (allowed slack) |
-| --- | ---: | --- |
-| stable | 2,400 req/s | no failures, no shedding, ≥98% of target rate |
-| near-limit | 2,700 req/s | ≤1% failures, ≤1% shed, ≥95% of target rate |
-| over-limit | 2,750 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+The public- and user-decrypt rates, their durations, and their budgets
+are defined in [`perf-scenarios.toml`](perf-scenarios.toml). The Slack report
+labels each result by its target rate, for example `✅ 2400/s`.
 
 The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
 not raw counts — `maxshed=25` means "no more than 25% of offered requests were
@@ -67,15 +104,10 @@ Each scenario lands on one of these outcomes:
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
 - **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, **or** it's the `1,500` (pdec) or `2,750` (udec) probe, which is
-  expected to run hot and is never allowed to fail the workflow.
-- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,400`/`2,700` (udec) scenario went
-  outside its budget. This fails the whole workflow.
+  traffic, or has `allowfail = true` and exceeded its budget.
+- **❌ fail** — a scenario without `allowfail = true` went outside its budget.
 - **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
   run in ascending order and stop climbing once one falls over).
-
-The top public- and user-decrypt scenarios are deliberately exploratory probes:
-they run just above the current clean range, so they warn instead of failing.
 
 ### Metric glossary
 

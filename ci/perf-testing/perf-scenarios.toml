@@ -1,0 +1,40 @@
+# Perf rate scenarios — the ONE place to edit rates + per-rate limits.
+#
+# generate-perf-workflow.py expands this into the concrete Argo workflow at submit
+# time (see the "Run performance testing" step). Adding/removing a rate = editing a
+# list here; no DAG or summary surgery.
+#
+# Rules (enforced by the generator, which fails before submit on any breach):
+#   - every `rates` entry MUST be an inline table with a `rate` key (a bare int is rejected);
+#   - unknown keys are rejected (typo protection);
+#   - everything unspecified is filled from [defaults].
+#
+# Not covered here: keygen/crs (one-shot setup tasks, parametrised by workflow inputs).
+# udec-direct is experiment-only and not on this branch.
+
+# Per-rate baseline, applied unless a rate overrides it.
+[defaults]
+duration = 60      # measurement window, seconds
+pause = 10         # inter-rate settle, seconds (run-path only; skipped rates don't wait)
+maxfail = 0        # max failed requests, % of offered
+maxshed = 0        # max shed (rate-limited) requests, % of offered
+pct = 98           # min achieved/target rate, %
+allowfail = false  # false → a limit breach fails the run; true → warns only
+
+[scenarios.pdec]
+key = "udec-key-gen"
+after = ["crs-gen"]
+rates = [
+  { rate = 1100 },
+  { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
+  { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
+
+[scenarios.udec]
+key = "udec-key-gen"                          # task whose request-id becomes each rate's key_id
+after = ["pdec-rate-1500"]                    # extra deps for the first rate (run after pdec)
+rates = [
+  { rate = 2400 },
+  { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },
+  { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
