@@ -30,6 +30,7 @@ members = [
 # backward-compatibility/generate-v0.13.10 - Data generation for v0.13.10 with old KMS version dependencies
 # backward-compatibility/generate-v0.13.20 - Data generation for v0.13.20 with old KMS version dependencies
 # backward-compatibility/generate-v0.14.0 - Data generation for v0.14.0 with old KMS version dependencies
+# backward-compatibility/generate-v0.15.0 - Data generation for v0.15.0 with old KMS version dependencies
 #
 # The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
 # current workspace dependencies, creating name conflicts as described in:
@@ -38,7 +39,7 @@ members = [
 # Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0", "backward-compatibility/generate-v0.13.10", "backward-compatibility/generate-v0.13.20", "backward-compatibility/generate-v0.14.0"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0", "backward-compatibility/generate-v0.13.10", "backward-compatibility/generate-v0.13.20", "backward-compatibility/generate-v0.14.0", "backward-compatibility/generate-v0.15.0"]
 
 [workspace.package]
 authors = ["Zama"]
@@ -115,6 +116,10 @@ aws-lc-rs = { version = "=1.17.0" } # AWS-LC cryptographic library - LOW RISK: O
 aws-nitro-enclaves-nsm-api = { version = "=0.5.1" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
 aws-sdk-kms = { version = "=1.111.0", default-features = false, features = ["default-https-client", "rt-tokio"] }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
 aws-sdk-s3 = { version = "=1.137.0", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
+# Official AWS SDK mocking crate (same org/repo as aws-sdk-s3); test-only, replaces the MinIO
+# integration test setup with in-process HTTP mocks. 0.2.6 is the newest release compatible with
+# our pinned smithy stack (aws-smithy-runtime-api 1.12.x / aws-smithy-types 1.5.0). - LOW RISK: Official AWS SDK
+aws-smithy-mocks = { version = "=0.2.6" }
 aws-smithy-types = { version = "=1.5.0" }  # AWS Smithy types (used for low risk base64 implementation) - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.9", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads

@@ -152,13 +152,22 @@ impl S3Storage {
             .await;
         match result {
             Ok(_) => Ok(true),
-            Err(sdk_error) => match sdk_error.as_service_error().map(|e| e.is_not_found()) {
-                Some(true) => Ok(false),
-                Some(false) | None => Err(anyhow_error_and_log(format!(
-                    "Could not check existence of object in bucket {} under key {}: {:?}",
-                    self.bucket, key, sdk_error
-                ))),
-            },
+            // Only a genuine "not found" error means the object is absent. Any
+            // other error (403 Access Denied, 500, 503 Slow Down, ...) must
+            // propagate to callers.
+            Err(sdk_error) => {
+                if sdk_error
+                    .as_service_error()
+                    .is_some_and(|e| e.is_not_found())
+                {
+                    Ok(false)
+                } else {
+                    Err(anyhow_error_and_log(format!(
+                        "Could not check existence of object in bucket {} under key {}: {:?}",
+                        self.bucket, key, sdk_error
+                    )))
+                }
+            }
         }
     }
 
@@ -199,10 +208,12 @@ impl S3Storage {
         Ok(())
     }
 
-    /// Deletes the object at the given key. Deleting a non-existent key succeeds
-    /// (S3 `DeleteObject` is idempotent), but genuine deletion failures are
-    /// returned so callers never mistake a failed delete for a successful one
-    /// (e.g. the destroy-epoch and purge flows must be able to retry).
+    /// Deletes the object at the given key.
+    ///
+    /// This operation is idempotent on S3, so this succeeds when the object
+    /// does not exist. Genuine deletion failures are returned, so callers never
+    /// mistake a failed delete for a successful one (e.g. the destroy-epoch and
+    /// purge flows must be able to retry).
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",
@@ -224,6 +235,42 @@ impl S3Storage {
             })?;
 
         Ok(())
+    }
+
+    /// List every object key (from `contents`) and common prefix (from `common_prefixes`)
+    /// under `prefix`, following `ListObjectsV2` continuation tokens so the result is the
+    /// full listing rather than a single (≤1000-entry) page. Keys and prefixes are trimmed.
+    async fn list_all(&self, prefix: &str) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+        let mut keys = Vec::new();
+        let mut common_prefixes = Vec::new();
+        let mut continuation_token = None;
+        loop {
+            let result = self
+                .s3_client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .delimiter("/")
+                .prefix(prefix)
+                .set_continuation_token(continuation_token)
+                .send()
+                .await?;
+            for cur_res in result.contents() {
+                if let Some(key) = &cur_res.key {
+                    keys.push(key.trim().to_string());
+                }
+            }
+            for cur_res in result.common_prefixes() {
+                if let Some(p) = &cur_res.prefix {
+                    common_prefixes.push(p.trim().to_string());
+                }
+            }
+            if result.is_truncated().unwrap_or(false) {
+                continuation_token = result.next_continuation_token().map(str::to_string);
+            } else {
+                break;
+            }
+        }
+        Ok((keys, common_prefixes))
     }
 }
 
@@ -264,23 +311,14 @@ impl StorageReader for S3Storage {
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
-        let mut ids = HashSet::new();
-        let result = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .delimiter("/")
-            .prefix(format!("{}/{}/", self.prefix, data_type))
-            .send()
+        let (keys, _) = self
+            .list_all(&format!("{}/{}/", self.prefix, data_type))
             .await?;
-        for cur_res in result.contents() {
-            if let Some(key) = &cur_res.key {
-                let trimmed_key = key.trim();
-                // Find the elements with the right prefix
-                // Find the id of file which is always the last segment when splitting on "/"
-                if let Some(cur_id) = trimmed_key.split('/').next_back() {
-                    ids.insert(RequestId::from_str(cur_id)?);
-                }
+        let mut ids = HashSet::new();
+        for key in keys {
+            // The id is always the last segment when splitting the key on "/".
+            if let Some(cur_id) = key.split('/').next_back() {
+                ids.insert(RequestId::from_str(cur_id)?);
             }
         }
         Ok(ids)
@@ -326,49 +364,32 @@ impl StorageReaderExt for S3Storage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
-        let mut ids = HashSet::new();
-        let result = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .delimiter("/")
-            .prefix(format!("{}/{}/{}/", self.prefix, data_type, epoch_id))
-            .send()
+        let (keys, _) = self
+            .list_all(&format!("{}/{}/{}/", self.prefix, data_type, epoch_id))
             .await?;
-        for cur_res in result.contents() {
-            if let Some(key) = &cur_res.key {
-                let trimmed_key = key.trim();
-                // Find the elements with the right prefix
-                // Find the id of file which is always the last segment when splitting on "/"
-                if let Some(cur_id) = trimmed_key.split('/').next_back() {
-                    ids.insert(RequestId::from_str(cur_id)?);
-                }
+        let mut ids = HashSet::new();
+        for key in keys {
+            // The id is always the last segment when splitting the key on "/".
+            if let Some(cur_id) = key.split('/').next_back() {
+                ids.insert(RequestId::from_str(cur_id)?);
             }
         }
         Ok(ids)
     }
 
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
-        let mut ids = HashSet::new();
-        let result = self
-            .s3_client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .delimiter("/")
-            .prefix(format!("{}/{}/", self.prefix, data_type))
-            .send()
+        let (_, common_prefixes) = self
+            .list_all(&format!("{}/{}/", self.prefix, data_type))
             .await?;
+        let mut ids = HashSet::new();
         // With delimiter="/", epoch_ids appear as "directories" in common_prefixes,
         // not as objects in contents()
-        for cur_res in result.common_prefixes() {
-            if let Some(key) = &cur_res.prefix {
-                let trimmed_key = key.trim();
-                // Ensure we only count "directories" by checking for the trailing "/"
-                if trimmed_key.ends_with('/') {
-                    // Remove the '/' at the end and take the last segment after splitting on "/" to get epoch_id
-                    if let Some(cur_id) = trimmed_key.trim_end_matches('/').split('/').next_back() {
-                        ids.insert(EpochId::from_str(cur_id)?);
-                    }
+        for key in common_prefixes {
+            // Ensure we only count "directories" by checking for the trailing "/"
+            if key.ends_with('/') {
+                // Remove the '/' at the end and take the last segment after splitting on "/" to get epoch_id
+                if let Some(cur_id) = key.trim_end_matches('/').split('/').next_back() {
+                    ids.insert(EpochId::from_str(cur_id)?);
                 }
             }
         }
@@ -1160,94 +1181,330 @@ pub fn find_region_from_s3_url(s3_bucket_url: &str) -> anyhow::Result<String> {
     }
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "s3_tests")]{
-        pub const BUCKET_NAME: &str = "ci-kms-key-test";
-        pub const AWS_REGION: &str = "eu-north-1";
-        // this points to a locally running Minio
-        pub const AWS_S3_ENDPOINT: &str = "http://127.0.0.1:9000";
-    }
-}
+/// Bucket name expected by the in-memory mock S3 backend in tests.
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
+pub(crate) const MOCK_BUCKET: &str = "test-bucket";
 
-#[cfg(all(feature = "s3_tests", any(test, feature = "testing")))]
+/// Build an [`S3Storage`] backed by a fresh in-memory mock S3 client, so the storage tests
+/// exercise the real `S3Storage` + `aws_sdk_s3` code paths with no network / MinIO.
+///
+/// Lives outside [`tests`] because other modules' test suites (e.g. `engine::migration`) use it.
+/// Kept `async` to match the call sites (the previous MinIO-backed helper was async).
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
-    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-    let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
-        .await
-        .unwrap();
+    let s3_client = mock_s3::build_mock_s3_client(mock_s3::new_store());
     S3Storage::new(
         s3_client,
-        BUCKET_NAME.to_string(),
+        MOCK_BUCKET.to_string(),
         storage_type,
         Some(prefix),
     )
     .unwrap()
 }
 
-// Observe that certain tests require an S3 instance setup.
-// There are run with the extra argument `-F s3_tests`.
-// Note that we pay for each of these tests, in the order of single digit cents per tests.
-//
-// To setup the testing environment locally with Minio, proceed as follows:
-// 1. Install and run Minio in Docker
-//    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
-// 2. Setup the bucket. Within the `dev-s3-mock-1` container in Docker execute the following commands:
-//   a. First open Docker desktop and navigate to `Volumes` and find `zama-core-threshold_minio_secrets` and copy the content of `access_key` and the content of `secret_key`.
-//   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and assuming no change to [`AWS_S3_ENDPOINT`])
-//   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
-//   d. Run `mc anonymous set public testminio/ci-kms-key-test`
-// 3. Update the environment variables in the shell where you run the tests:
-//   a. Execute the following:
-//   ```bash
-//      AWS_ACCESS_KEY_ID=<access_key> &&
-//      export AWS_ACCESS_KEY_ID &&
-//      AWS_SECRET_ACCESS_KEY=<secret_key> &&
-//      export AWS_SECRET_ACCESS_KEY
-//   ```
-//   where `<access_key>` and `<secret_key>` are the values copied above.
-// 4. Now you can execute the tests: `cargo test --lib -F s3_tests s3_`
-//
-// To instead setup a test environment for a real S3 proceed as follows:
-//
-// 1. Creating access keys:
-//    a. Log into aws.amazon.com
-//    b. In the top right corner of the page there will be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
-//    c. Select “Create access keys”
-//    d. Make sure to locally store the AWS access key ID and secret access key.
-// 2. Create S3 bucket
-//    a. Search for “S3 console” in the search bar after logging into aws.amazon.com
-//    b. Click “Create a bucket”
-//    c. Make a “general bucket” and remember the name you gave it
-//    d. Download the AWS CLI tool
-//    e. Run `aws configure` to set it up with the correct information for your bucket
-//    f. Validate it works with `aws s3 ls`
-// 3. Test S3 storage
-//    a. Update the const's BUCKET_NAME and AWS_REGION below to reflect what you created.
-//    b. Now you can run the tests :)
-//    cargo test --lib -F s3_tests s3_
-#[cfg(feature = "s3_tests")]
-#[cfg(test)]
+/// In-memory mock of the S3 operations used by [`S3Storage`], built on `aws-smithy-mocks`.
+///
+/// A bucket is modelled as a shared `key -> bytes` map. One `mock!` rule per operation
+/// (`put`/`get`/`head`/`delete`/`list_objects_v2`, plus the five multipart operations) reads and
+/// writes that map, so stored data can be read back exactly like a real bucket.
+/// `list_objects_v2` reproduces S3's `delimiter="/"` behaviour (direct objects in `contents`,
+/// sub-"directories" in `common_prefixes`) because the epoch-enumeration helpers
+/// ([`StorageReaderExt::all_epoch_ids_for_data`] etc.) depend on it.
+///
+/// The multipart rules model an upload as `upload id -> (key, part number -> bytes)`. Parts are
+/// concatenated in part-number order on `CompleteMultipartUpload`, which is also when the object
+/// becomes visible — matching S3's all-or-nothing visibility, which [`s3_put_versioned`] relies
+/// on. Completed objects get a multipart-style ETag (`"<key hash>-<part count>"`), so tests can
+/// tell a multipart upload from a single PUT exactly as they would against real S3.
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
+pub(crate) mod mock_s3 {
+    use super::*;
+    use aws_sdk_s3::operation::{
+        abort_multipart_upload::AbortMultipartUploadOutput,
+        complete_multipart_upload::CompleteMultipartUploadOutput,
+        create_multipart_upload::CreateMultipartUploadOutput,
+        delete_object::DeleteObjectOutput,
+        get_object::{GetObjectError, GetObjectOutput},
+        head_object::{HeadObjectError, HeadObjectOutput},
+        list_multipart_uploads::ListMultipartUploadsOutput,
+        list_objects_v2::ListObjectsV2Output,
+        put_object::PutObjectOutput,
+        upload_part::UploadPartOutput,
+    };
+    use aws_sdk_s3::types::{
+        CommonPrefix, MultipartUpload, Object,
+        error::{NoSuchKey, NotFound},
+    };
+    use aws_smithy_mocks::{MockResponse, RuleMode, mock, mock_client};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    /// In-memory object store shared by every rule of a single mock client, keyed by full object
+    /// key. Tests use a single logical bucket, so the mock ignores the request's bucket name.
+    pub(crate) type SharedStore = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
+
+    /// ETag per stored object. Only objects written through the multipart path get one, so an
+    /// absent entry means the object was stored with a single PUT.
+    type SharedEtags = Arc<Mutex<BTreeMap<String, String>>>;
+
+    /// In-flight multipart uploads: upload id -> (object key, part number -> part bytes).
+    type SharedUploads = Arc<Mutex<BTreeMap<String, (String, BTreeMap<i32, Vec<u8>>)>>>;
+
+    /// Create a fresh, empty [`SharedStore`].
+    pub(crate) fn new_store() -> SharedStore {
+        Arc::new(Mutex::new(BTreeMap::new()))
+    }
+
+    /// Build a mocked [`S3Client`] whose operations are served from `store`.
+    pub(crate) fn build_mock_s3_client(store: SharedStore) -> S3Client {
+        // Multipart bookkeeping is per client: an upload only ever spans one client, and tests
+        // observe it through `list_multipart_uploads` / `head_object` rather than directly.
+        let uploads: SharedUploads = Arc::new(Mutex::new(BTreeMap::new()));
+        let etags: SharedEtags = Arc::new(Mutex::new(BTreeMap::new()));
+        let next_upload_id = Arc::new(AtomicU64::new(1));
+
+        let put_store = Arc::clone(&store);
+        let put_etags = Arc::clone(&etags);
+        let put = mock!(aws_sdk_s3::Client::put_object).then_compute_output(move |input| {
+            let key = input.key().expect("put_object requires a key").to_string();
+            // `s3_put_blob` builds the body from an in-memory `Vec`, so `bytes()` is always `Some`.
+            let bytes = input
+                .body()
+                .bytes()
+                .expect("mock put_object expects an in-memory body")
+                .to_vec();
+            // A single-PUT ETag carries no "-<part count>" suffix, so tests can tell it apart
+            // from a multipart one. Writing over a multipart object replaces its ETag too.
+            let etag = format!("\"{:x}\"", bytes.len());
+            put_store.lock().unwrap().insert(key.clone(), bytes);
+            put_etags.lock().unwrap().insert(key, etag.clone());
+            PutObjectOutput::builder().e_tag(etag).build()
+        });
+
+        let get_store = Arc::clone(&store);
+        let get = mock!(aws_sdk_s3::Client::get_object).then_compute_response(move |input| {
+            let key = input.key().expect("get_object requires a key");
+            match get_store.lock().unwrap().get(key) {
+                Some(bytes) => MockResponse::Output(
+                    GetObjectOutput::builder()
+                        .body(ByteStream::from(bytes.clone()))
+                        .build(),
+                ),
+                None => {
+                    MockResponse::Error(GetObjectError::NoSuchKey(NoSuchKey::builder().build()))
+                }
+            }
+        });
+
+        let head_store = Arc::clone(&store);
+        let head_etags = Arc::clone(&etags);
+        let head = mock!(aws_sdk_s3::Client::head_object).then_compute_response(move |input| {
+            let key = input.key().expect("head_object requires a key");
+            if head_store.lock().unwrap().contains_key(key) {
+                MockResponse::Output(
+                    HeadObjectOutput::builder()
+                        .set_e_tag(head_etags.lock().unwrap().get(key).cloned())
+                        .build(),
+                )
+            } else {
+                MockResponse::Error(HeadObjectError::NotFound(NotFound::builder().build()))
+            }
+        });
+
+        let delete_store = Arc::clone(&store);
+        let delete = mock!(aws_sdk_s3::Client::delete_object).then_compute_output(move |input| {
+            let key = input.key().expect("delete_object requires a key");
+            delete_store.lock().unwrap().remove(key);
+            DeleteObjectOutput::builder().build()
+        });
+
+        let list_store = Arc::clone(&store);
+        let list = mock!(aws_sdk_s3::Client::list_objects_v2).then_compute_output(move |input| {
+            let prefix = input.prefix().unwrap_or("");
+            let delimiter = input.delimiter();
+            let guard = list_store.lock().unwrap();
+            let mut contents = Vec::new();
+            let mut common_prefixes = BTreeSet::new();
+            for key in guard.keys() {
+                let Some(rest) = key.strip_prefix(prefix) else {
+                    continue;
+                };
+                match delimiter.and_then(|d| rest.find(d).map(|i| i + d.len())) {
+                    // `rest` contains the delimiter: collapse into a common prefix that includes
+                    // everything up to and including the first delimiter (S3 semantics).
+                    Some(end) => {
+                        common_prefixes.insert(format!("{prefix}{}", &rest[..end]));
+                    }
+                    // No delimiter after the prefix: a direct object.
+                    None => {
+                        contents.push(Object::builder().key(key.clone()).build());
+                    }
+                }
+            }
+            let common_prefixes: Vec<_> = common_prefixes
+                .into_iter()
+                .map(|p| CommonPrefix::builder().prefix(p).build())
+                .collect();
+            ListObjectsV2Output::builder()
+                .is_truncated(false)
+                .set_contents((!contents.is_empty()).then_some(contents))
+                .set_common_prefixes((!common_prefixes.is_empty()).then_some(common_prefixes))
+                .build()
+        });
+
+        let create_uploads = Arc::clone(&uploads);
+        let create =
+            mock!(aws_sdk_s3::Client::create_multipart_upload).then_compute_output(move |input| {
+                let key = input
+                    .key()
+                    .expect("create_multipart_upload requires a key")
+                    .to_string();
+                // Sequential rather than random: workflow scripts and tests must stay
+                // reproducible, and ids only have to be unique within one client.
+                let upload_id = format!(
+                    "mock-upload-{}",
+                    next_upload_id.fetch_add(1, Ordering::Relaxed)
+                );
+                create_uploads
+                    .lock()
+                    .unwrap()
+                    .insert(upload_id.clone(), (key, BTreeMap::new()));
+                CreateMultipartUploadOutput::builder()
+                    .upload_id(upload_id)
+                    .build()
+            });
+
+        let upload_part_uploads = Arc::clone(&uploads);
+        let upload_part =
+            mock!(aws_sdk_s3::Client::upload_part).then_compute_output(move |input| {
+                let upload_id = input
+                    .upload_id()
+                    .expect("upload_part requires an upload id")
+                    .to_string();
+                let part_number = input.part_number().expect("upload_part requires a number");
+                // The uploader thread always sends an in-memory `Vec`, so `bytes()` is `Some`.
+                let bytes = input
+                    .body()
+                    .bytes()
+                    .expect("mock upload_part expects an in-memory body")
+                    .to_vec();
+                let mut guard = upload_part_uploads.lock().unwrap();
+                let (_, parts) = guard
+                    .get_mut(&upload_id)
+                    .expect("upload_part for an unknown upload id");
+                parts.insert(part_number, bytes);
+                UploadPartOutput::builder()
+                    .e_tag(format!("\"mock-part-{part_number}\""))
+                    .build()
+            });
+
+        let complete_uploads = Arc::clone(&uploads);
+        let complete_store = Arc::clone(&store);
+        let complete_etags = Arc::clone(&etags);
+        let complete = mock!(aws_sdk_s3::Client::complete_multipart_upload).then_compute_output(
+            move |input| {
+                let upload_id = input
+                    .upload_id()
+                    .expect("complete_multipart_upload requires an upload id");
+                let (key, parts) = complete_uploads
+                    .lock()
+                    .unwrap()
+                    .remove(upload_id)
+                    .expect("complete_multipart_upload for an unknown upload id");
+                // `BTreeMap` iterates by part number, which is the order S3 assembles in.
+                let part_count = parts.len();
+                let object: Vec<u8> = parts.into_values().flatten().collect();
+                // The object only becomes visible here: all-or-nothing, like real S3.
+                complete_store
+                    .lock()
+                    .unwrap()
+                    .insert(key.clone(), object.clone());
+                // Real S3 ends a multipart ETag with "-<part count>"; tests use that suffix to
+                // prove the multipart path ran instead of the single-PUT fast path.
+                let etag = format!("\"{:x}-{part_count}\"", object.len());
+                complete_etags.lock().unwrap().insert(key, etag.clone());
+                CompleteMultipartUploadOutput::builder().e_tag(etag).build()
+            },
+        );
+
+        let abort_uploads = Arc::clone(&uploads);
+        let abort =
+            mock!(aws_sdk_s3::Client::abort_multipart_upload).then_compute_output(move |input| {
+                let upload_id = input
+                    .upload_id()
+                    .expect("abort_multipart_upload requires an upload id");
+                // Aborting discards every buffered part and never publishes the object.
+                abort_uploads.lock().unwrap().remove(upload_id);
+                AbortMultipartUploadOutput::builder().build()
+            });
+
+        let list_uploads = Arc::clone(&uploads);
+        let list_multipart =
+            mock!(aws_sdk_s3::Client::list_multipart_uploads).then_compute_output(move |input| {
+                let prefix = input.prefix().unwrap_or("");
+                let guard = list_uploads.lock().unwrap();
+                let pending: Vec<_> = guard
+                    .iter()
+                    .filter(|(_, (key, _))| key.starts_with(prefix))
+                    .map(|(upload_id, (key, _))| {
+                        MultipartUpload::builder()
+                            .upload_id(upload_id)
+                            .key(key)
+                            .build()
+                    })
+                    .collect();
+                ListMultipartUploadsOutput::builder()
+                    .is_truncated(false)
+                    .set_uploads((!pending.is_empty()).then_some(pending))
+                    .build()
+            });
+
+        mock_client!(
+            aws_sdk_s3,
+            RuleMode::MatchAny,
+            [
+                &put,
+                &get,
+                &head,
+                &delete,
+                &list,
+                &create,
+                &upload_part,
+                &complete,
+                &abort,
+                &list_multipart
+            ],
+            // The endpoint is inert for mock-served calls (the mock transport never
+            // dials), but any client *derived* from this config has the mock transport
+            // stripped — `build_multipart_upload_client` does exactly that. Pointing at
+            // a dead local port makes such a client fail instantly instead of reaching
+            // the real `s3.us-east-1.amazonaws.com` that `with_test_defaults_v2` implies.
+            |c| c.force_path_style(true).endpoint_url("http://127.0.0.1:1")
+        )
+    }
+}
+
+// These tests exercise the real `S3Storage` + `aws_sdk_s3` code paths against an in-process
+// mock S3 (see [`mock_s3`]) — no MinIO, no network, no credentials. They run as part of the
+// normal `cargo test -F testing` suite.
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 mod tests {
     use super::*;
+    use aws_sdk_s3::error::ErrorMetadata;
+    use aws_sdk_s3::operation::{
+        delete_object::DeleteObjectError,
+        head_object::{HeadObjectError, HeadObjectOutput},
+        list_objects_v2::ListObjectsV2Output,
+    };
+    use aws_sdk_s3::types::{Object, error::NotFound};
+    use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
+
     use crate::vault::storage::tests::{
         test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
         test_store_bytes_does_not_overwrite_existing_bytes,
         test_store_data_does_not_overwrite_existing_data, test_store_data_records_payload_size,
     };
-
-    async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
-            .await
-            .unwrap();
-        S3Storage::new(
-            s3_client,
-            BUCKET_NAME.to_string(),
-            storage_type,
-            Some(prefix),
-        )
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn s3_storage_helper_methods() {
@@ -1347,30 +1604,99 @@ mod tests {
         .await;
     }
 
+    /// `data_exists_at_key` distinguishes three `head_object` outcomes: success ⇒ `true`, a genuine
+    /// "not found" service error ⇒ `false`, and any other service error (403/500/503/…) ⇒ propagated
+    /// as `Err`, so a transient failure is never silently mistaken for an absent object.
     #[tokio::test]
-    async fn test_s3_anon() {
-        let prefix = std::stringify!(test_s3_anon);
-        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
-        storage
-            .store_bytes(b"fake-pk", &RequestId::default(), "PublicKey")
-            .await
-            .unwrap();
+    async fn data_exists_at_key_maps_head_errors() {
+        const KEY: &str = "PUB/PublicKey/some-object";
 
-        // Build an anonymous client pointing at local MinIO
-        let s3_client = build_anonymous_s3_client(AWS_S3_ENDPOINT, AWS_REGION.to_string())
-            .await
-            .unwrap();
+        // An `S3Storage` whose only mocked operation is `head_object`, served by `rule`.
+        fn storage_for(rule: &Rule) -> S3Storage {
+            let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [rule], |c| c
+                .force_path_style(true));
+            S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap()
+        }
 
-        let pub_storage = ReadOnlyS3Storage::new(
-            s3_client,
-            BUCKET_NAME.to_string(),
-            StorageType::PUB,
-            Some(prefix),
-        )
-        .unwrap();
+        // Object present: `head_object` succeeds ⇒ `true`.
+        let ok = mock!(aws_sdk_s3::Client::head_object)
+            .then_output(|| HeadObjectOutput::builder().build());
+        assert!(storage_for(&ok).data_exists_at_key(KEY).await.unwrap());
 
-        let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-        assert!(!public_key_ids.is_empty());
+        // Genuine "not found" ⇒ `false`.
+        let not_found = mock!(aws_sdk_s3::Client::head_object)
+            .then_error(|| HeadObjectError::NotFound(NotFound::builder().build()));
+        assert!(
+            !storage_for(&not_found)
+                .data_exists_at_key(KEY)
+                .await
+                .unwrap()
+        );
+
+        // Any other service error must propagate rather than read as "absent". Cover a 403-style
+        // access error and a 503-style throttling error, both non-`NotFound` variants.
+        for code in ["AccessDenied", "SlowDown"] {
+            let err = mock!(aws_sdk_s3::Client::head_object).then_error(move || {
+                HeadObjectError::generic(ErrorMetadata::builder().code(code).build())
+            });
+            assert!(
+                storage_for(&err).data_exists_at_key(KEY).await.is_err(),
+                "head_object {code} error should propagate, not map to Ok(false)"
+            );
+        }
+    }
+
+    /// Reading a key that does not exist surfaces the `get_object` error as an `Err` rather than
+    /// silently succeeding.
+    #[tokio::test]
+    async fn read_missing_data_errors() {
+        let storage = create_s3_storage(StorageType::PUB, "read_missing").await;
+        assert!(
+            storage
+                .load_bytes(&RequestId::default(), "PublicKey")
+                .await
+                .is_err()
+        );
+    }
+
+    /// `list_all` follows `ListObjectsV2` continuation tokens and merges every page (the stateful
+    /// mock returns a single page, so this uses explicit multi-page rules).
+    #[tokio::test]
+    async fn list_all_follows_continuation_tokens() {
+        let mut rng = rand::thread_rng();
+        let id_a = RequestId::new_random(&mut rng);
+        let id_b = RequestId::new_random(&mut rng);
+        let key_a = format!("PUB/PublicKey/{id_a}");
+        let key_b = format!("PUB/PublicKey/{id_b}");
+
+        // First page: truncated, hands back a continuation token.
+        let page1 = mock!(aws_sdk_s3::Client::list_objects_v2)
+            .match_requests(|i| i.continuation_token().is_none())
+            .then_output(move || {
+                ListObjectsV2Output::builder()
+                    .contents(Object::builder().key(key_a.clone()).build())
+                    .is_truncated(true)
+                    .next_continuation_token("page-2")
+                    .build()
+            });
+        // Second page: final page for that token.
+        let page2 = mock!(aws_sdk_s3::Client::list_objects_v2)
+            .match_requests(|i| i.continuation_token() == Some("page-2"))
+            .then_output(move || {
+                ListObjectsV2Output::builder()
+                    .contents(Object::builder().key(key_b.clone()).build())
+                    .is_truncated(false)
+                    .build()
+            });
+        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&page1, &page2], |c| c
+            .force_path_style(true));
+        let storage =
+            S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap();
+
+        let ids = storage.all_data_ids("PublicKey").await.unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&id_a));
+        assert!(ids.contains(&id_b));
     }
 
     /// Deleting a key that was never stored must succeed: S3 `DeleteObject` is
@@ -1385,20 +1711,20 @@ mod tests {
             .unwrap();
     }
 
-    /// A delete that genuinely fails (here: the bucket does not exist) must
-    /// surface an error, so purge/destroy flows never mistake a failed delete
-    /// for a successful one.
+    /// A delete that genuinely fails must surface an error, so purge/destroy flows never
+    /// mistake a failed delete for a successful one — and the message must name the bucket
+    /// and key, which is the only context an operator gets from the log line.
     #[tokio::test]
     async fn test_delete_failure_propagates_s3() {
         let prefix = std::stringify!(test_delete_failure_propagates_s3);
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
-            .await
-            .unwrap();
-        let bucket = "no-such-bucket-delete-test";
+        let denied = mock!(aws_sdk_s3::Client::delete_object).then_error(|| {
+            DeleteObjectError::generic(ErrorMetadata::builder().code("AccessDenied").build())
+        });
+        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&denied], |c| c
+            .force_path_style(true));
         let mut storage = S3Storage::new(
-            s3_client,
-            bucket.to_string(),
+            client,
+            MOCK_BUCKET.to_string(),
             StorageType::PUB,
             Some(prefix),
         )
@@ -1406,37 +1732,28 @@ mod tests {
         let err = storage
             .delete_data(&RequestId::default(), "PublicKey")
             .await
-            .expect_err("delete against a missing bucket must fail");
+            .expect_err("a rejected delete must fail");
         assert!(
-            err.to_string().contains(bucket),
+            err.to_string().contains(MOCK_BUCKET),
             "error must carry the bucket context, got: {err}"
         );
     }
 
-    /// An existence check that fails with a non-404 service error (here:
-    /// credentials the server rejects) must surface an error rather than
-    /// "data absent", so exists-guarded flows (overwrite checks, purge and
-    /// destroy-epoch) never skip work because of e.g. broken credentials.
+    /// An existence check that fails with a non-404 service error must surface an error
+    /// rather than "data absent", so exists-guarded flows (overwrite checks, purge and
+    /// destroy-epoch) never skip work because of e.g. broken credentials. The mapping itself
+    /// is covered by [`data_exists_at_key_maps_head_errors`]; this pins the error context.
     #[tokio::test]
     async fn test_exists_failure_propagates_s3() {
         let prefix = std::stringify!(test_exists_failure_propagates_s3);
-        let credentials = aws_sdk_s3::config::Credentials::new(
-            "invalid-access-key",
-            "invalid-secret-key",
-            None,
-            None,
-            "s3-exists-negative-test",
-        );
-        let config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(aws_config::BehaviorVersion::latest())
-            .region(Region::new(AWS_REGION))
-            .credentials_provider(credentials)
-            .endpoint_url(AWS_S3_ENDPOINT)
-            .force_path_style(true)
-            .build();
+        let denied = mock!(aws_sdk_s3::Client::head_object).then_error(|| {
+            HeadObjectError::generic(ErrorMetadata::builder().code("AccessDenied").build())
+        });
+        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&denied], |c| c
+            .force_path_style(true));
         let storage = S3Storage::new(
-            S3Client::from_conf(config),
-            BUCKET_NAME.to_string(),
+            client,
+            MOCK_BUCKET.to_string(),
             StorageType::PUB,
             Some(prefix),
         )
@@ -1444,9 +1761,9 @@ mod tests {
         let err = storage
             .data_exists(&RequestId::default(), "PublicKey")
             .await
-            .expect_err("existence check with rejected credentials must fail");
+            .expect_err("a rejected existence check must fail");
         assert!(
-            err.to_string().contains(BUCKET_NAME),
+            err.to_string().contains(MOCK_BUCKET),
             "error must carry the bucket context, got: {err}"
         );
     }
@@ -1454,6 +1771,7 @@ mod tests {
     mod multipart {
         use super::*;
         use crate::engine::base::derive_request_id;
+        use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError;
         use serde::Deserialize;
         use tfhe_versionable::VersionsDispatch;
 
@@ -1491,7 +1809,7 @@ mod tests {
             let size = s3_put_versioned(
                 &storage.s3_client,
                 storage.s3_client.clone(),
-                BUCKET_NAME,
+                MOCK_BUCKET,
                 &key,
                 &data,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -1510,7 +1828,7 @@ mod tests {
             let head = storage
                 .s3_client
                 .head_object()
-                .bucket(BUCKET_NAME)
+                .bucket(MOCK_BUCKET)
                 .key(&key)
                 .send()
                 .await
@@ -1546,7 +1864,7 @@ mod tests {
             let size = s3_put_versioned(
                 &storage.s3_client,
                 storage.s3_client.clone(),
-                BUCKET_NAME,
+                MOCK_BUCKET,
                 &key,
                 &data,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -1559,7 +1877,7 @@ mod tests {
             let head = storage
                 .s3_client
                 .head_object()
-                .bucket(BUCKET_NAME)
+                .bucket(MOCK_BUCKET)
                 .key(&key)
                 .send()
                 .await
@@ -1599,9 +1917,11 @@ mod tests {
             // Drive the writer past one part so the pipeline engages (the
             // multipart upload is created and part 1 ships), then finish with
             // an injected serialization failure to exercise the abort path.
+            // The writer takes the upload's client, so the mock serves the
+            // uploader thread directly instead of a client derived from it.
             let mut writer = S3PartWriter::new(
-                build_multipart_upload_client(storage.s3_client.config()),
-                BUCKET_NAME,
+                storage.s3_client.clone(),
+                MOCK_BUCKET,
                 &key,
                 S3_MULTIPART_MIN_PART_SIZE,
             );
@@ -1610,7 +1930,7 @@ mod tests {
                 .unwrap();
             let res = s3_finish_put(
                 &storage.s3_client,
-                BUCKET_NAME,
+                MOCK_BUCKET,
                 &key,
                 writer,
                 Err(anyhow::anyhow!("injected serialization failure")),
@@ -1629,7 +1949,7 @@ mod tests {
             let pending = storage
                 .s3_client
                 .list_multipart_uploads()
-                .bucket(BUCKET_NAME)
+                .bucket(MOCK_BUCKET)
                 .prefix(&key)
                 .send()
                 .await
@@ -1655,7 +1975,7 @@ mod tests {
             let res = s3_put_versioned(
                 &storage.s3_client,
                 storage.s3_client.clone(),
-                BUCKET_NAME,
+                MOCK_BUCKET,
                 &key,
                 &data,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -1672,7 +1992,7 @@ mod tests {
             let pending = storage
                 .s3_client
                 .list_multipart_uploads()
-                .bucket(BUCKET_NAME)
+                .bucket(MOCK_BUCKET)
                 .prefix(&key)
                 .send()
                 .await
@@ -1684,62 +2004,70 @@ mod tests {
             );
         }
 
-        // Multi-thread flavor so the store exercises the `block_in_place`
-        // serialization branch that production (multi-thread) runtimes take.
+        // Multi-thread flavor so the store exercises the `block_in_place` serialization
+        // branch that production (multi-thread) runtimes take, at the production part size.
+        //
+        // This drives `s3_put_versioned` rather than `store_data`: the latter builds the
+        // upload's client itself, which by design drops the mock transport, so the uploader
+        // thread would talk to a real endpoint. The payload-size metric that `store_data`
+        // records around this call is covered by `test_store_data_records_payload_size`.
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn s3_multipart_via_store_data() {
-            let prefix = std::stringify!(s3_multipart_via_store_data);
+        async fn s3_multipart_block_in_place_branch() {
+            let prefix = std::stringify!(s3_multipart_block_in_place_branch);
             let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
             // 1 MiB more than a production part, so the pipeline engages.
             let data = big_payload(S3_MULTIPART_PART_SIZE + 1024 * 1024);
             let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
 
-            // Ensure no old data is present: a leftover object from a failed
-            // previous run (persistent buckets) would make the store a no-op.
-            storage
-                .delete_data(&req_id, TestBigType::NAME)
-                .await
-                .unwrap();
-            let before =
-                observability::metrics::METRICS.payload_size_sample_count(TestBigType::NAME);
-            let outcome = storage
-                .store_data(&data, &req_id, TestBigType::NAME)
-                .await
-                .unwrap();
-            assert!(matches!(outcome, StoreWriteOutcome::Created));
+            let size = s3_put_versioned(
+                &storage.s3_client,
+                storage.s3_client.clone(),
+                MOCK_BUCKET,
+                &key,
+                &data,
+                S3_MULTIPART_PART_SIZE,
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .await
+            .unwrap();
 
             let read_back: TestBigType =
                 storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
             assert_eq!(read_back, data);
-            let after =
-                observability::metrics::METRICS.payload_size_sample_count(TestBigType::NAME);
-            assert!(
-                after > before,
-                "storing data must record a payload-size sample (before={before}, after={after})"
-            );
+            let stored = storage
+                .load_bytes(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+            assert_eq!(stored.len() as u64, size);
             storage
                 .delete_data(&req_id, TestBigType::NAME)
                 .await
                 .unwrap();
         }
 
-        /// An uploader-side S3 failure (here: the bucket does not exist, so
-        /// `CreateMultipartUpload` fails on the uploader thread) must close the
-        /// part channel, unwind the serializing side, and surface the uploader
-        /// error as the root cause.
+        /// An uploader-side S3 failure (here: `CreateMultipartUpload` is rejected on the
+        /// uploader thread) must close the part channel, unwind the serializing side, and
+        /// surface the uploader error as the root cause.
         #[tokio::test]
         async fn s3_multipart_uploader_failure_propagates() {
             use std::io::Write;
 
             let prefix = std::stringify!(s3_multipart_uploader_failure_propagates);
-            let storage = create_s3_storage(StorageType::PUB, prefix).await;
             let req_id = derive_request_id(prefix).unwrap();
-            let key = storage.item_key(&req_id, TestBigType::NAME);
-            let bucket = "no-such-bucket-multipart-test";
+            let key = format!("PUB/{}/{req_id}", TestBigType::NAME);
+
+            let rejected = mock!(aws_sdk_s3::Client::create_multipart_upload).then_error(|| {
+                CreateMultipartUploadError::generic(
+                    ErrorMetadata::builder().code("AccessDenied").build(),
+                )
+            });
+            let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rejected], |c| c
+                .force_path_style(true));
 
             let mut writer = S3PartWriter::new(
-                build_multipart_upload_client(storage.s3_client.config()),
-                bucket,
+                client.clone(),
+                MOCK_BUCKET,
                 &key,
                 S3_MULTIPART_MIN_PART_SIZE,
             );
@@ -1750,7 +2078,7 @@ mod tests {
             let write_res =
                 writer.write_all(&vec![7u8; 2 * S3_MULTIPART_MIN_PART_SIZE + 1024 * 1024]);
             let ser_result = write_res.map_err(|e| anyhow::anyhow!(e));
-            let res = s3_finish_put(&storage.s3_client, bucket, &key, writer, ser_result).await;
+            let res = s3_finish_put(&client, MOCK_BUCKET, &key, writer, ser_result).await;
             let err = res.expect_err("uploader failure must propagate");
             assert!(
                 err.to_string().contains("creating multipart upload"),
@@ -1869,11 +2197,11 @@ fn test_find_region() {
     assert_eq!(region.as_str(), "us-east-1");
 }
 
-/// Unit tests for [`S3PartWriter`]'s buffering that need no S3/MinIO (so they
-/// run in ordinary CI, unlike the `s3_tests`-gated suite above). They assert on
-/// the writer's local state only; the single-PUT paths never spill, and the one
-/// spilling test points the (spawned, retry-disabled) uploader at a refused
-/// local port and never awaits it.
+/// Unit tests for [`S3PartWriter`]'s buffering. Unlike the [`tests`] suite these need no S3
+/// client at all: they assert on the writer's local state only, so they also run without the
+/// `testing` feature that gates the mock. The single-PUT paths never spill, and the one
+/// spilling test points the (spawned, retry-disabled) uploader at a refused local port and
+/// never awaits it.
 #[cfg(test)]
 mod part_writer_tests {
     use super::*;
