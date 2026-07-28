@@ -128,7 +128,8 @@ pub async fn setup_threshold_no_client<
             core_to_core_net: core_config
                 .threshold
                 .as_ref()
-                .and_then(|t| t.core_to_core_net),
+                .map(|t| t.core_to_core_net)
+                .unwrap_or_default(),
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
@@ -354,7 +355,8 @@ pub async fn setup_threshold_with_custom_peers<
             core_to_core_net: core_config
                 .threshold
                 .as_ref()
-                .and_then(|t| t.core_to_core_net),
+                .map(|t| t.core_to_core_net)
+                .unwrap_or_default(),
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);

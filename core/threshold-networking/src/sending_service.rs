@@ -35,8 +35,7 @@ use tonic::{async_trait, transport::Channel};
 
 use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
-use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
-use crate::constants::MAX_BUFFERED_FUTURE_MSGS;
+use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use threshold_types::network::{NetworkMode, Networking};
 
 pub struct ArcSendValueRequest {
@@ -56,7 +55,7 @@ impl ArcSendValueRequest {
 #[async_trait]
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
-    fn new(tls_certs: Option<ClientConfig>, conf: OptionConfigWrapper) -> anyhow::Result<Self>
+    fn new(tls_certs: Option<ClientConfig>, conf: CoreToCoreNetworkConfig) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
@@ -84,7 +83,7 @@ type ChannelMap =
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
-    pub(crate) config: OptionConfigWrapper,
+    pub(crate) config: CoreToCoreNetworkConfig,
     /// A ready-made TLS identity (certificate, keypair and CA roots)
     pub(crate) tls_config: Option<ClientConfig>,
     /// Keep in memory channels we already have available
@@ -301,7 +300,10 @@ impl GrpcSendingService {
 impl SendingService for GrpcSendingService {
     /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
-    fn new(tls_config: Option<ClientConfig>, config: OptionConfigWrapper) -> anyhow::Result<Self> {
+    fn new(
+        tls_config: Option<ClientConfig>,
+        config: CoreToCoreNetworkConfig,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             config,
             tls_config,
@@ -453,7 +455,7 @@ pub struct NetworkSession {
     pub(crate) network_mode: NetworkMode,
     // If Network mode is sync, we need to keep track of the values below to make sure
     // we are within time bound
-    pub(crate) conf: OptionConfigWrapper,
+    pub(crate) conf: CoreToCoreNetworkConfig,
     pub(crate) init_time: OnceLock<Instant>,
     /// Milliseconds since [`ACTIVITY_EPOCH`] when the last message was received,
     /// or when the session was made active if no message has been received yet.
@@ -472,6 +474,32 @@ pub struct NetworkSession {
     pub(crate) max_elapsed_time: AtomicDuration,
 }
 
+/// Outcome of a single wait for the next packet from a sender's channel in
+/// [`NetworkSession::recv_next`].
+enum RecvOutcome {
+    /// A packet arrived and should be classified against the current round.
+    Packet(NetworkRoundValue),
+    /// This tick elapsed without a delivery decision (sender not completed); the
+    /// caller should keep waiting.
+    Retry,
+    /// The sender's channel is closed; no further messages will ever arrive.
+    Closed,
+    /// The sender declared the session complete and the post-completion grace
+    /// period elapsed with no further message; the receive must abort.
+    Aborted,
+}
+
+impl RecvOutcome {
+    /// Map a channel `recv()` result to an outcome: `Some` is a packet, `None`
+    /// means the channel is closed.
+    fn from_recv(packet: Option<NetworkRoundValue>) -> Self {
+        match packet {
+            Some(packet) => RecvOutcome::Packet(packet),
+            None => RecvOutcome::Closed,
+        }
+    }
+}
+
 #[async_trait]
 impl<R: RoleTrait> Networking<R> for NetworkSession {
     /// WARNING: [`increase_round_counter`] MUST be called right before sending.
@@ -481,14 +509,18 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
     async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()> {
-        // Lock the counter to ensure no modifications happens while sending
-        // This may cause an error if someone tries to increase the round counter at the same time
-        // however, this would imply incorrect use of the networking API and thus we want to fail fast.
+        // Take the round-counter *read* guard for the duration of the send. This
+        // is a read guard, not an exclusive lock: concurrent `send`/`receive`
+        // calls (also readers) proceed in parallel, while `increase_round_counter`
+        // (the sole writer) simply *waits* until this guard is released — it does
+        // not error. Holding it is what binds the stamped round tag to the round
+        // the caller intended, by preventing a round transition mid-send.
         let round_counter = *self.round_counter.read().await;
         let tagged_value = Tag {
             session_id: self.session_id,
             sender: self.owner.mpc_identity(),
-            round_counter,
+            // Widen the in-memory `usize` round to the fixed-width wire type.
+            round_counter: round_counter as u64,
         };
 
         let tag = Arc::new(
@@ -515,9 +547,12 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
     /// Thus sending and receiving MUST not be interleaved.
     async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
-        // Lock the counter to ensure no modifications happens while receiving
-        // This may cause an error if someone tries to increase the round counter at the same time
-        // however, this would imply incorrect use of the networking API and thus we want to fail fast.
+        // Take the round-counter *read* guard for the whole receive. This is a
+        // read guard, not an exclusive lock: other readers (`send`/`receive`) run
+        // concurrently, while `increase_round_counter` (the sole writer) *waits*
+        // until this guard is dropped — it does not error. Holding it is what
+        // fixes `network_round` for the entire call and makes exact-round
+        // delivery well-defined against a racing round transition.
         let counter_lock = self.round_counter.read().await;
         let rx = self
             .receiving_channels
@@ -534,12 +569,13 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // round transition can race this call.
         let network_round = *counter_lock;
 
-        // Fast path: prune any buffered messages that have since become stale,
-        // then deliver a previously buffered message for exactly this round.
-        // Future-round messages are only ever buffered here (never delivered
-        // early), so this cannot leak a wrong-round packet.
-        state.future.retain(|&round, _| round >= network_round);
-        if let Some(value) = state.future.remove(&network_round) {
+        // Fast path: drop buffered messages that have since become stale, then
+        // deliver a previously buffered message for exactly this round. Future-
+        // round messages are only ever buffered (never delivered early), so this
+        // cannot leak a wrong-round packet. The prune + take is done in one place
+        // on `ReceiverState` (see `take_current`) so the buffer discipline stays
+        // unit-testable without a running session.
+        if let Some(value) = state.take_current(network_round) {
             self.last_rec_activity_time
                 .store(now_activity_millis(), Ordering::Relaxed);
             return Ok(value);
@@ -551,42 +587,30 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             self.conf.get_max_waiting_time_for_message_queue(),
         );
         loop {
-            // packet : Option<Option<NetworkRoundValue>>
-            // Outer Option layer is to signal whether we received something from the channel
-            // Inner Option layer is to signal whether the channel is closed
-            // i.e:
-            // - None: we keep waiting for messages (and log a warn)
-            // - Some(None): the channel is closed, we return an error
-            // - Some(Some(packet)): we received a packet, we break the loop and process it
-            // Note: if we know a sender has completed its session, we assume the connection with
-            // it is synchronous, and thus we wait for the timeout time to ensure there is no more messages lingering, before returning an error
-            let packet = tokio::select! {
-                    _ = tick_interval.tick() => {
-                        tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
-                        if self.completed_parties.contains(&sender.get_role_kind()) {
-                            // The sender has said the session is complete, wait for the timeout time to ensure there is no more messages lingering
-                            tokio::select! {
-                                _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => {
-                                    return Err(anyhow_error_and_log(format!("Session {} has been aborted with {}", self.session_id, sender.get_role_kind())));
-                                }
-                                local_packet = state.rx.recv() => Some(local_packet)
-                            }
-                        } else {
-                            None
-                        }
-                    },
-                    local_packet = state.rx.recv() => Some(local_packet)
-            };
-            let packet = match packet {
-                // Keep waiting for a message.
-                None => continue,
+            // Wait for the next packet from this sender's channel, applying the
+            // completed-party grace period. All the subtle wait/abort control
+            // flow lives in `recv_next`; here we only act on its verdict.
+            let packet = match self
+                .recv_next(&mut state.rx, &mut tick_interval, sender)
+                .await
+            {
+                RecvOutcome::Packet(packet) => packet,
+                // Nothing decided this tick — keep waiting.
+                RecvOutcome::Retry => continue,
                 // The channel is closed.
-                Some(None) => {
+                RecvOutcome::Closed => {
                     return Err(anyhow_error_and_log(
                         "Trying to receive from a closed channel.",
                     ));
                 }
-                Some(Some(packet)) => packet,
+                // Sender completed and the grace period elapsed with no message.
+                RecvOutcome::Aborted => {
+                    return Err(anyhow_error_and_log(format!(
+                        "Session {} has been aborted with {}",
+                        self.session_id,
+                        sender.get_role_kind()
+                    )));
+                }
             };
             // Update the time we received a message
             self.last_rec_activity_time
@@ -612,26 +636,23 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 std::cmp::Ordering::Equal => return Ok(packet.value),
                 // Future round: buffer it (within bounds) until the session
                 // advances, so it can never satisfy an earlier round's receive.
+                // The look-ahead window, per-sender cap and the
+                // at-most-one-value-per-round rule live in `buffer_future`.
                 std::cmp::Ordering::Greater => {
-                    if packet.round_counter
-                        <= network_round.saturating_add(MAX_BUFFERED_FUTURE_MSGS)
-                        && state.future.len() < MAX_BUFFERED_FUTURE_MSGS
-                    {
-                        // At most one legitimate message per (round, sender):
-                        // do not let a malicious duplicate flood
-                        // the buffer for that round.
-                        state
-                            .future
-                            .entry(packet.round_counter)
-                            .or_insert(packet.value);
-                    } else {
+                    let round = packet.round_counter;
+                    if !state.buffer_future(
+                        round,
+                        packet.value,
+                        network_round,
+                        self.conf.get_max_buffered_future_msgs(),
+                    ) {
                         // Note that the sender is never warned of this failure, so a honest party
                         // won't try and re-send the message. But, this is a DoS mitigation: a malicious peer could
                         // otherwise flood us with future-round messages and exhaust memory.
                         tracing::warn!(
                             "@ round {} - dropping out-of-window/over-cap future-round message for round {} from {:?} (buffered: {})",
                             network_round,
-                            packet.round_counter,
+                            round,
                             sender,
                             state.future.len()
                         );
@@ -728,6 +749,88 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 }
 
 impl NetworkSession {
+    /// Build a fresh session. Collapses the two production construction sites in
+    /// [`GrpcNetworkingManager::make_network_session`] (the inactive→active and
+    /// vacant branches), which previously duplicated this 14-field literal and
+    /// had to be kept in lock-step by hand. All the round-independent fields
+    /// (round counter, timers, byte counter, activity time) are initialised here;
+    /// callers supply only what actually differs.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        owner: Identity,
+        session_id: SessionId,
+        sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        receiving_channels: MessageQueueStore,
+        completed_parties: Arc<DashSet<RoleKind>>,
+        network_mode: NetworkMode,
+        conf: CoreToCoreNetworkConfig,
+        timeout: Duration,
+    ) -> Self {
+        NetworkSession {
+            owner,
+            session_id,
+            sending_channels,
+            receiving_channels,
+            round_counter: tokio::sync::RwLock::new(0),
+            completed_parties,
+            num_byte_sent: AtomicUsize::new(0),
+            network_mode,
+            conf,
+            init_time: OnceLock::new(),
+            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            current_network_timeout: AtomicDuration::new(timeout),
+            next_network_timeout: AtomicDuration::new(timeout),
+            max_elapsed_time: AtomicDuration::new(Duration::ZERO),
+        }
+    }
+
+    /// Wait for the next packet from `sender`'s channel, applying the
+    /// completed-party grace period.
+    ///
+    /// This isolates the subtlest control flow in [`Networking::receive`] (the
+    /// nested `select!`) behind a small enum. The invariants:
+    /// - If a packet is available on the channel it is always returned as
+    ///   [`RecvOutcome::Packet`] — even when it arrives *during* the grace
+    ///   period. (Silently dropping such a message was the bug fixed in PR #624,
+    ///   which is why the grace period `select!`s on `rx.recv()` and does not
+    ///   merely sleep.)
+    /// - A plain tick while the sender is *not* completed yields
+    ///   [`RecvOutcome::Retry`] (keep waiting), never a spurious abort.
+    /// - The grace period is entered only once the sender has declared the
+    ///   session complete, and only then can its timeout produce
+    ///   [`RecvOutcome::Aborted`].
+    ///
+    /// Classification of the returned packet against the current round is the
+    /// caller's job; this method only decides *whether* there is a packet.
+    async fn recv_next<R: RoleTrait>(
+        &self,
+        rx: &mut tokio::sync::mpsc::Receiver<NetworkRoundValue>,
+        tick_interval: &mut tokio::time::Interval,
+        sender: &R,
+    ) -> RecvOutcome {
+        tokio::select! {
+            _ = tick_interval.tick() => {
+                tracing::warn!(
+                    "Still waiting to receive from party {:?} for session {:?}",
+                    sender,
+                    self.session_id
+                );
+                if self.completed_parties.contains(&sender.get_role_kind()) {
+                    // The sender has said the session is complete: wait one more
+                    // grace period for any lingering in-flight message, but still
+                    // deliver it if it arrives before the timeout.
+                    tokio::select! {
+                        _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => RecvOutcome::Aborted,
+                        local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
+                    }
+                } else {
+                    RecvOutcome::Retry
+                }
+            },
+            local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
+        }
+    }
+
     fn inner_get_network_mode(&self) -> NetworkMode {
         self.network_mode
     }
@@ -755,8 +858,8 @@ mod tests {
 
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
-        CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
-        ReceiverState, TlsExtensionGetter,
+        ChannelPair, CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, ReceiverState,
+        TlsExtensionGetter,
     };
     use crate::sending_service::{AtomicDuration, NetworkSession, now_activity_millis};
     use std::collections::HashMap;
@@ -828,7 +931,8 @@ mod tests {
         let sender_handle = {
             let role_assignment = role_assignment.clone();
             tokio::spawn(async move {
-                let networking = GrpcNetworkingManager::new(None, None).unwrap();
+                let networking =
+                    GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
                 let network_session = networking
                     .make_network_session(sid, &role_assignment, role_1, NetworkMode::Sync)
                     .await
@@ -863,7 +967,8 @@ mod tests {
 
         // First receiver (role_2) - starts after delay, receives first message, then shuts down
         let first_receiver_handle = {
-            let networking = GrpcNetworkingManager::new(None, None).unwrap();
+            let networking =
+                GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
             let role_assignment = role_assignment.clone();
             let id_2 = id_2.clone();
             tokio::spawn(async move {
@@ -905,7 +1010,8 @@ mod tests {
 
         // Second receiver (role_2) - starts after longer delay, receives second message
         let second_receiver_handle = {
-            let networking = GrpcNetworkingManager::new(None, None).unwrap();
+            let networking =
+                GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
             let role_assignment = role_assignment.clone();
             tokio::spawn(async move {
                 // Wait before starting server to make sure sender retries
@@ -988,10 +1094,10 @@ mod tests {
             let tx = Arc::new(tx);
             channel_maps.insert(
                 id_2.mpc_identity(),
-                (
-                    Arc::clone(&tx),
-                    Arc::new(Mutex::new(ReceiverState::new(rx))),
-                ),
+                ChannelPair {
+                    tx: Arc::clone(&tx),
+                    rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                },
             );
             let mut out = MessageQueueStore::new_uninitialized(channel_maps);
 
@@ -1028,7 +1134,7 @@ mod tests {
             round_counter: tokio::sync::RwLock::new(0),
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
-            conf: OptionConfigWrapper { conf: None },
+            conf: CoreToCoreNetworkConfig::default(),
             init_time: OnceLock::new(),
             last_rec_activity_time: AtomicU64::new(now_activity_millis()),
             current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
@@ -1112,6 +1218,21 @@ mod tests {
         Role,
         Arc<tokio::sync::mpsc::Sender<NetworkRoundValue>>,
     ) {
+        make_test_session_with_conf(channel_size_limit, CoreToCoreNetworkConfig::default())
+    }
+
+    /// Like [`make_test_session`] but with an explicit config, so tests can
+    /// exercise configurable knobs (e.g. `max_future_rounds` /
+    /// `max_buffered_future_msgs`) rather than only their defaults.
+    fn make_test_session_with_conf(
+        channel_size_limit: usize,
+        conf: CoreToCoreNetworkConfig,
+    ) -> (
+        NetworkSession,
+        Role,
+        Role,
+        Arc<tokio::sync::mpsc::Sender<NetworkRoundValue>>,
+    ) {
         let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
         let role_1 = Role::indexed_from_one(1);
         let id_1 = Identity::new(format!("{ip_addr}"), 1, None);
@@ -1132,10 +1253,10 @@ mod tests {
             let tx = Arc::new(tx);
             channel_maps.insert(
                 id_2.mpc_identity(),
-                (
-                    Arc::clone(&tx),
-                    Arc::new(Mutex::new(ReceiverState::new(rx))),
-                ),
+                ChannelPair {
+                    tx: Arc::clone(&tx),
+                    rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                },
             );
             let mut out = MessageQueueStore::new_uninitialized(channel_maps);
             let mut others = role_assignment.clone();
@@ -1159,7 +1280,7 @@ mod tests {
             round_counter: tokio::sync::RwLock::new(0),
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
-            conf: OptionConfigWrapper { conf: None },
+            conf,
             init_time: OnceLock::new(),
             last_rec_activity_time: AtomicU64::new(now_activity_millis()),
             current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
@@ -1269,6 +1390,102 @@ mod tests {
         }
     }
 
+    /// The reordering-buffer bounds come from the network config, not the
+    /// compile-time constants. A session configured with a smaller window / cap
+    /// must enforce the *configured* values — dropping messages the default
+    /// bounds would have accepted.
+    #[tokio::test()]
+    async fn test_future_round_bounds_are_configurable() {
+        // --- Configured look-ahead window (max_future_rounds = 2) ---
+        {
+            let conf = CoreToCoreNetworkConfig {
+                max_future_rounds: Some(2),
+                ..Default::default()
+            };
+            let (session, _role_1, role_2, tx_2) = make_test_session_with_conf(1000, conf);
+
+            // Round 2 is within the configured window; round 5 is outside it
+            // (yet inside the default window of 16, so this pins the config path).
+            tx_2.send(NetworkRoundValue {
+                round_counter: 2,
+                value: vec![2],
+            })
+            .await
+            .unwrap();
+            tx_2.send(NetworkRoundValue {
+                round_counter: 5,
+                value: vec![5],
+            })
+            .await
+            .unwrap();
+            let current = vec![0u8; 4];
+            tx_2.send(NetworkRoundValue {
+                round_counter: 0,
+                value: current.clone(),
+            })
+            .await
+            .unwrap();
+
+            assert_eq!(session.receive(&role_2).await.unwrap(), current);
+
+            let rx = session
+                .receiving_channels
+                .get_receiver_state(&role_2)
+                .unwrap()
+                .unwrap();
+            let state = rx.lock().await;
+            assert!(
+                state.future.contains_key(&2),
+                "round 2 is within the configured window and must be buffered"
+            );
+            assert!(
+                !state.future.contains_key(&5),
+                "round 5 is outside the configured window of 2 and must be dropped"
+            );
+        }
+
+        // --- Configured per-sender cap (max_buffered_future_msgs = 2) ---
+        {
+            let conf = CoreToCoreNetworkConfig {
+                // Wide window so the cap, not the window, is what bites.
+                max_future_rounds: Some(1000),
+                max_buffered_future_msgs: Some(2),
+                ..Default::default()
+            };
+            let (session, _role_1, role_2, tx_2) = make_test_session_with_conf(1000, conf);
+
+            for r in 1..=5 {
+                tx_2.send(NetworkRoundValue {
+                    round_counter: r,
+                    value: vec![r as u8],
+                })
+                .await
+                .unwrap();
+            }
+            let current = vec![9u8; 4];
+            tx_2.send(NetworkRoundValue {
+                round_counter: 0,
+                value: current.clone(),
+            })
+            .await
+            .unwrap();
+
+            assert_eq!(session.receive(&role_2).await.unwrap(), current);
+
+            let rx = session
+                .receiving_channels
+                .get_receiver_state(&role_2)
+                .unwrap()
+                .unwrap();
+            let state = rx.lock().await;
+            assert_eq!(
+                state.future.len(),
+                2,
+                "buffer must be capped at the configured max_buffered_future_msgs (2), not the default"
+            );
+        }
+    }
+
     /// Two payloads tagged with the same future round must not overwrite each
     /// other: the first-buffered value wins and delivery is deterministic.
     #[tokio::test()]
@@ -1359,7 +1576,8 @@ mod tests {
             others.remove(&role);
 
             // Spin up gRPC server for current Role
-            let networking = GrpcNetworkingManager::new(None, None).unwrap();
+            let networking =
+                GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
             let networking_server = networking.new_server(TlsExtensionGetter::default());
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
             let core_router = tonic::transport::Server::builder()
@@ -1571,20 +1789,22 @@ mod tests {
     /// `max_waiting_time_for_message_queue` so that tests don't have to wait the default 60s.
     fn test_config(max_waiting_time_secs: u64) -> CoreToCoreNetworkConfig {
         CoreToCoreNetworkConfig {
-            message_limit: 70,
-            multiplier: 1.1,
-            max_interval: 60,
+            message_limit: Some(70),
+            multiplier: Some(1.1),
+            max_interval: Some(60),
             max_elapsed_time: Some(60),
             initial_interval_ms: Some(100),
-            network_timeout: 120,
-            network_timeout_bk: 300,
-            network_timeout_bk_sns: 1200,
-            max_en_decode_message_size: 2 * 1024 * 1024 * 1024,
+            network_timeout: Some(120),
+            network_timeout_bk: Some(300),
+            network_timeout_bk_sns: Some(1200),
+            max_en_decode_message_size: Some(2 * 1024 * 1024 * 1024),
             session_update_interval_secs: Some(60),
             session_cleanup_interval_secs: Some(86400),
             discard_inactive_sessions_interval: Some(15 * 60),
             max_waiting_time_for_message_queue: Some(max_waiting_time_secs),
             max_opened_inactive_sessions_per_party: Some(2000),
+            max_future_rounds: Some(16),
+            max_buffered_future_msgs: Some(32),
         }
     }
 
@@ -1628,10 +1848,10 @@ mod tests {
             let tx = Arc::new(tx);
             channel_maps.insert(
                 id_2.mpc_identity(),
-                (
-                    Arc::clone(&tx),
-                    Arc::new(Mutex::new(ReceiverState::new(rx))),
-                ),
+                ChannelPair {
+                    tx: Arc::clone(&tx),
+                    rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                },
             );
             let mut out = MessageQueueStore::new_uninitialized(channel_maps);
 
@@ -1665,9 +1885,7 @@ mod tests {
             round_counter: tokio::sync::RwLock::new(0),
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
-            conf: OptionConfigWrapper {
-                conf: Some(test_config(1)),
-            },
+            conf: test_config(1),
             init_time: OnceLock::new(),
             last_rec_activity_time: AtomicU64::new(now_activity_millis()),
             current_network_timeout: AtomicDuration::new(wait),
