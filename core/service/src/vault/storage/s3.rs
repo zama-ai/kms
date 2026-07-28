@@ -176,8 +176,15 @@ impl S3Storage {
             &self.bucket,
             key
         );
+        // Build the upload's own client up front, so a multipart upload never contends
+        // with this storage's other S3 operations. Payloads that stay on the single-PUT
+        // path never use it: that opens no connection, though it does build and discard
+        // a TLS connector (~55 µs measured), which is negligible against the PUT that
+        // follows (see [`build_multipart_upload_client`]).
+        let uploader = build_multipart_upload_client(self.s3_client.config());
         let size = s3_put_versioned(
             &self.s3_client,
+            uploader,
             &self.bucket,
             key,
             data,
@@ -709,8 +716,12 @@ enum PartWriterOutcome {
 /// multi-thread runtimes, inline otherwise (see [`s3_put_versioned`]) — while
 /// a dedicated uploader thread drains the bounded part queue, so
 /// serialization and upload overlap without unbounded buffering.
+///
+/// `client` is the upload's own S3 client, handed in by the caller (see
+/// [`build_multipart_upload_client`]) rather than derived here, so the uploader
+/// never inherits anything from the caller's client implicitly.
 struct S3PartWriter {
-    config: aws_sdk_s3::Config,
+    client: S3Client,
     bucket: String,
     key: String,
     part_size: usize,
@@ -720,14 +731,14 @@ struct S3PartWriter {
 }
 
 impl S3PartWriter {
-    fn new(config: aws_sdk_s3::Config, bucket: &str, key: &str, part_size: usize) -> Self {
+    fn new(client: S3Client, bucket: &str, key: &str, part_size: usize) -> Self {
         // Callers pass `S3_MULTIPART_PART_SIZE` or a test constant, so this
         // cannot fire in correct execution. Not a `debug_assert`: in release
         // S3 would only reject an undersized part at CompleteMultipartUpload,
         // once the whole object has already been uploaded.
         assert!(part_size >= S3_MULTIPART_MIN_PART_SIZE);
         Self {
-            config,
+            client,
             bucket: bucket.to_string(),
             key: key.to_string(),
             part_size,
@@ -742,11 +753,11 @@ impl S3PartWriter {
         if self.pipeline.is_none() {
             let (part_tx, part_rx) = mpsc::sync_channel(PART_CHANNEL_CAPACITY);
             let (result_tx, result_rx) = oneshot::channel();
-            let (config, bucket, key) =
-                (self.config.clone(), self.bucket.clone(), self.key.clone());
+            let (client, bucket, key) =
+                (self.client.clone(), self.bucket.clone(), self.key.clone());
             std::thread::Builder::new()
                 .name("s3-multipart-upload".to_string())
-                .spawn(move || run_multipart_uploader(config, bucket, key, part_rx, result_tx))
+                .spawn(move || run_multipart_uploader(client, bucket, key, part_rx, result_tx))
                 .map_err(|e| {
                     std::io::Error::other(format!("failed to spawn the S3 uploader thread: {e}"))
                 })?;
@@ -802,15 +813,68 @@ impl std::io::Write for S3PartWriter {
     }
 }
 
+/// Builds the S3 client that serves one streaming multipart upload.
+///
+/// The uploader runs on its own thread and runtime (see
+/// [`run_multipart_uploader`]), so it must not share transport or cached
+/// credentials with `base_config`'s client: those are driven by the caller's
+/// runtime, which sits blocked in the serializer while the upload runs.
+///
+/// Endpoint, region and the credentials *provider* are inherited — the caller's
+/// config is the only source of those. Note the provider is the one piece of the
+/// caller's machinery `set_http_client(None)` does not isolate: it carries its
+/// own transport for fetching credentials. Everything else the upload depends on
+/// is either pinned below or, for the identity load timeout, kept in step with
+/// the rest of the service through a shared constant.
+fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) -> S3Client {
+    let mut config = base_config.to_builder();
+    // Sharing the caller's HTTP client could hand out pooled connections that
+    // are driven by the caller's runtime, which can sit blocked in the
+    // serializer while this upload runs; force a fresh pool instead.
+    config.set_http_client(None);
+    // Same for the identity cache: the caller's lazy cache single-flights
+    // credential refreshes, so waiting here on a refresh started by a task on
+    // the caller's (blocked) runtime would deadlock the pipeline. The
+    // credentials provider behind the fresh cache is still shared.
+    //
+    // The load timeout has to be restated rather than inherited — a
+    // `SharedIdentityCache` cannot be read back off the config — and this cache
+    // is always cold, so every upload pays a real credential load against it.
+    // Leaving it at the SDK default of 5 s would make large stores the only
+    // operation in the process without the tuned budget (see
+    // [`crate::vault::aws::IDENTITY_LOAD_TIMEOUT`]).
+    config.set_identity_cache(
+        aws_sdk_s3::config::IdentityCache::lazy()
+            .load_timeout(crate::vault::aws::IDENTITY_LOAD_TIMEOUT)
+            .build(),
+    );
+    // Bound each attempt so a black-holed connection cannot pin the uploader
+    // — and the serializer blocked in `send` — forever. 600 s still clears a
+    // 16 MiB part at ~28 KiB/s.
+    config.set_timeout_config(Some(
+        aws_sdk_s3::config::timeout::TimeoutConfig::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .operation_attempt_timeout(std::time::Duration::from_secs(600))
+            .build(),
+    ));
+    // Pin checksum calculation so an ambient `when_required` setting (env or
+    // profile) cannot strip the per-part CRC32 that the declared algorithm in
+    // `run_multipart_uploader` obliges every part to carry.
+    config.set_request_checksum_calculation(Some(
+        aws_sdk_s3::config::RequestChecksumCalculation::WhenSupported,
+    ));
+    S3Client::from_conf(config.build())
+}
+
 /// Uploads parts received over `part_rx` to a new multipart upload of
 /// `bucket`/`key`, reporting the outcome over `result_tx`.
 ///
-/// Runs on a dedicated OS thread with its own single-threaded runtime and its
-/// own S3 client so uploads progress while the caller's runtime thread is
-/// blocked inside the serializer (see [`S3PartWriter`]). Dropping `part_rx` on
-/// error unblocks the serializing side with a send error.
+/// Runs on a dedicated OS thread with its own single-threaded runtime, driving
+/// the `client` it was given, so uploads progress while the caller's runtime
+/// thread is blocked inside the serializer (see [`S3PartWriter`]). Dropping
+/// `part_rx` on error unblocks the serializing side with a send error.
 fn run_multipart_uploader(
-    config: aws_sdk_s3::Config,
+    client: S3Client,
     bucket: String,
     key: String,
     part_rx: mpsc::Receiver<Vec<u8>>,
@@ -829,32 +893,6 @@ fn run_multipart_uploader(
             return;
         }
     };
-    // Sharing the caller's HTTP client could hand out pooled connections that
-    // are driven by the caller's runtime, which can sit blocked in the
-    // serializer while this upload runs; force a fresh pool instead.
-    let mut config = config.to_builder();
-    config.set_http_client(None);
-    // Same for the identity cache: the caller's lazy cache single-flights
-    // credential refreshes, so waiting here on a refresh started by a task on
-    // the caller's (blocked) runtime would deadlock the pipeline. The
-    // credentials provider behind the fresh cache is still shared.
-    config.set_identity_cache(aws_sdk_s3::config::IdentityCache::lazy().build());
-    // Bound each attempt so a black-holed connection cannot pin the uploader
-    // — and the serializer blocked in `send` — forever. 600 s still clears a
-    // 16 MiB part at ~28 KiB/s.
-    config.set_timeout_config(Some(
-        aws_sdk_s3::config::timeout::TimeoutConfig::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .operation_attempt_timeout(std::time::Duration::from_secs(600))
-            .build(),
-    ));
-    // Pin checksum calculation so an ambient `when_required` setting (env or
-    // profile) cannot strip the per-part CRC32 that the declared algorithm
-    // below obliges every part to carry.
-    config.set_request_checksum_calculation(Some(
-        aws_sdk_s3::config::RequestChecksumCalculation::WhenSupported,
-    ));
-    let client = S3Client::from_conf(config.build());
 
     // The SDK adds a CRC32 checksum to every part under `WhenSupported`;
     // declaring the algorithm up front keeps create/upload/complete consistent.
@@ -958,21 +996,31 @@ async fn abort_multipart_upload_best_effort(
 /// returning the total number of serialized bytes.
 ///
 /// Payloads that fit in one `part_size` buffer are stored with a single
-/// `PutObject`; larger ones are streamed as an S3 multipart upload so the full
-/// serialized blob never exists in memory. Visibility is all-or-nothing: the
-/// object appears only once `CompleteMultipartUpload` succeeds. Reported
-/// failures abort the upload best-effort; a panic or a cancelled future can
-/// still leave an incomplete upload behind for a bucket lifecycle rule
-/// (if configured) to reclaim.
+/// `PutObject` through `s3_client`; larger ones are streamed as an S3 multipart
+/// upload, so the full serialized blob never exists in memory. `uploader` drives
+/// the part-shipping half of that (`CreateMultipartUpload` and `UploadPart`,
+/// which run on the uploader thread); completing and aborting go through
+/// `s3_client`, since those happen on this task once the serializer is done and
+/// so carry no risk of waiting on the caller's blocked runtime.
+/// Visibility is all-or-nothing: the object appears only once
+/// `CompleteMultipartUpload` succeeds. Reported failures abort the upload
+/// best-effort; a panic or a cancelled future can still leave an incomplete
+/// upload behind for a bucket lifecycle rule (if configured) to reclaim.
+///
+/// `uploader` is the multipart upload's own client — see
+/// [`build_multipart_upload_client`], which every production caller uses to
+/// build one. It is consumed even when the payload stays on the single-PUT path
+/// and the upload never runs.
 pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
+    uploader: S3Client,
     bucket: &str,
     key: &str,
     data: &T,
     part_size: usize,
     size_limit: u64,
 ) -> anyhow::Result<u64> {
-    let mut writer = S3PartWriter::new(s3_client.config().clone(), bucket, key, part_size);
+    let mut writer = S3PartWriter::new(uploader, bucket, key, part_size);
     // The serializer borrows `data`, so it cannot move into `spawn_blocking`;
     // it runs on this task, blocking in `spill` at upload pace once the
     // payload exceeds one part (see [`run_blocking`]).
@@ -1442,6 +1490,7 @@ mod tests {
 
             let size = s3_put_versioned(
                 &storage.s3_client,
+                storage.s3_client.clone(),
                 BUCKET_NAME,
                 &key,
                 &data,
@@ -1496,6 +1545,7 @@ mod tests {
 
             let size = s3_put_versioned(
                 &storage.s3_client,
+                storage.s3_client.clone(),
                 BUCKET_NAME,
                 &key,
                 &data,
@@ -1550,7 +1600,7 @@ mod tests {
             // multipart upload is created and part 1 ships), then finish with
             // an injected serialization failure to exercise the abort path.
             let mut writer = S3PartWriter::new(
-                storage.s3_client.config().clone(),
+                build_multipart_upload_client(storage.s3_client.config()),
                 BUCKET_NAME,
                 &key,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -1604,6 +1654,7 @@ mod tests {
             // the failed serialization keeps the single PUT from happening.
             let res = s3_put_versioned(
                 &storage.s3_client,
+                storage.s3_client.clone(),
                 BUCKET_NAME,
                 &key,
                 &data,
@@ -1687,7 +1738,7 @@ mod tests {
             let bucket = "no-such-bucket-multipart-test";
 
             let mut writer = S3PartWriter::new(
-                storage.s3_client.config().clone(),
+                build_multipart_upload_client(storage.s3_client.config()),
                 bucket,
                 &key,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -1847,7 +1898,12 @@ mod part_writer_tests {
     }
 
     fn writer(part_size: usize) -> S3PartWriter {
-        S3PartWriter::new(refused_config(), "bucket", "key", part_size)
+        S3PartWriter::new(
+            build_multipart_upload_client(&refused_config()),
+            "bucket",
+            "key",
+            part_size,
+        )
     }
 
     /// A single write fills the buffer up to `part_size` but never spills: a

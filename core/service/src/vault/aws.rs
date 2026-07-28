@@ -5,6 +5,16 @@ use aws_config::{
 use std::time::Duration;
 use url::Url;
 
+/// Credential-load timeout for every AWS identity cache in the service.
+///
+/// DNS resolution is sometimes slow in EKS due to the ndots 5 clause in its
+/// default resolv.conf, and the SDK default of 5 s isn't enough. Anything that
+/// builds its own cache instead of inheriting this one — the streaming multipart
+/// uploader does, see `build_multipart_upload_client` — must apply this same
+/// value: a `SharedIdentityCache` is opaque, so the timeout cannot be read back
+/// off a config and carried over.
+pub(crate) const IDENTITY_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Constructs an AWS SDK configuration for requesting AWS credentials inside of
 /// a Nitro enclave.
 pub async fn build_aws_sdk_config(
@@ -37,11 +47,9 @@ pub async fn build_aws_sdk_config(
 
     config_loader
         .region(aws_region)
-        // DNS resolution is sometimes slow in EKS due to the ndots 5 clause in
-        // its default resolv.conf, and the default 5s timeout isn't enough
         .identity_cache(
             IdentityCache::lazy()
-                .load_timeout(Duration::from_secs(10))
+                .load_timeout(IDENTITY_LOAD_TIMEOUT)
                 .build(),
         )
         .load()
