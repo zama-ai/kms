@@ -9,6 +9,7 @@ use crate::{
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
+        signing::SigningSchemeType,
     },
     engine::base::compute_public_decryption_message,
     engine::validation::Eip712VerificationParams,
@@ -182,6 +183,27 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
+/// Resolve the signing schemes a decryption request asks the response to be
+/// signed under.
+///
+/// An empty list defaults to `[Ecdsa256k1]`.
+pub(crate) fn resolve_signing_schemes(
+    requested: &[i32],
+) -> Result<Vec<SigningSchemeType>, Box<dyn std::error::Error + Send + Sync>> {
+    if requested.is_empty() {
+        return Ok(vec![SigningSchemeType::Ecdsa256k1]);
+    }
+    let mut resolved = Vec::with_capacity(requested.len());
+    for &raw in requested {
+        let scheme = SigningSchemeType::try_from(raw)
+            .map_err(|e| anyhow::anyhow!("unsupported signing scheme requested: {e}"))?;
+        if !resolved.contains(&scheme) {
+            resolved.push(scheme);
+        }
+    }
+    Ok(resolved)
+}
+
 /// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
@@ -202,6 +224,7 @@ pub(crate) fn validate_user_decrypt_req(
         EpochId,
         alloy_sol_types::Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -230,6 +253,7 @@ fn unpack_user_decrypt_req(
         EpochId,
         alloy_sol_types::Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
@@ -289,6 +313,7 @@ fn unpack_user_decrypt_req(
         epoch_id,
         domain,
         req.extra_data.clone(),
+        resolve_signing_schemes(&req.signing_schemes)?,
     ))
 }
 
@@ -308,6 +333,7 @@ pub(crate) fn validate_public_decrypt_req(
         EpochId,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -333,6 +359,7 @@ fn unpack_public_decrypt_req(
         EpochId,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
@@ -372,6 +399,7 @@ fn unpack_public_decrypt_req(
         epoch_id,
         eip712_domain,
         req.extra_data.clone(),
+        resolve_signing_schemes(&req.signing_schemes)?,
     ))
 }
 
@@ -595,11 +623,20 @@ fn validate_public_decrypt_responses(
                 response_extra_data: &cur_resp.extra_data,
                 trusted_eip712_domain: domain,
             });
+        // Verify the ECDSA entry from the multi-scheme `signatures` list,
+        // falling back to the legacy scalar `signature` field for responses from
+        // older servers that don't populate `signatures`.
+        let ecdsa_sig = kms_grpc::rpc_types::ecdsa_signature_bytes(&cur_resp.signatures)
+            .unwrap_or(cur_resp.signature.as_slice());
+        if ecdsa_sig.is_empty() {
+            tracing::warn!("Response carries no ECDSA signature to verify!");
+            continue;
+        }
         if !validate_public_decrypt_meta_data(
             trusted_ctx.ext_handles_bytes,
             &pivot_payload,
             cur_payload,
-            &cur_resp.signature,
+            ecdsa_sig,
             eip712_params.as_ref(),
         )? {
             tracing::warn!("Some server did not provide the proper response!");
@@ -993,8 +1030,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
+    use super::resolve_signing_schemes;
     use aes_prng::AesRng;
     use kms_grpc::{
         RequestId,
@@ -1005,13 +1041,14 @@ mod tests {
         },
         rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
     };
-
     use rand::SeedableRng;
+    use std::collections::HashMap;
 
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
             signatures::{PublicSigKey, gen_sig_keys, internal_sign},
+            signing::SigningSchemeType,
         },
         dummy_domain,
         engine::{
@@ -1036,6 +1073,33 @@ mod tests {
         verify_user_decrypt_eip712,
     };
 
+    /// Empty signing schemes defaults to ECDSA, known schemes map through
+    #[test]
+    fn test_resolve_signing_schemes() {
+        // Empty ⇒ ECDSA default (backward compatible with old clients).
+        assert_eq!(
+            resolve_signing_schemes(&[]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        // Known schemes map through, preserving order.
+        let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
+        let mldsa65 = kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32;
+        assert_eq!(
+            resolve_signing_schemes(&[ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65]
+        );
+
+        // Duplicates are removed while preserving first-seen order.
+        assert_eq!(
+            resolve_signing_schemes(&[mldsa65, ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // An unknown scheme is an error.
+        assert!(resolve_signing_schemes(&[9999]).is_err());
+    }
+
     #[test]
     fn test_validate_public_decrypt_req() {
         // setup data we're going to use in this test
@@ -1055,6 +1119,7 @@ mod tests {
         // empty key ID
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: None,
@@ -1074,6 +1139,7 @@ mod tests {
         // empty request ID
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None,
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1096,6 +1162,7 @@ mod tests {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(bad_req_id),
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1115,6 +1182,7 @@ mod tests {
         // empty ciphertext
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1134,6 +1202,7 @@ mod tests {
         // finally everything is ok
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![], // empty signing schemes defaults to ECDSA
                 request_id: Some(request_id.into()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1142,7 +1211,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _, _, _domain, _) = unpack_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain, _, _) = unpack_public_decrypt_req(&req).unwrap();
         }
     }
 
@@ -1177,6 +1246,7 @@ mod tests {
         // empty key ID
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: None,
@@ -1198,6 +1268,7 @@ mod tests {
         // empty request ID
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None,
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1222,6 +1293,7 @@ mod tests {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(bad_req_id),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1243,6 +1315,7 @@ mod tests {
         // empty ciphertext
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1264,6 +1337,7 @@ mod tests {
         // bad client address
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1290,6 +1364,7 @@ mod tests {
             };
             let bad_enc_pk_buf = bc2wrap::serialize(&inner_key).unwrap();
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1311,6 +1386,7 @@ mod tests {
         // finally everything is ok
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![], // empty signing schemes defaults to ECDSA
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1375,6 +1451,7 @@ mod tests {
             _ => panic!("expected MlKem512 key"),
         };
         let req = UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
@@ -1640,7 +1717,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: signature_buf,
+                signature: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data_0.clone(),
@@ -1666,7 +1744,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: signature_buf,
+                signature: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data_1.clone(),
@@ -1732,7 +1811,8 @@ mod tests {
                 let signature_buf = signature.to_bytes();
 
                 PublicDecryptionResponse {
-                    signature: signature_buf,
+                    signature: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
                     payload: Some(payload),
                     external_signature: vec![],
                     extra_data: vec![],
@@ -1814,6 +1894,7 @@ mod tests {
         let alloy_domain = dummy_domain();
         let domain = Some(alloy_to_protobuf_domain(&alloy_domain).unwrap());
         let request = PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: request_id.clone(),
             ciphertexts,
             key_id: Some(
@@ -1851,7 +1932,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: signature_buf,
+                signature: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data.clone(),
@@ -1881,7 +1963,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: signature_buf,
+                signature: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data.clone(),
@@ -1922,6 +2005,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
@@ -1966,6 +2050,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
+                signing_schemes: vec![],
                 // wrong request ID
                 request_id: Some(
                     derive_request_id("bad PublicDecryptionRequest")
@@ -2167,6 +2252,7 @@ mod tests {
             };
             PublicDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 payload: Some(payload),
                 external_signature: vec![],
                 extra_data: vec![],
@@ -2224,6 +2310,7 @@ mod tests {
             };
             PublicDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 payload: Some(payload),
                 external_signature: vec![],
                 extra_data: vec![],
@@ -2239,7 +2326,7 @@ mod tests {
         // second response has a modified field unrelated to the hashmap key
         {
             let mut resp1 = resp1.clone();
-            resp1.signature = vec![2, 2, 2, 2];
+            resp1.signatures = kms_grpc::rpc_types::ecdsa_signatures(vec![2, 2, 2, 2]);
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             assert_eq!(
                 select_most_common_public_dec(2, &agg_resp),

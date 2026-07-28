@@ -361,11 +361,17 @@ fn validate_user_decrypt_responses(
             response_extra_data: &cur_resp.extra_data,
             trusted_eip712_domain: trusted_ctx.eip712_domain,
         };
+        // Source the internal ECDSA signature from the multi-scheme `signatures`
+        // list, falling back to the legacy scalar `signature` field for
+        // responses from older servers. An empty result makes the verifier below
+        // fall back to the external EIP-712 signature.
+        let ecdsa_sig = kms_grpc::rpc_types::ecdsa_signature_bytes(&cur_resp.signatures)
+            .unwrap_or(cur_resp.signature.as_slice());
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             trusted_ctx,
             &pivot_payload,
             cur_payload,
-            &cur_resp.signature,
+            ecdsa_sig,
             &eip712_params,
         ) {
             tracing::warn!(
@@ -1034,6 +1040,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload0),
                 extra_data: vec![],
@@ -1063,6 +1070,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1092,6 +1100,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1121,6 +1130,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1259,6 +1269,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
+                    signatures: vec![],
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1409,6 +1420,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload0),
                 extra_data: vec![],
@@ -1438,6 +1450,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1512,6 +1525,7 @@ mod tests {
             };
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature: vec![],
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1598,6 +1612,7 @@ mod tests {
             };
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature: vec![],
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1693,6 +1708,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
+                    signatures: vec![],
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],

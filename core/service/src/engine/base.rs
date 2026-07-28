@@ -7,6 +7,7 @@ use crate::cryptography::signatures::compute_eip712_signature;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::cryptography::signing::{SigningSchemeType, unified_sign};
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -17,7 +18,7 @@ use alloy_sol_types::Eip712Domain;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
+    CiphertextFormat, FheParameter, SchemeSignature, TypedPlaintext, UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::CrsGenMetadataV0;
 use kms_grpc::rpc_types::KMSType;
@@ -674,6 +675,30 @@ pub(crate) fn compute_external_pt_signature(
     compute_eip712_signature(server_sk, &message, eip712_domain)
 }
 
+/// Sign `msg` (domain-separated by `dsep`) under each requested scheme,
+/// returning one [`SchemeSignature`] per scheme.
+pub(crate) fn compute_scheme_signatures<T>(
+    server_sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
+    dsep: &DomainSep,
+    msg: &T,
+) -> anyhow::Result<Vec<SchemeSignature>>
+where
+    T: AsRef<[u8]> + ?Sized,
+{
+    schemes
+        .iter()
+        .map(|&scheme| {
+            let sk = server_sk.derive_signing_key(scheme)?;
+            let sig = unified_sign(dsep, msg.as_ref(), sk)?;
+            Ok(SchemeSignature {
+                scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                signature: sig.to_bytes(),
+            })
+        })
+        .collect()
+}
+
 pub struct BaseKmsStruct {
     kms_type: KMSType,
     sig_key: Option<Arc<PrivateSigKey>>,
@@ -716,6 +741,20 @@ impl BaseKmsStruct {
 
     pub fn verf_key(&self) -> Arc<PublicSigKey> {
         Arc::clone(&self.verf_key)
+    }
+
+    /// Sign `msg` under every requested [`SigningSchemeType`], deriving the
+    /// per-scheme signing key from the KMS' private signing key.
+    pub fn sign_with_schemes<T>(
+        &self,
+        schemes: &[SigningSchemeType],
+        dsep: &DomainSep,
+        msg: &T,
+    ) -> anyhow::Result<Vec<SchemeSignature>>
+    where
+        T: AsRef<[u8]> + ?Sized,
+    {
+        compute_scheme_signatures(self.sig_key()?.as_ref(), schemes, dsep, msg)
     }
 
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
@@ -1152,12 +1191,25 @@ impl Named for CrsGenMetadata {
 
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
-// an external signature on the batch and any extra data.
-pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
+// an external signature on the batch, any extra data, and the signing schemes the
+// response should be signed under.
+pub type PubDecCallValues = (
+    RequestId,
+    Vec<TypedPlaintext>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<SigningSchemeType>,
+);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
-// Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
-pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
+// Represents UserDecryptionResponsePayload, external_signature, extra_data, and the
+// signing schemes the response should be signed under.
+pub type UserDecryptCallValues = (
+    UserDecryptionResponsePayload,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<SigningSchemeType>,
+);
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1167,6 +1219,8 @@ pub(crate) mod tests {
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
+    use crate::cryptography::signatures::internal_sign;
+    use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
@@ -1203,6 +1257,65 @@ pub(crate) mod tests {
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
+
+    /// Round-trip test for multi-scheme response signing:
+    /// `compute_scheme_signatures` produces, for every requested scheme, a
+    /// signature that verifies under that scheme's derived key.
+    /// The test also validates that the ECDSA entry is byte-identical to the legacy
+    /// single signature.
+    #[test]
+    fn scheme_signatures_round_trip() {
+        let mut rng = AesRng::seed_from_u64(0xABCD);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let dsep = b"SCHSGTST";
+        let msg = b"a decryption response payload signed under several schemes";
+
+        // Several choices of schemes, including a classic + post-quantum hybrid.
+        let choices: Vec<Vec<SigningSchemeType>> = vec![
+            vec![SigningSchemeType::Ecdsa256k1],
+            vec![SigningSchemeType::Ed25519],
+            vec![SigningSchemeType::MlDsa65],
+            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+            vec![
+                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeType::Ed25519,
+                SigningSchemeType::MlDsa87,
+            ],
+        ];
+
+        for schemes in choices {
+            let sigs = super::compute_scheme_signatures(&sk, &schemes, dsep, msg).unwrap();
+            assert_eq!(sigs.len(), schemes.len());
+
+            for (scheme, scheme_sig) in schemes.iter().zip(&sigs) {
+                // The wire tag matches the requested scheme, in order.
+                assert_eq!(
+                    SigningSchemeType::try_from(scheme_sig.scheme).unwrap(),
+                    *scheme
+                );
+
+                // Verify against the scheme's derived verification key.
+                let vk = sk
+                    .derive_signing_key(*scheme)
+                    .unwrap()
+                    .verifying_key()
+                    .unwrap();
+                let sig = Signature::new(*scheme, scheme_sig.signature.clone());
+                unified_verify(dsep, msg, &sig, &vk)
+                    .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
+
+                // A tampered message must fail.
+                assert!(unified_verify(dsep, b"tampered", &sig, &vk).is_err());
+            }
+
+            // The ECDSA entry, when present, is byte-identical to the legacy
+            // single signature, so single-ECDSA consumers are unaffected.
+            if let Some(ecdsa_bytes) = kms_grpc::rpc_types::ecdsa_signature_bytes(&sigs) {
+                let legacy = internal_sign(dsep, msg, &sk).unwrap();
+                assert_eq!(ecdsa_bytes, legacy.as_bytes());
+            }
+        }
+    }
 
     #[test]
     fn sunshine_plaintext_as_u256() {

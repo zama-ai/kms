@@ -370,6 +370,11 @@ message PublicDecryptionRequest {
 
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   RequestId epoch_id = 7;
+
+  // The signature schemes the response should be signed under.
+  // If empty, defaults to ECDSA256K1 (backward compatible with old clients).
+  // Requesting a scheme the cluster does not support results in an error.
+  repeated SigningSchemeType signing_schemes = 8;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -392,11 +397,16 @@ message PublicDecryptionResponsePayload {
 
 // KMS-internal Public Decryption Response
 message PublicDecryptionResponse {
-  // Signature of the serialization of [PublicDecryptionResponsePayload].
+  // DEPRECATED to be removed in 0.16.0: 
+  // The KMS-internal ECDSA/secp256k1 authenticity signature over
+  // the serialization of [PublicDecryptionResponsePayload]. Kept at field 1 (and
+  // kept populated) for wire backward-compatibility with clients that predate
+  // the multi-scheme `signatures` list. It is byte-identical to the
+  // `Ecdsa256k1` entry of `signatures`.
   bytes signature = 1;
 
-  // the signature on external_decryption_result for the external recipient
-  // (e.g. using EIP712 for fhevm)
+  // The ECDSA/secp256k1 EIP-712 signature on external_decryption_result for the
+  // external recipient (e.g. using EIP712 for fhevm).
   bytes external_signature = 2;
 
   // The payload that is signed
@@ -404,6 +414,11 @@ message PublicDecryptionResponse {
 
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 4;
+
+  // Per-scheme KMS-internal authenticity signatures on the serialization of
+  // [PublicDecryptionResponsePayload], one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated SchemeSignature signatures = 5;
 }
 
 // Eip712 domain information.
@@ -450,12 +465,23 @@ message UserDecryptionRequest {
 
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   RequestId epoch_id = 9;
+
+  // The signature schemes the response should be signed under.
+  // If empty, defaults to ECDSA256K1 (backward compatible with old clients).
+  // Requesting a scheme the cluster does not support results in an error.
+  repeated SigningSchemeType signing_schemes = 10;
 }
 
 message UserDecryptionResponse {
+  // DEPRECATED to be removed in 0.16.0: 
+  // The KMS-internal ECDSA/secp256k1 authenticity signature over
+  // the serialization of [PublicDecryptionResponsePayload]. Kept at field 1 (and
+  // kept populated) for wire backward-compatibility with clients that predate
+  // the multi-scheme `signatures` list. It is byte-identical to the
+  // `Ecdsa256k1` entry of `signatures`.
   bytes signature = 1;
 
-  // This is the external signature created from the Eip712 domain
+  // This is the external ECDSA signature created from the Eip712 domain
   // on the structure, where userDecryptedShare is bc2wrap::serialize(&payload)
   // struct UserDecryptResponseVerification {
   //     bytes publicKey;
@@ -470,6 +496,11 @@ message UserDecryptionResponse {
 
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 4;
+
+  // Per-scheme KMS-internal authenticity signatures on the serialization of
+  // [UserDecryptionResponsePayload], one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated SchemeSignature signatures = 5;
 }
 
 message UserDecryptionResponsePayload {
@@ -699,6 +730,19 @@ enum SigningSchemeType {
   MLDSA44 = 2;
   MLDSA65 = 3;
   MLDSA87 = 4;
+}
+
+// A single signature together with the scheme that produced it.
+//
+// Used to carry a chain-native signature for one signing scheme when a response
+// may be signed under several schemes at once (e.g. ECDSA/secp256k1 EIP-712 for 
+// and EVM, ed25519 for Solana, ML-DSA for post-quantum).
+message SchemeSignature {
+  // The signature scheme that produced `signature`.
+  SigningSchemeType scheme = 1;
+
+  // The raw, scheme-specific signature bytes.
+  bytes signature = 2;
 }
 
 // The request constructed by a KMS to initiate custodian based backup recovery

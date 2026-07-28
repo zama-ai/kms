@@ -615,7 +615,7 @@ async fn process_batch_threshold_user_decryption(
                         &server_private_keys[&orig_party_id],
                     )
                     .unwrap();
-                    resp.signature = sig.to_bytes();
+                    resp.signatures = kms_grpc::rpc_types::ecdsa_signatures(sig.to_bytes());
                 }
             });
 

@@ -4,7 +4,7 @@ use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
-use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
+use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -56,6 +56,7 @@ pub async fn user_decrypt_impl<
         epoch_id,
         domain,
         extra_data,
+        signing_schemes,
     ) = validate_user_decrypt_req(&inner)?;
     if !service
         .context_manager
@@ -133,7 +134,8 @@ pub async fn user_decrypt_impl<
                 &extra_data,
             )
             .await;
-            let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
+            let res_with_extra_data =
+                res.map(|(payload, sig)| (payload, sig, extra_data, signing_schemes));
             let _ = update_req_in_meta_store(
                 &meta_store,
                 meta_permit,
@@ -177,7 +179,7 @@ pub async fn get_user_decryption_result_impl<
         DURATION_WAITING_ON_RESULT_SECONDS,
     )
     .await?;
-    let (payload, external_signature, extra_data) = (*arc).clone();
+    let (payload, external_signature, extra_data, signing_schemes) = (*arc).clone();
 
     // sign the response
     let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
@@ -189,8 +191,9 @@ pub async fn get_user_decryption_result_impl<
         )
     })?;
 
-    let sig = service
-        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+    let signatures = service
+        .base_kms
+        .sign_with_schemes(&signing_schemes, &DSEP_USER_DECRYPTION, &sig_payload_vec)
         .map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_RESULT,
@@ -201,7 +204,11 @@ pub async fn get_user_decryption_result_impl<
         })?;
 
     Ok(Response::new(UserDecryptionResponse {
-        signature: sig.to_bytes(),
+        // LEGACY
+        signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default(),
+        signatures,
         external_signature,
         payload: Some(payload),
         extra_data,
@@ -225,8 +232,16 @@ pub async fn public_decrypt_impl<
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
-    let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
-        validate_public_decrypt_req(&inner)?;
+    let (
+        ciphertexts,
+        request_id,
+        key_id,
+        context_id,
+        epoch_id,
+        eip712_domain,
+        extra_data,
+        signing_schemes,
+    ) = validate_public_decrypt_req(&inner)?;
 
     if !service
         .context_manager
@@ -316,7 +331,7 @@ pub async fn public_decrypt_impl<
                     &extra_data,
                     &eip712_domain,
                 ) {
-                    Ok(sig) => Ok((request_id, pts, sig, extra_data)),
+                    Ok(sig) => Ok((request_id, pts, sig, extra_data, signing_schemes)),
                     Err(e) => Err(format!("Failed to compute external signature: {e:?}")),
                 }
             }
@@ -366,7 +381,8 @@ pub async fn get_public_decryption_result_impl<
         DURATION_WAITING_ON_RESULT_SECONDS,
     )
     .await?;
-    let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*dec_res).clone();
+    let (retrieved_req_id, plaintexts, external_signature, extra_data, signing_schemes) =
+        (*dec_res).clone();
 
     if retrieved_req_id != request_id {
         return Err(MetricedError::new(
@@ -409,10 +425,13 @@ pub async fn get_public_decryption_result_impl<
         )
     })?;
 
-    // sign the decryption result with the central KMS key
-    let sig = service
+    let signatures = service
         .base_kms
-        .sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
+        .sign_with_schemes(
+            &signing_schemes,
+            &DSEP_PUBLIC_DECRYPTION,
+            &kms_sig_payload_vec,
+        )
         .map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,
@@ -422,7 +441,11 @@ pub async fn get_public_decryption_result_impl<
             )
         })?;
     Ok(Response::new(PublicDecryptionResponse {
-        signature: sig.to_bytes(),
+        // LEGACY
+        signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default(),
+        signatures,
         payload: Some(kms_sig_payload),
         external_signature,
         extra_data,
@@ -505,7 +528,7 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod tests_public_decryption {
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+    use kms_grpc::{kms::v1::SigningSchemeType, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
 
     use crate::{
@@ -529,6 +552,7 @@ mod tests_public_decryption {
         let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
 
         let request = PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(request_id.into()),
             ciphertexts,
             key_id: Some(key_id.into()),
@@ -565,6 +589,7 @@ mod tests_public_decryption {
         // missing request Id
         {
             let request = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None, // missing
                 ciphertexts: ct.clone(),
                 key_id: Some(key_id.into()),
@@ -586,6 +611,7 @@ mod tests_public_decryption {
                 request_id: "wrong_id".to_string(),
             };
             let request = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(wrong_request_id),
                 ciphertexts: ct.clone(),
                 key_id: Some(key_id.into()),
@@ -604,6 +630,7 @@ mod tests_public_decryption {
         // missing domain
         {
             let request = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: ct.clone(),
                 key_id: Some(key_id.into()),
@@ -621,6 +648,7 @@ mod tests_public_decryption {
         // missing ciphertexts
         {
             let request = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: vec![], // missing
                 key_id: Some(key_id.into()),
@@ -649,6 +677,7 @@ mod tests_public_decryption {
         {
             let wrong_key_id = derive_request_id("wrong_keyid_decryption_not_found").unwrap();
             let request = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: ct.clone(),
                 key_id: Some(wrong_key_id.into()), // wrong
@@ -693,6 +722,7 @@ mod tests_public_decryption {
         // make a normal request then it should fail
         {
             let request = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: ct.clone(),
                 key_id: Some(key_id.into()),
@@ -718,6 +748,7 @@ mod tests_public_decryption {
         let (_msg, ct) = make_test_msg_ct(&pk, true);
 
         let request = PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(request_id.into()),
             ciphertexts: ct.clone(),
             key_id: Some(key_id.into()),
@@ -743,7 +774,7 @@ mod tests_public_decryption {
 #[cfg(test)]
 mod test_user_decryption {
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+    use kms_grpc::{kms::v1::SigningSchemeType, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
 
     use crate::{
@@ -786,6 +817,7 @@ mod test_user_decryption {
         let (enc_key_buf, enc_sk) = make_test_pk(&mut rng);
 
         let request = UserDecryptionRequest {
+            signing_schemes: vec![], // no signing scheme defaults to ECDSA256k1
             request_id: Some(request_id.into()),
             typed_ciphertexts: ciphertexts,
             key_id: Some(key_id.into()),
@@ -839,6 +871,7 @@ mod test_user_decryption {
         // missing request ID
         {
             let request = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None,
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -862,6 +895,7 @@ mod test_user_decryption {
                 request_id: "wrong_id".to_string(),
             };
             let request = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(wrong_request_id),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -881,6 +915,7 @@ mod test_user_decryption {
         // missing domain
         {
             let request = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -900,6 +935,7 @@ mod test_user_decryption {
         // wrongly formatted client address
         {
             let request = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -932,6 +968,7 @@ mod test_user_decryption {
         {
             let wrong_key_id = derive_request_id("wrong_keyid_decryption_not_found").unwrap();
             let request = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(wrong_key_id.into()), // wrong
@@ -976,6 +1013,7 @@ mod test_user_decryption {
         // make a normal request then it should fail
         {
             let request = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1005,6 +1043,7 @@ mod test_user_decryption {
         let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
 
         let request = UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(request_id.into()),
             typed_ciphertexts: ciphertexts.clone(),
             key_id: Some(key_id.into()),

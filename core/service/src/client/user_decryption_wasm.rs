@@ -168,8 +168,29 @@ impl Client {
             return Err(anyhow_error_and_log("missing server address at ID 1"));
         };
 
-        // prefer the normal ECDSA verification over the EIP712 one
-        if resp.signature.is_empty() {
+        // prefer the normal ECDSA verification over the external (EIP712) one.
+        // The internal signatures are carried per-scheme; pick the ECDSA entry,
+        // falling back to the legacy scalar `signature` field for responses from
+        // older servers.
+        let ecdsa_signature = kms_grpc::rpc_types::ecdsa_signature_bytes(&resp.signatures).or(
+            if resp.signature.is_empty() {
+                None
+            } else {
+                Some(resp.signature.as_slice())
+            },
+        );
+        if let Some(ecdsa_signature) = ecdsa_signature {
+            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(ecdsa_signature)?);
+            internal_verify_sig(
+                &DSEP_USER_DECRYPTION,
+                &bc2wrap::serialize(&payload)?,
+                &sig,
+                &cur_verf_key,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("signature on received response is not valid ({})", e)
+            })?;
+        } else {
             // we only consider the external signature in wasm
             let eip712_signature = &resp.external_signature;
 
@@ -184,17 +205,6 @@ impl Client {
                 request,
                 eip712_domain,
                 expected_server_addr,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        } else {
-            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&resp.signature)?);
-            internal_verify_sig(
-                &DSEP_USER_DECRYPTION,
-                &bc2wrap::serialize(&payload)?,
-                &sig,
-                &cur_verf_key,
             )
             .inspect_err(|e| {
                 tracing::warn!("signature on received response is not valid ({})", e)

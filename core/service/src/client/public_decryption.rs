@@ -6,8 +6,8 @@ use crate::engine::validation::validate_public_decrypt_responses_against_request
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
+use kms_grpc::kms::v1::{SigningSchemeType, TypedPlaintext};
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
 use kms_grpc::{EpochId, RequestId};
 
@@ -43,6 +43,7 @@ impl Client {
             extra_data: extra_data.to_vec(),
             context_id: context_id.map(|c| (*c).into()),
             epoch_id: epoch_id.map(|e| (*e).into()),
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
         };
         Ok(req)
     }
@@ -109,8 +110,12 @@ impl Client {
                 cur_resp.payload.to_owned(),
                 "No payload in current response!".to_string(),
             )?;
-            let sig =
-                Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
+            // Verify the ECDSA entry from the multi-scheme `signatures` list,
+            // falling back to the legacy scalar `signature` field for
+            // responses from older servers.
+            let ecdsa_sig = kms_grpc::rpc_types::ecdsa_signature_bytes(&cur_resp.signatures)
+                .unwrap_or(cur_resp.signature.as_slice());
+            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(ecdsa_sig)?);
 
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys

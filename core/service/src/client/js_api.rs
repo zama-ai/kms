@@ -301,7 +301,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
     let mut out = vec![];
     for hex_resp in hex_resps {
         out.push(UserDecryptionResponse {
-            signature: vec![], // there is no ECDSA signature in the wasm use case
+            signature: vec![],
+            signatures: vec![], // there is no ECDSA signature in the wasm use case
             external_signature: hex::decode(&hex_resp.signature)?,
             payload: match hex_resp.payload {
                 Some(inner) => {

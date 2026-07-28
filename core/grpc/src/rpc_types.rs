@@ -528,6 +528,37 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> anyhow::Result<Bytes> 
 }
 
 #[cfg(feature = "non-wasm")]
+impl crate::kms::v1::SchemeSignature {
+    /// True if this is an ECDSA/secp256k1 signature.
+    pub fn is_ecdsa(&self) -> bool {
+        self.scheme == crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32
+    }
+
+    /// Build an ECDSA/secp256k1 scheme signature from raw signature bytes.
+    pub fn ecdsa(signature: Vec<u8>) -> Self {
+        Self {
+            scheme: crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+            signature,
+        }
+    }
+}
+
+/// Wrap raw ECDSA signature bytes as a single-element scheme-signature list.
+///
+/// Convenience for the common single-ECDSA (legacy) case
+pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::SchemeSignature> {
+    vec![crate::kms::v1::SchemeSignature::ecdsa(signature)]
+}
+
+/// Return the ECDSA/secp256k1 signature bytes from a list of scheme signatures,
+/// if present.
+pub fn ecdsa_signature_bytes(signatures: &[crate::kms::v1::SchemeSignature]) -> Option<&[u8]> {
+    signatures
+        .iter()
+        .find(|s| s.is_ecdsa())
+        .map(|s| s.signature.as_slice())
+}
+
 impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key
     /// because these are the only information available
@@ -1361,6 +1392,7 @@ mod tests {
         // empty domain
         {
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1382,6 +1414,7 @@ mod tests {
         // empty ciphertexts
         {
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1406,6 +1439,7 @@ mod tests {
             bad_domain.verifying_contract = client_address.to_checksum(None);
 
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1428,6 +1462,7 @@ mod tests {
         // everything is ok
         {
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),

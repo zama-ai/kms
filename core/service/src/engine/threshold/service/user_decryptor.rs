@@ -63,7 +63,6 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -462,6 +461,7 @@ impl<
             epoch_id,
             domain,
             extra_data,
+            signing_schemes,
         ) = validate_user_decrypt_req(inner.as_ref())?;
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
@@ -553,7 +553,8 @@ impl<
                 extra_data,
                 metric_tags,
             )
-            .await;
+            .await
+            .map(|(payload, ext_sig, extra_data)| (payload, ext_sig, extra_data, signing_schemes));
             update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
                 .await;
         };
@@ -589,7 +590,7 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (payload, external_signature, extra_data) = (*arc).clone();
+        let (payload, external_signature, extra_data, signing_schemes) = (*arc).clone();
 
         let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
             MetricedError::new(
@@ -600,9 +601,9 @@ impl<
             )
         })?;
 
-        let sig = self
+        let signatures = self
             .base_kms
-            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+            .sign_with_schemes(&signing_schemes, &DSEP_USER_DECRYPTION, &sig_payload_vec)
             .map_err(|e| {
                 MetricedError::new(
                     OP_USER_DECRYPT_RESULT,
@@ -612,7 +613,11 @@ impl<
                 )
             })?;
         Ok(Response::new(UserDecryptionResponse {
-            signature: sig.to_bytes(),
+            // LEGACY
+            signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default(),
+            signatures,
             external_signature,
             payload: Some(payload),
             extra_data,
@@ -639,7 +644,7 @@ fn format_user_request(request: &UserDecryptionRequest) -> String {
 mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
-        kms::v1::CiphertextFormat,
+        kms::v1::{CiphertextFormat, SigningSchemeType},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
@@ -798,6 +803,7 @@ mod tests {
                 request_id: "invalid_id".to_string(),
             };
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -826,6 +832,7 @@ mod tests {
             // empty typed ciphertexts
             let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -849,6 +856,7 @@ mod tests {
             // missing domain
             let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -877,6 +885,7 @@ mod tests {
             // bad client address
             let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -921,6 +930,7 @@ mod tests {
                 request_id: "invalid_key_id".to_string(),
             };
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -959,6 +969,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
@@ -999,6 +1010,7 @@ mod tests {
             let req_id = RequestId::new_random(&mut rng);
             let bad_key_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -1029,6 +1041,7 @@ mod tests {
             let req_id = RequestId::new_random(&mut rng);
             let bad_epoch_id = EpochId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -1074,6 +1087,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rng);
         let request = UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
@@ -1115,6 +1129,7 @@ mod tests {
         // finally everything is ok
         let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),

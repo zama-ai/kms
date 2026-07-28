@@ -115,6 +115,18 @@ impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
     }
 }
 
+impl From<SigningSchemeType> for kms_grpc::kms::v1::SigningSchemeType {
+    fn from(value: SigningSchemeType) -> Self {
+        match value {
+            SigningSchemeType::Ecdsa256k1 => kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519 => kms_grpc::kms::v1::SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa44 => kms_grpc::kms::v1::SigningSchemeType::Mldsa44,
+            SigningSchemeType::MlDsa65 => kms_grpc::kms::v1::SigningSchemeType::Mldsa65,
+            SigningSchemeType::MlDsa87 => kms_grpc::kms::v1::SigningSchemeType::Mldsa87,
+        }
+    }
+}
+
 impl TryFrom<i32> for SigningSchemeType {
     type Error = SigningError;
 

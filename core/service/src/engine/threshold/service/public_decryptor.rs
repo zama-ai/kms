@@ -54,7 +54,6 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
             DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -286,8 +285,16 @@ impl<
         tracing::info!("{}", format_public_request(&inner));
 
         // Check and extract the parameters from the request in a separate thread
-        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
-            validate_public_decrypt_req(&inner)?;
+        let (
+            ciphertexts,
+            req_id,
+            key_id,
+            context_id,
+            epoch_id,
+            eip712_domain,
+            extra_data,
+            signing_schemes,
+        ) = validate_public_decrypt_req(&inner)?;
         let my_role = validate_context_and_epoch(
             OP_PUBLIC_DECRYPT_REQUEST,
             &self.session_maker,
@@ -589,7 +596,7 @@ impl<
                 .await
             };
             let res = match external_sig {
-                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data)),
+                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data, signing_schemes)),
                 Err(e) | Ok(Err(e)) => Err(format!(
                     "Failed to compute external signature for decryption request {req_id}: {e:?}"
                 )),
@@ -639,7 +646,8 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
+        let (retrieved_req_id, plaintexts, external_signature, extra_data, signing_schemes) =
+            (*arc).clone();
 
         if request_id != retrieved_req_id {
             return Err(MetricedError::new(
@@ -675,9 +683,9 @@ impl<
             )
         })?;
 
-        let sig = self
+        let signatures = self
             .base_kms
-            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
+            .sign_with_schemes(&signing_schemes, &DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
             .map_err(|e| {
                 MetricedError::new(
                     OP_PUBLIC_DECRYPT_RESULT,
@@ -688,7 +696,11 @@ impl<
             })?;
 
         Ok(Response::new(PublicDecryptionResponse {
-            signature: sig.to_bytes(),
+            // LEGACY
+            signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default(),
+            signatures,
             payload: Some(sig_payload),
             external_signature,
             extra_data,
@@ -717,7 +729,7 @@ mod tests {
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
     use aes_prng::AesRng;
-    use kms_grpc::RequestId;
+    use kms_grpc::{RequestId, kms::v1::SigningSchemeType};
     use kms_grpc::{
         kms::v1::TypedCiphertext,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -906,6 +918,7 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
@@ -939,6 +952,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf,
@@ -977,6 +991,7 @@ mod tests {
             let req_id = RequestId::new_random(&mut rng);
             let bad_key_id = RequestId::new_random(&mut rng);
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -1005,6 +1020,7 @@ mod tests {
             let req_id = RequestId::new_random(&mut rng);
             let bad_epoch_id = EpochId::new_random(&mut rng);
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf,
@@ -1051,6 +1067,7 @@ mod tests {
             };
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(bad_req_id),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -1078,6 +1095,7 @@ mod tests {
             let req_id = RequestId::new_random(&mut rng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1103,6 +1121,7 @@ mod tests {
             };
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -1129,6 +1148,7 @@ mod tests {
             // missing domain
             let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
@@ -1157,6 +1177,7 @@ mod tests {
             let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             domain.verifying_contract = "invalid_contract".to_string();
             let request = Request::new(PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf,
@@ -1201,6 +1222,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
+            signing_schemes: vec![], // no signing scheme means ecdsa256k1 is used by default
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf,
