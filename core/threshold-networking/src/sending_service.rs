@@ -36,6 +36,7 @@ use tonic::{async_trait, transport::Channel};
 use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
+use crate::constants::{MAX_BUFFERED_FUTURE_MSGS, MAX_FUTURE_ROUNDS};
 use threshold_types::network::{NetworkMode, Networking};
 
 pub struct ArcSendValueRequest {
@@ -518,19 +519,38 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
         let counter_lock = self.round_counter.read().await;
-        let rx = self.receiving_channels.get_rx(sender)?.ok_or_else(|| {
-            anyhow_error_and_log(format!(
-                "couldn't retrieve receiving channel for P:{sender:?}"
-            ))
-        })?;
-        let mut rx = rx.lock().await;
+        let rx = self
+            .receiving_channels
+            .get_receiver_state(sender)?
+            .ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "couldn't retrieve receiving channel for P:{sender:?}"
+                ))
+            })?;
+        let mut state = rx.lock().await;
+
+        // The round counter is fixed for the whole call: `receive` holds the
+        // read lock and `increase_round_counter` holds the write lock, so no
+        // round transition can race this call.
+        let network_round = *counter_lock;
+
+        // Fast path: prune any buffered messages that have since become stale,
+        // then deliver a previously buffered message for exactly this round.
+        // Future-round messages are only ever buffered here (never delivered
+        // early), so this cannot leak a wrong-round packet.
+        state.future.retain(|&round, _| round >= network_round);
+        if let Some(value) = state.future.remove(&network_round) {
+            self.last_rec_activity_time
+                .store(now_activity_millis(), Ordering::Relaxed);
+            return Ok(value);
+        }
 
         tracing::debug!("Waiting to receive from {:?}", sender);
         let mut tick_interval = tokio::time::interval_at(
             (Instant::now() + self.conf.get_max_waiting_time_for_message_queue()).into(),
             self.conf.get_max_waiting_time_for_message_queue(),
         );
-        let mut returned_packet = loop {
+        loop {
             // packet : Option<Option<NetworkRoundValue>>
             // Outer Option layer is to signal whether we received something from the channel
             // Inner Option layer is to signal whether the channel is closed
@@ -549,39 +569,76 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                                 _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => {
                                     return Err(anyhow_error_and_log(format!("Session {} has been aborted with {}", self.session_id, sender.get_role_kind())));
                                 }
-                                local_packet = rx.recv() => Some(local_packet)
+                                local_packet = state.rx.recv() => Some(local_packet)
                             }
                         } else {
                             None
                         }
                     },
-                    local_packet = rx.recv() => Some(local_packet)
+                    local_packet = state.rx.recv() => Some(local_packet)
             };
-            if let Some(local_packet) = packet {
-                break local_packet;
+            let packet = match packet {
+                // Keep waiting for a message.
+                None => continue,
+                // The channel is closed.
+                Some(None) => {
+                    return Err(anyhow_error_and_log(
+                        "Trying to receive from a closed channel.",
+                    ));
+                }
+                Some(Some(packet)) => packet,
+            };
+            // Update the time we received a message
+            self.last_rec_activity_time
+                .store(now_activity_millis(), Ordering::Relaxed);
+
+            // Classify the packet against the current round. The round counter
+            // is peer-controlled and unauthenticated, so a packet is only
+            // deliverable when it is tagged with *exactly* the current round.
+            match packet.round_counter.cmp(&network_round) {
+                // Stale: a message for a round we already passed. Drop it and
+                // keep waiting.
+                std::cmp::Ordering::Less => {
+                    let val_len = packet.value.len();
+                    tracing::debug!(
+                        "@ round {} - dropped value {:?} from stale round {}",
+                        network_round,
+                        packet.value[..val_len.min(16)].to_vec(),
+                        packet.round_counter
+                    );
+                    continue;
+                }
+                // Exactly our round: deliver.
+                std::cmp::Ordering::Equal => return Ok(packet.value),
+                // Future round: buffer it (within bounds) until the session
+                // advances, so it can never satisfy an earlier round's receive.
+                std::cmp::Ordering::Greater => {
+                    if packet.round_counter <= network_round.saturating_add(MAX_FUTURE_ROUNDS)
+                        && state.future.len() < MAX_BUFFERED_FUTURE_MSGS
+                    {
+                        // At most one legitimate message per (round, sender):
+                        // do not let a malicious duplicate flood
+                        // the buffer for that round.
+                        state
+                            .future
+                            .entry(packet.round_counter)
+                            .or_insert(packet.value);
+                    } else {
+                        // Note that the sender is never warned of this failure, so a honest party
+                        // won't try and re-send the message. But, this is a DoS mitigation: a malicious peer could
+                        // otherwise flood us with future-round messages and exhaust memory.
+                        tracing::warn!(
+                            "@ round {} - dropping out-of-window/over-cap future-round message for round {} from {:?} (buffered: {})",
+                            network_round,
+                            packet.round_counter,
+                            sender,
+                            state.future.len()
+                        );
+                    }
+                    continue;
+                }
             }
         }
-        .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-        // Update the time we received a message
-        self.last_rec_activity_time
-            .store(now_activity_millis(), Ordering::Relaxed);
-        // drop old messages
-        let network_round = *counter_lock;
-        while returned_packet.round_counter < network_round {
-            let val_len = returned_packet.value.len();
-            tracing::debug!(
-                "@ round {} - dropped value {:?} from round {}",
-                network_round,
-                returned_packet.value[..if val_len < 16 { val_len } else { 16 }].to_vec(),
-                returned_packet.round_counter
-            );
-            returned_packet = rx
-                .recv()
-                .await
-                .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-        }
-
-        Ok(returned_packet.value)
     }
 
     /// Increase the round counter
@@ -698,7 +755,7 @@ mod tests {
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
         CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
-        TlsExtensionGetter,
+        ReceiverState, TlsExtensionGetter,
     };
     use crate::sending_service::{AtomicDuration, NetworkSession, now_activity_millis};
     use std::collections::HashMap;
@@ -930,7 +987,10 @@ mod tests {
             let tx = Arc::new(tx);
             channel_maps.insert(
                 id_2.mpc_identity(),
-                (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+                (
+                    Arc::clone(&tx),
+                    Arc::new(Mutex::new(ReceiverState::new(rx))),
+                ),
             );
             let mut out = MessageQueueStore::new_uninitialized(channel_maps);
 
@@ -1037,6 +1097,221 @@ mod tests {
             let actual = session.receive(&role_2).await.unwrap();
             assert_eq!(actual, expected);
         }
+    }
+
+    /// Build a [`NetworkSession`] wired to a single sender channel, returning the
+    /// session and a `Sender` on which a (possibly malicious) peer's messages can
+    /// be enqueued directly, bypassing the gRPC layer. `channel_size_limit` bounds
+    /// the mpsc so buffer-flooding tests can be exercised deterministically.
+    fn make_test_session(
+        channel_size_limit: usize,
+    ) -> (
+        NetworkSession,
+        Role,
+        Role,
+        Arc<tokio::sync::mpsc::Sender<NetworkRoundValue>>,
+    ) {
+        let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity::new(format!("{ip_addr}"), 1, None);
+        let role_2 = Role::indexed_from_one(2);
+        let id_2 = Identity::new(format!("{ip_addr}"), 2, None);
+
+        let role_assignment = {
+            let mut role_assignment = RoleAssignment::default();
+            role_assignment.insert(role_1, id_1.clone());
+            role_assignment.insert(role_2, id_2.clone());
+            role_assignment
+        };
+
+        let dummy_session_tracker = Arc::new(DashMap::new());
+        let message_store = {
+            let channel_maps = DashMap::new();
+            let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
+            let tx = Arc::new(tx);
+            channel_maps.insert(
+                id_2.mpc_identity(),
+                (
+                    Arc::clone(&tx),
+                    Arc::new(Mutex::new(ReceiverState::new(rx))),
+                ),
+            );
+            let mut out = MessageQueueStore::new_uninitialized(channel_maps);
+            let mut others = role_assignment.clone();
+            others.remove(&role_1);
+            out.init(
+                channel_size_limit,
+                &others,
+                Arc::clone(&dummy_session_tracker),
+            );
+            out
+        };
+
+        let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
+
+        let session = NetworkSession {
+            owner: id_1,
+            session_id: SessionId::from(0),
+            sending_channels: HashMap::new(),
+            receiving_channels: message_store,
+            completed_parties: Arc::new(DashSet::new()),
+            round_counter: tokio::sync::RwLock::new(0),
+            num_byte_sent: AtomicUsize::new(0),
+            network_mode: NetworkMode::Async,
+            conf: OptionConfigWrapper { conf: None },
+            init_time: OnceLock::new(),
+            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
+            next_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
+            max_elapsed_time: AtomicDuration::new(Duration::ZERO),
+        };
+
+        (session, role_1, role_2, tx_2)
+    }
+
+    /// A malicious authenticated peer controls the ordering of its own channel
+    /// and the (unauthenticated) round counter of each packet. It places a
+    /// round-5 packet at the head of the queue while the victim is still in
+    /// round 0. `receive` must NOT deliver that future-round packet as the
+    /// round-0 message: it must skip/buffer it and deliver the genuine round-0
+    /// payload instead. Once the session advances to round 5, the buffered
+    /// packet must then be delivered.
+    #[tokio::test()]
+    async fn test_future_round_not_delivered_early() {
+        let (session, _role_1, role_2, tx_2) = make_test_session(1000);
+
+        let future_payload = vec![5, 5, 5, 5, 5];
+        let current_payload = vec![0, 0, 0, 0, 0];
+
+        // Malicious ordering: future-round packet first, then the legitimate
+        // current-round packet.
+        tx_2.send(NetworkRoundValue {
+            round_counter: 5,
+            value: future_payload.clone(),
+        })
+        .await
+        .unwrap();
+        tx_2.send(NetworkRoundValue {
+            round_counter: 0,
+            value: current_payload.clone(),
+        })
+        .await
+        .unwrap();
+
+        // At round 0, we must get the round-0 payload, not the injected round-5 one.
+        let actual = session.receive(&role_2).await.unwrap();
+        assert_eq!(
+            actual, current_payload,
+            "receive at round 0 must return the round-0 payload, not the injected future-round one"
+        );
+
+        // Advance to round 5; the buffered round-5 payload must now be delivered
+        // straight from the reordering buffer, without any new send.
+        for _ in 0..5 {
+            <NetworkSession as Networking<Role>>::increase_round_counter(&session).await;
+        }
+        let actual = session.receive(&role_2).await.unwrap();
+        assert_eq!(
+            actual, future_payload,
+            "after advancing to round 5, the previously buffered round-5 payload must be delivered"
+        );
+    }
+
+    /// A peer flooding many distinct future rounds must not grow the per-sender
+    /// buffer without bound, and the legitimate current-round message must still
+    /// be delivered.
+    #[tokio::test()]
+    async fn test_future_round_buffer_bounded() {
+        use crate::constants::MAX_BUFFERED_FUTURE_MSGS;
+
+        // Make sure the channel can hold the whole flood plus the current-round
+        // message, so enqueue never blocks and the flood reaches `receive`.
+        let flood = MAX_BUFFERED_FUTURE_MSGS + 50;
+        let (session, _role_1, role_2, tx_2) = make_test_session(flood + 10);
+
+        // Flood the channel with distinct future rounds (all >= 1, current is 0).
+        for r in 1..=flood {
+            tx_2.send(NetworkRoundValue {
+                round_counter: r,
+                value: vec![r as u8],
+            })
+            .await
+            .unwrap();
+        }
+
+        // The genuine current-round (0) message arrives last.
+        let current_payload = vec![42u8; 8];
+        tx_2.send(NetworkRoundValue {
+            round_counter: 0,
+            value: current_payload.clone(),
+        })
+        .await
+        .unwrap();
+
+        // Despite the flood, the current-round message is delivered.
+        let actual = session.receive(&role_2).await.unwrap();
+        assert_eq!(actual, current_payload);
+
+        // And the buffer stayed bounded.
+        {
+            let receiver_state = session
+                .receiving_channels
+                .get_receiver_state(&role_2)
+                .unwrap()
+                .unwrap();
+            let state = receiver_state.lock().await;
+            assert!(
+                state.future.len() <= MAX_BUFFERED_FUTURE_MSGS,
+                "future buffer must stay within MAX_BUFFERED_FUTURE_MSGS, got {}",
+                state.future.len()
+            );
+        }
+    }
+
+    /// Two payloads tagged with the same future round must not overwrite each
+    /// other: the first-buffered value wins and delivery is deterministic.
+    #[tokio::test()]
+    async fn test_future_round_duplicate_does_not_overwrite() {
+        let (session, _role_1, role_2, tx_2) = make_test_session(1000);
+
+        let first = vec![1u8; 4];
+        let second = vec![2u8; 4];
+
+        // Two packets for the same future round 2, plus the current-round packet.
+        tx_2.send(NetworkRoundValue {
+            round_counter: 2,
+            value: first.clone(),
+        })
+        .await
+        .unwrap();
+        tx_2.send(NetworkRoundValue {
+            round_counter: 2,
+            value: second.clone(),
+        })
+        .await
+        .unwrap();
+        let current_payload = vec![9u8; 4];
+        tx_2.send(NetworkRoundValue {
+            round_counter: 0,
+            value: current_payload.clone(),
+        })
+        .await
+        .unwrap();
+
+        // Round 0 delivers the current-round payload.
+        let actual = session.receive(&role_2).await.unwrap();
+        assert_eq!(actual, current_payload);
+
+        // Advance to round 2: the first buffered value wins (or_insert), the
+        // duplicate is discarded — no panic, deterministic result.
+        for _ in 0..2 {
+            <NetworkSession as Networking<Role>>::increase_round_counter(&session).await;
+        }
+        let actual = session.receive(&role_2).await.unwrap();
+        assert_eq!(
+            actual, first,
+            "the first value buffered for a round must win over a later duplicate"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1352,7 +1627,10 @@ mod tests {
             let tx = Arc::new(tx);
             channel_maps.insert(
                 id_2.mpc_identity(),
-                (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+                (
+                    Arc::clone(&tx),
+                    Arc::new(Mutex::new(ReceiverState::new(rx))),
+                ),
             );
             let mut out = MessageQueueStore::new_uninitialized(channel_maps);
 
