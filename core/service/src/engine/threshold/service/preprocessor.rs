@@ -207,8 +207,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let orchestrator_result = {
             let mut factory_guard = factory.lock().await;
             let factory = factory_guard.as_mut();
-            // Bind this execution's context to the factory so every produced
-            // preprocessing instance derives session-unique storage keys.
             match partial_params {
                 Some(partial_params) => {
                     PreprocessingOrchestrator::<ResiduePolyF4Z128>::new_partial(
@@ -230,8 +228,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let orchestrator_result = {
             let mut factory_guard = factory.lock().await;
             let factory = factory_guard.as_mut();
-            // Bind this execution's context to the factory so every produced
-            // preprocessing instance derives session-unique storage keys.
             PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(factory, params, keyset_config)
         };
 

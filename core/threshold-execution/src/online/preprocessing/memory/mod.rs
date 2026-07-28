@@ -20,7 +20,6 @@ use super::{BitDecPreprocessing, InMemoryBitDecPreprocessing};
 #[derive(Default)]
 struct InMemoryPreprocessorFactory<const EXTENSION_DEGREE: usize>;
 
-/// Note: For in-memory preprocessing, we don't need to pass a context string, since the factory is ephemeral and only used for a single execution. The context string is only needed for persistent storage backends to avoid collisions across executions.
 impl<const EXTENSION_DEGREE: usize> PreprocessorFactory<EXTENSION_DEGREE>
     for InMemoryPreprocessorFactory<EXTENSION_DEGREE>
 where
