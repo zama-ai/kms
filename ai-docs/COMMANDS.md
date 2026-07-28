@@ -42,7 +42,7 @@ make lint-dylint
 
 ## Testing
 
-Typical test run — uses the `testing` feature, includes unit and integration tests :
+Typical test run — uses the `testing` feature, includes unit and integration tests:
 
 ```
 cargo test -F testing
