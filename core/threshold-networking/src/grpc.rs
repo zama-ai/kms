@@ -3,15 +3,15 @@
 use super::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use super::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
 use super::sending_service::{
-    AtomicDuration, GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
+    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
 };
 use super::tls::extract_subject_from_cert;
 use crate::constants::{
-    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
-    MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
-    MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT, MULTIPLIER, NETWORK_TIMEOUT_BK,
-    NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG, SESSION_CLEANUP_INTERVAL_SECS,
-    SESSION_STATUS_UPDATE_INTERVAL_SECS,
+    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_BUFFERED_FUTURE_MSGS,
+    MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL,
+    MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY, MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT,
+    MULTIPLIER, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
+    SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
 use crate::ggen::Status;
 use crate::health_check::HealthCheckSession;
@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, OnceLock, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
 use threshold_types::{
@@ -37,21 +37,30 @@ use tonic::transport::CertificateDer;
 use tonic::transport::server::TcpConnectInfo;
 use x509_parser::parse_x509_certificate;
 
+/// Network configuration for core-to-core communication.
+///
+/// Every field is optional: an absent field falls back to the corresponding
+/// default in [`crate::constants`] via the `get_*` accessors below. This means
+/// a fully-absent config (`CoreToCoreNetworkConfig::default()`, all `None`) is
+/// equivalent to "use all defaults", and a partial config overrides only the
+/// fields it sets. Callers should always read through the `get_*` accessors
+/// rather than the raw fields so the defaulting stays in one place.
+///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CoreToCoreNetworkConfig {
-    pub message_limit: u64,
-    pub multiplier: f64,
-    pub max_interval: u64,
+    pub message_limit: Option<u64>,
+    pub multiplier: Option<f64>,
+    pub max_interval: Option<u64>,
     pub max_elapsed_time: Option<u64>,
     /// Initial interval for exponential backoff in milliseconds
     pub initial_interval_ms: Option<u64>,
-    pub network_timeout: u64,
-    pub network_timeout_bk: u64,
-    pub network_timeout_bk_sns: u64,
-    pub max_en_decode_message_size: u64,
+    pub network_timeout: Option<u64>,
+    pub network_timeout_bk: Option<u64>,
+    pub network_timeout_bk_sns: Option<u64>,
+    pub max_en_decode_message_size: Option<u64>,
     /// Background interval for updating session status
     pub session_update_interval_secs: Option<u64>,
     /// Background interval for cleaning up completed sessions
@@ -62,141 +71,114 @@ pub struct CoreToCoreNetworkConfig {
     pub max_waiting_time_for_message_queue: Option<u64>,
     /// Maximum number of "Inactive" sessions a party can open before I refuse to open more
     pub max_opened_inactive_sessions_per_party: Option<u64>,
+    /// Look-ahead window (in rounds) for buffering future-round messages from a
+    /// peer that is ahead of us: a message more than this many rounds ahead of
+    /// our current round is dropped rather than buffered. Larger tolerates more
+    /// benign reordering/asynchrony but lets a peer make us reserve more memory.
+    /// Should be `>= 1`; `0` disables future buffering and drops legitimate
+    /// reordered messages.
+    pub max_future_rounds: Option<u64>,
+    /// Hard cap on the number of distinct future-round messages buffered per
+    /// sender, independent of `max_future_rounds`. Bounds reordering-buffer
+    /// memory against a peer flooding many distinct future round numbers.
+    /// Should be `>= 1` to tolerate any reordering.
+    pub max_buffered_future_msgs: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct OptionConfigWrapper {
-    pub conf: Option<CoreToCoreNetworkConfig>,
-}
-
-impl OptionConfigWrapper {
+impl CoreToCoreNetworkConfig {
     pub fn get_message_limit(&self) -> usize {
-        if let Some(conf) = self.conf {
-            conf.message_limit as usize
-        } else {
-            MESSAGE_LIMIT
-        }
+        self.message_limit
+            .map(|v| v as usize)
+            .unwrap_or(MESSAGE_LIMIT)
     }
 
     pub fn get_multiplier(&self) -> f64 {
-        if let Some(conf) = self.conf {
-            conf.multiplier
-        } else {
-            MULTIPLIER
-        }
+        self.multiplier.unwrap_or(MULTIPLIER)
     }
 
     pub fn get_max_interval(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(conf.max_interval)
-        } else {
-            MAX_INTERVAL
-        }
+        self.max_interval
+            .map(Duration::from_secs)
+            .unwrap_or(MAX_INTERVAL)
     }
 
     pub fn get_max_elapsed_time(&self) -> Option<Duration> {
-        if let Some(conf) = self.conf {
-            conf.max_elapsed_time.map(Duration::from_secs)
-        } else {
-            Some(MAX_ELAPSED_TIME)
-        }
+        // Always bounded: an unset value falls back to MAX_ELAPSED_TIME rather
+        // than "retry forever". (The old two-level wrapper returned `None` when
+        // a config was supplied but this field omitted; that partial-config
+        // corner is now defaulted like every other field.)
+        Some(
+            self.max_elapsed_time
+                .map(Duration::from_secs)
+                .unwrap_or(MAX_ELAPSED_TIME),
+        )
     }
 
     pub fn get_network_timeout(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(conf.network_timeout)
-        } else {
-            NETWORK_TIMEOUT_LONG
-        }
+        self.network_timeout
+            .map(Duration::from_secs)
+            .unwrap_or(NETWORK_TIMEOUT_LONG)
     }
 
     pub fn get_network_timeout_bk(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(conf.network_timeout_bk)
-        } else {
-            NETWORK_TIMEOUT_BK
-        }
+        self.network_timeout_bk
+            .map(Duration::from_secs)
+            .unwrap_or(NETWORK_TIMEOUT_BK)
     }
 
     pub fn get_network_timeout_bk_sns(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(conf.network_timeout_bk_sns)
-        } else {
-            NETWORK_TIMEOUT_BK_SNS
-        }
+        self.network_timeout_bk_sns
+            .map(Duration::from_secs)
+            .unwrap_or(NETWORK_TIMEOUT_BK_SNS)
     }
 
     pub fn get_max_en_decode_message_size(&self) -> usize {
-        if let Some(conf) = self.conf {
-            conf.max_en_decode_message_size as usize
-        } else {
-            *MAX_EN_DECODE_MESSAGE_SIZE
-        }
+        self.max_en_decode_message_size
+            .map(|v| v as usize)
+            .unwrap_or(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
     pub fn get_initial_interval(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            if let Some(initial_interval_ms) = conf.initial_interval_ms {
-                Duration::from_millis(initial_interval_ms)
-            } else {
-                Duration::from_millis(INITIAL_INTERVAL_MS)
-            }
-        } else {
-            Duration::from_millis(INITIAL_INTERVAL_MS)
-        }
+        Duration::from_millis(self.initial_interval_ms.unwrap_or(INITIAL_INTERVAL_MS))
     }
 
     pub fn get_session_update_interval(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(
-                conf.session_update_interval_secs
-                    .unwrap_or(SESSION_STATUS_UPDATE_INTERVAL_SECS),
-            )
-        } else {
-            Duration::from_secs(SESSION_STATUS_UPDATE_INTERVAL_SECS)
-        }
+        Duration::from_secs(
+            self.session_update_interval_secs
+                .unwrap_or(SESSION_STATUS_UPDATE_INTERVAL_SECS),
+        )
     }
 
     pub fn get_session_cleanup_interval(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(
-                conf.session_cleanup_interval_secs
-                    .unwrap_or(SESSION_CLEANUP_INTERVAL_SECS),
-            )
-        } else {
-            Duration::from_secs(SESSION_CLEANUP_INTERVAL_SECS)
-        }
+        Duration::from_secs(
+            self.session_cleanup_interval_secs
+                .unwrap_or(SESSION_CLEANUP_INTERVAL_SECS),
+        )
     }
 
     pub fn get_discard_inactive_sessions_interval(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(
-                conf.discard_inactive_sessions_interval
-                    .unwrap_or(DISCARD_INACTIVE_SESSION_INTERVAL_SECS),
-            )
-        } else {
-            Duration::from_secs(DISCARD_INACTIVE_SESSION_INTERVAL_SECS)
-        }
+        Duration::from_secs(
+            self.discard_inactive_sessions_interval
+                .unwrap_or(DISCARD_INACTIVE_SESSION_INTERVAL_SECS),
+        )
     }
 
     pub fn get_max_opened_inactive_sessions_per_party(&self) -> u64 {
-        if let Some(conf) = self.conf {
-            conf.max_opened_inactive_sessions_per_party
-                .unwrap_or(MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY)
-        } else {
-            MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY
-        }
+        self.max_opened_inactive_sessions_per_party
+            .unwrap_or(MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY)
     }
 
     pub fn get_max_waiting_time_for_message_queue(&self) -> Duration {
-        if let Some(conf) = self.conf {
-            Duration::from_secs(
-                conf.max_waiting_time_for_message_queue
-                    .unwrap_or(MAX_WAITING_TIME_MESSAGE_QUEUE),
-            )
-        } else {
-            Duration::from_secs(MAX_WAITING_TIME_MESSAGE_QUEUE) // Default to 60 seconds if not specified
-        }
+        Duration::from_secs(
+            self.max_waiting_time_for_message_queue
+                .unwrap_or(MAX_WAITING_TIME_MESSAGE_QUEUE),
+        )
+    }
+
+    pub fn get_max_buffered_future_msgs(&self) -> usize {
+        self.max_buffered_future_msgs
+            .map(|v| v as usize)
+            .unwrap_or(MAX_BUFFERED_FUTURE_MSGS)
     }
 }
 
@@ -212,7 +194,7 @@ pub struct GrpcNetworkingManager {
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
     pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
-    conf: OptionConfigWrapper,
+    conf: CoreToCoreNetworkConfig,
     pub sending_service: GrpcSendingService,
     #[cfg(feature = "testing")]
     pub force_tls: bool,
@@ -326,7 +308,7 @@ impl GrpcNetworkingManager {
     /// Owner should be the external address
     pub fn new(
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
-        conf: Option<CoreToCoreNetworkConfig>,
+        conf: CoreToCoreNetworkConfig,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
@@ -344,7 +326,8 @@ impl GrpcNetworkingManager {
             ));
         }
 
-        let conf = OptionConfigWrapper { conf };
+        // `conf` is already resolved: an absent config is `CoreToCoreNetworkConfig::default()`
+        // (all fields `None`), so every `get_*` accessor falls back to its constant.
         let session_store = Arc::new(SessionStore::default());
 
         // We need to spawn background cleanup task to remove dead weak references from session_store, otherwise they accumulate and eat RAM + perf
@@ -471,22 +454,16 @@ impl GrpcNetworkingManager {
                     ));
                 };
 
-                let session = Arc::new(NetworkSession {
-                    owner: owner.clone(),
+                let session = Arc::new(NetworkSession::new(
+                    owner.clone(),
                     session_id,
-                    sending_channels: connection_channel,
-                    receiving_channels: message_store.0,
-                    round_counter: tokio::sync::RwLock::new(0),
-                    network_mode,
-                    conf: self.conf,
+                    connection_channel,
+                    message_store.0,
                     completed_parties,
-                    init_time: OnceLock::new(),
-                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
-                    current_network_timeout: AtomicDuration::new(timeout),
-                    next_network_timeout: AtomicDuration::new(timeout),
-                    max_elapsed_time: AtomicDuration::new(Duration::ZERO),
-                    num_byte_sent: AtomicUsize::new(0),
-                });
+                    network_mode,
+                    self.conf,
+                    timeout,
+                ));
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
 
@@ -499,22 +476,16 @@ impl GrpcNetworkingManager {
                     Arc::clone(&self.opened_sessions_tracker),
                 );
 
-                let session = Arc::new(NetworkSession {
-                    owner: owner.clone(),
+                let session = Arc::new(NetworkSession::new(
+                    owner.clone(),
                     session_id,
-                    sending_channels: connection_channel,
-                    receiving_channels: message_queue,
-                    round_counter: tokio::sync::RwLock::new(0),
-                    network_mode,
-                    conf: self.conf,
+                    connection_channel,
+                    message_queue,
                     completed_parties,
-                    init_time: OnceLock::new(),
-                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
-                    current_network_timeout: AtomicDuration::new(timeout),
-                    next_network_timeout: AtomicDuration::new(timeout),
-                    max_elapsed_time: AtomicDuration::new(Duration::ZERO),
-                    num_byte_sent: AtomicUsize::new(0),
-                });
+                    network_mode,
+                    self.conf,
+                    timeout,
+                ));
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
 
@@ -576,6 +547,43 @@ impl ReceiverState {
             future: std::collections::BTreeMap::new(),
         }
     }
+
+    /// Drop every buffered message strictly older than `current`, then take the
+    /// buffered message for exactly `current` if one is present.
+    pub(crate) fn take_current(&mut self, current: usize) -> Option<Vec<u8>> {
+        // Keep only rounds >= current; everything below is stale and dropped.
+        self.future = self.future.split_off(&current);
+        self.future.remove(&current)
+    }
+
+    /// Buffer a strictly-future-round message, enforcing the reordering-buffer
+    /// bounds. Returns `true` if the message was buffered, `false` if it was
+    /// dropped for being outside the `max_future_rounds` look-ahead window or
+    /// over the per-sender `max_buffered` cap.
+    ///
+    /// The two bounds are passed in (resolved from
+    /// [`CoreToCoreNetworkConfig`](crate::grpc::CoreToCoreNetworkConfig)) rather
+    /// than read from constants, so buffering tolerance is configurable while
+    /// this method stays free of any config dependency and unit-testable in
+    /// isolation. Their defaults are [`MAX_FUTURE_ROUNDS`] / [`MAX_BUFFERED_FUTURE_MSGS`].
+    ///
+    /// At most one value is kept per round: a duplicate for an already-buffered
+    /// round is discarded (first one wins) so a malicious peer cannot clobber a
+    /// genuine future-round message.
+    pub(crate) fn buffer_future(
+        &mut self,
+        round: usize,
+        value: Vec<u8>,
+        current: usize,
+        max_buffered: usize,
+    ) -> bool {
+        if round <= current.saturating_add(max_buffered) && self.future.len() < max_buffered {
+            self.future.entry(round).or_insert(value);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -586,23 +594,23 @@ pub(crate) struct InitializedMessageQueueStore {
     receiver_state: DashMap<RoleKind, Arc<Mutex<ReceiverState>>>,
 }
 
-#[expect(clippy::type_complexity)]
+/// The pair of channel halves kept per sender in an uninitialized message
+/// queue: the sending half other parties push into (`tx`) and the shared
+/// receiving state the owning session drains (`rx`).
+#[derive(Debug, Clone)]
+pub(crate) struct ChannelPair {
+    pub(crate) tx: Arc<Sender<NetworkRoundValue>>,
+    pub(crate) rx: Arc<Mutex<ReceiverState>>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum MessageQueueStore {
-    Uninitialized(
-        DashMap<MpcIdentity, (Arc<Sender<NetworkRoundValue>>, Arc<Mutex<ReceiverState>>)>,
-    ),
+    Uninitialized(DashMap<MpcIdentity, ChannelPair>),
     Initialized(InitializedMessageQueueStore),
 }
 
 impl MessageQueueStore {
-    #[expect(clippy::type_complexity)]
-    pub(crate) fn new_uninitialized(
-        channel_maps: DashMap<
-            MpcIdentity,
-            (Arc<Sender<NetworkRoundValue>>, Arc<Mutex<ReceiverState>>),
-        >,
-    ) -> Self {
+    pub(crate) fn new_uninitialized(channel_maps: DashMap<MpcIdentity, ChannelPair>) -> Self {
         MessageQueueStore::Uninitialized(channel_maps)
     }
 
@@ -639,9 +647,9 @@ impl MessageQueueStore {
                             *count = count.saturating_sub(1);
                         })
                         .or_insert(0);
-                    let (tx, rx) = entry.value();
-                    tx_map.insert(entry.key().clone(), tx.clone());
-                    rx_map.insert(role.get_role_kind(), rx.clone());
+                    let pair = entry.value();
+                    tx_map.insert(entry.key().clone(), pair.tx.clone());
+                    rx_map.insert(role.get_role_kind(), pair.rx.clone());
                 } else {
                     let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
                     tx_map.insert(identity.mpc_identity(), Arc::new(tx));
@@ -692,17 +700,10 @@ impl MessageQueueStore {
     }
 
     // this must be performed on the uninitialized message queue
-    #[expect(clippy::type_complexity)]
     pub(crate) fn entry(
         &self,
         mpc_identity: MpcIdentity,
-    ) -> anyhow::Result<
-        dashmap::mapref::entry::Entry<
-            '_,
-            MpcIdentity,
-            (Arc<Sender<NetworkRoundValue>>, Arc<Mutex<ReceiverState>>),
-        >,
-    > {
+    ) -> anyhow::Result<dashmap::mapref::entry::Entry<'_, MpcIdentity, ChannelPair>> {
         match &self {
             MessageQueueStore::Uninitialized(inner) => Ok(inner.entry(mpc_identity)),
             MessageQueueStore::Initialized(_) => Err(anyhow::anyhow!(
@@ -741,14 +742,8 @@ pub(crate) enum SessionStatus {
 
 impl From<SessionStatus> for SendValueResponse {
     fn from(value: SessionStatus) -> Self {
-        let status = match value {
-            SessionStatus::Completed(_) => Status::Completed,
-            SessionStatus::Inactive(_) => Status::Inactive,
-            SessionStatus::Active(_) => Status::Active,
-        };
-        SendValueResponse {
-            status: status.into(),
-        }
+        // Same mapping as the borrowing impl; delegate so the two cannot drift.
+        (&value).into()
     }
 }
 
@@ -811,6 +806,31 @@ impl NetworkingImpl {
         }
     }
 
+    /// Extract and parse the sender identity from the request's TLS certificate,
+    /// according to the configured [`TlsExtensionGetter`].
+    ///
+    /// Returns `Ok(None)` when no client certificate is present (whether that is
+    /// acceptable is decided later by [`sender_verification`]). This is the single
+    /// source of truth for identity extraction so `health_check` and `send_value`
+    /// — which must perform the *exact same* check — cannot diverge.
+    fn extract_tls_sender<T>(
+        &self,
+        request: &tonic::Request<T>,
+    ) -> Result<Option<String>, tonic::Status> {
+        match self.tls_extension {
+            TlsExtensionGetter::TlsConnectInfo => request
+                .extensions()
+                .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
+            TlsExtensionGetter::SslConnectInfo => request
+                .extensions()
+                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
+        }
+        .transpose()
+        .map_err(|boxed| *boxed)
+    }
+
     /// Fetches the channel for the given session and tag.
     /// - If the session is inactive, it creates a new channel for the sender (assuming the sender hasn't opened too many channels for inactive sessions yet).
     /// - If the session is active, it returns the existing channel (assuming the sender is part of the session).
@@ -847,7 +867,7 @@ impl NetworkingImpl {
                     ))
                 })? {
                     dashmap::Entry::Occupied(occupied_entry) => {
-                        Ok(Some(occupied_entry.get().0.clone()))
+                        Ok(Some(occupied_entry.get().tx.clone()))
                     }
                     dashmap::Entry::Vacant(vacant_entry_tx) => {
                         let mut opened_session_tracker_entry = self
@@ -874,10 +894,10 @@ impl NetworkingImpl {
                         // Create a new channel for the sender
                         let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
                         let tx = Arc::new(tx);
-                        vacant_entry_tx.insert((
-                            Arc::clone(&tx),
-                            Arc::new(Mutex::new(ReceiverState::new(rx))),
-                        ));
+                        vacant_entry_tx.insert(ChannelPair {
+                            tx: Arc::clone(&tx),
+                            rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                        });
 
                         // Update the opened sessions tracker
                         *opened_session_tracker_entry += 1;
@@ -1014,18 +1034,7 @@ impl Gnetworking for NetworkingImpl {
         request: tonic::Request<HealthCheckRequest>,
     ) -> std::result::Result<tonic::Response<HealthCheckResponse>, tonic::Status> {
         // Perform the exact same check as we do for a "real" MPC message
-        let valid_tls_sender = match self.tls_extension {
-            TlsExtensionGetter::TlsConnectInfo => request
-                .extensions()
-                .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
-            TlsExtensionGetter::SslConnectInfo => request
-                .extensions()
-                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
-        }
-        .transpose()
-        .map_err(|boxed| *boxed)?;
+        let valid_tls_sender = self.extract_tls_sender(&request)?;
         let request = request.into_inner();
         let health_tag = bc2wrap::deserialize_slice::<HealthTag>(&request.tag).map_err(|e| {
             tonic::Status::new(
@@ -1057,18 +1066,7 @@ impl Gnetworking for NetworkingImpl {
         // in this case it's party1.com.
         // We also require party1.com to be the subject and the issuer CN too,
         // since we're using self-signed certificates at the moment.
-        let valid_tls_sender = match self.tls_extension {
-            TlsExtensionGetter::TlsConnectInfo => request
-                .extensions()
-                .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
-            TlsExtensionGetter::SslConnectInfo => request
-                .extensions()
-                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
-        }
-        .transpose()
-        .map_err(|boxed| *boxed)?;
+        let valid_tls_sender = self.extract_tls_sender(&request)?;
 
         let request = request.into_inner();
         let tag = bc2wrap::deserialize_slice::<Tag>(&request.tag).map_err(|e| {
@@ -1159,10 +1157,10 @@ impl Gnetworking for NetworkingImpl {
                     let tx = Arc::new(tx);
                     channel_maps.insert(
                         tag.sender.clone(),
-                        (
-                            Arc::clone(&tx),
-                            Arc::new(Mutex::new(ReceiverState::new(rx))),
-                        ),
+                        ChannelPair {
+                            tx: Arc::clone(&tx),
+                            rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+                        },
                     );
 
                     // Insert the new session into the store
@@ -1181,7 +1179,8 @@ impl Gnetworking for NetworkingImpl {
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
                 value: request.value,
-                round_counter: tag.round_counter,
+                // Narrow the fixed-width wire round back to the in-memory `usize`.
+                round_counter: tag.round_counter as usize,
             }),
         )
         .await;
@@ -1214,7 +1213,12 @@ impl Gnetworking for NetworkingImpl {
 pub struct Tag {
     pub(crate) session_id: SessionId,
     pub(crate) sender: MpcIdentity,
-    pub(crate) round_counter: usize,
+    /// Round the message belongs to. This is a *wire* field, so it is a
+    /// fixed-width `u64` rather than a platform-dependent `usize`: the encoding
+    /// (bincode legacy/fixint via `bc2wrap`) must not vary with the sender's
+    /// pointer width. The in-memory round counter is `usize`; conversions happen
+    /// at the send/receive boundary.
+    pub(crate) round_counter: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1327,7 +1331,10 @@ mod tests {
         let (tx, rx) = channel::<NetworkRoundValue>(100);
         channel_maps.insert(
             sender.clone(),
-            (Arc::new(tx), Arc::new(Mutex::new(ReceiverState::new(rx)))),
+            ChannelPair {
+                tx: Arc::new(tx),
+                rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+            },
         );
 
         session_store.insert(
