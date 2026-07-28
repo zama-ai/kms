@@ -1,12 +1,8 @@
 {
+  "sandbox": {
+    "enabled": true
+  },
   "permissions": {
-    "allow": [
-      "Bash(grep -E 'CLIPPY_EXIT|^error|^warning: unused|needless|error\\\\[' __TRACKED_VAR__/clippy3.txt)",
-      "Bash(grep -c 'warning\\\\|error' __TRACKED_VAR__/clippy3.txt)",
-      "Bash(grep -A8 'panicked at core/service/src/client/test_tools.rs:717' __TRACKED_VAR__/dectest.txt)",
-      "Bash(grep CLIPPY_EXIT __TRACKED_VAR__/clippy3.txt)",
-      "Bash(grep -E '^warning:|^error' __TRACKED_VAR__/clippy3.txt)"
-    ],
     "deny": [
       "Read(**/target/**)",
       "Read(./.env)",
@@ -55,8 +51,5 @@
       "Read(~/Library/Application Support/**/phantom*/**)",
       "Read(~/Library/Application Support/**/solflare*/**)"
     ]
-  },
-  "sandbox": {
-    "enabled": true
   }
 }
