@@ -177,7 +177,6 @@ rasn = "=0.28.13"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer 
 rasn-cms = "=0.28.13"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
 rayon = "=1.12.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
-redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 571M+ downloads; since 0.13 the rustls feature validates against the OS trust store (rustls-platform-verifier) with aws-lc-rs — irrelevant for our self-signed/plain-HTTP endpoints
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.26.1"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
