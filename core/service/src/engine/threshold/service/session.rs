@@ -1,7 +1,7 @@
 // === Standard Library ===
 use std::{
     collections::{HashMap, hash_map::Entry},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use crate::{
@@ -34,12 +34,13 @@ use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
+use thiserror::Error;
 use threshold_types::session_id::SessionId;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, MpcIdentity, RoleAssignment},
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use tonic::Code;
 
 struct Context {
@@ -75,11 +76,76 @@ impl tfhe::named::Named for PRSSSetupCombined {
 
 type ContextMap = HashMap<ContextId, Context>;
 
+#[derive(Clone, Default)]
+struct LifecycleCoordinator {
+    // Weak entries ensure rejected requests for random IDs do not grow these registries forever.
+    // The owned lock guards keep their lock alive for exactly the lifecycle operation.
+    context_locks: Arc<Mutex<HashMap<ContextId, Weak<RwLock<()>>>>>,
+    epoch_locks: Arc<Mutex<HashMap<EpochId, Weak<RwLock<()>>>>>,
+}
+
+impl LifecycleCoordinator {
+    async fn context_lock(&self, context_id: &ContextId) -> Arc<RwLock<()>> {
+        let mut locks = self.context_locks.lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(context_id).and_then(Weak::upgrade) {
+            return lock;
+        }
+
+        let lock = Arc::new(RwLock::new(()));
+        locks.insert(*context_id, Arc::downgrade(&lock));
+        lock
+    }
+
+    async fn epoch_lock(&self, epoch_id: &EpochId) -> Arc<RwLock<()>> {
+        let mut locks = self.epoch_locks.lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(epoch_id).and_then(Weak::upgrade) {
+            return lock;
+        }
+
+        let lock = Arc::new(RwLock::new(()));
+        locks.insert(*epoch_id, Arc::downgrade(&lock));
+        lock
+    }
+}
+
+/// Identifies the lifecycle resource that is already held by a conflicting operation.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub(crate) enum LifecycleConflict {
+    /// A context is being destroyed while an epoch creation wants to use it, or vice versa.
+    #[error("MPC context {0} has a conflicting lifecycle operation in progress")]
+    Context(ContextId),
+    /// An epoch is being created while it is being destroyed, or vice versa.
+    #[error("epoch {0} has a conflicting lifecycle operation in progress")]
+    Epoch(EpochId),
+}
+
+/// Keeps an epoch creation mutually exclusive with destruction of its epoch and context.
+#[derive(Debug)]
+pub(crate) struct EpochCreationLease {
+    _context: OwnedRwLockReadGuard<()>,
+    _epoch: OwnedRwLockReadGuard<()>,
+}
+
+/// Prevents epoch creation for a context while that context and its epochs are destroyed.
+#[derive(Debug)]
+pub(crate) struct ContextDestructionLease {
+    _context: OwnedRwLockWriteGuard<()>,
+}
+
+/// Prevents creation of an epoch while that epoch is destroyed.
+#[derive(Debug)]
+pub(crate) struct EpochDestructionLease {
+    _epoch: OwnedRwLockWriteGuard<()>,
+}
+
 #[derive(Clone)]
 pub(crate) struct SessionMaker {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     context_map: Arc<RwLock<ContextMap>>,
     epoch_map: Arc<RwLock<HashMap<EpochId, EpochData>>>,
+    lifecycle: LifecycleCoordinator,
     verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
     rng: Arc<Mutex<AesRng>>,
 }
@@ -135,9 +201,67 @@ impl SessionMaker {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
+            lifecycle: LifecycleCoordinator::default(),
             verifier,
             rng: Arc::new(Mutex::new(rng)),
         }
+    }
+
+    /// Reserve `context_id` and `epoch_id` for an epoch creation.
+    ///
+    /// The returned lease must live until the creation task has finished every persistent write.
+    /// Destruction uses exclusive leases for the same IDs and therefore fails while this lease is
+    /// alive.
+    pub(crate) async fn try_start_epoch_creation(
+        &self,
+        context_id: &ContextId,
+        epoch_id: &EpochId,
+    ) -> Result<EpochCreationLease, LifecycleConflict> {
+        let context = self.lifecycle.context_lock(context_id).await;
+        let context = context
+            .try_read_owned()
+            .map_err(|_| LifecycleConflict::Context(*context_id))?;
+
+        let epoch = self.lifecycle.epoch_lock(epoch_id).await;
+        let epoch = epoch
+            .try_read_owned()
+            .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;
+
+        Ok(EpochCreationLease {
+            _context: context,
+            _epoch: epoch,
+        })
+    }
+
+    /// Exclusively reserve a context for destruction.
+    ///
+    /// The caller must retain the lease while taking the epoch snapshot, deleting every associated
+    /// epoch, and deleting the context itself. Acquiring it fails while an epoch creation for this
+    /// context is in flight.
+    pub(crate) async fn try_start_context_destruction(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<ContextDestructionLease, LifecycleConflict> {
+        let context = self.lifecycle.context_lock(context_id).await;
+        let context = context
+            .try_write_owned()
+            .map_err(|_| LifecycleConflict::Context(*context_id))?;
+        Ok(ContextDestructionLease { _context: context })
+    }
+
+    /// Exclusively reserve an epoch for destruction.
+    ///
+    /// Acquiring this lease fails while creation of the same epoch is in flight. The caller must
+    /// retain it through all storage and cache deletion.
+    pub(crate) async fn try_start_epoch_destruction(
+        &self,
+        epoch_id: &EpochId,
+    ) -> Result<EpochDestructionLease, LifecycleConflict> {
+        let epoch = self.lifecycle.epoch_lock(epoch_id).await;
+        let epoch = epoch
+            .try_write_owned()
+            .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;
+        Ok(EpochDestructionLease { _epoch: epoch })
     }
 
     /// Returns the number of active sessions.
@@ -179,6 +303,7 @@ impl SessionMaker {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
+            lifecycle: LifecycleCoordinator::default(),
             verifier: None,
             rng: Arc::new(Mutex::new(rng)),
         }
@@ -232,6 +357,7 @@ impl SessionMaker {
                 Some(epoch) => HashMap::from_iter([(*epoch_id, epoch)]),
                 None => HashMap::new(),
             })),
+            lifecycle: LifecycleCoordinator::default(),
             verifier: None,
             rng: Arc::new(Mutex::new(rng)),
         }
@@ -782,6 +908,14 @@ pub(crate) struct ImmutableSessionMaker {
 }
 
 impl ImmutableSessionMaker {
+    /// Exclusively reserve a context while its epochs and context metadata are destroyed.
+    pub(crate) async fn try_start_context_destruction(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<ContextDestructionLease, LifecycleConflict> {
+        self.inner.try_start_context_destruction(context_id).await
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
         self.inner.context_exists(context_id).await
@@ -1009,5 +1143,99 @@ mod tests {
                 .await
                 .is_empty()
         );
+    }
+
+    /// An epoch creation is visible to lifecycle coordination before it is registered in
+    /// `epoch_map`, so neither its context nor its epoch can be destroyed in that window.
+    #[tokio::test]
+    async fn epoch_creation_lease_blocks_matching_destruction_only() {
+        let mut rng = AesRng::seed_from_u64(6);
+        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(7));
+        let context_id = ContextId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
+        let endpoint_session_maker = session_maker.make_immutable();
+
+        let creation = session_maker
+            .try_start_epoch_creation(&context_id, &epoch_id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            endpoint_session_maker
+                .try_start_context_destruction(&context_id)
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Context(context_id)
+        );
+        assert_eq!(
+            session_maker
+                .try_start_epoch_destruction(&epoch_id)
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Epoch(epoch_id)
+        );
+
+        // Unrelated lifecycle operations remain independent.
+        let other_context_id = ContextId::new_random(&mut rng);
+        let other_epoch_id = EpochId::new_random(&mut rng);
+        endpoint_session_maker
+            .try_start_context_destruction(&other_context_id)
+            .await
+            .unwrap();
+        session_maker
+            .try_start_epoch_destruction(&other_epoch_id)
+            .await
+            .unwrap();
+
+        drop(creation);
+        endpoint_session_maker
+            .try_start_context_destruction(&context_id)
+            .await
+            .unwrap();
+        session_maker
+            .try_start_epoch_destruction(&epoch_id)
+            .await
+            .unwrap();
+    }
+
+    /// Whichever destructive operation acquires its exclusive lease first prevents a conflicting
+    /// epoch creation from beginning until that lease is released.
+    #[tokio::test]
+    async fn destruction_leases_block_epoch_creation_until_drop() {
+        let mut rng = AesRng::seed_from_u64(8);
+        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(9));
+        let context_id = ContextId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
+
+        let context_destruction = session_maker
+            .try_start_context_destruction(&context_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            session_maker
+                .try_start_epoch_creation(&context_id, &epoch_id)
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Context(context_id)
+        );
+        drop(context_destruction);
+
+        let epoch_destruction = session_maker
+            .try_start_epoch_destruction(&epoch_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            session_maker
+                .try_start_epoch_creation(&context_id, &epoch_id)
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Epoch(epoch_id)
+        );
+        drop(epoch_destruction);
+
+        session_maker
+            .try_start_epoch_creation(&context_id, &epoch_id)
+            .await
+            .unwrap();
     }
 }
