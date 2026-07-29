@@ -1049,15 +1049,15 @@ mod tests {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
         // Create the roles from Set 1
-        let role_1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
+        let role_1_set_1 = TwoSetsRole::OnlySet1(Role::indexed_from_one(1));
         let id_1_set_1 = Identity::new(format!("{ip_addr}"), ports[0], None);
-        let role_2_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(2));
+        let role_2_set_1 = TwoSetsRole::OnlySet1(Role::indexed_from_one(2));
         let id_2_set_1 = Identity::new(format!("{ip_addr}"), ports[1], None);
 
         // Create the roles from Set 2
-        let role_1_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(1));
+        let role_1_set_2 = TwoSetsRole::OnlySet2(Role::indexed_from_one(1));
         let id_1_set_2 = Identity::new(format!("{ip_addr}"), ports[2], None);
-        let role_2_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(2));
+        let role_2_set_2 = TwoSetsRole::OnlySet2(Role::indexed_from_one(2));
         let id_2_set_2 = Identity::new(format!("{ip_addr}"), ports[3], None);
 
         role_assignment.insert(role_1_set_1, id_1_set_1.clone());

@@ -1137,7 +1137,7 @@ mod tests {
 
             let my_role = common_session.my_role();
             let out = match my_role {
-                TwoSetsRole::Set1(_) => {
+                TwoSetsRole::OnlySet1(_) => {
                     let mut party_keyshare = party_keyshare.unwrap();
                     SecureReshareSecretKeys::reshare_sk_two_sets_as_s1(
                         &mut common_session,
@@ -1149,7 +1149,7 @@ mod tests {
                     .unwrap();
                     party_keyshare
                 }
-                TwoSetsRole::Set2(_) => SecureReshareSecretKeys::reshare_sk_two_sets_as_s2(
+                TwoSetsRole::OnlySet2(_) => SecureReshareSecretKeys::reshare_sk_two_sets_as_s2(
                     &mut (common_session, session_set_2.unwrap()),
                     preproc_128.as_mut().unwrap(),
                     preproc_64.as_mut().unwrap(),
@@ -1201,8 +1201,8 @@ mod tests {
         let (results_set_1_only, mut results_set_2_and_both): (Vec<_>, Vec<_>) = results
             .into_iter()
             .partition_map(|(role, out, expected_sk)| match role {
-                TwoSetsRole::Set1(role) => itertools::Either::Left((role, out, expected_sk)),
-                TwoSetsRole::Set2(role) => itertools::Either::Right((role, out, expected_sk)),
+                TwoSetsRole::OnlySet1(role) => itertools::Either::Left((role, out, expected_sk)),
+                TwoSetsRole::OnlySet2(role) => itertools::Either::Right((role, out, expected_sk)),
                 TwoSetsRole::Both(dual_role) => {
                     itertools::Either::Right((dual_role.role_set_2, out, expected_sk))
                 }

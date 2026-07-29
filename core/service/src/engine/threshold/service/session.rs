@@ -674,8 +674,8 @@ impl SessionMaker {
                     context_id_set2
                 ));
             }
-            (None, Some(role)) => TwoSetsRole::Set2(role),
-            (Some(role), None) => TwoSetsRole::Set1(role),
+            (None, Some(role)) => TwoSetsRole::OnlySet2(role),
+            (Some(role), None) => TwoSetsRole::OnlySet1(role),
             (Some(role_set_1), Some(role_set_2)) => TwoSetsRole::Both(DualRole {
                 role_set_1,
                 role_set_2,
@@ -686,7 +686,7 @@ impl SessionMaker {
         // TwoSetsRole::Both, else TwoSetsRole::Set1 or TwoSetsRole::Set2
         let mut reversed_role_assignment_both_sets = role_assignment_s1
             .into_iter()
-            .map(|(role, id)| (id, TwoSetsRole::Set1(role)))
+            .map(|(role, id)| (id, TwoSetsRole::OnlySet1(role)))
             .collect::<HashMap<_, _>>();
 
         role_assignment_s2.into_iter().for_each(|(role, id)| {
@@ -694,7 +694,7 @@ impl SessionMaker {
                 Entry::Occupied(occupied_entry) => {
                     let role_set_1 = occupied_entry.into_mut();
                     match role_set_1 {
-                        TwoSetsRole::Set1(role1) => {
+                        TwoSetsRole::OnlySet1(role1) => {
                             *role_set_1 = TwoSetsRole::Both(DualRole {
                                 role_set_1: *role1,
                                 role_set_2: role,
@@ -706,7 +706,7 @@ impl SessionMaker {
                     }
                 }
                 Entry::Vacant(vacant_entry) => {
-                    let _ = vacant_entry.insert(TwoSetsRole::Set2(role));
+                    let _ = vacant_entry.insert(TwoSetsRole::OnlySet2(role));
                 }
             }
         });
