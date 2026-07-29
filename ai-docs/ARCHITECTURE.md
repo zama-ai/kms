@@ -164,7 +164,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context.
+  of truth for which epochs belong to a context. Destroying an epoch is refused
+  with `FailedPrecondition` while a `NewMpcEpoch` for that same epoch ID is still
+  in flight, because the creation task registers the epoch as soon as PRSS
+  completes but keeps writing private shares for the rest of the resharing;
+  callers retry once the creation has settled.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 

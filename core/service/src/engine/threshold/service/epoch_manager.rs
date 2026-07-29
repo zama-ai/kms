@@ -90,7 +90,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            EntryState, MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
             update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
@@ -1088,6 +1088,12 @@ impl<
     ///
     /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
     /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
+    ///
+    /// NOTE: this only guards against the preconditions it can see in storage and in the session
+    /// maker. The guard against a *concurrent* [`EpochManager::new_mpc_epoch`] still writing
+    /// private shares for this epoch lives in the caller,
+    /// [`Self::destroy_epoch_and_purge_cache`]; do not call this function directly from a
+    /// destruction path that bypasses it.
     async fn destroy_epoch(
         epoch_id: &EpochId,
         priv_storage: &tokio::sync::Mutex<PrivS>,
@@ -1217,10 +1223,47 @@ impl<
     ///
     /// [`Self::destroy_epoch`] only touches storage, so the cache must be cleared here as well or the decompressed keys
     /// stay resident until restart. The cache is purged regardless of the deletion outcome.
+    ///
+    /// Refuses with `FailedPrecondition` while an [`EpochManager::new_mpc_epoch`] for this epoch is
+    /// still in flight. [`Self::internal_init_epoch`] registers the epoch in the session maker as
+    /// soon as PRSS completes, but the resharing that follows keeps writing private shares for the
+    /// whole (potentially minutes-long) MPC protocol. Destroying in that window would delete every
+    /// visible piece of material, report success, and then let the resharing task persist a fresh
+    /// private share that no API can reach any more — the epoch is gone from the session maker and
+    /// its epoch data, from which a restart would rediscover it, has been deleted.
     async fn destroy_epoch_and_purge_cache(
         &self,
         epoch_id: &EpochId,
     ) -> Result<Response<Empty>, MetricedError> {
+        // `reshare_pubinfo_meta_store` is written only by `new_mpc_epoch`, so a `Pending` entry
+        // under this epoch id means exactly "an epoch creation for this epoch is running". The
+        // entry is claimed before the task is spawned and only resolved once the resharing future
+        // has fully returned, so it spans every write the task performs — private storage, the
+        // in-memory key cache, and the backup vault alike.
+        //
+        // A dead or cancelled task cannot wedge this check: its dropped permit is reaped into
+        // `Done(Err)`, and the store is in-memory only, so a restart clears the entry along with
+        // the task. A reshare that hangs forever does block destruction until the node restarts,
+        // which is the safe direction to fail — proceeding would leave unreachable shares on disk.
+        if matches!(
+            self.reshare_pubinfo_meta_store
+                .read()
+                .await
+                .retrieve(&(*epoch_id).into()),
+            Some(EntryState::Pending)
+        ) {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!(
+                    "Epoch ID {epoch_id} is still being created (PRSS setup and/or resharing in \
+                     progress); refusing to destroy it because the in-flight task would persist \
+                     private shares after the deletion. Retry once the epoch creation has settled."
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
         // NOTE: destroy_epoch will also destroy PRSS data
@@ -2752,6 +2795,141 @@ pub(crate) mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
+    /// Destroying an epoch whose creation is still in flight must be refused. `internal_init_epoch`
+    /// registers the epoch as soon as PRSS completes, but the resharing that follows keeps writing
+    /// private shares; destroying in that window would report success and then let the task persist
+    /// a share that no API can reach any more.
+    #[tokio::test]
+    async fn test_destroy_epoch_rejected_while_creation_in_flight() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        // A "keeper" epoch so the target is not the last remaining one, which `destroy_epoch`
+        // refuses to remove for an unrelated reason.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, keeper_epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        let data_id = seed_epoched_key_data(&epoch_manager, &epoch_id, "in_flight_share").await;
+
+        // Claim the meta store entry the way `new_mpc_epoch` does and keep the permit, mirroring a
+        // resharing task that has finished PRSS but not yet written its shares.
+        let permit = add_req_to_meta_store(
+            &epoch_manager.reshare_pubinfo_meta_store,
+            &epoch_id.into(),
+            OP_NEW_EPOCH,
+        )
+        .await
+        .unwrap();
+
+        let err = epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        // The refusal must leave everything intact so a retry still has something to delete.
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let priv_storage = private_storage.lock().await;
+            assert!(
+                priv_storage
+                    .all_data_ids_at_epoch(&epoch_id, &PrivDataType::FheKeyInfo.to_string())
+                    .await
+                    .unwrap()
+                    .contains(&data_id),
+                "a refused destruction must not delete private key material"
+            );
+            assert!(
+                priv_storage
+                    .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap(),
+                "a refused destruction must not delete the epoch data holding the PRSS setup"
+            );
+        }
+
+        // Once the creation settles the epoch must become destroyable again, so the guard cannot
+        // turn into a permanent block. Resolve the entry explicitly instead of dropping the permit,
+        // since the reaper that fails an abandoned entry runs asynchronously.
+        assert!(
+            update_req_in_meta_store::<_, String>(
+                &epoch_manager.reshare_pubinfo_meta_store,
+                permit,
+                Ok(EpochOutput::PRSSInitOnly),
+                OP_NEW_EPOCH,
+            )
+            .await
+        );
+
+        epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap();
+
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let priv_storage = private_storage.lock().await;
+            assert!(
+                priv_storage
+                    .all_data_ids_at_epoch(&epoch_id, &PrivDataType::FheKeyInfo.to_string())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    /// An epoch whose creation *failed* must remain destroyable: the guard only holds while a
+    /// creation is genuinely in flight, never for an entry that already carries an outcome.
+    #[tokio::test]
+    async fn test_destroy_epoch_allowed_after_failed_creation() {
+        let mut rng = AesRng::seed_from_u64(45);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, keeper_epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        let data_id =
+            seed_epoched_key_data(&epoch_manager, &epoch_id, "failed_creation_share").await;
+
+        let permit = add_req_to_meta_store(
+            &epoch_manager.reshare_pubinfo_meta_store,
+            &epoch_id.into(),
+            OP_NEW_EPOCH,
+        )
+        .await
+        .unwrap();
+        assert!(
+            update_err_req_in_meta_store(
+                &epoch_manager.reshare_pubinfo_meta_store,
+                permit,
+                "resharing failed".to_string(),
+                OP_NEW_EPOCH,
+            )
+            .await
+        );
+
+        epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap();
+
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        let priv_storage = private_storage.lock().await;
+        assert!(
+            !priv_storage
+                .all_data_ids_at_epoch(&epoch_id, &PrivDataType::FheKeyInfo.to_string())
+                .await
+                .unwrap()
+                .contains(&data_id)
+        );
+    }
+
     /// Validates partial-failure in destroying MPC epoch:
     /// If deleting the private data fails, retrying should be possible until success,
     /// at which point all epoch Ids associated to the destroyed context should be returned.
@@ -3041,6 +3219,33 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+    }
+
+    /// Store a dummy `FheKeyInfo` entry under `epoch_id`, standing in for the private share material
+    /// a keygen or a resharing would persist there, and return its data ID.
+    async fn seed_epoched_key_data(
+        epoch_manager: &RealThresholdEpochManager<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >,
+        epoch_id: &EpochId,
+        label: &str,
+    ) -> RequestId {
+        let data_id = derive_request_id(label).unwrap();
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        let mut priv_storage = private_storage.lock().await;
+        store_versioned_at_request_and_epoch_id(
+            &mut (*priv_storage),
+            &data_id,
+            epoch_id,
+            &TestType { i: 42 },
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        data_id
     }
 
     #[tokio::test]
