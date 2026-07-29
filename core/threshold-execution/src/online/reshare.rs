@@ -704,10 +704,10 @@ where
 
         let mut jobs = JoinSet::new();
         let transform_s1_to_role = |sender: &TwoSetsRole, _external_opening_info: ()| match sender {
-            TwoSetsRole::Set1(role) => *role,
+            TwoSetsRole::OnlySet1(role) => *role,
             TwoSetsRole::Both(dual_role) => dual_role.role_set_1,
             // Here it is OK to panic because this function is only called for parties in set 1
-            TwoSetsRole::Set2(role) => {
+            TwoSetsRole::OnlySet2(role) => {
                 panic!("Expected to receive from set 1 parties, got {:?}", role)
             }
         };
@@ -1226,7 +1226,7 @@ mod tests {
                 threshold_set_2: 1,
             },
             HashSet::from([
-                TwoSetsRole::Set1(Role::indexed_from_one(4)),
+                TwoSetsRole::OnlySet1(Role::indexed_from_one(4)),
                 TwoSetsRole::Both(DualRole {
                     role_set_1: Role::indexed_from_one(2),
                     role_set_2: Role::indexed_from_one(3),
@@ -1254,7 +1254,7 @@ mod tests {
                 threshold_set_2: 1,
             },
             HashSet::from([
-                TwoSetsRole::Set1(Role::indexed_from_one(4)),
+                TwoSetsRole::OnlySet1(Role::indexed_from_one(4)),
                 TwoSetsRole::Both(DualRole {
                     role_set_1: Role::indexed_from_one(2),
                     role_set_2: Role::indexed_from_one(3),
@@ -1269,7 +1269,7 @@ mod tests {
                 threshold_set_2: 2,
             },
             HashSet::from([
-                TwoSetsRole::Set2(Role::indexed_from_one(6)),
+                TwoSetsRole::OnlySet2(Role::indexed_from_one(6)),
                 TwoSetsRole::Both(DualRole {
                     role_set_1: Role::indexed_from_one(3),
                     role_set_2: Role::indexed_from_one(4),
@@ -1493,7 +1493,7 @@ mod tests {
         };
 
         let (reshare_result, set_2_session) = match two_sets_session.my_role() {
-            TwoSetsRole::Set1(_) => (
+            TwoSetsRole::OnlySet1(_) => (
                 malicious_reshare_set_1
                     .execute(
                         &mut two_sets_session,
@@ -1505,7 +1505,7 @@ mod tests {
                     .map(|res| res.into()),
                 None,
             ),
-            TwoSetsRole::Set2(_) => {
+            TwoSetsRole::OnlySet2(_) => {
                 let mut sessions = (two_sets_session, set_2_session.unwrap());
                 (
                     malicious_reshare_set_2

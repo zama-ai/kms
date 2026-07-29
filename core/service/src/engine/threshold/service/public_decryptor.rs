@@ -688,7 +688,7 @@ impl<
             })?;
 
         Ok(Response::new(PublicDecryptionResponse {
-            signature: sig.sig.to_vec(),
+            signature: sig.to_bytes(),
             payload: Some(sig_payload),
             external_signature,
             extra_data,

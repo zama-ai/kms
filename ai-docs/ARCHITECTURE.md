@@ -93,7 +93,13 @@ The service crate is the main surface area. Key subdirectories under
   [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
-  chain verification).
+  chain verification). Signing lives under
+  [cryptography/signing/](core/service/src/cryptography/signing/): a
+  scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
+  (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
+  ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
+  `unified_sign`/`unified_verify` entry points. The historic
+  `cryptography::signatures` path is now a re-export facade.
 - [client/](core/service/src/client/) and
   [testing/](core/service/src/testing/) — client-side helpers and
   test-only wiring.
@@ -145,9 +151,16 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched
-  via `GetEpochResult`. When resharing legacy key material that has no
-  dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and the
-  reshared private keyset keeps that field absent. `DestroyMpcContext` carries
+  via `GetEpochResult`. The `preproc_id` supplied per key in `previous_epoch` is
+  caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
+  so before any resharing protocol runs each party checks it against the
+  preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
+  What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
+  both sets must hold the key material, so failing to read it rejects the
+  request, whereas a pure set 2 party (a node joining the new context) never held
+  the key and logs a warning instead. When resharing legacy key material that
+  has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
+  the reshared private keyset keeps that field absent. `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source

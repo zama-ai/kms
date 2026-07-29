@@ -173,9 +173,7 @@ fn validate_user_decrypt_meta_data_and_signature(
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
     } else {
-        let sig = Signature {
-            sig: k256::ecdsa::Signature::from_slice(signature)?,
-        };
+        let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
         // NOTE that we cannot use `BaseKmsStruct::verify_sig`
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
         if internal_verify_sig(
@@ -947,7 +945,7 @@ mod tests {
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
             let params = Eip712VerificationParams {
                 response_external_signature: &[],
                 response_extra_data: &extra_data,

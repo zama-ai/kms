@@ -28,8 +28,8 @@ pub mod tests_and_benches {
 
     pub fn get_seed_for_two_sets_role(role: &TwoSetsRole) -> u64 {
         match role {
-            TwoSetsRole::Set1(r) => r.one_based() as u64 | (1 << 60),
-            TwoSetsRole::Set2(r) => r.one_based() as u64 | (2 << 60),
+            TwoSetsRole::OnlySet1(r) => r.one_based() as u64 | (1 << 60),
+            TwoSetsRole::OnlySet2(r) => r.one_based() as u64 | (2 << 60),
             TwoSetsRole::Both(r) => {
                 r.role_set_1.one_based() as u64
                     | ((r.role_set_2.one_based() as u64) << 32)
@@ -95,7 +95,7 @@ pub mod tests_and_benches {
 
             let set_1_session = if party.is_set1() {
                 let role = match party {
-                    TwoSetsRole::Set1(r) => r,
+                    TwoSetsRole::OnlySet1(r) => r,
                     TwoSetsRole::Both(r) => r.role_set_1,
                     _ => unreachable!(),
                 };
@@ -110,7 +110,7 @@ pub mod tests_and_benches {
 
             let set_2_session = if party.is_set2() {
                 let role = match party {
-                    TwoSetsRole::Set2(r) => r,
+                    TwoSetsRole::OnlySet2(r) => r,
                     TwoSetsRole::Both(r) => r.role_set_2,
                     _ => unreachable!(),
                 };
@@ -901,7 +901,7 @@ pub mod tests {
             );
 
             let (set_1_session, set_2_session) = match party {
-                TwoSetsRole::Set1(role) => (
+                TwoSetsRole::OnlySet1(role) => (
                     Some(test_runtime_set_1.base_session_for_party(
                         sid_set_1,
                         role,
@@ -909,7 +909,7 @@ pub mod tests {
                     )),
                     None,
                 ),
-                TwoSetsRole::Set2(role) => (
+                TwoSetsRole::OnlySet2(role) => (
                     None,
                     Some(test_runtime_set_2.base_session_for_party(
                         sid_set_2,
