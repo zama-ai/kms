@@ -134,6 +134,8 @@ zeroize.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 assert_cmd.workspace = true
+# In-process S3 mocking for the vault storage tests (replaces the MinIO integration setup).
+aws-smithy-mocks = { workspace = true }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 cargo_metadata = { workspace = true }
 threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
@@ -151,7 +153,10 @@ walkdir = { workspace = true }
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile", "threshold-execution/testing"]
+# `aws-sdk-s3?/test-util` is required by aws-smithy-mocks' `mock_client!`. The weak-dependency
+# (`?`) syntax only enables it when aws-sdk-s3 is already pulled in (i.e. via `non-wasm`), so
+# wasm / `--no-default-features` builds are unaffected and production never gets test-util.
+testing = ["dep:tempfile", "threshold-execution/testing", "aws-sdk-s3?/test-util"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",
@@ -182,7 +187,6 @@ non-wasm = [
 ]
 slow_tests = ["testing"]
 wasm_tests = ["testing"]
-s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
     "threshold-networking/testing",
