@@ -21,13 +21,50 @@ use crate::{
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
+/// How a response is bound to the request that produced it, per host chain.
+///
+/// Each variant carries every chain-specific value the response checks need, so
+/// they cannot be mixed: an EIP-712 link can never be paired with a Solana
+/// receiver id. Two facts are deliberately fused here — the link source and the
+/// availability of an EIP-712 certificate — because a host with no domain also
+/// has no external certificate to fall back on when a response omits its
+/// internal ECDSA signature.
+#[derive(Clone, Copy)]
+pub(crate) enum UserDecLinkBinding<'a> {
+    /// EVM hosts: the link is the `UserDecryptionLinker` EIP-712 hash and the
+    /// same domain verifies the external certificate.
+    Eip712 {
+        domain: &'a Eip712Domain,
+        /// Signcryption receiver id: the 20-byte client address.
+        client_address: &'a [u8],
+    },
+    /// Solana hosts: the link is the precomputed keccak digest over
+    /// `(host_chain_id, user_pubkey, handles, enc_key)`. There is no EIP-712
+    /// certificate, so an internal ECDSA signature is mandatory.
+    Keccak {
+        link: &'a [u8],
+        /// Signcryption receiver id derived from the Ed25519 pubkey.
+        receiver_id: &'a [u8],
+    },
+}
+
+impl<'a> UserDecLinkBinding<'a> {
+    /// The signcryption receiver id the servers signcrypted their shares against.
+    pub fn client_id(&self) -> &'a [u8] {
+        match self {
+            Self::Eip712 { client_address, .. } => client_address,
+            Self::Keccak { receiver_id, .. } => receiver_id,
+        }
+    }
+}
+
 /// Trusted client-side configuration used to validate server responses.
 /// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
 /// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct UserDecTrustedValidationContext<'a> {
     pub server_addresses: &'a HashMap<u32, Address>,
     pub client_request: &'a ParsedUserDecryptionRequest,
-    pub eip712_domain: &'a Eip712Domain,
+    pub link_binding: UserDecLinkBinding<'a>,
     pub threshold: Option<usize>,
 }
 
@@ -55,6 +92,8 @@ pub(crate) struct Eip712VerificationParams<'a> {
 
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
     "External PT signature verification failed";
+
+const ERR_VALIDATE_USER_DECRYPTION_MISSING_INTERNAL_SIGNATURE: &str = "Response omits the internal ECDSA signature and this host has no EIP-712 certificate to verify instead";
 
 const ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH: &str =
     "Incorrect FHE type lengths in user decryption response";
@@ -99,7 +138,9 @@ fn validate_user_decrypt_meta_data_and_signature(
     pivot_resp: &UserDecryptionResponsePayload,
     other_resp: &UserDecryptionResponsePayload,
     signature: &[u8],
-    eip712_params: &Eip712VerificationParams,
+    // `None` on a host with no EIP-712 certificate (Solana), which makes the internal ECDSA
+    // signature the only server authenticator.
+    eip712_params: Option<&Eip712VerificationParams>,
 ) -> anyhow::Result<()> {
     let pivot_type = pivot_resp.fhe_types()?;
     let check_type = other_resp.fhe_types()?;
@@ -151,6 +192,15 @@ fn validate_user_decrypt_meta_data_and_signature(
 
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
+        // Only an EIP-712 host has an external certificate to fall back on. On a
+        // keccak-linked host (Solana) the internal signature is the only server
+        // authenticator, so its absence is fatal rather than a fallback.
+        let Some(eip712_params) = eip712_params else {
+            return Err(anyhow_error_and_log(
+                ERR_VALIDATE_USER_DECRYPTION_MISSING_INTERNAL_SIGNATURE,
+            ));
+        };
+
         // check signature
         if eip712_params.response_external_signature.is_empty() {
             return Err(anyhow_error_and_log(
@@ -358,17 +408,20 @@ fn validate_user_decrypt_responses(
 
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
-        let eip712_params = Eip712VerificationParams {
-            response_external_signature: &cur_resp.external_signature,
-            response_extra_data: &cur_resp.extra_data,
-            trusted_eip712_domain: trusted_ctx.eip712_domain,
+        let eip712_params = match trusted_ctx.link_binding {
+            UserDecLinkBinding::Eip712 { domain, .. } => Some(Eip712VerificationParams {
+                response_external_signature: &cur_resp.external_signature,
+                response_extra_data: &cur_resp.extra_data,
+                trusted_eip712_domain: domain,
+            }),
+            UserDecLinkBinding::Keccak { .. } => None,
         };
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             trusted_ctx,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
-            &eip712_params,
+            eip712_params.as_ref(),
         ) {
             tracing::warn!(
                 "User decryption validation failed for party {} with error: {e:?}",
@@ -486,7 +539,14 @@ pub(crate) fn validate_user_decrypt_responses_against_request(
         anyhow::bail!("VerifiedUserDecryptionPayloads is empty")
     }
 
-    let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
+    let expected_link = match trusted_ctx.link_binding {
+        UserDecLinkBinding::Eip712 { domain, .. } => {
+            compute_link(trusted_ctx.client_request, domain)?
+        }
+        // Already derived from the trusted request by the caller; see
+        // `compute_solana_user_decrypt_link`.
+        UserDecLinkBinding::Keccak { link, .. } => link.to_vec(),
+    };
 
     // Only index into the pivot if we've checked that the slice is not empty earlier
     let pivot_resp = &resp_parsed.as_slice()[0];
@@ -533,7 +593,7 @@ mod tests {
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
+        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams, UserDecLinkBinding,
         UserDecTrustedValidationContext, check_ext_user_decryption_signature,
         select_most_common_user_dec, validate_user_decrypt_meta_data_and_signature,
         validate_user_decrypt_responses, validate_user_decrypt_responses_against_request,
@@ -759,7 +819,10 @@ mod tests {
         let trusted_ctx = UserDecTrustedValidationContext {
             server_addresses: &server_addresses,
             client_request: &client_request,
-            eip712_domain: &dummy_domain,
+            link_binding: UserDecLinkBinding::Eip712 {
+                domain: &dummy_domain,
+                client_address: &[],
+            },
             threshold: None,
         };
 
@@ -783,7 +846,7 @@ mod tests {
                     &pivot_resp,
                     &other_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
+                    Some(&params),
                 )
                 .unwrap_err()
                 .to_string()
@@ -816,7 +879,7 @@ mod tests {
                     &pivot_resp,
                     &other_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
+                    Some(&params),
                 )
                 .unwrap_err()
                 .to_string()
@@ -849,7 +912,7 @@ mod tests {
                     &pivot_resp,
                     &other_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
+                    Some(&params),
                 )
                 .unwrap_err()
                 .to_string()
@@ -870,7 +933,7 @@ mod tests {
                     &pivot_resp,
                     &pivot_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
+                    Some(&params),
                 )
                 .unwrap_err()
                 .to_string()
@@ -893,7 +956,7 @@ mod tests {
                     &pivot_resp,
                     &other_resp,
                     &[],
-                    &params,
+                    Some(&params),
                 )
                 .unwrap_err()
                 .to_string()
@@ -916,7 +979,7 @@ mod tests {
                     &pivot_resp,
                     &other_resp,
                     &[],
-                    &params,
+                    Some(&params),
                 )
                 .unwrap_err()
                 .to_string()
@@ -938,7 +1001,7 @@ mod tests {
                 &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &params,
+                Some(&params),
             )
             .unwrap();
         }
@@ -958,7 +1021,7 @@ mod tests {
                 &pivot_resp,
                 &pivot_resp,
                 &signature_buf,
-                &params,
+                Some(&params),
             )
             .unwrap();
         }
@@ -1009,7 +1072,10 @@ mod tests {
         let trusted_ctx = UserDecTrustedValidationContext {
             server_addresses: &server_addresses,
             client_request: &client_request,
-            eip712_domain: &dummy_domain,
+            link_binding: UserDecLinkBinding::Eip712 {
+                domain: &dummy_domain,
+                client_address: &[],
+            },
             threshold: None,
         };
 
@@ -1465,7 +1531,10 @@ mod tests {
             let bad_ctx = UserDecTrustedValidationContext {
                 server_addresses: &server_addresses,
                 client_request: &bad_client_request,
-                eip712_domain: &dummy_domain,
+                link_binding: UserDecLinkBinding::Eip712 {
+                    domain: &dummy_domain,
+                    client_address: &[],
+                },
                 threshold: None,
             };
             assert!(
@@ -1481,7 +1550,10 @@ mod tests {
             let trusted_ctx = UserDecTrustedValidationContext {
                 server_addresses: &server_addresses,
                 client_request: &client_request,
-                eip712_domain: &dummy_domain,
+                link_binding: UserDecLinkBinding::Eip712 {
+                    domain: &dummy_domain,
+                    client_address: &[],
+                },
                 threshold: None,
             };
             assert_eq!(
@@ -1709,7 +1781,10 @@ mod tests {
             let trusted_ctx = UserDecTrustedValidationContext {
                 server_addresses: &server_addresses,
                 client_request: &client_request,
-                eip712_domain: &dummy_domain,
+                link_binding: UserDecLinkBinding::Eip712 {
+                    domain: &dummy_domain,
+                    client_address: &[],
+                },
                 threshold: Some(1),
             };
             let agg_resp: Vec<_> = (1..=5)
@@ -1731,7 +1806,10 @@ mod tests {
             let trusted_ctx = UserDecTrustedValidationContext {
                 server_addresses: &server_addresses,
                 client_request: &client_request,
-                eip712_domain: &dummy_domain,
+                link_binding: UserDecLinkBinding::Eip712 {
+                    domain: &dummy_domain,
+                    client_address: &[],
+                },
                 threshold: Some(1),
             };
             let agg_resp = vec![
@@ -1750,5 +1828,203 @@ mod tests {
                     .contains("Cannot find user decryption pivot")
             );
         }
+    }
+
+    /// Builds a 4-party fixture bound by a keccak link rather than an EIP-712 hash, as a Solana
+    /// host-chain user decryption produces. `sign_internally` chooses whether each response carries
+    /// the internal ECDSA signature (the direct-gRPC shape) or only an external EIP-712 certificate.
+    fn keccak_bound_fixture(
+        link: &[u8],
+        sign_internally: bool,
+    ) -> (
+        HashMap<u32, alloy_primitives::Address>,
+        ParsedUserDecryptionRequest,
+        Vec<UserDecryptionResponse>,
+    ) {
+        let mut rng = AesRng::seed_from_u64(42);
+        let keys: Vec<(PublicSigKey, PrivateSigKey)> =
+            (0..4).map(|_| gen_sig_keys(&mut rng)).collect();
+        let server_addresses = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (vk, _))| (i as u32 + 1, vk.address()))
+            .collect::<HashMap<u32, alloy_primitives::Address>>();
+
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &eph_client_pk,
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+
+        let dummy_domain = dummy_domain();
+        let ciphertext_handle = vec![9, 9, 9, 9];
+        let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
+        let client_request = ParsedUserDecryptionRequest::new(
+            None,
+            client_vk.address(),
+            enc_key_buf,
+            vec![CiphertextHandle::new(ciphertext_handle.clone())],
+            dummy_domain.verifying_contract.unwrap(),
+            vec![],
+        );
+
+        let responses = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (vk, sk))| {
+                let payload = UserDecryptionResponsePayload {
+                    verification_key: bc2wrap::serialize(vk).unwrap(),
+                    // On Solana the digest *is* the keccak link, so the fixture sets it directly.
+                    digest: link.to_vec(),
+                    signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                        fhe_type: tfhe::FheTypes::Uint4 as i32,
+                        signcrypted_ciphertext: vec![1, 2, 3, 4],
+                        external_handle: ciphertext_handle.clone(),
+                        packing_factor: 1,
+                    }],
+                    party_id: i as u32 + 1,
+                    degree: 1,
+                };
+                let (signature, external_signature) = if sign_internally {
+                    let buf = bc2wrap::serialize(&payload).unwrap();
+                    let sig = internal_sign(&DSEP_USER_DECRYPTION, &buf, sk).unwrap();
+                    (sig.sig.to_vec(), vec![])
+                } else {
+                    let external = compute_external_user_decrypt_signature(
+                        sk,
+                        &payload,
+                        &dummy_domain,
+                        client_request.enc_key(),
+                        &[],
+                    )
+                    .unwrap();
+                    (vec![], external)
+                };
+                UserDecryptionResponse {
+                    signature,
+                    external_signature,
+                    payload: Some(payload),
+                    extra_data: vec![],
+                }
+            })
+            .collect();
+
+        (server_addresses, client_request, responses)
+    }
+
+    /// A keccak-bound host validates all four internally-signed responses and accepts them as
+    /// linked to the request, without ever deriving an EIP-712 hash.
+    #[test]
+    fn keccak_bound_context_validates_internally_signed_responses() {
+        let link = vec![0xAB; 32];
+        let (server_addresses, client_request, agg_resp) = keccak_bound_fixture(&link, true);
+
+        let trusted_ctx = UserDecTrustedValidationContext {
+            server_addresses: &server_addresses,
+            client_request: &client_request,
+            link_binding: UserDecLinkBinding::Keccak {
+                link: &link,
+                receiver_id: &[],
+            },
+            threshold: None,
+        };
+
+        assert_eq!(
+            validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                .unwrap()
+                .as_slice()
+                .len(),
+            4,
+            "all four threshold responses should validate under a keccak binding"
+        );
+        assert_eq!(
+            validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp)
+                .unwrap()
+                .expect("responses should be linked to the request")
+                .as_slice()
+                .len(),
+            4
+        );
+    }
+
+    /// The keccak link is enforced, not merely carried: a context expecting a different link must
+    /// report the responses as unlinked rather than accepting them.
+    #[test]
+    fn keccak_bound_context_rejects_a_mismatched_link() {
+        let link = vec![0xAB; 32];
+        let (server_addresses, client_request, agg_resp) = keccak_bound_fixture(&link, true);
+
+        let other_link = vec![0xCD; 32];
+        let trusted_ctx = UserDecTrustedValidationContext {
+            server_addresses: &server_addresses,
+            client_request: &client_request,
+            link_binding: UserDecLinkBinding::Keccak {
+                link: &other_link,
+                receiver_id: &[],
+            },
+            threshold: None,
+        };
+
+        assert!(
+            validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp)
+                .unwrap()
+                .is_none(),
+            "a response digest that does not equal the expected keccak link must not be accepted"
+        );
+    }
+
+    /// Fail-closed: a keccak-bound host has no EIP-712 certificate to fall back on, so a response
+    /// that omits its internal ECDSA signature must be rejected even though it carries a valid
+    /// external signature that an EVM host would have accepted.
+    #[test]
+    fn keccak_bound_context_rejects_responses_lacking_an_internal_signature() {
+        let link = vec![0xAB; 32];
+        let (server_addresses, client_request, agg_resp) = keccak_bound_fixture(&link, false);
+
+        // The same responses are accepted under an EIP-712 binding, which isolates the internal
+        // signature requirement as the only reason the keccak binding refuses them.
+        let dummy_domain = dummy_domain();
+        let evm_ctx = UserDecTrustedValidationContext {
+            server_addresses: &server_addresses,
+            client_request: &client_request,
+            link_binding: UserDecLinkBinding::Eip712 {
+                domain: &dummy_domain,
+                client_address: &[],
+            },
+            threshold: None,
+        };
+        assert_eq!(
+            validate_user_decrypt_responses(&evm_ctx, &agg_resp)
+                .unwrap()
+                .as_slice()
+                .len(),
+            4,
+            "externally-signed responses are valid on an EIP-712 host"
+        );
+
+        let solana_ctx = UserDecTrustedValidationContext {
+            server_addresses: &server_addresses,
+            client_request: &client_request,
+            link_binding: UserDecLinkBinding::Keccak {
+                link: &link,
+                receiver_id: &[],
+            },
+            threshold: None,
+        };
+        // Every response is refused for want of an internal signature, which leaves nothing to
+        // reconstruct from, so validation fails outright rather than returning a short set.
+        let err = validate_user_decrypt_responses(&solana_ctx, &agg_resp)
+            .expect_err(
+                "a keccak-bound host must refuse responses authenticated only by an EIP-712 certificate",
+            )
+            .to_string();
+        assert!(
+            err.contains(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP),
+            "expected {ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP}, got: {err}"
+        );
     }
 }

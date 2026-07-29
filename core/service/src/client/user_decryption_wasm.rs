@@ -8,8 +8,8 @@ use crate::cryptography::{
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
 };
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, UserDecTrustedValidationContext, check_ext_user_decryption_signature,
-    validate_user_decrypt_responses_against_request,
+    DSEP_USER_DECRYPTION, UserDecLinkBinding, UserDecTrustedValidationContext,
+    check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -54,6 +54,14 @@ fn compute_solana_user_decrypt_link(
     )?;
     binding.validate_declared_chain_id(declared_chain_id)?;
     Ok(binding.compute_link(&request.enc_key, solana_user_pubkey))
+}
+
+/// The signcryption receiver id the KMS signcrypts a Solana user-decrypt response against.
+///
+/// Mirrors the server's `solana_user_decrypt_client_id`: `keccak256(pubkey)[12..]`. Centralized and
+/// threshold reconstruction must agree on this byte-for-byte, so both read it from here.
+fn solana_signcryption_receiver_id(solana_user_pubkey: &[u8; 32]) -> Vec<u8> {
+    alloy_primitives::keccak256(solana_user_pubkey)[12..].to_vec()
 }
 
 impl Client {
@@ -119,7 +127,10 @@ impl Client {
         } else {
             self.threshold_user_decryption_resp(
                 client_request,
-                eip712_domain,
+                UserDecLinkBinding::Eip712 {
+                    domain: eip712_domain,
+                    client_address: self.client_address.as_slice(),
+                },
                 enc_key,
                 dec_key,
                 threshold,
@@ -234,20 +245,25 @@ impl Client {
             .collect()
     }
 
-    /// Solana (RFC-021) centralized de-signcryption.
+    /// Solana (RFC-021) de-signcryption, centralized or threshold.
     ///
-    /// Identical to [`Self::centralized_user_decryption_resp`] except for the request<->response
-    /// binding `link`: on Solana it is the opaque keccak [`compute_link_solana`] digest over
+    /// Mirrors the EVM entry point [`Self::process_user_decryption_resp`], differing only in the
+    /// request<->response binding `link`: on Solana it is the opaque keccak
+    /// [`compute_solana_user_decrypt_link`] digest over
     /// `(host_chain_id, solana_user_pubkey, handles, enc_key)`, not the EVM `UserDecryptionLinker`
     /// EIP-712 hash. The KMS signcrypts against this same link and the derived signcryption
-    /// `receiver_id = keccak256(solana_user_pubkey)[12..]` (see the Solana branch in
-    /// `validation_non_wasm`), so the client reproduces both here. The link is opaque AAD to the
-    /// signcryption layer, so the unsigncryption is mechanically the EVM path with a different link.
+    /// [`solana_signcryption_receiver_id`] (see the Solana branch in `validation_non_wasm`), so the
+    /// client reproduces both here. The link is opaque AAD to the signcryption layer, so the
+    /// unsigncryption is mechanically the EVM path with a different link — which is why a threshold
+    /// deployment reuses [`Self::threshold_user_decryption_resp`] wholesale, including Shamir
+    /// reconstruction over the `n` per-party shares.
     ///
-    /// Server authenticity is checked via the internal ECDSA signature over the response payload;
+    /// Server authenticity is checked via the internal ECDSA signature over each response payload;
     /// the external EIP-712 certificate is the on-chain-consumable artifact and is not needed to
-    /// recover the plaintext client-side. Every handle must embed the same high-bit Solana chain
-    /// ID, and that ID must equal `host_chain_id`, before the link is computed.
+    /// recover the plaintext client-side. On the threshold path that internal signature is
+    /// therefore mandatory, since there is no EIP-712 domain to verify a certificate against. Every
+    /// handle must embed the same high-bit Solana chain ID, and that ID must equal `host_chain_id`,
+    /// before the link is computed.
     pub fn process_user_decryption_resp_solana(
         &self,
         request: &ParsedUserDecryptionRequest,
@@ -258,6 +274,26 @@ impl Client {
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let link = compute_solana_user_decrypt_link(request, solana_user_pubkey, host_chain_id)?;
+        let receiver_id = solana_signcryption_receiver_id(solana_user_pubkey);
+
+        // Same dispatch rule as the EVM entry point: both the response count and the configured
+        // server count must indicate a single party before taking the weaker centralized path,
+        // so a threshold deployment can never silently fall back to it.
+        if !(agg_resp.len() <= 1 && self.server_identities.len() == 1) {
+            // `threshold` is left to be derived from the configured server count as (n-1)/3, which
+            // is the 3t+1 topology the KMS enforces; there is no Solana-side override to pass.
+            return self.threshold_user_decryption_resp(
+                request,
+                UserDecLinkBinding::Keccak {
+                    link: &link,
+                    receiver_id: &receiver_id,
+                },
+                enc_key,
+                dec_key,
+                None,
+                agg_resp,
+            );
+        }
 
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -307,8 +343,6 @@ impl Client {
             })?;
         }
 
-        // receiver_id mirrors the server's `solana_user_decrypt_client_id`: keccak256(pubkey)[12..].
-        let receiver_id = alloy_primitives::keccak256(solana_user_pubkey)[12..].to_vec();
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
@@ -347,20 +381,26 @@ impl Client {
         Ok(out)
     }
 
-    /// Decrypt the user decryption responses from the threshold KMS and verify that the signatures are valid
+    /// Decrypt the user decryption responses from the threshold KMS and verify that the signatures
+    /// are valid.
+    ///
+    /// Host-chain-agnostic: `link_binding` carries both the request<->response binding (EIP-712
+    /// hash on EVM, keccak digest on Solana) and the signcryption receiver id the servers
+    /// signcrypted against. Shamir reconstruction itself is identical across hosts.
     fn threshold_user_decryption_resp(
         &self,
         client_request: &ParsedUserDecryptionRequest,
-        eip712_domain: &Eip712Domain,
+        link_binding: UserDecLinkBinding<'_>,
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
         threshold: Option<usize>,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let client_id = link_binding.client_id();
         let ctx = UserDecTrustedValidationContext {
             server_addresses: &self.get_server_addrs(),
             client_request,
-            eip712_domain,
+            link_binding,
             threshold,
         };
         let validated_resps = some_or_err(
@@ -394,7 +434,7 @@ impl Client {
             DecryptionMode::BitDecSmall => {
                 // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
                 let all_sharings =
-                    self.recover_sharings::<Z64>(&validated_resps, enc_key, dec_key)?;
+                    self.recover_sharings::<Z64>(&validated_resps, enc_key, dec_key, client_id)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -457,7 +497,7 @@ impl Client {
             }
             DecryptionMode::NoiseFloodSmall => {
                 let all_sharings =
-                    self.recover_sharings::<Z128>(&validated_resps, enc_key, dec_key)?;
+                    self.recover_sharings::<Z128>(&validated_resps, enc_key, dec_key, client_id)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -745,12 +785,17 @@ impl Client {
 
     /// Decrypts the user decryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
+    ///
+    /// `client_id` is the signcryption receiver id the servers signcrypted against. It is
+    /// per-host-chain — the EVM client address on EVM, the Ed25519 pubkey identity on Solana —
+    /// so it is passed in rather than read off `self.client_address`.
     #[expect(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
         agg_resp: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
+        client_id: &[u8],
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>, usize)>> {
         let batch_count = agg_resp
             .first()
@@ -791,9 +836,8 @@ impl Client {
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey =
                     bc2wrap::deserialize_slice(&cur_resp.verification_key)?; // TODO(#2781)
-                let client_id = self.client_address.to_vec();
                 let unsign_key =
-                    UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
+                    UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, client_id);
                 match unsign_key.unsigncrypt_plaintext(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
