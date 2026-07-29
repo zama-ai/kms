@@ -185,15 +185,15 @@ impl S3Storage {
             &self.bucket,
             key
         );
-        // Build the upload's own client up front, so a multipart upload never contends
-        // with this storage's other S3 operations. Payloads that stay on the single-PUT
-        // path never use it: that opens no connection, though it does build and discard
-        // a TLS connector (~55 µs measured), which is negligible against the PUT that
-        // follows (see [`build_multipart_upload_client`]).
-        let uploader = build_multipart_upload_client(self.s3_client.config());
+        // A multipart upload gets its own client so it never contends with this storage's
+        // other S3 operations, but it is built only if the payload actually spills: the
+        // single-PUT path is every write in normal operation, and building a client there
+        // would burn a TLS connector (~55 µs measured) on every one of them. Cloning the
+        // client to carry into the closure is just an `Arc` bump.
+        let base_client = self.s3_client.clone();
         let size = s3_put_versioned(
             &self.s3_client,
-            uploader,
+            Box::new(move || build_multipart_upload_client(base_client.config())),
             &self.bucket,
             key,
             data,
@@ -728,6 +728,16 @@ enum PartWriterOutcome {
     Multipart(oneshot::Receiver<MultipartUploadResult>),
 }
 
+/// Builds the S3 client that serves one multipart upload, called at most once and
+/// only when the payload actually outgrows the first part buffer.
+///
+/// Production hands in a closure over [`build_multipart_upload_client`], so the
+/// single-PUT path — every write in normal operation — never pays for a client it
+/// does not use. Tests hand in a closure returning a mock client directly, which
+/// must not go through `build_multipart_upload_client`: deriving a client from a
+/// config strips the mock transport.
+type UploaderClientFactory = Box<dyn FnOnce() -> S3Client + Send>;
+
 /// `std::io::Write` sink that buffers serialized bytes into `part_size` chunks
 /// and, once the payload outgrows the first chunk, streams them to S3 as a
 /// multipart upload.
@@ -738,11 +748,12 @@ enum PartWriterOutcome {
 /// a dedicated uploader thread drains the bounded part queue, so
 /// serialization and upload overlap without unbounded buffering.
 ///
-/// `client` is the upload's own S3 client, handed in by the caller (see
-/// [`build_multipart_upload_client`]) rather than derived here, so the uploader
-/// never inherits anything from the caller's client implicitly.
+/// `make_client` builds the upload's own S3 client (see [`UploaderClientFactory`])
+/// rather than the writer deriving one itself, so the uploader never inherits
+/// anything from the caller's client implicitly — and so a payload that never
+/// spills never builds a client at all.
 struct S3PartWriter {
-    client: S3Client,
+    make_client: Option<UploaderClientFactory>,
     bucket: String,
     key: String,
     part_size: usize,
@@ -752,14 +763,14 @@ struct S3PartWriter {
 }
 
 impl S3PartWriter {
-    fn new(client: S3Client, bucket: &str, key: &str, part_size: usize) -> Self {
+    fn new(make_client: UploaderClientFactory, bucket: &str, key: &str, part_size: usize) -> Self {
         // Callers pass `S3_MULTIPART_PART_SIZE` or a test constant, so this
         // cannot fire in correct execution. Not a `debug_assert`: in release
         // S3 would only reject an undersized part at CompleteMultipartUpload,
         // once the whole object has already been uploaded.
         assert!(part_size >= S3_MULTIPART_MIN_PART_SIZE);
         Self {
-            client,
+            make_client: Some(make_client),
             bucket: bucket.to_string(),
             key: key.to_string(),
             part_size,
@@ -774,8 +785,13 @@ impl S3PartWriter {
         if self.pipeline.is_none() {
             let (part_tx, part_rx) = mpsc::sync_channel(PART_CHANNEL_CAPACITY);
             let (result_tx, result_rx) = oneshot::channel();
-            let (client, bucket, key) =
-                (self.client.clone(), self.bucket.clone(), self.key.clone());
+            // The factory is consumed exactly here, and only this branch runs more
+            // than never: `pipeline` is `Some` from now on.
+            let make_client = self
+                .make_client
+                .take()
+                .expect("the uploader client factory is taken only when the pipeline is installed");
+            let (client, bucket, key) = (make_client(), self.bucket.clone(), self.key.clone());
             std::thread::Builder::new()
                 .name("s3-multipart-upload".to_string())
                 .spawn(move || run_multipart_uploader(client, bucket, key, part_rx, result_tx))
@@ -1018,30 +1034,29 @@ async fn abort_multipart_upload_best_effort(
 ///
 /// Payloads that fit in one `part_size` buffer are stored with a single
 /// `PutObject` through `s3_client`; larger ones are streamed as an S3 multipart
-/// upload, so the full serialized blob never exists in memory. `uploader` drives
-/// the part-shipping half of that (`CreateMultipartUpload` and `UploadPart`,
-/// which run on the uploader thread); completing and aborting go through
-/// `s3_client`, since those happen on this task once the serializer is done and
-/// so carry no risk of waiting on the caller's blocked runtime.
+/// upload, so the full serialized blob never exists in memory. `make_uploader`
+/// builds the client driving the part-shipping half of that
+/// (`CreateMultipartUpload` and `UploadPart`, which run on the uploader thread);
+/// completing and aborting go through `s3_client`, since those happen on this
+/// task once the serializer is done and so carry no risk of waiting on the
+/// caller's blocked runtime.
 /// Visibility is all-or-nothing: the object appears only once
 /// `CompleteMultipartUpload` succeeds. Reported failures abort the upload
 /// best-effort; a panic or a cancelled future can still leave an incomplete
 /// upload behind for a bucket lifecycle rule (if configured) to reclaim.
 ///
-/// `uploader` is the multipart upload's own client — see
-/// [`build_multipart_upload_client`], which every production caller uses to
-/// build one. It is consumed even when the payload stays on the single-PUT path
-/// and the upload never runs.
+/// `make_uploader` is called at most once and never on the single-PUT path; see
+/// [`UploaderClientFactory`].
 pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
-    uploader: S3Client,
+    make_uploader: UploaderClientFactory,
     bucket: &str,
     key: &str,
     data: &T,
     part_size: usize,
     size_limit: u64,
 ) -> anyhow::Result<u64> {
-    let mut writer = S3PartWriter::new(uploader, bucket, key, part_size);
+    let mut writer = S3PartWriter::new(make_uploader, bucket, key, part_size);
     // The serializer borrows `data`, so it cannot move into `spawn_blocking`;
     // it runs on this task, blocking in `spill` at upload pace once the
     // payload exceeds one part (see [`run_blocking`]).
@@ -1797,6 +1812,14 @@ mod tests {
             }
         }
 
+        /// Hand the mock client to the uploader thread as-is. It must not go through
+        /// `build_multipart_upload_client`: a client derived from a config loses the
+        /// mock transport and would dial the (dead) endpoint instead.
+        fn mock_uploader(client: &S3Client) -> UploaderClientFactory {
+            let client = client.clone();
+            Box::new(move || client)
+        }
+
         #[tokio::test]
         async fn s3_multipart_store_and_read() {
             let prefix = std::stringify!(s3_multipart_store_and_read);
@@ -1808,7 +1831,7 @@ mod tests {
 
             let size = s3_put_versioned(
                 &storage.s3_client,
-                storage.s3_client.clone(),
+                mock_uploader(&storage.s3_client),
                 MOCK_BUCKET,
                 &key,
                 &data,
@@ -1863,7 +1886,7 @@ mod tests {
 
             let size = s3_put_versioned(
                 &storage.s3_client,
-                storage.s3_client.clone(),
+                mock_uploader(&storage.s3_client),
                 MOCK_BUCKET,
                 &key,
                 &data,
@@ -1917,10 +1940,10 @@ mod tests {
             // Drive the writer past one part so the pipeline engages (the
             // multipart upload is created and part 1 ships), then finish with
             // an injected serialization failure to exercise the abort path.
-            // The writer takes the upload's client, so the mock serves the
+            // The writer takes the upload's client factory, so the mock serves the
             // uploader thread directly instead of a client derived from it.
             let mut writer = S3PartWriter::new(
-                storage.s3_client.clone(),
+                mock_uploader(&storage.s3_client),
                 MOCK_BUCKET,
                 &key,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -1974,7 +1997,7 @@ mod tests {
             // the failed serialization keeps the single PUT from happening.
             let res = s3_put_versioned(
                 &storage.s3_client,
-                storage.s3_client.clone(),
+                mock_uploader(&storage.s3_client),
                 MOCK_BUCKET,
                 &key,
                 &data,
@@ -2022,7 +2045,7 @@ mod tests {
 
             let size = s3_put_versioned(
                 &storage.s3_client,
-                storage.s3_client.clone(),
+                mock_uploader(&storage.s3_client),
                 MOCK_BUCKET,
                 &key,
                 &data,
@@ -2066,7 +2089,7 @@ mod tests {
                 .force_path_style(true));
 
             let mut writer = S3PartWriter::new(
-                client.clone(),
+                mock_uploader(&client),
                 MOCK_BUCKET,
                 &key,
                 S3_MULTIPART_MIN_PART_SIZE,
@@ -2226,8 +2249,10 @@ mod part_writer_tests {
     }
 
     fn writer(part_size: usize) -> S3PartWriter {
+        // Same shape as production: the client is built by the factory, so the
+        // non-spilling tests below build no client at all.
         S3PartWriter::new(
-            build_multipart_upload_client(&refused_config()),
+            Box::new(|| build_multipart_upload_client(&refused_config())),
             "bucket",
             "key",
             part_size,
@@ -2258,6 +2283,25 @@ mod part_writer_tests {
         match w.finish(true) {
             PartWriterOutcome::Single(buf) => assert_eq!(buf.len(), 1024),
             PartWriterOutcome::Multipart(_) => panic!("small payload must stay single-PUT"),
+        }
+    }
+
+    /// The single-PUT path must not build an uploader client at all. Every write in
+    /// normal operation takes this path, and building a client there costs a TLS
+    /// connector (~55 µs measured) that is then thrown away.
+    #[test]
+    fn single_put_never_builds_an_uploader_client() {
+        let part_size = S3_MULTIPART_MIN_PART_SIZE;
+        let mut w = S3PartWriter::new(
+            Box::new(|| panic!("the uploader client must not be built on the single-PUT path")),
+            "bucket",
+            "key",
+            part_size,
+        );
+        w.write_all(&vec![0u8; part_size]).unwrap();
+        match w.finish(true) {
+            PartWriterOutcome::Single(buf) => assert_eq!(buf.len(), part_size),
+            PartWriterOutcome::Multipart(_) => panic!("exact-part payload must stay single-PUT"),
         }
     }
 
