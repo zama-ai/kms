@@ -25,7 +25,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
-/// The number of seed bytes consumed to build an ed25519 signing key.
+/// The number of seed bytes consumed to build an ecdsa signing key.
 pub const SEED_LEN: usize = 32;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
