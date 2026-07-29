@@ -189,9 +189,7 @@ impl Client {
                 tracing::warn!("signature on received response is not valid ({})", e)
             })?;
         } else {
-            let sig = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
-            };
+            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&resp.signature)?);
             internal_verify_sig(
                 &DSEP_USER_DECRYPTION,
                 &bc2wrap::serialize(&payload)?,

@@ -62,6 +62,7 @@ cfg-if.workspace = true
 ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
+ed25519-dalek.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
 hashing.workspace = true
@@ -70,6 +71,7 @@ iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
+ml-dsa.workspace = true
 ml-kem.workspace = true
 nom.workspace = true
 nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }

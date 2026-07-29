@@ -459,8 +459,7 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
     };
     let to_sign = [msg.as_ref(), signcrypt_key.receiver_id, &serialized_enc_key].concat();
     let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key)
-        .map_err(|e| CryptographyError::SigningError(e.to_string()))?
-        .sig;
+        .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
 
     // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
     // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
@@ -643,7 +642,7 @@ fn parse_msg(
     }
     let sig = k256::ecdsa::Signature::from_slice(sig_bytes)
         .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
-    Ok((msg.to_vec(), Signature { sig }))
+    Ok((msg.to_vec(), Signature::from_ecdsa(sig)))
 }
 
 /// Helper method for performing the necessary checks on a signcryption signature.
@@ -677,7 +676,11 @@ fn check_format_and_signature(
     unsigncryption_key
         .sender_verf_key
         .pk()
-        .verify(&msg_signed[..], &sig.sig)
+        .verify(
+            &msg_signed[..],
+            &sig.ecdsa_sig()
+                .map_err(|e| CryptographyError::VerificationError(e.to_string()))?,
+        )
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 
