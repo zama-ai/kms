@@ -59,11 +59,11 @@ pub fn generate_fixed_roles_two_sets_with_intersection(
 
     let mut roles = (1..=parties_set_1)
         .map(Role::indexed_from_one)
-        .map(TwoSetsRole::Set1)
+        .map(TwoSetsRole::OnlySet1)
         .chain(
             (1..=parties_set_2)
                 .map(Role::indexed_from_one)
-                .map(TwoSetsRole::Set2),
+                .map(TwoSetsRole::OnlySet2),
         )
         .collect::<HashSet<_>>();
 
@@ -71,8 +71,8 @@ pub fn generate_fixed_roles_two_sets_with_intersection(
     // and add the corresponding dual role
     for i in 0..intersection_size {
         // index_role_2 is i+1 with wrap around back to 1
-        let role_set1 = TwoSetsRole::Set1(Role::indexed_from_zero(i));
-        let role_set2 = TwoSetsRole::Set2(Role::indexed_from_zero((i + 1) % parties_set_2));
+        let role_set1 = TwoSetsRole::OnlySet1(Role::indexed_from_zero(i));
+        let role_set2 = TwoSetsRole::OnlySet2(Role::indexed_from_zero((i + 1) % parties_set_2));
         assert!(
             roles.remove(&role_set1),
             "role {role_set1:?} not found in roles set"

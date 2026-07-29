@@ -261,8 +261,8 @@ fn verify_epoch_info(
 
 /// Rejects a supplied preprocessing ID that disagrees with the one stored for the key.
 ///
-/// `stored` is `None` when the previous epoch's metadata is legacy and records no preprocessing
-/// ID; there is nothing to match against, so the request is accepted with a warning.
+/// If stored is `None` then a warning is logged and nothing is checked (this is the
+/// case for legacy preprecessing).
 fn check_preproc_id_matches(
     supplied: &kms_grpc::RequestId,
     stored: Option<&kms_grpc::RequestId>,
@@ -1239,8 +1239,7 @@ impl<
     /// from.
     ///
     /// `preproc_id` is caller-supplied metadata that ends up inside the EIP-712 struct signed for
-    /// the new epoch, so an unchecked value would let the caller obtain KMS signatures binding a
-    /// key to a preprocessing ID it was never generated with.
+    /// the new epoch.
     ///
     /// `my_role` decides what a missing keyset means. A party in the previous context (set 1 or
     /// both sets) must hold the key material, so failing to read it is an error and the request is
@@ -1254,8 +1253,7 @@ impl<
     ) -> Result<(), MetricedError> {
         let previous_epoch_id = &verified_previous_epoch.epoch_id;
         for key_info in verified_previous_epoch.keys_info.iter() {
-            // The in-memory key cache, populated from private storage on a miss, is the single
-            // source of truth here — the same one the reshare paths themselves read from.
+            // This is the in-memory key cache which should be in sync with what's in storage.
             let keys = match self
                 .crypto_storage
                 .read_guarded_fhe_keys(&key_info.key_id, previous_epoch_id)
@@ -1287,7 +1285,7 @@ impl<
                 // Pure set 2: this party never held the key, so there is nothing local to compare
                 // the supplied ID against.
                 Err(e) => {
-                    tracing::warn!(
+                    tracing::info!(
                         "Cannot validate the supplied preprocessing ID {} for key {} at epoch \
                          {}: this party is only in the new context (role {my_role}) and holds no \
                          key material for it: {e}",
@@ -1341,21 +1339,6 @@ impl<
 
         let new_epoch_id_as_request_id = (*new_epoch_id).into();
 
-        // Fetch CRS (also parties from set 1 even if they don't actually need it, but they should fetch it from their storage anyway so no big deal)
-        let crs_info = join_all(verified_previous_epoch.crs_info.iter().map(|crs_info| {
-            get_verified_crs_material(
-                &self.crypto_storage,
-                &new_epoch_id_as_request_id,
-                &crs_info.crs_id,
-                &verified_previous_epoch.context_id,
-                &crs_info.crs_digest,
-                &RealReadOnlyS3StorageGetter {},
-            )
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, MetricedError>>()?;
-
         let session_maker_immutable = self.session_maker.make_immutable();
 
         let two_sets_session = async {
@@ -1381,10 +1364,25 @@ impl<
 
         let my_role = two_sets_session.my_role();
 
-        // Reject a request whose preprocessing IDs disagree with what we signed and stored for
-        // these keys before running any protocol: the supplied values end up inside the EIP-712
-        // struct signed for the new epoch. Checking here, before the role-specific paths are
-        // dispatched below, covers all three resharing roles with one call.
+        // Fetch CRS for parties that are in set2 or both
+        let crs_info = if matches!(my_role, TwoSetsRole::OnlySet1(_)) {
+            vec![]
+        } else {
+            join_all(verified_previous_epoch.crs_info.iter().map(|crs_info| {
+                get_verified_crs_material(
+                    &self.crypto_storage,
+                    &new_epoch_id_as_request_id,
+                    &crs_info.crs_id,
+                    &verified_previous_epoch.context_id,
+                    &crs_info.crs_digest,
+                    &RealReadOnlyS3StorageGetter {},
+                )
+            }))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, MetricedError>>()?
+        };
+
         self.validate_supplied_preproc_ids(
             new_epoch_id_as_request_id,
             my_role,
@@ -1393,11 +1391,11 @@ impl<
         .await?;
 
         Ok(match my_role {
-            TwoSetsRole::Set1(_) => self
+            TwoSetsRole::OnlySet1(_) => self
                 .reshare_as_set_1(two_sets_session, *new_epoch_id, verified_previous_epoch)
                 .await?
                 .boxed(),
-            TwoSetsRole::Set2(_) => self
+            TwoSetsRole::OnlySet2(_) => self
                 .reshare_as_set_2(
                     two_sets_session,
                     *new_epoch_id,
@@ -2369,12 +2367,12 @@ pub(crate) mod tests {
 
     /// A party in the previous context, which must therefore hold the key material.
     fn set1_role() -> TwoSetsRole {
-        TwoSetsRole::Set1(Role::indexed_from_one(1))
+        TwoSetsRole::OnlySet1(Role::indexed_from_one(1))
     }
 
     /// A party only in the new context, which never held the key material.
     fn set2_role() -> TwoSetsRole {
-        TwoSetsRole::Set2(Role::indexed_from_one(1))
+        TwoSetsRole::OnlySet2(Role::indexed_from_one(1))
     }
 
     fn make_verified_previous_epoch(
@@ -2518,6 +2516,7 @@ pub(crate) mod tests {
                     epoch_id: Some(previous_epoch_id.into()),
                     keys_info: vec![KeyInfo {
                         key_id: Some(key_id.into()),
+                        // Observe the use of wrong preproc_id here
                         preproc_id: Some(wrong_preproc_id.into()),
                         key_parameters: FheParameter::Test as i32,
                         key_digests: vec![],
