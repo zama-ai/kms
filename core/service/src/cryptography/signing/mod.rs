@@ -169,8 +169,9 @@ impl HasSigningScheme for Signature {
 }
 
 /// A signing key tagged with the scheme it belongs to.
-/// Large types are boxed s.t. the enum remains small and copyable.
+/// Large types are boxed so the enum remains small to move.
 #[allow(clippy::large_enum_variant)]
+#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub enum UnifiedPrivateSigKey {
     Ecdsa256k1(PrivateSigKey),
     Ed25519(Ed25519SigningKey),
