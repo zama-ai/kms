@@ -527,7 +527,6 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> anyhow::Result<Bytes> 
     Ok(Bytes::from(data))
 }
 
-#[cfg(feature = "non-wasm")]
 impl crate::kms::v1::SchemeSignature {
     /// True if this is an ECDSA/secp256k1 signature.
     pub fn is_ecdsa(&self) -> bool {
@@ -559,6 +558,7 @@ pub fn ecdsa_signature_bytes(signatures: &[crate::kms::v1::SchemeSignature]) -> 
         .map(|s| s.signature.as_slice())
 }
 
+#[cfg(feature = "non-wasm")]
 impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key
     /// because these are the only information available
