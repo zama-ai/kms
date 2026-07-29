@@ -3,6 +3,11 @@
 //! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
 //! internally.
 
+// The module is `pub(crate)` and its callers have not landed yet, so every
+// scheme's API currently looks dead to the crate.
+// TODO(#3078): remove this once the unified signing API is used by the KMS and other consumers.
+#![allow(dead_code)]
+
 pub mod ecdsa;
 pub mod eddsa;
 pub mod mldsa;
@@ -171,7 +176,6 @@ impl HasSigningScheme for Signature {
 /// A signing key tagged with the scheme it belongs to.
 /// Large types are boxed so the enum remains small to move.
 #[allow(clippy::large_enum_variant)]
-#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub enum UnifiedPrivateSigKey {
     Ecdsa256k1(PrivateSigKey),
     Ed25519(Ed25519SigningKey),
