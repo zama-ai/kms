@@ -71,7 +71,6 @@ itertools.workspace = true
 k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 ml-kem.workspace = true
-nom.workspace = true
 nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }
 observability = { workspace = true, optional = true }
 p384.workspace = true

@@ -9,7 +9,6 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use nom::AsBytes;
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use std::sync::Arc;
 use strum_macros::Display;
@@ -147,7 +146,7 @@ impl Serialize for WrappedVerifyingKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.0.to_sec1_bytes().as_bytes())
+        serializer.serialize_bytes(&self.0.to_sec1_bytes())
     }
 }
 
@@ -244,7 +243,7 @@ impl PrivateSigKey {
     pub fn signing_key_id(&self) -> Vec<u8> {
         // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address
         let addr = alloy_primitives::Address::from_private_key(&self.sk.0);
-        addr.as_bytes().to_vec()
+        addr.to_vec()
     }
 
     pub fn address(&self) -> alloy_primitives::Address {
@@ -288,7 +287,7 @@ impl Serialize for WrappedSigningKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.0.to_bytes().as_bytes())
+        serializer.serialize_bytes(self.0.to_bytes().as_slice())
     }
 }
 impl<'de> Deserialize<'de> for WrappedSigningKey {
