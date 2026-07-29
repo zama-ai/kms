@@ -139,6 +139,10 @@ cargo_metadata = { workspace = true }
 threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
+# Peak-heap tracking for the `s3_store_peak_memory` bench, which measures how much memory one
+# S3 store needs on top of the object being stored. Same global-allocator pattern the
+# `core/experiments` memory benches already use; dev-only, so it never enters a shipped build.
+peak_alloc = { workspace = true }
 proptest.workspace = true
 rstest.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -147,6 +151,13 @@ tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 walkdir = { workspace = true }
+
+# Everything else the bench needs (aws-sdk-s3, kms-grpc, tokio, tfhe) is already a dependency
+# above and is visible to bench targets; `non-wasm` is what gates the optional ones.
+[[bench]]
+name = "s3_store_peak_memory"
+harness = false
+required-features = ["non-wasm"]
 
 
 [features]

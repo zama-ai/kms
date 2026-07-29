@@ -4554,6 +4554,7 @@ dependencies = [
  "nsm-nitro-enclave-utils",
  "observability",
  "p384",
+ "peak_alloc",
  "proptest",
  "rand 0.8.6",
  "rasn",
