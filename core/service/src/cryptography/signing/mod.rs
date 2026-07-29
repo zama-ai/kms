@@ -3,9 +3,14 @@
 //! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
 //! internally.
 
+// The module is `pub(crate)` and its callers have not landed yet, so every
+// scheme's API currently looks dead to the crate.
+// TODO(#3078): remove this once the unified signing API is used by the KMS and other consumers.
+#![allow(dead_code)]
+
 pub mod ecdsa;
-pub mod eddsa;
-pub mod mldsa;
+mod eddsa;
+mod mldsa;
 
 use ecdsa::Ecdsa256k1;
 use ecdsa::{PrivateSigKey, PublicSigKey};
@@ -202,7 +207,7 @@ impl HasSigningScheme for Signature {
 }
 
 /// A signing key tagged with the scheme it belongs to.
-/// Large types are boxed s.t. the enum remains small and copyable.
+/// Large types are boxed so the enum remains small to move.
 #[allow(clippy::large_enum_variant)]
 pub enum UnifiedPrivateSigKey {
     Ecdsa256k1(PrivateSigKey),
@@ -723,5 +728,25 @@ mod tests {
         assert_eq!(unified.scheme(), SigningSchemeType::Ecdsa256k1);
         assert_eq!(unified.as_bytes(), legacy.as_bytes());
         assert_eq!(unified.as_bytes().len(), ecdsa::SIG_SIZE);
+    }
+
+    /// The internal and gRPC scheme enums must stay in lock-step.
+    fn consistent_signing_scheme_conversion() {
+        for scheme in SigningSchemeType::iter() {
+            let wire = scheme as i32;
+            let grpc = kms_grpc::kms::v1::SigningSchemeType::try_from(wire).unwrap();
+            assert_eq!(
+                SigningSchemeType::from(grpc),
+                scheme,
+                "{scheme} does not round-trip through kms_grpc"
+            );
+        }
+
+        // The gRPC enum must not carry variants the internal enum is missing.
+        let past_last = SigningSchemeType::iter().count() as i32;
+        assert!(
+            kms_grpc::kms::v1::SigningSchemeType::try_from(past_last).is_err(),
+            "kms_grpc has a scheme with discriminant {past_last} that SigningSchemeType lacks"
+        );
     }
 }

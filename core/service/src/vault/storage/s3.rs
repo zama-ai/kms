@@ -683,94 +683,170 @@ pub fn find_region_from_s3_url(s3_bucket_url: &str) -> anyhow::Result<String> {
     }
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "s3_tests")]{
-        pub const BUCKET_NAME: &str = "ci-kms-key-test";
-        pub const AWS_REGION: &str = "eu-north-1";
-        // this points to a locally running Minio
-        pub const AWS_S3_ENDPOINT: &str = "http://127.0.0.1:9000";
-    }
-}
+/// Bucket name expected by the in-memory mock S3 backend in tests.
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
+pub(crate) const MOCK_BUCKET: &str = "test-bucket";
 
-#[cfg(all(feature = "s3_tests", any(test, feature = "testing")))]
+/// Build an [`S3Storage`] backed by a fresh in-memory mock S3 client, so the storage tests
+/// exercise the real `S3Storage` + `aws_sdk_s3` code paths with no network / MinIO.
+///
+/// Lives outside [`tests`] because other modules' test suites (e.g. `engine::migration`) use it.
+/// Kept `async` to match the call sites (the previous MinIO-backed helper was async).
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
-    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-    let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
-        .await
-        .unwrap();
+    let s3_client = mock_s3::build_mock_s3_client(mock_s3::new_store());
     S3Storage::new(
         s3_client,
-        BUCKET_NAME.to_string(),
+        MOCK_BUCKET.to_string(),
         storage_type,
         Some(prefix),
     )
     .unwrap()
 }
 
-// Observe that certain tests require an S3 instance setup.
-// There are run with the extra argument `-F s3_tests`.
-// Note that we pay for each of these tests, in the order of single digit cents per tests.
-//
-// To setup the testing environment locally with Minio, proceed as follows:
-// 1. Install and run Minio in Docker
-//    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
-// 2. Setup the bucket. Within the `dev-s3-mock-1` container in Docker execute the following commands:
-//   a. First open Docker desktop and navigate to `Volumes` and find `zama-core-threshold_minio_secrets` and copy the content of `access_key` and the content of `secret_key`.
-//   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and assuming no change to [`AWS_S3_ENDPOINT`])
-//   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
-//   d. Run `mc anonymous set public testminio/ci-kms-key-test`
-// 3. Update the environment variables in the shell where you run the tests:
-//   a. Execute the following:
-//   ```bash
-//      AWS_ACCESS_KEY_ID=<access_key> &&
-//      export AWS_ACCESS_KEY_ID &&
-//      AWS_SECRET_ACCESS_KEY=<secret_key> &&
-//      export AWS_SECRET_ACCESS_KEY
-//   ```
-//   where `<access_key>` and `<secret_key>` are the values copied above.
-// 4. Now you can execute the tests: `cargo test --lib -F s3_tests s3_`
-//
-// To instead setup a test environment for a real S3 proceed as follows:
-//
-// 1. Creating access keys:
-//    a. Log into aws.amazon.com
-//    b. In the top right corner of the page there will be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
-//    c. Select “Create access keys”
-//    d. Make sure to locally store the AWS access key ID and secret access key.
-// 2. Create S3 bucket
-//    a. Search for “S3 console” in the search bar after logging into aws.amazon.com
-//    b. Click “Create a bucket”
-//    c. Make a “general bucket” and remember the name you gave it
-//    d. Download the AWS CLI tool
-//    e. Run `aws configure` to set it up with the correct information for your bucket
-//    f. Validate it works with `aws s3 ls`
-// 3. Test S3 storage
-//    a. Update the const's BUCKET_NAME and AWS_REGION below to reflect what you created.
-//    b. Now you can run the tests :)
-//    cargo test --lib -F s3_tests s3_
-#[cfg(feature = "s3_tests")]
-#[cfg(test)]
+/// In-memory mock of the S3 operations used by [`S3Storage`], built on `aws-smithy-mocks`.
+///
+/// A bucket is modelled as a shared `key -> bytes` map. One `mock!` rule per operation
+/// (`put`/`get`/`head`/`delete`/`list_objects_v2`) reads and writes that map, so stored data can
+/// be read back exactly like a real bucket. `list_objects_v2` reproduces S3's `delimiter="/"`
+/// behaviour (direct objects in `contents`, sub-"directories" in `common_prefixes`) because the
+/// epoch-enumeration helpers ([`StorageReaderExt::all_epoch_ids_for_data`] etc.) depend on it.
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
+pub(crate) mod mock_s3 {
+    use super::*;
+    use aws_sdk_s3::operation::{
+        delete_object::DeleteObjectOutput,
+        get_object::{GetObjectError, GetObjectOutput},
+        head_object::{HeadObjectError, HeadObjectOutput},
+        list_objects_v2::ListObjectsV2Output,
+        put_object::PutObjectOutput,
+    };
+    use aws_sdk_s3::types::{
+        CommonPrefix, Object,
+        error::{NoSuchKey, NotFound},
+    };
+    use aws_smithy_mocks::{MockResponse, RuleMode, mock, mock_client};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::{Arc, Mutex};
+
+    /// In-memory object store shared by every rule of a single mock client, keyed by full object
+    /// key. Tests use a single logical bucket, so the mock ignores the request's bucket name.
+    pub(crate) type SharedStore = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
+
+    /// Create a fresh, empty [`SharedStore`].
+    pub(crate) fn new_store() -> SharedStore {
+        Arc::new(Mutex::new(BTreeMap::new()))
+    }
+
+    /// Build a mocked [`S3Client`] whose operations are served from `store`.
+    pub(crate) fn build_mock_s3_client(store: SharedStore) -> S3Client {
+        let put_store = Arc::clone(&store);
+        let put = mock!(aws_sdk_s3::Client::put_object).then_compute_output(move |input| {
+            let key = input.key().expect("put_object requires a key").to_string();
+            // `s3_put_blob` builds the body from an in-memory `Vec`, so `bytes()` is always `Some`.
+            let bytes = input
+                .body()
+                .bytes()
+                .expect("mock put_object expects an in-memory body")
+                .to_vec();
+            put_store.lock().unwrap().insert(key, bytes);
+            PutObjectOutput::builder().build()
+        });
+
+        let get_store = Arc::clone(&store);
+        let get = mock!(aws_sdk_s3::Client::get_object).then_compute_response(move |input| {
+            let key = input.key().expect("get_object requires a key");
+            match get_store.lock().unwrap().get(key) {
+                Some(bytes) => MockResponse::Output(
+                    GetObjectOutput::builder()
+                        .body(ByteStream::from(bytes.clone()))
+                        .build(),
+                ),
+                None => {
+                    MockResponse::Error(GetObjectError::NoSuchKey(NoSuchKey::builder().build()))
+                }
+            }
+        });
+
+        let head_store = Arc::clone(&store);
+        let head = mock!(aws_sdk_s3::Client::head_object).then_compute_response(move |input| {
+            let key = input.key().expect("head_object requires a key");
+            if head_store.lock().unwrap().contains_key(key) {
+                MockResponse::Output(HeadObjectOutput::builder().build())
+            } else {
+                MockResponse::Error(HeadObjectError::NotFound(NotFound::builder().build()))
+            }
+        });
+
+        let delete_store = Arc::clone(&store);
+        let delete = mock!(aws_sdk_s3::Client::delete_object).then_compute_output(move |input| {
+            let key = input.key().expect("delete_object requires a key");
+            delete_store.lock().unwrap().remove(key);
+            DeleteObjectOutput::builder().build()
+        });
+
+        let list_store = Arc::clone(&store);
+        let list = mock!(aws_sdk_s3::Client::list_objects_v2).then_compute_output(move |input| {
+            let prefix = input.prefix().unwrap_or("");
+            let delimiter = input.delimiter();
+            let guard = list_store.lock().unwrap();
+            let mut contents = Vec::new();
+            let mut common_prefixes = BTreeSet::new();
+            for key in guard.keys() {
+                let Some(rest) = key.strip_prefix(prefix) else {
+                    continue;
+                };
+                match delimiter.and_then(|d| rest.find(d).map(|i| i + d.len())) {
+                    // `rest` contains the delimiter: collapse into a common prefix that includes
+                    // everything up to and including the first delimiter (S3 semantics).
+                    Some(end) => {
+                        common_prefixes.insert(format!("{prefix}{}", &rest[..end]));
+                    }
+                    // No delimiter after the prefix: a direct object.
+                    None => {
+                        contents.push(Object::builder().key(key.clone()).build());
+                    }
+                }
+            }
+            let common_prefixes: Vec<_> = common_prefixes
+                .into_iter()
+                .map(|p| CommonPrefix::builder().prefix(p).build())
+                .collect();
+            ListObjectsV2Output::builder()
+                .is_truncated(false)
+                .set_contents((!contents.is_empty()).then_some(contents))
+                .set_common_prefixes((!common_prefixes.is_empty()).then_some(common_prefixes))
+                .build()
+        });
+
+        mock_client!(
+            aws_sdk_s3,
+            RuleMode::MatchAny,
+            [&put, &get, &head, &delete, &list],
+            |c| c.force_path_style(true)
+        )
+    }
+}
+
+// These tests exercise the real `S3Storage` + `aws_sdk_s3` code paths against an in-process
+// mock S3 (see [`mock_s3`]) — no MinIO, no network, no credentials. They run as part of the
+// normal `cargo test -F testing` suite.
+#[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 mod tests {
     use super::*;
+    use aws_sdk_s3::error::ErrorMetadata;
+    use aws_sdk_s3::operation::{
+        head_object::{HeadObjectError, HeadObjectOutput},
+        list_objects_v2::ListObjectsV2Output,
+    };
+    use aws_sdk_s3::types::{Object, error::NotFound};
+    use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
+
     use crate::vault::storage::tests::{
         test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
         test_store_bytes_does_not_overwrite_existing_bytes,
         test_store_data_does_not_overwrite_existing_data, test_store_data_records_payload_size,
     };
-
-    async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
-            .await
-            .unwrap();
-        S3Storage::new(
-            s3_client,
-            BUCKET_NAME.to_string(),
-            storage_type,
-            Some(prefix),
-        )
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn s3_storage_helper_methods() {
@@ -870,30 +946,99 @@ mod tests {
         .await;
     }
 
+    /// `data_exists_at_key` distinguishes three `head_object` outcomes: success ⇒ `true`, a genuine
+    /// "not found" service error ⇒ `false`, and any other service error (403/500/503/…) ⇒ propagated
+    /// as `Err`, so a transient failure is never silently mistaken for an absent object.
     #[tokio::test]
-    async fn test_s3_anon() {
-        let prefix = std::stringify!(test_s3_anon);
-        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
-        storage
-            .store_bytes(b"fake-pk", &RequestId::default(), "PublicKey")
-            .await
-            .unwrap();
+    async fn data_exists_at_key_maps_head_errors() {
+        const KEY: &str = "PUB/PublicKey/some-object";
 
-        // Build an anonymous client pointing at local MinIO
-        let s3_client = build_anonymous_s3_client(AWS_S3_ENDPOINT, AWS_REGION.to_string())
-            .await
-            .unwrap();
+        // An `S3Storage` whose only mocked operation is `head_object`, served by `rule`.
+        fn storage_for(rule: &Rule) -> S3Storage {
+            let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [rule], |c| c
+                .force_path_style(true));
+            S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap()
+        }
 
-        let pub_storage = ReadOnlyS3Storage::new(
-            s3_client,
-            BUCKET_NAME.to_string(),
-            StorageType::PUB,
-            Some(prefix),
-        )
-        .unwrap();
+        // Object present: `head_object` succeeds ⇒ `true`.
+        let ok = mock!(aws_sdk_s3::Client::head_object)
+            .then_output(|| HeadObjectOutput::builder().build());
+        assert!(storage_for(&ok).data_exists_at_key(KEY).await.unwrap());
 
-        let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-        assert!(!public_key_ids.is_empty());
+        // Genuine "not found" ⇒ `false`.
+        let not_found = mock!(aws_sdk_s3::Client::head_object)
+            .then_error(|| HeadObjectError::NotFound(NotFound::builder().build()));
+        assert!(
+            !storage_for(&not_found)
+                .data_exists_at_key(KEY)
+                .await
+                .unwrap()
+        );
+
+        // Any other service error must propagate rather than read as "absent". Cover a 403-style
+        // access error and a 503-style throttling error, both non-`NotFound` variants.
+        for code in ["AccessDenied", "SlowDown"] {
+            let err = mock!(aws_sdk_s3::Client::head_object).then_error(move || {
+                HeadObjectError::generic(ErrorMetadata::builder().code(code).build())
+            });
+            assert!(
+                storage_for(&err).data_exists_at_key(KEY).await.is_err(),
+                "head_object {code} error should propagate, not map to Ok(false)"
+            );
+        }
+    }
+
+    /// Reading a key that does not exist surfaces the `get_object` error as an `Err` rather than
+    /// silently succeeding.
+    #[tokio::test]
+    async fn read_missing_data_errors() {
+        let storage = create_s3_storage(StorageType::PUB, "read_missing").await;
+        assert!(
+            storage
+                .load_bytes(&RequestId::default(), "PublicKey")
+                .await
+                .is_err()
+        );
+    }
+
+    /// `list_all` follows `ListObjectsV2` continuation tokens and merges every page (the stateful
+    /// mock returns a single page, so this uses explicit multi-page rules).
+    #[tokio::test]
+    async fn list_all_follows_continuation_tokens() {
+        let mut rng = rand::thread_rng();
+        let id_a = RequestId::new_random(&mut rng);
+        let id_b = RequestId::new_random(&mut rng);
+        let key_a = format!("PUB/PublicKey/{id_a}");
+        let key_b = format!("PUB/PublicKey/{id_b}");
+
+        // First page: truncated, hands back a continuation token.
+        let page1 = mock!(aws_sdk_s3::Client::list_objects_v2)
+            .match_requests(|i| i.continuation_token().is_none())
+            .then_output(move || {
+                ListObjectsV2Output::builder()
+                    .contents(Object::builder().key(key_a.clone()).build())
+                    .is_truncated(true)
+                    .next_continuation_token("page-2")
+                    .build()
+            });
+        // Second page: final page for that token.
+        let page2 = mock!(aws_sdk_s3::Client::list_objects_v2)
+            .match_requests(|i| i.continuation_token() == Some("page-2"))
+            .then_output(move || {
+                ListObjectsV2Output::builder()
+                    .contents(Object::builder().key(key_b.clone()).build())
+                    .is_truncated(false)
+                    .build()
+            });
+        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&page1, &page2], |c| c
+            .force_path_style(true));
+        let storage =
+            S3Storage::new(client, MOCK_BUCKET.to_string(), StorageType::PUB, None).unwrap();
+
+        let ids = storage.all_data_ids("PublicKey").await.unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&id_a));
+        assert!(ids.contains(&id_b));
     }
 }
 

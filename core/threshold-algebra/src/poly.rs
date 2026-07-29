@@ -258,6 +258,14 @@ where
         poly
     }
 
+    /// Construct a [`Poly`] from coefficients without compression.
+    ///
+    /// Callers must guarantee that `coefs` is canonical: either the zero-polynomial or with a non-zero last
+    /// coefficient.
+    pub(crate) fn from_coefs_unchecked(coefs: Vec<F>) -> Self {
+        Poly { coefs }
+    }
+
     pub fn pop(&mut self) -> Option<F> {
         if self.coefs.is_empty() {
             None
@@ -584,29 +592,102 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     (q, r)
 }
 
-/// compute Lagrange polynomials for the given list of points
+/// Build the vanishing polynomial `V(Z) = ∏_j (Z - points[j])` (monic, degree `points.len()`).
+/// We do so iteratively, starting from the low to the high coefficients, so that the leading coefficient is always 1 (monic).
+/// Then for each subsequent point, we multiply the running product by `(Z - alpha)`.
+/// That is, we use the recursion for coefficient of degree k: c'_k = c_{k−1} − alpha * c_k,
+/// where c'_k is the new coefficient of degree k after multiplying by `(Z - alpha)`.
+/// Concretely we observe that the coefficient c_{k−1} comes from the Z * part and the −alpha * c_k from the −alpha * part.
+pub(crate) fn vanishing_poly<F: Ring>(points: &[F]) -> Poly<F> {
+    // Master poly V(Z) = ∏_j (Z - alpha_j), low-to-high, monic, degree n.
+    let mut coefs = Vec::with_capacity(points.len() + 1);
+    // The leading coefficient is always 1 (monic), so we can start with that.
+    coefs.push(F::ONE);
+    // Proceed iteratively, multiplying the running product by (Z - alpha) for each point.
+    for &alpha in points {
+        // Add the next leading coefficient (which is again 1) to start with
+        coefs.push(F::ONE);
+        let m = coefs.len() - 1;
+        // Multiply the running product by (Z − alpha): coef[k] <- coef[k-1] − alpha * coef[k].
+        // Walk high to low so coef[k-1] still holds its pre-update value when we read it, thus allow in-place updates.
+        for k in (1..m).rev() {
+            coefs[k] = coefs[k - 1] - alpha * coefs[k];
+        }
+        // Handle the constant term separately since it has no coefₖ₋₁ to read from.
+        coefs[0] = -(alpha * coefs[0]);
+    }
+    // coefs is canonical because it's monic and the leading coef is F::ONE
+    Poly::from_coefs_unchecked(coefs)
+}
+
+/// Divide out the linear factor `(Z - root)` to drop the degree by one. Computes `v / (Z - root)` by synthetic division.
+///
+/// `root` must be a root of `v` (exact, zero-remainder division); `v` must be canonical, so the quotient has degree
+/// WARNING: `deg(v) - 1`. `v` must have degree at least 1.
+///
+/// The computation is iterative and in-place and computes q(Z) = v(Z) / (Z - root) by synthetic division.
+/// More concretely q(Z) is computed incrementally, from most significant, to least significant coefficient,
+/// as q_{k−1} = v_k + root * q_k, where v_k, q_k are the k-th coefficients of v(Z) and q(Z) respectively.
+pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
+    // This is provably the case for the current 2 callsites.
+    assert!(
+        v.coefs.len() >= 2,
+        "deflate_root requires deg(v) >= 1, got {:?}",
+        v.coefs.len()
+    );
+    let vc = &v.coefs; // The coefficients of v(Z)
+    let deg = vc.len() - 1;
+    let mut qc = vec![F::ZERO; deg]; // The coefficients of q(Z)
+    qc[deg - 1] = vc[deg]; // leading coefficient drops straight down since the result, q(Z), is one degree lower than the input v(Z)
+    for k in (0..deg - 1).rev() {
+        // iterate from highest coefficients to lowest in the incremental result since qc[k+1] has already been fully computed
+        qc[k] = vc[k + 1] + root * qc[k + 1]; // I.e. q_{k−1} = v_k + root * q_k  
+    }
+    assert!(vc[0] + root * qc[0] == F::ZERO, "remainder must vanish");
+    // Invariant: coefs is canonical because the leading coef == vc[deg] (nonzero)
+    Poly::from_coefs_unchecked(qc)
+}
+
+/// Compute the Lagrange basis polynomials for the given points: `basis_i(Z) = L_i(Z) / L_i(x_i)` where `L_i = V / (Z -
+/// x_i)`.
+///
+/// Builds the vanishing polynomial `V` once and deflates each root. The denominator `L_i(x_i) = ∏_{j != i}(x_i - x_j)`
+/// is just `L_i` evaluated at `x_i`.
+/// WARNING: This function requires `points.len() >= 2`
 pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
-    let polys: Vec<_> = points
+    let v = vanishing_poly(points);
+    points
         .iter()
-        .enumerate()
-        .map(|(i, xi)| {
-            let mut numerator = Poly {
-                coefs: vec![F::ONE, F::ZERO],
-            };
-            let mut denominator = F::ONE;
-            for (j, xj) in points.iter().enumerate() {
-                if i != j {
-                    numerator = numerator
-                        * Poly {
-                            coefs: vec![-*xj, F::ONE],
-                        };
-                    denominator *= *xi - *xj;
+        .map(|&xi| {
+            // Observe that `li` is the numerator of the basis polynomial
+            let li = deflate_root(&v, xi); // L_i(Z) = V / (Z - x_i)
+            // Observe `inv` is the denominator, already inverted
+            let inv = li.eval(&xi).invert(); // 1/ L_i(x_i)
+            li * &inv
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod lagrange_basis_tests {
+    use super::*;
+    use crate::galois_fields::gf16::GF16;
+    use crate::structure_traits::FromU128;
+
+    /// The defining property of a Lagrange basis: `basis_i(x_j) == δ_ij` (1 when i == j, else 0).
+    #[test]
+    fn lagrange_polynomials_form_a_delta_basis() {
+        for n in [1usize, 4, 7, 13] {
+            let pts: Vec<GF16> = (1..=n as u128).map(GF16::from_u128).collect();
+            let basis = lagrange_polynomials(&pts);
+            for (i, li) in basis.iter().enumerate() {
+                for (j, xj) in pts.iter().enumerate() {
+                    let expected = if i == j { GF16::ONE } else { GF16::ZERO };
+                    assert_eq!(li.eval(xj), expected, "basis_{i}(x_{j}) at n={n}");
                 }
             }
-            numerator / &denominator
-        })
-        .collect();
-    polys
+        }
+    }
 }
 
 /// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
@@ -790,13 +871,7 @@ pub fn gao_decoding<F: Field>(
 
     // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
     // note that deg(G) >= deg(R)
-    let mut g = Poly::one();
-    for xi in points.iter() {
-        let fi = Poly {
-            coefs: vec![-*xi, F::ONE],
-        };
-        g = g * fi;
-    }
+    let g = vanishing_poly(points);
 
     gao_decoding_common(n, k, max_errors, r, &g)
 }
