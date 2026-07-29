@@ -731,6 +731,7 @@ mod tests {
     }
 
     /// The internal and gRPC scheme enums must stay in lock-step.
+    #[test]
     fn consistent_signing_scheme_conversion() {
         for scheme in SigningSchemeType::iter() {
             let wire = scheme as i32;
