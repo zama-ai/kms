@@ -397,6 +397,7 @@ where
     let domain = dummy_domain();
     let (pp, crs_info) = match gen_centralized_crs(
         &sk,
+        &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         &dkg_params,
         max_num_bits_u32,
         &domain,
@@ -1357,6 +1358,7 @@ where
                 // PANICS: If signature generation fails - would compromise security model
                 let crs_info = compute_info_crs_from_digest(
                     cur_sk,
+                    &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                     crs_id,
                     crs_digest,
                     crs_max_num_bits,
@@ -1429,6 +1431,7 @@ mod tests {
         for max_num_bits in [64, 128, 256, 1024, 2048] {
             let (crs, _) = gen_centralized_crs(
                 &sk,
+                &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 params,
                 Some(max_num_bits),
                 &eip712_domain,

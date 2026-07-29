@@ -111,6 +111,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         req_tasks.spawn(async move {
             cur_client
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                     epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
                     context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                     extra_data: make_extra_data(

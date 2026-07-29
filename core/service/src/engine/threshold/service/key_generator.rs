@@ -802,6 +802,8 @@ impl<
                     preprocessing_id: Some(res.preprocessing_id.into()),
                     key_digests,
                     external_signature: res.external_signature.clone(),
+                    // TODO(#3078): populate multi-scheme signatures (replication step).
+                    signatures: vec![],
                 }))
             }
             KeyGenMetadata::LegacyV0(_res) => {
@@ -820,6 +822,8 @@ impl<
                     // since no domain separation is used
                     key_digests: Vec::new(),
                     external_signature: vec![],
+                    // TODO(#3078): populate multi-scheme signatures (replication step).
+                    signatures: vec![],
                 }))
             }
         }
@@ -2039,6 +2043,7 @@ mod tests {
             };
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(bad_key_id.clone()),
                 params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
@@ -2069,6 +2074,7 @@ mod tests {
             domain.verifying_contract = "bad_contract".to_string();
 
             let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(key_id.into()),
                 params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
@@ -2095,6 +2101,7 @@ mod tests {
             };
 
             let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(key_id.into()),
                 params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
@@ -2129,6 +2136,7 @@ mod tests {
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
@@ -2160,6 +2168,7 @@ mod tests {
             assert!(!prep_ids.contains(&bad_prep_id));
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(key_id.into()),
                 params: Some(FheParameter::Test as i32),
                 preproc_id: Some(bad_prep_id.into()),
@@ -2203,6 +2212,7 @@ mod tests {
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
@@ -2243,6 +2253,7 @@ mod tests {
         // do one keygen
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request0 = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id0.into()),
@@ -2259,6 +2270,7 @@ mod tests {
         // try to do it again with the same key ID
         // NOTE: we need to use a different preproc ID to avoid the `NotFound` error
         let request1 = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id1.into()),
@@ -2314,6 +2326,7 @@ mod tests {
         };
 
         let request = tonic::Request::new(KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
@@ -2347,6 +2360,7 @@ mod tests {
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             // The test parameters will be used under the hood
             // since we configured the dummy key generator with preprocessing materials from prep_ids.
@@ -2413,6 +2427,7 @@ mod tests {
     ) -> tonic::Request<KeyGenRequest> {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         tonic::Request::new(KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: prep_id.map(|id| id.into()),
@@ -2593,6 +2608,7 @@ mod tests {
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),

@@ -899,6 +899,7 @@ pub(crate) struct VerifiedCrsGenRequest {
     pub params: DKGParams,
     pub eip712_domain: Eip712Domain,
     pub extra_data: Vec<u8>,
+    pub signing_schemes: Vec<SigningSchemeType>,
 }
 
 pub(crate) fn validate_crs_gen_request(
@@ -958,6 +959,8 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
         params,
         eip712_domain,
         extra_data: req.extra_data,
+        signing_schemes: resolve_signing_schemes(&req.signing_schemes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
     })
 }
 
@@ -2212,6 +2215,7 @@ mod tests {
         // should fail, and validate_new_mpc_epoch_request should surface InvalidArgument.
         {
             let req = NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 previous_epoch: Some(PreviousEpochInfo::default()),
                 domain: None,
                 ..Default::default()
@@ -2223,6 +2227,7 @@ mod tests {
         // Happy path
         {
             let req = NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 previous_epoch: Some(PreviousEpochInfo::default()),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 ..Default::default()

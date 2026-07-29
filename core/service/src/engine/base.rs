@@ -15,6 +15,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
@@ -236,8 +237,66 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     Ok(RequestId::from_str(&res_hex)?)
 }
 
+/// A single KMS signature together with the scheme that produced it, in the
+/// form persisted inside result metadata.
+///
+/// This is the stored twin of the gRPC [`SchemeSignature`].
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum StoredSchemeSignatureVersions {
+    V0(StoredSchemeSignature),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(StoredSchemeSignatureVersions)]
+pub struct StoredSchemeSignature {
+    pub scheme: SigningSchemeType,
+    pub signature: Vec<u8>,
+}
+
+impl From<&StoredSchemeSignature> for SchemeSignature {
+    fn from(value: &StoredSchemeSignature) -> Self {
+        SchemeSignature {
+            scheme: kms_grpc::kms::v1::SigningSchemeType::from(value.scheme) as i32,
+            signature: value.signature.clone(),
+        }
+    }
+}
+
+/// Convert stored per-scheme signatures into their gRPC representation.
+pub(crate) fn stored_scheme_signatures_to_proto(
+    signatures: &[StoredSchemeSignature],
+) -> Vec<SchemeSignature> {
+    signatures.iter().map(SchemeSignature::from).collect()
+}
+
+/// Sign a public result (keygen / preprocessing / crsgen) under each requested
+/// scheme, returning the per-scheme signatures to persist in result metadata.
+pub(crate) fn compute_result_signatures(
+    sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
+    // TODO refactor to not have to take external_signature as argument
+    external_signature: &[u8],
+    dsep: &DomainSep,
+    internal_payload: &[u8],
+) -> anyhow::Result<Vec<StoredSchemeSignature>> {
+    schemes
+        .iter()
+        .map(|&scheme| {
+            let signature = match scheme {
+                SigningSchemeType::Ecdsa256k1 => external_signature.to_vec(),
+                _ => {
+                    let key = sk.derive_signing_key(scheme)?;
+                    unified_sign(dsep, internal_payload, key)?.to_bytes()
+                }
+            };
+            Ok(StoredSchemeSignature { scheme, signature })
+        })
+        .collect()
+}
+
 pub(crate) fn compute_info_crs(
     sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     crs_id: &RequestId,
     pp: &CompactPkeCrs,
@@ -246,12 +305,21 @@ pub(crate) fn compute_info_crs(
 ) -> anyhow::Result<CrsGenMetadata> {
     let crs_digest = hash_versioned(domain_separator, pp)?;
     let max_num_bits = max_num_bits_from_crs(pp);
-    compute_info_crs_from_digest(sk, crs_id, crs_digest, max_num_bits, domain, extra_data)
+    compute_info_crs_from_digest(
+        sk,
+        schemes,
+        crs_id,
+        crs_digest,
+        max_num_bits,
+        domain,
+        extra_data,
+    )
 }
 
-/// Sign a CRS using a precomputed digest.
+/// Sign a CRS using a precomputed digest, under each requested scheme.
 pub(crate) fn compute_info_crs_from_digest(
     sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
     crs_id: &RequestId,
     crs_digest: Vec<u8>,
     max_num_bits: usize,
@@ -261,12 +329,20 @@ pub(crate) fn compute_info_crs_from_digest(
     let sol_type =
         CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
+    let signatures = compute_result_signatures(
+        sk,
+        schemes,
+        &external_signature,
+        &DSEP_PUBDATA_CRS,
+        sol_type.eip712_signing_hash(domain).as_slice(),
+    )?;
 
     Ok(CrsGenMetadata::new(
         *crs_id,
         crs_digest,
         max_num_bits as u32,
         external_signature,
+        signatures,
         extra_data,
     ))
 }
@@ -1091,7 +1167,8 @@ impl KeyGenMetadata {
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataInnerVersions {
     V0(CrsGenMetadataInnerV0),
-    V1(CrsGenMetadataInner),
+    V1(CrsGenMetadataInnerV1),
+    V2(CrsGenMetadataInner),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
@@ -1102,9 +1179,33 @@ pub struct CrsGenMetadataInner {
     pub(crate) max_num_bits: u32,
     pub(crate) extra_data: Option<Vec<u8>>,
     pub(crate) external_signature: Vec<u8>,
+    pub(crate) signatures: Vec<StoredSchemeSignature>,
 }
 
-impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV0 {
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct CrsGenMetadataInnerV1 {
+    pub crs_id: RequestId,
+    pub crs_digest: Vec<u8>,
+    pub max_num_bits: u32,
+    pub extra_data: Option<Vec<u8>>,
+    pub external_signature: Vec<u8>,
+}
+
+impl Upgrade<CrsGenMetadataInnerV1> for CrsGenMetadataInnerV0 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<CrsGenMetadataInnerV1, Self::Error> {
+        Ok(CrsGenMetadataInnerV1 {
+            crs_id: self.crs_id,
+            crs_digest: self.crs_digest,
+            max_num_bits: self.max_num_bits,
+            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
+            external_signature: self.external_signature,
+        })
+    }
+}
+
+impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV1 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
@@ -1112,8 +1213,13 @@ impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV0 {
             crs_id: self.crs_id,
             crs_digest: self.crs_digest,
             max_num_bits: self.max_num_bits,
-            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
-            external_signature: self.external_signature,
+            extra_data: self.extra_data,
+            external_signature: self.external_signature.clone(),
+            // Pre-0.15.0 versions of CRS metadata has no per-scheme signatures, but add the ecdsa signature to the list of signatures for compatibility with the new format.
+            signatures: vec![StoredSchemeSignature {
+                scheme: SigningSchemeType::Ecdsa256k1,
+                signature: self.external_signature,
+            }],
         })
     }
 }
@@ -1152,6 +1258,7 @@ impl CrsGenMetadata {
         crs_digest: Vec<u8>,
         max_num_bits: u32,
         external_signature: Vec<u8>,
+        signatures: Vec<StoredSchemeSignature>,
         extra_data: Vec<u8>,
     ) -> Self {
         let parsed_extra_data = if extra_data.is_empty() {
@@ -1165,6 +1272,7 @@ impl CrsGenMetadata {
             max_num_bits,
             extra_data: parsed_extra_data,
             external_signature,
+            signatures,
         })
     }
 
@@ -1172,6 +1280,14 @@ impl CrsGenMetadata {
         match self {
             CrsGenMetadata::Current(inner) => &inner.crs_digest,
             CrsGenMetadata::LegacyV0(_inner) => &[],
+        }
+    }
+
+    /// The per-scheme KMS signatures on this result, in gRPC form.
+    pub fn scheme_signatures(&self) -> Vec<SchemeSignature> {
+        match self {
+            CrsGenMetadata::Current(inner) => stored_scheme_signatures_to_proto(&inner.signatures),
+            CrsGenMetadata::LegacyV0(_) => Vec::new(),
         }
     }
 
@@ -1313,6 +1429,65 @@ pub(crate) mod tests {
             if let Some(ecdsa_bytes) = kms_grpc::rpc_types::ecdsa_signature_bytes(&sigs) {
                 let legacy = internal_sign(dsep, msg, &sk).unwrap();
                 assert_eq!(ecdsa_bytes, legacy.as_bytes());
+            }
+        }
+    }
+
+    /// Verifies the policy in [`super::compute_result_signatures`]:
+    /// the ECDSA entry is byte-identical to the EIP-712 `external_signature`,
+    /// while every other scheme's entry is a signature over the EIP-712 signing
+    /// hash that verifies under that scheme's derived key.
+    #[test]
+    fn crs_result_signatures_multi_scheme() {
+        let mut rng = AesRng::seed_from_u64(0x5C15);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let domain = dummy_domain();
+
+        let crs_id = RequestId::new_random(&mut rng);
+        let crs_digest = vec![0x42u8; 32];
+        let extra_data = vec![0x01u8, 0x02, 0x03];
+        let sol_type =
+            CrsgenVerification::new(&crs_id, 2048, crs_digest.clone(), extra_data.clone());
+        let external_signature = compute_eip712_signature(&sk, &sol_type, &domain).unwrap();
+        let eip712_hash = sol_type.eip712_signing_hash(&domain);
+
+        let schemes = [
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa65,
+        ];
+        let sigs = super::compute_result_signatures(
+            &sk,
+            &schemes,
+            &external_signature,
+            &DSEP_PUBDATA_CRS,
+            eip712_hash.as_slice(),
+        )
+        .unwrap();
+        assert_eq!(sigs.len(), schemes.len());
+
+        for (scheme, stored) in schemes.iter().zip(&sigs) {
+            assert_eq!(stored.scheme, *scheme);
+            match scheme {
+                // ECDSA reuses the on-chain-verifiable EIP-712 signature verbatim.
+                SigningSchemeType::Ecdsa256k1 => {
+                    assert_eq!(stored.signature, external_signature);
+                }
+                // Every other scheme signs the EIP-712 hash under its derived key.
+                _ => {
+                    let vk = sk
+                        .derive_signing_key(*scheme)
+                        .unwrap()
+                        .verifying_key()
+                        .unwrap();
+                    let sig = Signature::new(*scheme, stored.signature.clone());
+                    unified_verify(&DSEP_PUBDATA_CRS, eip712_hash.as_slice(), &sig, &vk)
+                        .unwrap_or_else(|e| panic!("{scheme:?} CRS signature should verify: {e}"));
+                    assert!(
+                        unified_verify(&DSEP_PUBDATA_CRS, b"tampered", &sig, &vk).is_err(),
+                        "{scheme:?} verified a tampered payload"
+                    );
+                }
             }
         }
     }
@@ -1870,6 +2045,7 @@ pub(crate) mod tests {
 
         let (crs, meta_data) = gen_centralized_crs(
             &sk,
+            &[SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
             &domain,
@@ -1990,6 +2166,7 @@ pub(crate) mod tests {
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let (crs, meta_data) = gen_centralized_crs(
                 &bad_sk, // using bad_sk
+                &[SigningSchemeType::Ecdsa256k1],
                 &params,
                 Some(max_num_bits),
                 &domain,
@@ -2276,9 +2453,11 @@ pub(crate) mod tests {
             external_signature: external_signature.clone(),
         };
 
-        // Verify upgrade sets extra_data as None
-        let upgraded: CrsGenMetadataInner = q126.clone().upgrade().unwrap();
+        // Verify upgrade (V0 -> V1 -> V2) sets extra_data as None and leaves the
+        // new per-scheme `signatures` list empty for pre-#3078 data.
+        let upgraded: CrsGenMetadataInner = q126.clone().upgrade().unwrap().upgrade().unwrap();
         assert_eq!(upgraded.extra_data, None);
+        assert!(upgraded.signatures.is_empty());
         // Upgraded serialization
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 

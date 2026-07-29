@@ -585,6 +585,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         Ok(Response::new(KeyGenPreprocResult {
             preprocessing_id: Some(request_id.into()),
             external_signature: preproc_data.external_signature.clone(),
+            // TODO(#3078): populate multi-scheme signatures (replication step).
+            signatures: vec![],
         }))
     }
 }
@@ -770,6 +772,7 @@ mod tests {
 
         {
             let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "invalid_id".to_string(),
                 }),
@@ -800,6 +803,7 @@ mod tests {
         {
             // Invalid argument because request ID is empty
             let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None,
                 params: FheParameter::Test as i32,
                 keyset_config: None,
@@ -821,6 +825,7 @@ mod tests {
             let mut rng = AesRng::seed_from_u64(22);
             let req_id = RequestId::new_random(&mut rng);
             let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 params: 10,
                 keyset_config: None,
@@ -842,6 +847,7 @@ mod tests {
             let mut rng = AesRng::seed_from_u64(22);
             let req_id = RequestId::new_random(&mut rng);
             let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 params: FheParameter::Test as i32,
                 keyset_config: None,
@@ -871,6 +877,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
         let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
@@ -898,6 +905,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
         let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
@@ -946,6 +954,7 @@ mod tests {
 
             let req_id = RequestId::new_random(&mut rng);
             let request = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 params: FheParameter::Test as i32,
                 keyset_config: None,
@@ -972,6 +981,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rng);
         let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
@@ -1004,6 +1014,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rng);
         let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
@@ -1039,6 +1050,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
         let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
@@ -1060,6 +1072,7 @@ mod tests {
     fn insecure_preproc_request(req_id: RequestId) -> tonic::Request<KeyGenPreprocRequest> {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         tonic::Request::new(KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
@@ -1201,6 +1214,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rng);
         let request = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,

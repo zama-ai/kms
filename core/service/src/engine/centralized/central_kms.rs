@@ -11,6 +11,7 @@ use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
+use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -195,8 +196,10 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
+    signing_schemes: &[SigningSchemeType],
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: alloy_sol_types::Eip712Domain,
@@ -207,10 +210,12 @@ pub(crate) async fn async_generate_crs(
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let req_id_copy = req_id.to_owned();
+    let signing_schemes = signing_schemes.to_vec();
 
     rayon::spawn_fifo(move || {
         let out = gen_centralized_crs(
             &sk_copy,
+            &signing_schemes,
             &params,
             max_num_bits,
             &eip712_domain,
@@ -364,8 +369,10 @@ pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<S
 }
 
 /// compute the CRS in the centralized KMS.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
+    signing_schemes: &[SigningSchemeType],
     params: &DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
@@ -384,6 +391,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
     let crs_info = crate::engine::base::compute_info_crs(
         sk,
+        signing_schemes,
         &crate::engine::base::DSEP_PUBDATA_CRS,
         req_id,
         &pp,

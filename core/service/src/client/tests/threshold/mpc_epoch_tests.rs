@@ -399,6 +399,7 @@ async fn run_new_epoch(
                             preprocessing_id: response.preprocessing_id.clone(),
                             key_digests: response.key_digests.clone(),
                             external_signature: response.external_signature.clone(),
+                            signatures: response.signatures.clone(),
                         })
                         .collect::<Vec<_>>();
                     let crs_results = inner.crs_responses;

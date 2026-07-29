@@ -31,9 +31,12 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::engine::utils::MetricedError;
 use crate::{
-    cryptography::signatures::PrivateSigKey,
+    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
     engine::{
-        base::{BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs},
+        base::{
+            BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs,
+            stored_scheme_signatures_to_proto,
+        },
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
@@ -160,6 +163,7 @@ impl<
             verified.params,
             &verified.eip712_domain,
             verified.extra_data,
+            verified.signing_schemes,
             rate_limiter_permit,
             meta_permit,
             verified.epoch_id,
@@ -182,6 +186,7 @@ impl<
         dkg_params: DKGParams,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         rate_limiter_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
@@ -231,6 +236,7 @@ impl<
                     dkg_params.to_owned(),
                     eip712_domain_copy,
                     extra_data,
+                    signing_schemes,
                     insecure,
                 )
                 .await;
@@ -278,6 +284,7 @@ impl<
                     crs_digest: crs_data.crs_digest.clone(),
                     max_num_bits: crs_data.max_num_bits,
                     external_signature: crs_data.external_signature.clone(),
+                    signatures: stored_scheme_signatures_to_proto(&crs_data.signatures),
                 }))
             }
             CrsGenMetadata::LegacyV0(_) => {
@@ -297,6 +304,7 @@ impl<
                     crs_digest: vec![],
                     max_num_bits: 0,
                     external_signature: vec![],
+                    signatures: vec![],
                 }))
             }
         }
@@ -346,6 +354,7 @@ impl<
         params: DKGParams,
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         insecure: bool,
     ) {
         tracing::info!(
@@ -381,6 +390,7 @@ impl<
                     if my_role.one_based() == input_party_id {
                         let crs_res = async_generate_crs(
                             &sk,
+                            &signing_schemes,
                             params,
                             max_num_bits,
                             domain,
@@ -422,6 +432,7 @@ impl<
             pp = generate_pp => pp
                 .and_then(|pp| compute_info_crs(
                     &sk,
+                    &signing_schemes,
                     &DSEP_PUBDATA_CRS,
                     req_id,
                     &pp,
@@ -719,6 +730,7 @@ mod tests {
         {
             // missing request ID
             let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
                 request_id: None,
@@ -751,6 +763,7 @@ mod tests {
             let req_id = RequestId::new_random(&mut rng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: 200, // wrong parameter
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
@@ -770,6 +783,7 @@ mod tests {
             // missing domain
             let req_id = RequestId::new_random(&mut rng);
             let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
@@ -792,6 +806,7 @@ mod tests {
             domain.verifying_contract = "wrong_contract".to_string();
             let req_id = RequestId::new_random(&mut rng);
             let req = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
@@ -836,6 +851,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
@@ -861,6 +877,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
@@ -894,6 +911,7 @@ mod tests {
         // start the ceremony but immediately fetch the result, it should be not found too
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
@@ -923,6 +941,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
@@ -950,6 +969,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
@@ -987,6 +1007,7 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),

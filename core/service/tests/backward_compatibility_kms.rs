@@ -289,6 +289,7 @@ fn test_crs_gen_metadata(
         max_num_bits,
         external_signature.clone(),
         vec![],
+        vec![],
     );
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
@@ -420,6 +421,7 @@ fn test_crs_gen_metadata_with_extra_data(
         digest,
         max_num_bits,
         external_signature.clone(),
+        vec![],
         extra_data,
     );
     match &new_current {

@@ -148,6 +148,8 @@ pub async fn get_preprocessing_res_impl<
     Ok(Response::new(KeyGenPreprocResult {
         preprocessing_id: Some(request_id.into()),
         external_signature: preproc_data.external_signature.clone(),
+        // TODO(#3078): populate multi-scheme signatures (replication step).
+        signatures: vec![],
     }))
 }
 #[cfg(test)]
@@ -173,6 +175,7 @@ mod tests {
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((preproc_req_id).into()),
@@ -207,6 +210,7 @@ mod tests {
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((preproc_req_id).into()),
@@ -228,6 +232,7 @@ mod tests {
         let preproc_req_id = derive_request_id("test_preprocessing_impl_already_exists").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((preproc_req_id).into()),
@@ -257,6 +262,7 @@ mod tests {
         // Missing domain should lead to InvalidArgument
         {
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some((preproc_req_id).into()),
@@ -275,6 +281,7 @@ mod tests {
         // missing request_id should lead to InvalidArgument
         {
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: None,
@@ -293,6 +300,7 @@ mod tests {
         // wrong request_id should lead to InvalidArgument
         {
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some(kms_grpc::kms::v1::RequestId {
@@ -316,6 +324,7 @@ mod tests {
                 request_id: "xyz".to_string(),
             };
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some(preproc_req_id.into()),

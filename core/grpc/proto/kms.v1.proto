@@ -898,9 +898,9 @@ message NewMpcEpochRequest {
   Eip712DomainMsg domain = 4;
   // Extra data used in the EIP712 signature - external_signature - for the newly signed key and CRS info
   bytes extra_data = 5;
-  // Per-scheme KMS signatures.
-  // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 6;
+  // The signature schemes the response should be signed under.
+  // If empty, defaults to ECDSA256K1 (backward compatible with old clients).
+  repeated SigningSchemeType signing_schemes = 6;
 }
 
 message EpochResultResponse {

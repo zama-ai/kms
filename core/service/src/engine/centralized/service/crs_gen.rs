@@ -17,7 +17,8 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::engine::base::CrsGenMetadata;
+use crate::cryptography::signing::SigningSchemeType;
+use crate::engine::base::{CrsGenMetadata, stored_scheme_signatures_to_proto};
 use crate::engine::centralized::central_kms::{CentralizedKms, async_generate_crs};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
@@ -120,6 +121,7 @@ pub async fn crs_gen_impl<
                 verified.params,
                 verified.eip712_domain,
                 verified.extra_data,
+                verified.signing_schemes,
                 max_bits,
                 op_tag,
             )
@@ -173,6 +175,7 @@ pub async fn get_crs_gen_result_impl<
                 crs_digest: vec![],
                 max_num_bits: 0,
                 external_signature: vec![],
+                signatures: vec![],
             }))
         }
         CrsGenMetadata::Current(crs_info) => {
@@ -193,6 +196,7 @@ pub async fn get_crs_gen_result_impl<
                 crs_digest: crs_info.crs_digest.clone(),
                 max_num_bits: crs_info.max_num_bits,
                 external_signature: crs_info.external_signature.clone(),
+                signatures: stored_scheme_signatures_to_proto(&crs_info.signatures),
             }))
         }
     }
@@ -245,6 +249,7 @@ pub(crate) async fn crs_gen_background<
     params: DKGParams,
     eip712_domain: Eip712Domain,
     extra_data: Vec<u8>,
+    signing_schemes: Vec<SigningSchemeType>,
     max_number_bits: Option<u32>,
     op_tag: &'static str,
 ) {
@@ -254,7 +259,7 @@ pub(crate) async fn crs_gen_background<
         biased;
         () = cancel_token.cancelled() => Err(format!("CRS generation aborted for request {req_id}")),
         result = async_generate_crs(
-            &sk, params, max_number_bits, eip712_domain, extra_data, req_id, rng,
+            &sk, &signing_schemes, params, max_number_bits, eip712_domain, extra_data, req_id, rng,
         ) => result.map_err(|e| e.to_string()),
     };
 
@@ -321,6 +326,7 @@ mod tests {
         let epoch_id = derive_request_id("test_crs_gen_sunshine_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,
@@ -348,6 +354,7 @@ mod tests {
         let epoch_id = derive_request_id("test_crs_gen_already_exists_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,
@@ -376,6 +383,7 @@ mod tests {
         // wrong params
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
@@ -393,6 +401,7 @@ mod tests {
         // missing request ID
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None, // missing
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
@@ -410,6 +419,7 @@ mod tests {
         // wrong request ID format
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "not_a_valid_request_id".to_string(),
                 }),
@@ -429,6 +439,7 @@ mod tests {
         // missing domain
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
@@ -446,6 +457,7 @@ mod tests {
         // invalid context ID
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some(kms_grpc::kms::v1::RequestId {
@@ -465,6 +477,7 @@ mod tests {
         // invalid max_num_bits
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
@@ -482,6 +495,7 @@ mod tests {
         // invalid epoch ID format
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![],
                 request_id: Some(req_id.into()),
                 epoch_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "not_a_valid_epoch_id".to_string(),
@@ -532,6 +546,7 @@ mod tests {
         // missing epoch ID should use default epoch with a warning, but not fail
         {
             let request = CrsGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(req_id.into()),
                 epoch_id: None, // missing
                 context_id: None,
@@ -580,6 +595,7 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,
@@ -612,6 +628,7 @@ mod tests {
         let req_id = derive_request_id("abort_during_crs_gen_crs_id").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()), // use default epoch to make sure the test works even if the default epoch fallback is removed in validation
             context_id: None,
@@ -657,6 +674,7 @@ mod tests {
         let epoch_id = derive_request_id("test_crs_gen_abort_already_finished_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,

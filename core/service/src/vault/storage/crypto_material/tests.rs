@@ -137,10 +137,18 @@ async fn write_crs() {
     let crs_id = RequestId::new_random(&mut rng);
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) =
-        async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, vec![], &crs_id, rng)
-            .await
-            .unwrap();
+    let (pp, crs_info) = async_generate_crs(
+        &sig_sk,
+        &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
+        TEST_PARAM,
+        Some(1),
+        domain,
+        vec![],
+        &crs_id,
+        rng,
+    )
+    .await
+    .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();
     let default_epoch_id = *DEFAULT_EPOCH_ID;
 
@@ -834,6 +842,7 @@ fn dummy_crs_metadata(seed: u8) -> CrsGenMetadata {
         vec![seed; 32],
         128,
         vec![seed; 8],
+        vec![],
         format!("extra-{seed}").into_bytes(),
     )
 }

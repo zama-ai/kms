@@ -1028,6 +1028,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1052,6 +1053,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1421,6 +1423,7 @@ mod tests {
 
         let (crs, metadata) = gen_centralized_crs(
             &sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
             &domain,
