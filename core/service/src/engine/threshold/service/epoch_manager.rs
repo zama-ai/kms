@@ -1226,7 +1226,7 @@ impl<
     ) -> Result<Response<Empty>, MetricedError> {
         let _destruction_lease = self
             .session_maker
-            .try_start_epoch_destruction(epoch_id)
+            .try_get_epoch_destruction_lease(epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -1471,7 +1471,7 @@ impl<
         // and epoch destruction acquire the corresponding exclusive lease before mutating state.
         let creation_lease = self
             .session_maker
-            .try_start_epoch_creation(&context_id, &epoch_id)
+            .try_get_epoch_creation_lease(&context_id, &epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -2804,7 +2804,7 @@ pub(crate) mod tests {
         // Mirror a creation task that has registered its epoch after PRSS but is still resharing.
         let creation_lease = epoch_manager
             .session_maker
-            .try_start_epoch_creation(&DEFAULT_MPC_CONTEXT, &epoch_id)
+            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &epoch_id)
             .await
             .unwrap();
 

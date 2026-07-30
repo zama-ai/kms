@@ -218,7 +218,7 @@ impl SessionMaker {
     /// The returned lease must live until the creation task has finished every persistent write.
     /// Destruction uses exclusive leases for the same IDs and therefore fails while this lease is
     /// alive.
-    pub(crate) async fn try_start_epoch_creation(
+    pub(crate) async fn try_get_epoch_creation_lease(
         &self,
         context_id: &ContextId,
         epoch_id: &EpochId,
@@ -244,7 +244,7 @@ impl SessionMaker {
     /// The caller must retain the lease while taking the epoch snapshot, deleting every associated
     /// epoch, and deleting the context itself. Acquiring it fails while an epoch creation for this
     /// context is in flight.
-    pub(crate) async fn try_start_context_destruction(
+    pub(crate) async fn try_get_context_destruction_lease(
         &self,
         context_id: &ContextId,
     ) -> Result<ContextDestructionLease, LifecycleConflict> {
@@ -259,7 +259,7 @@ impl SessionMaker {
     ///
     /// Acquiring this lease fails while creation of the same epoch is in flight. The caller must
     /// retain it through all storage and cache deletion.
-    pub(crate) async fn try_start_epoch_destruction(
+    pub(crate) async fn try_get_epoch_destruction_lease(
         &self,
         epoch_id: &EpochId,
     ) -> Result<EpochDestructionLease, LifecycleConflict> {
@@ -919,7 +919,9 @@ impl ImmutableSessionMaker {
         &self,
         context_id: &ContextId,
     ) -> Result<ContextDestructionLease, LifecycleConflict> {
-        self.inner.try_start_context_destruction(context_id).await
+        self.inner
+            .try_get_context_destruction_lease(context_id)
+            .await
     }
 
     #[allow(dead_code)]
@@ -1162,7 +1164,7 @@ mod tests {
         let endpoint_session_maker = session_maker.make_immutable();
 
         let creation = session_maker
-            .try_start_epoch_creation(&context_id, &epoch_id)
+            .try_get_epoch_creation_lease(&context_id, &epoch_id)
             .await
             .unwrap();
 
@@ -1175,7 +1177,7 @@ mod tests {
         );
         assert_eq!(
             session_maker
-                .try_start_epoch_destruction(&epoch_id)
+                .try_get_epoch_destruction_lease(&epoch_id)
                 .await
                 .unwrap_err(),
             LifecycleConflict::Epoch(epoch_id)
@@ -1189,7 +1191,7 @@ mod tests {
             .await
             .unwrap();
         session_maker
-            .try_start_epoch_destruction(&other_epoch_id)
+            .try_get_epoch_destruction_lease(&other_epoch_id)
             .await
             .unwrap();
 
@@ -1199,7 +1201,7 @@ mod tests {
             .await
             .unwrap();
         session_maker
-            .try_start_epoch_destruction(&epoch_id)
+            .try_get_epoch_destruction_lease(&epoch_id)
             .await
             .unwrap();
     }
@@ -1214,12 +1216,12 @@ mod tests {
         let epoch_id = EpochId::new_random(&mut rng);
 
         let context_destruction = session_maker
-            .try_start_context_destruction(&context_id)
+            .try_get_context_destruction_lease(&context_id)
             .await
             .unwrap();
         assert_eq!(
             session_maker
-                .try_start_epoch_creation(&context_id, &epoch_id)
+                .try_get_epoch_creation_lease(&context_id, &epoch_id)
                 .await
                 .unwrap_err(),
             LifecycleConflict::Context(context_id)
@@ -1227,12 +1229,12 @@ mod tests {
         drop(context_destruction);
 
         let epoch_destruction = session_maker
-            .try_start_epoch_destruction(&epoch_id)
+            .try_get_epoch_destruction_lease(&epoch_id)
             .await
             .unwrap();
         assert_eq!(
             session_maker
-                .try_start_epoch_creation(&context_id, &epoch_id)
+                .try_get_epoch_creation_lease(&context_id, &epoch_id)
                 .await
                 .unwrap_err(),
             LifecycleConflict::Epoch(epoch_id)
@@ -1240,7 +1242,7 @@ mod tests {
         drop(epoch_destruction);
 
         session_maker
-            .try_start_epoch_creation(&context_id, &epoch_id)
+            .try_get_epoch_creation_lease(&context_id, &epoch_id)
             .await
             .unwrap();
     }
