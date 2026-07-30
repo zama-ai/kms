@@ -36,7 +36,7 @@ use tonic::{async_trait, transport::Channel};
 use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
-use crate::constants::{MAX_BUFFERED_FUTURE_MSGS, MAX_FUTURE_ROUNDS};
+use crate::constants::MAX_BUFFERED_FUTURE_MSGS;
 use threshold_types::network::{NetworkMode, Networking};
 
 pub struct ArcSendValueRequest {
@@ -613,7 +613,8 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 // Future round: buffer it (within bounds) until the session
                 // advances, so it can never satisfy an earlier round's receive.
                 std::cmp::Ordering::Greater => {
-                    if packet.round_counter <= network_round.saturating_add(MAX_FUTURE_ROUNDS)
+                    if packet.round_counter
+                        <= network_round.saturating_add(MAX_BUFFERED_FUTURE_MSGS)
                         && state.future.len() < MAX_BUFFERED_FUTURE_MSGS
                     {
                         // At most one legitimate message per (round, sender):
