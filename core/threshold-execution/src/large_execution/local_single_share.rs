@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use num_integer::div_ceil;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use threshold_types::protocol::ProtocolDescription;
@@ -374,31 +374,36 @@ pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHan
     threshold: usize,
     result_map: &mut Option<HashMap<Role, Z>>,
 ) -> anyhow::Result<HashSet<Role>> {
-    let mut newly_corrupt = HashSet::<Role>::new();
-
     let my_role = session.my_role();
+    let roles = session.roles();
+    let disputed_roles = session.disputed_roles();
 
-    for (role_pi, bcast_value) in bcast_data {
-        if role_pi != &my_role {
+    // The heavy per-sender work is the error-correcting `error_reconstruct` decode; it and the
+    // dispute-zero check only read the session, so we run them across senders in parallel. Each
+    // sender maps to either `None` (corrupt) or `Some(reconstructed check value)`; the corrupt
+    // set / result_map are then updated sequentially, so the outcome is identical to processing
+    // senders one by one.
+    let verdicts = bcast_data
+        .par_iter()
+        .filter(|(role_pi, _)| **role_pi != my_role)
+        .map(|(role_pi, bcast_value)| -> anyhow::Result<(Role, Option<Z>)> {
             let sharing_from_sender = &bcast_value.checks_for_mine;
             //Make sure the current sender has sent a value to check against for all parties
             if sharing_from_sender
                 .keys()
                 .cloned()
                 .collect::<HashSet<Role>>()
-                != *session.roles()
+                != *roles
             {
-                newly_corrupt.insert(*role_pi);
                 tracing::warn!(
                     "[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set"
                 );
-                continue;
+                return Ok((*role_pi, None));
             }
 
             //Check parties in dispute with pi have shares = 0  - Step (g)
             //This should never fail, if there is no dispute the set is empty but exists
-            let parties_dispute_pi = session.disputed_roles().get(role_pi);
-            for pj_dispute_pi in parties_dispute_pi {
+            for pj_dispute_pi in disputed_roles.get(role_pi) {
                 //Add pi to corrupt if sharing from pi to pj is not zero
                 if sharing_from_sender
                     .get(pj_dispute_pi)
@@ -410,32 +415,43 @@ pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHan
                     })?
                     != &Z::ZERO
                 {
-                    newly_corrupt.insert(*role_pi);
                     tracing::warn!(
                         "[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt"
                     );
-                    break;
+                    return Ok((*role_pi, None));
                 }
             }
-            if !newly_corrupt.contains(role_pi) {
-                //Check correct degree
-                let sharing = sharing_from_sender
-                    .iter()
-                    .map(|(role, share)| Share::new(*role, *share))
-                    .collect_vec();
-                let sharing = ShamirSharings::create(sharing);
-                let try_reconstruct = sharing.error_reconstruct(threshold, 0);
 
-                if let Ok(value) = try_reconstruct {
-                    if let Some(result_map) = result_map {
-                        result_map.insert(*role_pi, value);
-                    }
-                } else {
+            //Check correct degree
+            let sharing = sharing_from_sender
+                .iter()
+                .map(|(role, share)| Share::new(*role, *share))
+                .collect_vec();
+            let sharing = ShamirSharings::create(sharing);
+            match sharing.error_reconstruct(threshold, 0) {
+                Ok(value) => Ok((*role_pi, Some(value))),
+                Err(e) => {
                     tracing::warn!(
                         "[{my_role}] Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
-                        try_reconstruct
+                        e
                     );
-                    newly_corrupt.insert(*role_pi);
+                    Ok((*role_pi, None))
+                }
+            }
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let mut newly_corrupt = HashSet::<Role>::new();
+    for (role_pi, verdict) in verdicts {
+        match verdict {
+            //Corrupt sender
+            None => {
+                newly_corrupt.insert(role_pi);
+            }
+            //Valid sharing: record the reconstructed check value if the caller wants it
+            Some(value) => {
+                if let Some(result_map) = result_map {
+                    result_map.insert(role_pi, value);
                 }
             }
         }
