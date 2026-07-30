@@ -21,6 +21,7 @@ use itertools::Itertools;
 use num_integer::div_ceil;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use tracing::instrument;
@@ -233,66 +234,74 @@ pub(crate) async fn verify_sharing<
     // broadcast them together in a single parallel round (spec Fig. 88), instead of one
     // broadcast per `g`.
     //
-    // Building the batch is a pure CPU burst over `m` independent challenge indices, so we fan
-    // it out across rayon. We borrow the (large) share maps rather than cloning them into a
-    // `spawn_compute_bound` task, and the burst runs before this call touches the network.
+    // Building the batch is a pure CPU burst over `m` independent challenge indices. We clone
+    // the (O(n·l)) share maps once and run the fan-out on the dedicated MPC rayon pool via
+    // `spawn_compute_bound`, so the tokio worker stays free (rather than blocking on an inline
+    // `par_iter`). The burst runs before this call touches the network.
     let my_batch: Vec<MapsDoubleSharesChallenges<Z>> = {
-        let roles = session.roles();
-        // Reborrow the mutable share maps immutably for the parallel read; the mutable use
-        // (zeroing corrupt senders' shares below) resumes after this block.
-        let secrets_shares_all_t: &HashMap<Role, Vec<Z>> = secrets_shares_all_t;
-        let secrets_shares_all_2t: &HashMap<Role, Vec<Z>> = secrets_shares_all_2t;
-        let my_shared_secrets_t: &HashMap<Role, Vec<Z>> = my_shared_secrets_t;
-        let my_shared_secrets_2t: &HashMap<Role, Vec<Z>> = my_shared_secrets_2t;
-        (0..m)
-            .into_par_iter()
-            .map(|g| -> anyhow::Result<MapsDoubleSharesChallenges<Z>> {
-                let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, roles);
+        let roles = session.roles().clone();
+        let pads_shares_all_t = pads_shares_all_t.clone();
+        let pads_shares_all_2t = pads_shares_all_2t.clone();
+        let my_share_pads_t = my_share_pads_t.clone();
+        let my_share_pads_2t = my_share_pads_2t.clone();
+        let secrets_shares_all_t = secrets_shares_all_t.clone();
+        let secrets_shares_all_2t = secrets_shares_all_2t.clone();
+        let my_shared_secrets_t = my_shared_secrets_t.clone();
+        let my_shared_secrets_2t = my_shared_secrets_2t.clone();
+        let x = *x;
+        spawn_compute_bound(move || {
+            (0..m)
+                .into_par_iter()
+                .map(|g| -> anyhow::Result<MapsDoubleSharesChallenges<Z>> {
+                    let map_challenges =
+                        Z::derive_challenges_from_coinflip(&x, g.try_into()?, l, &roles);
 
-                //Compute my share of check values for every sharing of degree t
-                let map_share_check_values_t = compute_check_values(
-                    pads_shares_all_t,
-                    &map_challenges,
-                    secrets_shares_all_t,
-                    g,
-                    None,
-                )?;
+                    //Compute my share of check values for every sharing of degree t
+                    let map_share_check_values_t = compute_check_values(
+                        &pads_shares_all_t,
+                        &map_challenges,
+                        &secrets_shares_all_t,
+                        g,
+                        None,
+                    )?;
 
-                //Compute my share of check values for every sharing of degree 2t
-                let map_share_check_values_2t = compute_check_values(
-                    pads_shares_all_2t,
-                    &map_challenges,
-                    secrets_shares_all_2t,
-                    g,
-                    None,
-                )?;
+                    //Compute my share of check values for every sharing of degree 2t
+                    let map_share_check_values_2t = compute_check_values(
+                        &pads_shares_all_2t,
+                        &map_challenges,
+                        &secrets_shares_all_2t,
+                        g,
+                        None,
+                    )?;
 
-                //Compute the shares of the check values for every sharing of degree t where I am sender
-                let map_share_my_check_values_t = compute_check_values(
-                    my_share_pads_t,
-                    &map_challenges,
-                    my_shared_secrets_t,
-                    g,
-                    Some(&my_role),
-                )?;
+                    //Compute the shares of the check values for every sharing of degree t where I am sender
+                    let map_share_my_check_values_t = compute_check_values(
+                        &my_share_pads_t,
+                        &map_challenges,
+                        &my_shared_secrets_t,
+                        g,
+                        Some(&my_role),
+                    )?;
 
-                //Compute the shares of the check values for every sharing of degree 2t where I am sender
-                let map_share_my_check_values_2t = compute_check_values(
-                    my_share_pads_2t,
-                    &map_challenges,
-                    my_shared_secrets_2t,
-                    g,
-                    Some(&my_role),
-                )?;
+                    //Compute the shares of the check values for every sharing of degree 2t where I am sender
+                    let map_share_my_check_values_2t = compute_check_values(
+                        &my_share_pads_2t,
+                        &map_challenges,
+                        &my_shared_secrets_2t,
+                        g,
+                        Some(&my_role),
+                    )?;
 
-                Ok((
-                    map_share_check_values_t,
-                    map_share_check_values_2t,
-                    map_share_my_check_values_t,
-                    map_share_my_check_values_2t,
-                ))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?
+                    Ok((
+                        map_share_check_values_t,
+                        map_share_check_values_2t,
+                        map_share_my_check_values_t,
+                        map_share_my_check_values_2t,
+                    ))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .await??
     };
 
     let corrupt_before_bc = session.corrupt_roles().clone();
@@ -368,19 +377,14 @@ pub(crate) async fn verify_sharing<
             Some(HashMap::<Role, Z>::new()),
             Some(HashMap::<Role, Z>::new()),
         );
-        let newly_corrupt = verify_sender_challenge(
-            &bcast_data_t,
-            session,
-            session.threshold() as usize,
-            &mut result_map_t,
-        )?;
+        let threshold_t = session.threshold() as usize;
+        let newly_corrupt =
+            verify_sender_challenge(&bcast_data_t, session, threshold_t, &mut result_map_t).await?;
 
-        let newly_corrupt_2t = verify_sender_challenge(
-            &bcast_data_2t,
-            session,
-            2 * session.threshold() as usize,
-            &mut result_map_2t,
-        )?;
+        let threshold_2t = 2 * session.threshold() as usize;
+        let newly_corrupt_2t =
+            verify_sender_challenge(&bcast_data_2t, session, threshold_2t, &mut result_map_2t)
+                .await?;
 
         let result_map_t = result_map_t
             .ok_or_else(|| anyhow_error_and_log("Can not unwrap result_map_t I created."))?;

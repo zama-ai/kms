@@ -25,7 +25,8 @@ use itertools::Itertools;
 use num_integer::div_ceil;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use tracing::instrument;
@@ -209,46 +210,52 @@ pub(crate) async fn verify_sharing<
     // broadcast them together in a single parallel round (spec Fig. 88), instead of one
     // broadcast per `g`.
     //
-    // Building the batch is a pure CPU burst over `m` independent challenge indices, so we fan
-    // it out across rayon. We borrow the (large) share maps rather than cloning them into a
-    // `spawn_compute_bound` task, and the burst runs before this call touches the network.
+    // Building the batch is a pure CPU burst over `m` independent challenge indices. We clone
+    // the (O(n·l)) share maps once and run the fan-out on the dedicated MPC rayon pool via
+    // `spawn_compute_bound`, so the tokio worker stays free (rather than blocking on an inline
+    // `par_iter`). The burst runs before this call touches the network.
     let my_batch: Vec<MapsSharesChallenges<Z>> = {
-        let roles = session.roles();
-        // Reborrow the mutable share maps immutably for the parallel read; the mutable use
-        // (zeroing corrupt senders' shares below) resumes after this block.
-        let secrets_shares_all: &HashMap<Role, Vec<Z>> = secrets_shares_all;
-        let my_shared_secrets: &HashMap<Role, Vec<Z>> = my_shared_secrets;
-        (0..m)
-            .into_par_iter()
-            .map(|g| -> anyhow::Result<MapsSharesChallenges<Z>> {
-                let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, roles);
+        let roles = session.roles().clone();
+        let pads_shares_all = pads_shares_all.clone();
+        let secrets_shares_all = secrets_shares_all.clone();
+        let my_shared_pads = my_shared_pads.clone();
+        let my_shared_secrets = my_shared_secrets.clone();
+        let x = *x;
+        spawn_compute_bound(move || {
+            (0..m)
+                .into_par_iter()
+                .map(|g| -> anyhow::Result<MapsSharesChallenges<Z>> {
+                    let map_challenges =
+                        Z::derive_challenges_from_coinflip(&x, g.try_into()?, l, &roles);
 
-                //Compute my share of check values for every local single share happening in parallel
-                //<y>
-                let checks_for_all = compute_check_values(
-                    pads_shares_all,
-                    &map_challenges,
-                    secrets_shares_all,
-                    g,
-                    None,
-                )?;
+                    //Compute my share of check values for every local single share happening in parallel
+                    //<y>
+                    let checks_for_all = compute_check_values(
+                        &pads_shares_all,
+                        &map_challenges,
+                        &secrets_shares_all,
+                        g,
+                        None,
+                    )?;
 
-                //Compute the share of the check value for MY local single share
-                //<y^*>_j
-                let checks_for_mine = compute_check_values(
-                    my_shared_pads,
-                    &map_challenges,
-                    my_shared_secrets,
-                    g,
-                    Some(&my_role),
-                )?;
+                    //Compute the share of the check value for MY local single share
+                    //<y^*>_j
+                    let checks_for_mine = compute_check_values(
+                        &my_shared_pads,
+                        &map_challenges,
+                        &my_shared_secrets,
+                        g,
+                        Some(&my_role),
+                    )?;
 
-                Ok(MapsSharesChallenges {
-                    checks_for_all,
-                    checks_for_mine,
+                    Ok(MapsSharesChallenges {
+                        checks_for_all,
+                        checks_for_mine,
+                    })
                 })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .await??
     };
 
     let corrupt_before_bc = session.corrupt_roles().clone();
@@ -293,12 +300,9 @@ pub(crate) async fn verify_sharing<
             .map(|(role, batch)| (*role, batch[g].clone()))
             .collect();
 
-        let mut bcast_corrupts = verify_sender_challenge(
-            &bcast_output,
-            session,
-            session.threshold() as usize,
-            &mut None,
-        )?;
+        let threshold = session.threshold() as usize;
+        let mut bcast_corrupts =
+            verify_sender_challenge(&bcast_output, session, threshold, &mut None).await?;
         //Wrong-type senders are corrupt across every challenge index; fold them in on the first pass.
         if g == 0 {
             bcast_corrupts.extend(wrong_type_corrupts.iter().cloned());
@@ -368,78 +372,91 @@ pub(crate) fn compute_check_values<Z: Ring>(
 
 //Verify that the sender for each lsl did give a 0 share to parties it is in dispute with
 //and that the overall sharing is a degree t polynomial
-pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHandles>(
+pub(crate) async fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHandles>(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
     session: &mut L,
     threshold: usize,
     result_map: &mut Option<HashMap<Role, Z>>,
 ) -> anyhow::Result<HashSet<Role>> {
     let my_role = session.my_role();
-    let roles = session.roles();
-    let disputed_roles = session.disputed_roles();
+    let roles = session.roles().clone();
+    // Snapshot only the dispute sets of the senders we are checking, so the compute task below
+    // needs no access to the session.
+    let sender_disputes: HashMap<Role, BTreeSet<Role>> = bcast_data
+        .keys()
+        .filter(|role_pi| **role_pi != my_role)
+        .map(|role_pi| (*role_pi, session.disputed_roles().get(role_pi).clone()))
+        .collect();
+    let bcast_data = bcast_data.clone();
 
     // The heavy per-sender work is the error-correcting `error_reconstruct` decode; it and the
-    // dispute-zero check only read the session, so we run them across senders in parallel. Each
-    // sender maps to either `None` (corrupt) or `Some(reconstructed check value)`; the corrupt
-    // set / result_map are then updated sequentially, so the outcome is identical to processing
-    // senders one by one.
-    let verdicts = bcast_data
-        .par_iter()
-        .filter(|(role_pi, _)| **role_pi != my_role)
-        .map(|(role_pi, bcast_value)| -> anyhow::Result<(Role, Option<Z>)> {
-            let sharing_from_sender = &bcast_value.checks_for_mine;
-            //Make sure the current sender has sent a value to check against for all parties
-            if sharing_from_sender
-                .keys()
-                .cloned()
-                .collect::<HashSet<Role>>()
-                != *roles
-            {
-                tracing::warn!(
-                    "[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set"
-                );
-                return Ok((*role_pi, None));
-            }
-
-            //Check parties in dispute with pi have shares = 0  - Step (g)
-            //This should never fail, if there is no dispute the set is empty but exists
-            for pj_dispute_pi in disputed_roles.get(role_pi) {
-                //Add pi to corrupt if sharing from pi to pj is not zero
+    // dispute-zero check only need a read-only snapshot, so we run the fan-out on the dedicated
+    // MPC rayon pool via `spawn_compute_bound` (freeing the tokio worker) rather than blocking on
+    // an inline `par_iter`. Each sender maps to either `None` (corrupt) or `Some(reconstructed
+    // check value)`; the corrupt set / result_map are then updated sequentially, so the outcome
+    // is identical to processing senders one by one.
+    let verdicts: Vec<(Role, Option<Z>)> = spawn_compute_bound(move || {
+        bcast_data
+            .par_iter()
+            .filter(|(role_pi, _)| **role_pi != my_role)
+            .map(|(role_pi, bcast_value)| -> anyhow::Result<(Role, Option<Z>)> {
+                let sharing_from_sender = &bcast_value.checks_for_mine;
+                //Make sure the current sender has sent a value to check against for all parties
                 if sharing_from_sender
-                    .get(pj_dispute_pi)
-                    //This should never fail due to the above check
-                    .ok_or_else(|| {
-                        anyhow_error_and_log(format!(
-                            "[{my_role}] Can not find the share for {pj_dispute_pi}"
-                        ))
-                    })?
-                    != &Z::ZERO
+                    .keys()
+                    .cloned()
+                    .collect::<HashSet<Role>>()
+                    != roles
                 {
                     tracing::warn!(
-                        "[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt"
+                        "[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set"
                     );
                     return Ok((*role_pi, None));
                 }
-            }
 
-            //Check correct degree
-            let sharing = sharing_from_sender
-                .iter()
-                .map(|(role, share)| Share::new(*role, *share))
-                .collect_vec();
-            let sharing = ShamirSharings::create(sharing);
-            match sharing.error_reconstruct(threshold, 0) {
-                Ok(value) => Ok((*role_pi, Some(value))),
-                Err(e) => {
-                    tracing::warn!(
-                        "[{my_role}] Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
-                        e
-                    );
-                    Ok((*role_pi, None))
+                //Check parties in dispute with pi have shares = 0  - Step (g)
+                //This should never fail, if there is no dispute the set is empty but exists
+                if let Some(pi_disputes) = sender_disputes.get(role_pi) {
+                    for pj_dispute_pi in pi_disputes {
+                        //Add pi to corrupt if sharing from pi to pj is not zero
+                        if sharing_from_sender
+                            .get(pj_dispute_pi)
+                            //This should never fail due to the above check
+                            .ok_or_else(|| {
+                                anyhow_error_and_log(format!(
+                                    "[{my_role}] Can not find the share for {pj_dispute_pi}"
+                                ))
+                            })?
+                            != &Z::ZERO
+                        {
+                            tracing::warn!(
+                                "[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt"
+                            );
+                            return Ok((*role_pi, None));
+                        }
+                    }
                 }
-            }
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+
+                //Check correct degree
+                let sharing = sharing_from_sender
+                    .iter()
+                    .map(|(role, share)| Share::new(*role, *share))
+                    .collect_vec();
+                let sharing = ShamirSharings::create(sharing);
+                match sharing.error_reconstruct(threshold, 0) {
+                    Ok(value) => Ok((*role_pi, Some(value))),
+                    Err(e) => {
+                        tracing::warn!(
+                            "[{my_role}] Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
+                            e
+                        );
+                        Ok((*role_pi, None))
+                    }
+                }
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+    })
+    .await??;
 
     let mut newly_corrupt = HashSet::<Role>::new();
     for (role_pi, verdict) in verdicts {
