@@ -740,6 +740,7 @@ pub(crate) fn validate_preproc_request(
         KeySetConfig,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -764,6 +765,7 @@ fn unpack_preproc_request(
     KeySetConfig,
     Eip712Domain,
     Vec<u8>,
+    Vec<SigningSchemeType>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -799,6 +801,7 @@ fn unpack_preproc_request(
         keyset_config,
         eip712_domain,
         req.extra_data,
+        resolve_signing_schemes(&req.signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?,
     ))
 }
 
@@ -816,6 +819,7 @@ pub(crate) fn validate_key_gen_request(
         InternalKeySetConfig,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -841,6 +845,7 @@ fn unpack_key_gen_request(
     InternalKeySetConfig,
     Eip712Domain,
     Vec<u8>,
+    Vec<SigningSchemeType>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -888,6 +893,7 @@ fn unpack_key_gen_request(
         internal_keyset_config,
         eip712_domain,
         req.extra_data,
+        resolve_signing_schemes(&req.signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?,
     ))
 }
 

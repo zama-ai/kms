@@ -49,11 +49,12 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    cryptography::signatures::PrivateSigKey,
+    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
     engine::{
         base::{
             BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
             compute_info_decompression_keygen, compute_info_uncompressed_keygen,
+            stored_scheme_signatures_to_proto,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
@@ -281,6 +282,7 @@ impl<
         req_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         context_id: ContextId,
         epoch_id: EpochId,
         permit: OwnedSemaphorePermit,
@@ -492,6 +494,7 @@ impl<
                         &internal_keyset_config,
                         eip712_domain_copy,
                         extra_data,
+                        signing_schemes,
                         permit,
                         meta_permit,
                         token,
@@ -515,6 +518,7 @@ impl<
                             .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
                         eip712_domain_copy,
                         extra_data,
+                        signing_schemes,
                         permit,
                         meta_permit,
                         token,
@@ -573,6 +577,7 @@ impl<
             internal_keyset_config,
             eip712_domain,
             extra_data,
+            signing_schemes,
         ) = validate_key_gen_request(inner, op_tag)?;
         let my_role = validate_context_and_epoch(
             op_tag,
@@ -631,6 +636,7 @@ impl<
             req_id,
             &eip712_domain,
             extra_data,
+            signing_schemes,
             context_id,
             epoch_id,
             permit,
@@ -802,8 +808,7 @@ impl<
                     preprocessing_id: Some(res.preprocessing_id.into()),
                     key_digests,
                     external_signature: res.external_signature.clone(),
-                    // TODO(#3078): populate multi-scheme signatures (replication step).
-                    signatures: vec![],
+                    signatures: stored_scheme_signatures_to_proto(&res.signatures),
                 }))
             }
             KeyGenMetadata::LegacyV0(_res) => {
@@ -1079,6 +1084,7 @@ impl<
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
@@ -1177,6 +1183,7 @@ impl<
         // Compute all the info required for storing
         let info = match compute_info_decompression_keygen(
             &sk,
+            &signing_schemes,
             &DSEP_PUBDATA_KEY,
             &prep_id,
             req_id,
@@ -1328,6 +1335,7 @@ impl<
         internal_keyset_config: &InternalKeySetConfig,
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
@@ -1555,6 +1563,7 @@ impl<
                 //Compute all the info required for storing
                 let info = match compute_info_uncompressed_keygen(
                     &sk,
+                    &signing_schemes,
                     &DSEP_PUBDATA_KEY,
                     &prep_id,
                     req_id,
@@ -1651,6 +1660,7 @@ impl<
                 // Compute info for compressed keygen
                 let info = match compute_info_compressed_keygen(
                     &sk,
+                    &signing_schemes,
                     &DSEP_PUBDATA_KEY,
                     &prep_id,
                     req_id,
@@ -2012,6 +2022,7 @@ mod tests {
                 .await
                 .unwrap();
             let dummy_prep = BucketMetaStore {
+                signatures: vec![],
                 preprocessing_id: *prep_id,
                 external_signature: vec![],
                 preprocessing_store: PreprocMaterial::Real(Arc::new(Mutex::new(Box::new(
@@ -2409,6 +2420,7 @@ mod tests {
         prep_id: &RequestId,
     ) {
         let bucket = BucketMetaStore {
+            signatures: vec![],
             preprocessing_id: *prep_id,
             external_signature: vec![],
             preprocessing_store: PreprocMaterial::Insecure,

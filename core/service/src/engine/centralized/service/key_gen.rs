@@ -1,5 +1,9 @@
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::engine::base::{DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen};
+use crate::cryptography::signing::SigningSchemeType;
+use crate::engine::base::{
+    DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen,
+    stored_scheme_signatures_to_proto,
+};
 use crate::engine::centralized::central_kms::{
     CentralizedKeyGenResult, CentralizedKms, async_generate_decompression_keys,
     async_generate_fhe_keys,
@@ -74,6 +78,7 @@ pub async fn key_gen_impl<
         internal_keyset_config,
         eip712_domain,
         extra_data,
+        signing_schemes,
     ) = validate_key_gen_request(inner, op_tag)?;
 
     tracing::info!("centralized key-gen with request id: {:?}", req_id);
@@ -246,6 +251,7 @@ pub async fn key_gen_impl<
                 meta_store,
                 crypto_storage,
                 sk,
+                signing_schemes,
                 params,
                 internal_keyset_config,
                 eip712_domain,
@@ -315,8 +321,7 @@ pub async fn get_key_gen_result_impl<
                 preprocessing_id: Some(res.preprocessing_id.into()),
                 key_digests,
                 external_signature: res.external_signature.clone(),
-                // TODO(#3078): populate multi-scheme signatures (replication step).
-                signatures: vec![],
+                signatures: stored_scheme_signatures_to_proto(&res.signatures),
             }))
         }
         KeyGenMetadata::LegacyV0(_res) => {
@@ -389,6 +394,7 @@ pub(crate) async fn key_gen_background<
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
+    schemes: Vec<SigningSchemeType>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
     eip712_domain: Eip712Domain,
@@ -403,6 +409,7 @@ pub(crate) async fn key_gen_background<
                 () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),
                 res = async_generate_fhe_keys(
                     &sk,
+                    &schemes,
                     params,
                     standard_key_set_config.to_owned(),
                     req_id,
@@ -486,6 +493,7 @@ pub(crate) async fn key_gen_background<
             };
             let info = match compute_info_decompression_keygen(
                 &sk,
+                &schemes,
                 &DSEP_PUBDATA_KEY,
                 preproc_id,
                 req_id,

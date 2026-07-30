@@ -11,7 +11,7 @@
 // TODO(#3078): Do this before finishing #3078, but wait until the last sub-issue since the signing surface may still change.
 pub use crate::cryptography::signing::ecdsa::{
     ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PrivateSigKeyVersions, PublicSigKey,
-    PublicSigKeyVersions, SIG_SIZE, compute_eip712_signature, gen_sig_keys,
+    PublicSigKeyVersions, SIG_SIZE, compute_eip712_signature, eip712_sign_hash, gen_sig_keys,
     recover_address_from_ext_signature,
 };
 pub use crate::cryptography::signing::{

@@ -537,6 +537,7 @@ where
             || {
                 generate_fhe_keys(
                     &sk_1,
+                    &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                     dkg_params,
                     StandardKeySetConfig::default().secret_key_config,
                     &key_id_1,
@@ -549,6 +550,7 @@ where
             || {
                 generate_fhe_keys(
                     &sk_2,
+                    &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                     dkg_params,
                     StandardKeySetConfig::default().secret_key_config,
                     &key_id_2,
@@ -1145,6 +1147,7 @@ where
             async move {
                 let info = match compute_info_compressed_keygen_from_digests(
                     sk,
+                    &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                     &INSECURE_PREPROCESSING_ID,
                     key_id,
                     compressed_digest,

@@ -39,9 +39,12 @@ use tracing::Instrument;
 use crate::{
     anyhow_error_and_log,
     consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-    cryptography::signatures::PrivateSigKey,
+    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
     engine::{
-        base::{BaseKmsStruct, compute_external_signature_preprocessing},
+        base::{
+            BaseKmsStruct, compute_preprocessing_signatures, ecdsa_result_signature,
+            stored_scheme_signatures_to_proto,
+        },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::KeyGenPreprocessor,
@@ -86,6 +89,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         context_id: ContextId,
         epoch_id: EpochId,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
         rate_limiting_permit: OwnedSemaphorePermit,
@@ -140,6 +144,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     sk,
                     &request_id,
                     &domain_clone,
+                    signing_schemes,
                     small_sessions,
                     bucket_store,
                     my_identity,
@@ -166,6 +171,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         sk: Arc<PrivateSigKey>,
         req_id: &RequestId,
         domain: &alloy_sol_types::Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
         sessions: Vec<SmallSession<ResiduePolyF4Z128>>,
         bucket_store: Arc<RwLock<MetaStore<BucketMetaStore>>>,
         own_identity: Identity,
@@ -318,9 +324,16 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     req_id,
                     own_identity,
                 );
-                match compute_external_signature_preprocessing(&sk, req_id, domain, extra_data) {
-                    Ok(external_signature) => Ok(BucketMetaStore {
-                        external_signature,
+                match compute_preprocessing_signatures(
+                    &sk,
+                    &signing_schemes,
+                    req_id,
+                    domain,
+                    extra_data,
+                ) {
+                    Ok(signatures) => Ok(BucketMetaStore {
+                        external_signature: ecdsa_result_signature(&signatures),
+                        signatures,
                         preprocessing_id: *req_id,
                         preprocessing_store: PreprocMaterial::Real(inner),
                         dkg_param: params,
@@ -385,6 +398,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             keyset_config,
             eip712_domain,
             extra_data,
+            signing_schemes,
         ) = validate_preproc_request(request)?;
         let my_role = validate_context_and_epoch(
             OP_KEYGEN_PREPROC_REQUEST,
@@ -414,6 +428,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 context_id,
                 epoch_id,
                 extra_data,
+                signing_schemes,
                 &eip712_domain,
                 timer,
                 rate_limiting_permit,
@@ -450,6 +465,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             _keyset_config,
             eip712_domain,
             extra_data,
+            signing_schemes,
         ) = validate_preproc_request(request)?;
         let my_role = validate_context_and_epoch(
             OP_INSECURE_KEYGEN_PREPROC_REQUEST,
@@ -482,6 +498,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         .await?;
         let preproc_bucket_res = super::new_insecure_preproc_bucket(
             &sk,
+            &signing_schemes,
             request_id,
             dkg_params,
             &eip712_domain,
@@ -585,8 +602,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         Ok(Response::new(KeyGenPreprocResult {
             preprocessing_id: Some(request_id.into()),
             external_signature: preproc_data.external_signature.clone(),
-            // TODO(#3078): populate multi-scheme signatures (replication step).
-            signatures: vec![],
+            signatures: stored_scheme_signatures_to_proto(&preproc_data.signatures),
         }))
     }
 }

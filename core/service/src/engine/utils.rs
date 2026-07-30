@@ -782,6 +782,7 @@ mod tests {
     impl TestStoredMaterial {
         fn current_metadata(&self) -> KeyGenMetadata {
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map: self.key_digest_map.clone(),
@@ -814,6 +815,7 @@ mod tests {
                 })
                 .collect();
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map,

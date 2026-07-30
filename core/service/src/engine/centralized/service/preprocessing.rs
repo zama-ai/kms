@@ -1,6 +1,6 @@
 use crate::{
     engine::{
-        base::compute_external_signature_preprocessing,
+        base::{compute_preprocessing_signatures, ecdsa_result_signature},
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
@@ -56,8 +56,16 @@ pub async fn preprocessing_impl<
         .start();
     let inner = request.into_inner();
 
-    let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain, extra_data) =
-        validate_preproc_request(inner)?;
+    let (
+        req_id,
+        _context_id,
+        _epoch_id,
+        dkg_param,
+        _key_set_config,
+        eip712_domain,
+        extra_data,
+        signing_schemes,
+    ) = validate_preproc_request(inner)?;
 
     let sk = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
@@ -73,12 +81,18 @@ pub async fn preprocessing_impl<
         OP_KEYGEN_PREPROC_REQUEST,
     )
     .await?;
-    let external_signature =
-        compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain, extra_data)
-            .map_err(|e| e.to_string());
+    let signatures = compute_preprocessing_signatures(
+        &sk,
+        &signing_schemes,
+        &req_id,
+        &eip712_domain,
+        extra_data,
+    )
+    .map_err(|e| e.to_string());
 
-    let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
-        external_signature,
+    let preproc_bucket = signatures.map(|signatures| CentralizedPreprocBucket {
+        external_signature: ecdsa_result_signature(&signatures),
+        signatures,
         dkg_param,
     });
 
@@ -148,8 +162,9 @@ pub async fn get_preprocessing_res_impl<
     Ok(Response::new(KeyGenPreprocResult {
         preprocessing_id: Some(request_id.into()),
         external_signature: preproc_data.external_signature.clone(),
-        // TODO(#3078): populate multi-scheme signatures (replication step).
-        signatures: vec![],
+        signatures: crate::engine::base::stored_scheme_signatures_to_proto(
+            &preproc_data.signatures,
+        ),
     }))
 }
 #[cfg(test)]

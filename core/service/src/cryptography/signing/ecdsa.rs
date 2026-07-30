@@ -482,11 +482,19 @@ pub fn compute_eip712_signature<D: SolStruct>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = data.eip712_signing_hash(eip712_domain);
+    eip712_sign_hash(sk, &data.eip712_signing_hash(eip712_domain))
+}
+
+/// Produce an EIP-712 recoverable ECDSA signature over a precomputed 32-byte
+/// signing hash (the value returned by [`SolStruct::eip712_signing_hash`]).
+pub fn eip712_sign_hash(
+    sk: &PrivateSigKey,
+    message_hash: &alloy_primitives::B256,
+) -> anyhow::Result<Vec<u8>> {
     let signer = PrivateKeySigner::from_signing_key(sk.raw_signing_key().clone());
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
+    let signature = signer.sign_hash_sync(message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
         "Public data EIP-712 hash {} with signature {} from signer {}",

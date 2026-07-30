@@ -15,6 +15,7 @@ use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
+use crate::engine::base::StoredSchemeSignature;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
@@ -93,6 +94,7 @@ pub(crate) enum CentralizedKeyGenResult {
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
     key_id: &RequestId,
@@ -105,6 +107,7 @@ pub(crate) async fn async_generate_fhe_keys(
     let sk_copy = sk.to_owned();
     let key_id_copy = key_id.to_owned();
     let preproc_id_copy = preproc_id.to_owned();
+    let schemes = schemes.to_vec();
 
     match keyset_config.computation_key_type {
         threshold_execution::keyset_config::ComputeKeyType::Cpu => {
@@ -119,6 +122,7 @@ pub(crate) async fn async_generate_fhe_keys(
         let out = match keyset_config.compressed_key_config {
             CompressedKeyConfig::None => generate_uncompressed_fhe_keys(
                 &sk_copy,
+                &schemes,
                 params,
                 keyset_config.secret_key_config,
                 &key_id_copy,
@@ -130,6 +134,7 @@ pub(crate) async fn async_generate_fhe_keys(
             .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
             CompressedKeyConfig::All => generate_fhe_keys(
                 &sk_copy,
+                &schemes,
                 params,
                 keyset_config.secret_key_config,
                 &key_id_copy,
@@ -231,6 +236,7 @@ pub(crate) async fn async_generate_crs(
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn generate_fhe_keys(
     sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
     params: DKGParams,
     keyset_config: KeyGenSecretKeyConfig,
     key_id: &RequestId,
@@ -284,6 +290,7 @@ pub(crate) fn generate_fhe_keys(
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
+        schemes,
         client_key,
         key_id,
         preproc_id,
@@ -300,6 +307,7 @@ pub(crate) fn generate_fhe_keys(
 #[expect(clippy::too_many_arguments)]
 pub fn generate_uncompressed_fhe_keys(
     sk: &PrivateSigKey,
+    schemes: &[SigningSchemeType],
     params: DKGParams,
     compression_config: KeyGenSecretKeyConfig,
     key_id: &RequestId,
@@ -338,6 +346,7 @@ pub fn generate_uncompressed_fhe_keys(
         };
         let handles = KmsFheKeyHandles::new(
             sk,
+            schemes,
             client_key,
             key_id,
             preproc_id,
@@ -424,6 +433,7 @@ pub(crate) struct CentralizedTestingKeys {
 #[derive(Debug, Clone)]
 pub struct CentralizedPreprocBucket {
     pub(crate) external_signature: Vec<u8>,
+    pub(crate) signatures: Vec<StoredSchemeSignature>,
     pub(crate) dkg_param: DKGParams,
 }
 
@@ -1290,6 +1300,7 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let (pub_fhe_keys, key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
             &RequestId::from_str(key_id).unwrap(),
@@ -1305,6 +1316,7 @@ pub(crate) mod tests {
 
         let (other_pub_fhe_keys, other_key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
             &RequestId::from_str(other_key_id).unwrap(),
@@ -1356,6 +1368,7 @@ pub(crate) mod tests {
         assert!(
             generate_fhe_keys(
                 &sig_sk,
+                &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 DEFAULT_PARAM,
                 StandardKeySetConfig::default().secret_key_config,
                 &key_id,
@@ -1383,6 +1396,7 @@ pub(crate) mod tests {
 
         let result = generate_fhe_keys(
             &sig_sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             KeyGenSecretKeyConfig::GenerateAll,
             &key_id,

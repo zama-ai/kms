@@ -639,6 +639,8 @@ impl<
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_uncompressed_keygen(
                         sk,
+                        // Resharing has no per-request scheme choice (issue #3078).
+                        &[SigningSchemeType::Ecdsa256k1],
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
@@ -692,6 +694,8 @@ impl<
 
                     let info = match compute_info_compressed_keygen(
                         sk,
+                        // Resharing has no per-request scheme choice (issue #3078).
+                        &[SigningSchemeType::Ecdsa256k1],
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
@@ -1528,8 +1532,7 @@ impl<
                                 preprocessing_id: Some(res.preprocessing_id.into()),
                                 key_digests,
                                 external_signature: res.external_signature.clone(),
-                                // TODO(#3078): populate multi-scheme signatures (replication step).
-                                signatures: vec![],
+                                signatures: stored_scheme_signatures_to_proto(&res.signatures),
                             });
                         }
                         KeyGenMetadata::LegacyV0(_res) => {

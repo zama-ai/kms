@@ -54,7 +54,10 @@ use kms_lib::{
         },
     },
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
+        base::{
+            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
+            StoredSchemeSignature,
+        },
         context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{
             EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
@@ -229,6 +232,11 @@ fn test_key_gen_metadata(
     );
 
     let new_versionized = KeyGenMetadataInner {
+        // The upgrade backfills the ECDSA entry from `external_signature`.
+        signatures: vec![StoredSchemeSignature {
+            scheme: SigningSchemeType::Ecdsa256k1,
+            signature: external_signature.clone(),
+        }],
         key_id,
         preprocessing_id,
         key_digest_map,
@@ -288,7 +296,11 @@ fn test_crs_gen_metadata(
         digest,
         max_num_bits,
         external_signature.clone(),
-        vec![],
+        // The upgrade backfills the ECDSA entry from `external_signature`.
+        vec![StoredSchemeSignature {
+            scheme: SigningSchemeType::Ecdsa256k1,
+            signature: external_signature.clone(),
+        }],
         vec![],
     );
     match &new_current {
@@ -370,6 +382,11 @@ fn test_key_gen_metadata_with_extra_data(
         compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
 
     let new_versionized = KeyGenMetadataInner {
+        // The upgrade backfills the ECDSA entry from `external_signature`.
+        signatures: vec![StoredSchemeSignature {
+            scheme: SigningSchemeType::Ecdsa256k1,
+            signature: external_signature.clone(),
+        }],
         key_id,
         preprocessing_id,
         key_digest_map,
@@ -421,7 +438,11 @@ fn test_crs_gen_metadata_with_extra_data(
         digest,
         max_num_bits,
         external_signature.clone(),
-        vec![],
+        // The upgrade backfills the ECDSA entry from `external_signature`.
+        vec![StoredSchemeSignature {
+            scheme: SigningSchemeType::Ecdsa256k1,
+            signature: external_signature.clone(),
+        }],
         extra_data,
     );
     match &new_current {
@@ -1078,6 +1099,7 @@ fn test_kms_fhe_key_handles(
     let preproc_id = RequestId::zeros();
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
+        &[SigningSchemeType::Ecdsa256k1],
         client_key,
         &key_id,
         &preproc_id,

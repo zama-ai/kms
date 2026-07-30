@@ -2188,6 +2188,7 @@ async fn remove_oprf_from_existing_keyset(
         };
         let metadata = compute_info_uncompressed_keygen(
             &signing_key,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &DSEP_PUBDATA_KEY,
             preproc_id,
             key_id,
