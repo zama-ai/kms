@@ -96,17 +96,16 @@ impl<
         // to maybe decide to store data somewhere else
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
-        //Init single sharing, we need 2 calls per triple and 1 call per randomness
-        self.single_sharing
-            .init(large_session, 2 * batch_sizes.triples + batch_sizes.randoms)
-            .instrument(init_span.clone())
-            .await?;
-
-        //Init double sharing, we need 1 call per triple
-        self.double_sharing
-            .init(large_session, batch_sizes.triples)
+        //Jointly init single and double sharing in a single local-share protocol.
+        //Single sharing needs 2 calls per triple and 1 per randomness; double sharing 1 per triple.
+        let single_l = 2 * batch_sizes.triples + batch_sizes.randoms;
+        let single_shares = self
+            .double_sharing
+            .init_joint_with_single(large_session, single_l, batch_sizes.triples)
             .instrument(init_span)
             .await?;
+        self.single_sharing
+            .load_local_single_shares(large_session, single_shares, single_l)?;
 
         if batch_sizes.triples > 0 {
             //Preprocess a batch of triples
@@ -449,23 +448,21 @@ mod tests {
     }
 
     // Rounds (happy path)
-    // init single sharing
+    // joint init of single and double sharing (single local-share protocol)
     //         share dispute = 1 round (secrets and pads shared together)
     //         coinflip = vss + open = (1 + 3 + threshold) + 1
     //         verify = 1 reliable_broadcast = (3 + t) rounds
     //             (the m check-value maps are batched into a single broadcast)
-    // init double sharing
-    //         same as single sharing above (run back-to-back, not yet merged)
     //  triple batch - have been precomputed, just one open = 1 round
     //  random batch - have been precomputed = 0 rounds
-    // = 2 * (1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1
+    // = (1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1
     // Note: 3 batches, so above rounds times 3
-    // 5p/1t: 2 * (1 + 5 + 1 + 4) + 1 = 23
-    // 9p/2t: 2 * (1 + 6 + 1 + 5) + 1 = 27
+    // 5p/1t: (1 + 5 + 1 + 4) + 1 = 12
+    // 9p/2t: (1 + 6 + 1 + 5) + 1 = 14
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(5, 1, Some(3 * 23)))]
-    #[case(TestingParameters::init_honest(9, 2, Some(3 * 27)))]
+    #[case(TestingParameters::init_honest(5, 1, Some(3 * 12)))]
+    #[case(TestingParameters::init_honest(9, 2, Some(3 * 14)))]
     async fn test_large_offline_z128(#[case] params: TestingParameters) {
         let honest_offline = SecureLargePreprocessing::default();
 
@@ -479,8 +476,8 @@ mod tests {
     // Rounds: same as for z128, see above
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(5, 1, Some(3 * 23)))]
-    #[case(TestingParameters::init_honest(9, 2, Some(3 * 27)))]
+    #[case(TestingParameters::init_honest(5, 1, Some(3 * 12)))]
+    #[case(TestingParameters::init_honest(9, 2, Some(3 * 14)))]
     async fn test_large_offline_z64(#[case] params: TestingParameters) {
         let honest_offline = SecureLargePreprocessing::default();
 

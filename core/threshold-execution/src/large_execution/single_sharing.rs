@@ -22,6 +22,19 @@ pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
         l: usize,
     ) -> anyhow::Result<()>;
     async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z>;
+
+    /// Load an externally produced set of degree-t local single shares (e.g. coming from a joint
+    /// single+double sharing) as the material `next()` will extract from, (re)initialising the
+    /// extraction VDM matrix. `local_single_shares` maps each role to its `l` degree-t shares.
+    ///
+    /// This is the non-interactive counterpart of [`init`](Self::init): the caller has already
+    /// run the local single share protocol elsewhere.
+    fn load_local_single_shares<L: LargeSessionHandles>(
+        &mut self,
+        session: &L,
+        local_single_shares: HashMap<Role, Vec<Z>>,
+        l: usize,
+    ) -> anyhow::Result<()>;
 }
 
 //Might want to store the dispute set at the output of the lsl call
@@ -95,6 +108,34 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
 
         // Prepare data from the map output by LocalSingleShare to the vector ready to be multiplied with the VDM matrix
         self.available_lsl = format_for_next(shares, l)?;
+        self.max_num_iterations = l;
+
+        //Init vdm matrix only once or when dim changes
+        let curr_height = session.num_parties();
+        let curr_width = session.num_parties() - session.threshold() as usize;
+        if self.vdm_matrix.is_empty()
+            || curr_height != self.vdm_matrix.height()
+            || curr_width != self.vdm_matrix.width()
+        {
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
+                session.num_parties(),
+                session.num_parties() - session.threshold() as usize,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn load_local_single_shares<L: LargeSessionHandles>(
+        &mut self,
+        session: &L,
+        local_single_shares: HashMap<Role, Vec<Z>>,
+        l: usize,
+    ) -> anyhow::Result<()> {
+        if l == 0 {
+            return Ok(());
+        }
+
+        self.available_lsl = format_for_next(local_single_shares, l)?;
         self.max_num_iterations = l;
 
         //Init vdm matrix only once or when dim changes

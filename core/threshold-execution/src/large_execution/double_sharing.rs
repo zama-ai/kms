@@ -1,3 +1,6 @@
+use super::local_double_and_single_share::{
+    JointShares, LocalDoubleAndSingleShare, RealLocalDoubleAndSingleShare,
+};
 use super::local_double_share::{DoubleShares, LocalDoubleShare, SecureLocalDoubleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
@@ -38,6 +41,23 @@ pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>>;
+
+    /// Jointly initialise this double sharing and a companion single sharing in a single
+    /// local-share protocol execution. Shares `l_single + l_double` secrets through one
+    /// [`LocalDoubleShare`](super::local_double_share::LocalDoubleShare), stores the last
+    /// `l_double` of them as this double sharing's material, and returns the first `l_single`
+    /// degree-t shares (one vector per role) for the companion single sharing to load via
+    /// [`SingleSharing::load_local_single_shares`](super::single_sharing::SingleSharing::load_local_single_shares).
+    ///
+    /// This collapses the previously separate single- and double-sharing inits into one round of
+    /// ShareDispute + Coinflip + verify (spec parity), at the cost of also carrying the single
+    /// secrets as 2t shares on the wire.
+    async fn init_joint_with_single<L: LargeSessionHandles>(
+        &mut self,
+        session: &mut L,
+        l_single: usize,
+        l_double: usize,
+    ) -> anyhow::Result<HashMap<Role, Vec<Z>>>;
 }
 
 //Might want to store the dispute set at the output of the ldl call
@@ -126,6 +146,51 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             )?;
         }
         Ok(())
+    }
+
+    #[instrument(name="DoubleAndSingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),my_role=?session.my_role(), single_batch_size = ?l_single, double_batch_size = ?l_double))]
+    async fn init_joint_with_single<L: LargeSessionHandles>(
+        &mut self,
+        session: &mut L,
+        l_single: usize,
+        l_double: usize,
+    ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
+        if l_single + l_double == 0 {
+            return Ok(HashMap::new());
+        }
+
+        let single_secrets = (0..l_single)
+            .map(|_| Z::sample(session.rng()))
+            .collect_vec();
+        let double_secrets = (0..l_double)
+            .map(|_| Z::sample(session.rng()))
+            .collect_vec();
+
+        //Share single and double secrets together in one LocalDoubleShare
+        let joint = RealLocalDoubleAndSingleShare::new(self.local_double_share.clone());
+        let JointShares { single, double } = joint
+            .execute(session, &single_secrets, &double_secrets)
+            .await?;
+
+        //Store the double-sharing material for next()
+        self.available_ldl = format_for_next(double, l_double)?;
+        self.max_num_iterations = l_double;
+
+        //Init vdm matrix only once or when dim changes
+        let curr_height = session.num_parties();
+        let curr_width = session.num_parties() - session.threshold() as usize;
+        if self.vdm_matrix.is_empty()
+            || curr_height != self.vdm_matrix.height()
+            || curr_width != self.vdm_matrix.width()
+        {
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
+                session.num_parties(),
+                session.num_parties() - session.threshold() as usize,
+            )?;
+        }
+
+        //Return the single-sharing material for the companion SingleSharing to load
+        Ok(single)
     }
 
     //NOTE: This is instrumented by the caller function to use the same span for all calls
