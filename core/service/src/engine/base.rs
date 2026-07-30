@@ -2557,7 +2557,7 @@ pub(crate) mod tests {
         );
 
         // V1 -> V2 -> V3: the HashMap is converted to a BTreeMap (V2) and the
-        // per-scheme `signatures` list is backfilled with the ECDSA entry (V3).
+        // per-scheme `signatures` list is added (V3) and upgrades to empty.
         // Field-by-field structural equality remains, modulo container type.
         let upgraded_v3: KeyGenMetadataInner = upgraded.upgrade().unwrap().upgrade().unwrap();
         assert_eq!(upgraded_v3.extra_data, None);
