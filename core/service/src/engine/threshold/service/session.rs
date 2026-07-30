@@ -1,6 +1,7 @@
 // === Standard Library ===
 use std::{
     collections::{HashMap, hash_map::Entry},
+    hash::Hash,
     sync::{Arc, Weak},
 };
 
@@ -76,38 +77,43 @@ impl tfhe::named::Named for PRSSSetupCombined {
 
 type ContextMap = HashMap<ContextId, Context>;
 
-#[derive(Clone, Default)]
-struct LifecycleCoordinator {
-    // Weak entries ensure rejected requests for random IDs do not grow these registries forever.
-    // The owned lock guards keep their lock alive for exactly the lifecycle operation.
-    context_locks: Arc<Mutex<HashMap<ContextId, Weak<RwLock<()>>>>>,
-    epoch_locks: Arc<Mutex<HashMap<EpochId, Weak<RwLock<()>>>>>,
+/// Hands out one lock per ID, keyed by the identifier type of the guarded resource.
+///
+/// Weak entries ensure rejected requests for random IDs do not grow the registry forever.
+/// The owned lock guards taken by the callers keep their lock alive for exactly the lifecycle
+/// operation.
+#[derive(Clone)]
+struct LockRegistry<Id> {
+    locks: Arc<Mutex<HashMap<Id, Weak<RwLock<()>>>>>,
 }
 
-impl LifecycleCoordinator {
-    async fn context_lock(&self, context_id: &ContextId) -> Arc<RwLock<()>> {
-        let mut locks = self.context_locks.lock().await;
+// Hand-written because `#[derive(Default)]` would add a spurious `Id: Default` bound.
+impl<Id> Default for LockRegistry<Id> {
+    fn default() -> Self {
+        Self {
+            locks: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl<Id: Copy + Eq + Hash> LockRegistry<Id> {
+    async fn lock(&self, id: &Id) -> Arc<RwLock<()>> {
+        let mut locks = self.locks.lock().await;
         locks.retain(|_, lock| lock.strong_count() > 0);
-        if let Some(lock) = locks.get(context_id).and_then(Weak::upgrade) {
+        if let Some(lock) = locks.get(id).and_then(Weak::upgrade) {
             return lock;
         }
 
         let lock = Arc::new(RwLock::new(()));
-        locks.insert(*context_id, Arc::downgrade(&lock));
+        locks.insert(*id, Arc::downgrade(&lock));
         lock
     }
+}
 
-    async fn epoch_lock(&self, epoch_id: &EpochId) -> Arc<RwLock<()>> {
-        let mut locks = self.epoch_locks.lock().await;
-        locks.retain(|_, lock| lock.strong_count() > 0);
-        if let Some(lock) = locks.get(epoch_id).and_then(Weak::upgrade) {
-            return lock;
-        }
-
-        let lock = Arc::new(RwLock::new(()));
-        locks.insert(*epoch_id, Arc::downgrade(&lock));
-        lock
-    }
+#[derive(Clone, Default)]
+struct LifecycleCoordinator {
+    context_locks: LockRegistry<ContextId>,
+    epoch_locks: LockRegistry<EpochId>,
 }
 
 /// Identifies the lifecycle resource that is already held by a conflicting operation.
@@ -217,12 +223,12 @@ impl SessionMaker {
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> Result<EpochCreationLease, LifecycleConflict> {
-        let context = self.lifecycle.context_lock(context_id).await;
+        let context = self.lifecycle.context_locks.lock(context_id).await;
         let context = context
             .try_read_owned()
             .map_err(|_| LifecycleConflict::Context(*context_id))?;
 
-        let epoch = self.lifecycle.epoch_lock(epoch_id).await;
+        let epoch = self.lifecycle.epoch_locks.lock(epoch_id).await;
         let epoch = epoch
             .try_read_owned()
             .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;
@@ -242,7 +248,7 @@ impl SessionMaker {
         &self,
         context_id: &ContextId,
     ) -> Result<ContextDestructionLease, LifecycleConflict> {
-        let context = self.lifecycle.context_lock(context_id).await;
+        let context = self.lifecycle.context_locks.lock(context_id).await;
         let context = context
             .try_write_owned()
             .map_err(|_| LifecycleConflict::Context(*context_id))?;
@@ -257,7 +263,7 @@ impl SessionMaker {
         &self,
         epoch_id: &EpochId,
     ) -> Result<EpochDestructionLease, LifecycleConflict> {
-        let epoch = self.lifecycle.epoch_lock(epoch_id).await;
+        let epoch = self.lifecycle.epoch_locks.lock(epoch_id).await;
         let epoch = epoch
             .try_write_owned()
             .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;

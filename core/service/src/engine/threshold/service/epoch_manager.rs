@@ -2817,14 +2817,15 @@ pub(crate) mod tests {
         // Destruction must return before touching the registered epoch or its persisted PRSS data.
         assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
         let private_storage = epoch_manager.crypto_storage.get_private_storage();
-        let priv_storage = private_storage.lock().await;
-        assert!(
-            priv_storage
-                .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
-                .await
-                .unwrap()
-        );
-        drop(priv_storage);
+        {
+            let priv_storage = private_storage.lock().await;
+            assert!(
+                priv_storage
+                    .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
 
         // Success, failure, panic and task cancellation all drop this owned lease, allowing cleanup.
         drop(creation_lease);
