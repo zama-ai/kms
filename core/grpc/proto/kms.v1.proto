@@ -158,6 +158,7 @@ enum CompressedKeyConfig {
 message KeyGenPreprocResult {
   // Preprocessing ID used for keygen
   RequestId preprocessing_id = 1;
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
 
   // Per-scheme KMS signatures.
@@ -258,6 +259,7 @@ message KeyGenResult {
   //     /// @notice The digest of the generated key.
   //     bytes digest;
   // }
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 4;
 
   // Per-scheme KMS signatures.
@@ -331,6 +333,7 @@ message CrsGenResult {
   //     /// @notice The digest of the generated CRS.
   //     bytes crsDigest;
   // }
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 4;
 
   // Per-scheme KMS signatures.
@@ -420,7 +423,7 @@ message PublicDecryptionResponsePayload {
 
 // KMS-internal Public Decryption Response
 message PublicDecryptionResponse {
-  // DEPRECATED to be removed in 0.16.0:
+  // DEPRECATED to be removed in 0.16.0 TODO(0.16)
   // The KMS-internal ECDSA/secp256k1 authenticity signature over
   // the serialization of [PublicDecryptionResponsePayload]. Kept at field 1 (and
   // kept populated) for wire backward-compatibility with clients that predate
@@ -430,6 +433,7 @@ message PublicDecryptionResponse {
 
   // The ECDSA/secp256k1 EIP-712 signature on external_decryption_result for the
   // external recipient (e.g. using EIP712 for fhevm).
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
 
   // The payload that is signed
@@ -494,7 +498,7 @@ message UserDecryptionRequest {
 }
 
 message UserDecryptionResponse {
-  // DEPRECATED to be removed in 0.16.0: 
+  // DEPRECATED to be removed in 0.16.0 TODO(0.16)
   // The KMS-internal ECDSA/secp256k1 authenticity signature over
   // the serialization of [UserDecryptionResponsePayload]. Kept at field 1 (and
   // kept populated) for wire backward-compatibility with clients that predate
@@ -510,6 +514,7 @@ message UserDecryptionResponse {
   //     bytes userDecryptedShare; // serialization of payload
   //     bytes extraData;
   // }
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
 
   // The actual [UserDecryptionResponsePayload].
