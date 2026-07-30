@@ -156,7 +156,6 @@ ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "z
 ml-kem = { version = "=0.2.3", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
-nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
 oid-registry = "=0.8.1"  # OID registry for ASN.1 - LOW RISK: rusticata team
@@ -184,7 +183,6 @@ reqwest = { version = "=0.13.4", default-features = false, features = ["json", "
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.26.1"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.9", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
-schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
 serde = { version = "1.0.228", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
 serde_json = "=1.0.150"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
@@ -193,8 +191,8 @@ sha3 = "=0.12.0"  # SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downlo
 shake = "=0.1.0"  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads
 signature = "=2.2.0"  # Digital signature traits - LOW RISK: RustCrypto org, 50M+ downloads
 statrs = "=0.18.0"  # Statistical functions - LOW RISK: starts-dev team
-strum = "=0.28.0"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
-strum_macros = "=0.28.0"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
+strum = "=0.27.2"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
+strum_macros = "=0.27.2"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
 syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RISK: Reputable individual maintainer (dtolnay), 993M downloads
 sysinfo = "0.38.4"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency

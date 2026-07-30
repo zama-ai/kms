@@ -1222,10 +1222,29 @@ impl<
     ///
     /// [`Self::destroy_epoch`] only touches storage, so the cache must be cleared here as well or the decompressed keys
     /// stay resident until restart. The cache is purged regardless of the deletion outcome.
+    ///
+    /// An exclusive lifecycle lease prevents creation of the same epoch from starting or completing
+    /// concurrently with deletion.
     async fn destroy_epoch_and_purge_cache(
         &self,
         epoch_id: &EpochId,
     ) -> Result<Response<Empty>, MetricedError> {
+        let _destruction_lease = self
+            .session_maker
+            .try_get_epoch_destruction_lease(epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_EPOCH,
+                    Some((*epoch_id).into()),
+                    anyhow::anyhow!(
+                        "Cannot destroy epoch ID {epoch_id}: {e}. Retry once epoch creation has \
+                         settled."
+                    ),
+                    tonic::Code::FailedPrecondition,
+                )
+            })?;
+
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
         // NOTE: destroy_epoch will also destroy PRSS data
@@ -1453,6 +1472,21 @@ impl<
             resharing: resharing_params,
         } = validate_new_mpc_epoch_request(inner)?;
 
+        // Retain both shared leases until the background task has completed every write. Context
+        // and epoch destruction acquire the corresponding exclusive lease before mutating state.
+        let creation_lease = self
+            .session_maker
+            .try_get_epoch_creation_lease(&context_id, &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(epoch_id.into()),
+                    anyhow::anyhow!("Cannot create epoch ID {epoch_id}: {e}"),
+                    tonic::Code::FailedPrecondition,
+                )
+            })?;
+
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(MetricedError::new(
                 OP_NEW_EPOCH,
@@ -1506,6 +1540,7 @@ impl<
         let session_maker = self.session_maker.clone();
         let crypto_storage = self.crypto_storage.clone();
         self.tracker.spawn(async move {
+            let _creation_lease = creation_lease;
             let _rate_limiter_permit = rate_limiter_permit;
             let crypto_storage = crypto_storage;
             let context_id = context_id;
@@ -2770,6 +2805,63 @@ pub(crate) mod tests {
         .unwrap_err();
 
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// The creation lease remains live after PRSS registers the epoch, preventing destruction while
+    /// resharing can still write private shares. Releasing the lease makes destruction retryable.
+    #[tokio::test]
+    async fn test_destroy_epoch_rejected_while_creation_in_flight() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        // A "keeper" epoch so the target is not the last remaining one, which `destroy_epoch`
+        // refuses to remove for an unrelated reason.
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, epoch_id, *DEFAULT_MPC_CONTEXT).await;
+        seed_epoch(&epoch_manager, keeper_epoch_id, *DEFAULT_MPC_CONTEXT).await;
+
+        // Mirror a creation task that has registered its epoch after PRSS but is still resharing.
+        let creation_lease = epoch_manager
+            .session_maker
+            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &epoch_id)
+            .await
+            .unwrap();
+
+        let err = epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        // Destruction must return before touching the registered epoch or its persisted PRSS data.
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        {
+            let priv_storage = private_storage.lock().await;
+            assert!(
+                priv_storage
+                    .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
+
+        // Success, failure, panic and task cancellation all drop this owned lease, allowing cleanup.
+        drop(creation_lease);
+        epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap();
+
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        let priv_storage = private_storage.lock().await;
+        assert!(
+            !priv_storage
+                .data_exists(&epoch_id.into(), &PrivDataType::EpochData.to_string())
+                .await
+                .unwrap()
+        );
     }
 
     /// Validates partial-failure in destroying MPC epoch:
