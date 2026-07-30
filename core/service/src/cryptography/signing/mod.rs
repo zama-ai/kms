@@ -326,12 +326,7 @@ impl PrivateSigKey {
     /// The signing key to use for `scheme`.
     ///
     /// For [`SigningSchemeType::Ecdsa256k1`] this yields the persisted key's own
-    /// material — it is already an ECDSA key and is the node's primary,
-    /// on-chain-registered identity (its Ethereum address), so it must be used
-    /// as-is rather than re-derived. For every other scheme the key is
-    /// deterministically derived from this key via a domain-separated KDF
-    /// ([`Self::derived_seed`]), so no new key material is persisted and
-    /// deriving the same scheme twice yields the identical key.
+    /// material instead of deriving a new ECDSA key.
     pub fn derive_signing_key(
         &self,
         scheme: SigningSchemeType,

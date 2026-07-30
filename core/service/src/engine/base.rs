@@ -411,7 +411,7 @@ pub(crate) fn compute_info_crs_from_digest(
 
 /// Sign a preprocessing result: the always-present ECDSA/EIP-712
 /// `external_signature`, plus the per-scheme `signatures` for exactly the
-/// requested schemes. See [`sign_eip712_result`].
+/// requested schemes.
 pub(crate) fn compute_preprocessing_signatures(
     sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
@@ -2571,7 +2571,6 @@ pub(crate) mod tests {
                 .collect::<BTreeMap<_, _>>(),
         );
         assert_eq!(upgraded_v3.external_signature, q126.external_signature);
-        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
         assert!(upgraded_v3.signatures.is_empty());
     }
 

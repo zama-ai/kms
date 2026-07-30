@@ -17,7 +17,7 @@ pub const SEED_LEN: usize = 32;
 pub struct Ed25519;
 
 impl SigningScheme for Ed25519 {
-    type SigningKey = Ed25519SigningKey; // // TODO(#3078) Should this be a wrapped type? Consider in the last subissue.
+    type SigningKey = Ed25519SigningKey; // TODO(#3078) Should this be a wrapped type? Consider in the last subissue.
     type VerificationKey = Ed25519VerifyingKey;
 
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> Result<Vec<u8>, SigningError> {

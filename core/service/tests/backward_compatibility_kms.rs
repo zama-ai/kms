@@ -229,7 +229,6 @@ fn test_key_gen_metadata(
     );
 
     let new_versionized = KeyGenMetadataInner {
-        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
         signatures: vec![],
         key_id,
         preprocessing_id,
@@ -290,7 +289,6 @@ fn test_crs_gen_metadata(
         digest,
         max_num_bits,
         external_signature.clone(),
-        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
         vec![],
         vec![],
     );
@@ -373,7 +371,6 @@ fn test_key_gen_metadata_with_extra_data(
         compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
 
     let new_versionized = KeyGenMetadataInner {
-        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
         signatures: vec![],
         key_id,
         preprocessing_id,
@@ -426,7 +423,6 @@ fn test_crs_gen_metadata_with_extra_data(
         digest,
         max_num_bits,
         external_signature.clone(),
-        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
         vec![],
         extra_data,
     );

@@ -168,7 +168,7 @@ impl Client {
             return Err(anyhow_error_and_log("missing server address at ID 1"));
         };
 
-        // prefer the normal ECDSA verification over the external (EIP712) one.
+        // Prefer the raw ECDSA verification over the external (EIP712) one.
         // The internal signatures are carried per-scheme; pick the ECDSA entry,
         // falling back to the legacy scalar `signature` field for responses from
         // older servers.

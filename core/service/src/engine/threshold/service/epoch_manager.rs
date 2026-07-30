@@ -669,7 +669,6 @@ impl<
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_uncompressed_keygen(
                         sk,
-                        // Resharing has no per-request scheme choice (issue #3078).
                         &[SigningSchemeType::Ecdsa256k1],
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
@@ -724,7 +723,6 @@ impl<
 
                     let info = match compute_info_compressed_keygen(
                         sk,
-                        // Resharing has no per-request scheme choice (issue #3078).
                         &[SigningSchemeType::Ecdsa256k1],
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,

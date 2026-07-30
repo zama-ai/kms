@@ -163,7 +163,7 @@ message KeyGenPreprocResult {
 
   // Per-scheme KMS signatures.
   // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 5;
+  repeated SchemeSignature signatures = 3;
 }
 
 // Request for generating new keys under a certain handle and return a URI where
