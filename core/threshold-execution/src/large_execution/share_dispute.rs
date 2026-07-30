@@ -92,10 +92,21 @@ pub(crate) fn share_secrets<Z, R: Rng + CryptoRng>(
 where
     Z: RingWithExceptionalSequence + Invert,
 {
+    // The root factors only depend on `num_parties`, so compute them once here instead of once
+    // per secret inside `evaluate_w_new_roots` (each recomputation does `num_parties` field
+    // inversions).
+    let (normalized_parties_root, x_coords) = Poly::<Z>::normalized_parties_root(num_parties)?;
     secrets
         .iter()
         .map(|secret| {
-            interpolate_poly_w_punctures(rng, num_parties, degree, punctured_idx.to_vec(), *secret)
+            interpolate_poly_w_punctures_with_roots(
+                rng,
+                &normalized_parties_root,
+                &x_coords,
+                degree,
+                punctured_idx.to_vec(),
+                *secret,
+            )
         })
         .collect::<anyhow::Result<_>>()
 }
@@ -408,9 +419,40 @@ pub(crate) async fn send_and_receive_share_dispute_single<Z: Ring, L: LargeSessi
 
 /// Constructs a random polynomial given a set of `threshold` party IDs which should evaluate to 0 on the interpolated polynomial.
 /// Returns all the `num_parties` y-values interpolated from the `dispute_party_ids` point embedded onto the x-axis.
+///
+/// Test-only convenience wrapper computing the root factors on the fly; production code shares
+/// a single [`Poly::normalized_parties_root`] across a batch via `share_secrets` and calls
+/// `interpolate_poly_w_punctures_with_roots` directly.
+#[cfg(test)]
 pub(crate) fn interpolate_poly_w_punctures<Z, R: Rng + CryptoRng>(
     rng: &mut R,
     num_parties: usize,
+    threshold: usize,
+    dispute_party_ids: Vec<usize>,
+    secret: Z,
+) -> anyhow::Result<Vec<Z>>
+where
+    Z: RingWithExceptionalSequence,
+    Z: Invert,
+{
+    let (normalized_parties_root, x_coords) = Poly::<Z>::normalized_parties_root(num_parties)?;
+    interpolate_poly_w_punctures_with_roots(
+        rng,
+        &normalized_parties_root,
+        &x_coords,
+        threshold,
+        dispute_party_ids,
+        secret,
+    )
+}
+
+/// `interpolate_poly_w_punctures` with the root factors (which only depend on `num_parties`)
+/// computed by the caller, so that a batch of secrets can share a single
+/// [`Poly::normalized_parties_root`] computation.
+pub(crate) fn interpolate_poly_w_punctures_with_roots<Z, R: Rng + CryptoRng>(
+    rng: &mut R,
+    normalized_parties_root: &[Poly<Z>],
+    x_coords: &[Z],
     threshold: usize,
     dispute_party_ids: Vec<usize>,
     secret: Z,
@@ -429,18 +471,26 @@ where
     let base_poly = Poly::sample_random_with_fixed_constant(rng, secret, degree);
     // Modify the polynomial by increasing its degree with |dispute_party_ids| and ensuring the points
     // in `dispute_party_ids` gets y-value=0 and evaluate it for 1..num_parties
-    let points = evaluate_w_new_roots(num_parties, dispute_party_ids, &base_poly)?;
+    let points = evaluate_w_new_roots_with_roots(
+        normalized_parties_root,
+        x_coords,
+        dispute_party_ids,
+        &base_poly,
+    );
     // check that the zero point is `secret`
     debug_assert_eq!(secret, points[0]);
     // exclude the point at x=0 (i.e. the secret)
     Ok(points[1..points.len()].to_vec())
 }
 
-//TODO: This function should be optimized with memoized calls to normalized_parties_root
 /// Helper method for `punctured` polynomial interpolation.
 /// Takes a base polynomial and increases its degree by multiplying roots of the form (1 - X/embed(i)) for each i in [points_of_new_roots].
 /// Such that the new polynomial has same constant term, and evaluates to 0 at each embed(i) for i in [points_of_new_roots]
 /// Then returns all the 0..[num_parties] points on the polynomial.
+///
+/// Test-only convenience wrapper computing the root factors on the fly; production code calls
+/// `evaluate_w_new_roots_with_roots` with roots shared across a batch.
+#[cfg(test)]
 pub(crate) fn evaluate_w_new_roots<Z>(
     num_parties: usize,
     points_of_new_roots: Vec<usize>,
@@ -451,6 +501,28 @@ where
     Z: Invert,
 {
     let (normalized_parties_root, x_coords) = Poly::<Z>::normalized_parties_root(num_parties)?;
+    Ok(evaluate_w_new_roots_with_roots(
+        &normalized_parties_root,
+        &x_coords,
+        points_of_new_roots,
+        base_poly,
+    ))
+}
+
+/// `evaluate_w_new_roots` with the root factors (`normalized_parties_root`, `x_coords`)
+/// supplied by the caller. This is the memoization hook: the roots only depend on the number of
+/// parties, so a batch of sharings computes them once via [`Poly::normalized_parties_root`] and
+/// reuses them here instead of recomputing (with `num_parties` field inversions) per sharing.
+pub(crate) fn evaluate_w_new_roots_with_roots<Z>(
+    normalized_parties_root: &[Poly<Z>],
+    x_coords: &[Z],
+    points_of_new_roots: Vec<usize>,
+    base_poly: &Poly<Z>,
+) -> Vec<Z>
+where
+    Z: RingWithExceptionalSequence,
+    Z: Invert,
+{
     let mut poly = base_poly.clone();
 
     // poly will be of degree [threshold], zero at the points [x_coords], which reflect the party IDs embedded, and [secret] at 0
@@ -458,8 +530,7 @@ where
         poly = poly * normalized_parties_root[p - 1].clone();
     }
     // evaluate the poly at the embedded party indices
-    let points: Vec<_> = (0..=num_parties).map(|p| poly.eval(&x_coords[p])).collect();
-    Ok(points)
+    x_coords.iter().map(|x| poly.eval(x)).collect()
 }
 
 #[cfg(test)]

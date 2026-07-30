@@ -23,6 +23,7 @@ use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use num_integer::div_ceil;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use threshold_types::protocol::ProtocolDescription;
@@ -207,36 +208,48 @@ pub(crate) async fn verify_sharing<
     // check-value maps are independent of one another: we compute them all locally, then
     // broadcast them together in a single parallel round (spec Fig. 88), instead of one
     // broadcast per `g`.
-    let mut my_batch = Vec::with_capacity(m);
-    for g in 0..m {
-        let map_challenges =
-            Z::derive_challenges_from_coinflip(x, g.try_into()?, l, session.roles());
+    //
+    // Building the batch is a pure CPU burst over `m` independent challenge indices, so we fan
+    // it out across rayon. We borrow the (large) share maps rather than cloning them into a
+    // `spawn_compute_bound` task, and the burst runs before this call touches the network.
+    let my_batch: Vec<MapsSharesChallenges<Z>> = {
+        let roles = session.roles();
+        // Reborrow the mutable share maps immutably for the parallel read; the mutable use
+        // (zeroing corrupt senders' shares below) resumes after this block.
+        let secrets_shares_all: &HashMap<Role, Vec<Z>> = secrets_shares_all;
+        let my_shared_secrets: &HashMap<Role, Vec<Z>> = my_shared_secrets;
+        (0..m)
+            .into_par_iter()
+            .map(|g| -> anyhow::Result<MapsSharesChallenges<Z>> {
+                let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, roles);
 
-        //Compute my share of check values for every local single share happening in parallel
-        //<y>
-        let map_share_check_values = compute_check_values(
-            pads_shares_all,
-            &map_challenges,
-            secrets_shares_all,
-            g,
-            None,
-        )?;
+                //Compute my share of check values for every local single share happening in parallel
+                //<y>
+                let checks_for_all = compute_check_values(
+                    pads_shares_all,
+                    &map_challenges,
+                    secrets_shares_all,
+                    g,
+                    None,
+                )?;
 
-        //Compute the share of the check value for MY local single share
-        //<y^*>_j
-        let map_share_my_check_values = compute_check_values(
-            my_shared_pads,
-            &map_challenges,
-            my_shared_secrets,
-            g,
-            Some(&my_role.clone()),
-        )?;
+                //Compute the share of the check value for MY local single share
+                //<y^*>_j
+                let checks_for_mine = compute_check_values(
+                    my_shared_pads,
+                    &map_challenges,
+                    my_shared_secrets,
+                    g,
+                    Some(&my_role),
+                )?;
 
-        my_batch.push(MapsSharesChallenges {
-            checks_for_all: map_share_check_values,
-            checks_for_mine: map_share_my_check_values,
-        });
-    }
+                Ok(MapsSharesChallenges {
+                    checks_for_all,
+                    checks_for_mine,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?
+    };
 
     let corrupt_before_bc = session.corrupt_roles().clone();
 
