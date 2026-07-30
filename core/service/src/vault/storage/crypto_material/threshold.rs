@@ -381,17 +381,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     extra_data.clone(),
                 );
                 let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
-                // Mirror the ECDSA signature into the per-scheme list
-                let signatures = vec![crate::engine::base::StoredSchemeSignature {
-                    scheme: crate::cryptography::signing::SigningSchemeType::Ecdsa256k1,
-                    signature: new_signature.clone(),
-                }];
+                // The canonical ECDSA signature lives in `external_signature` and the opt-in `signatures`
+                // set stays empty.
                 let new_metadata = KeyGenMetadata::new(
                     *old_key_id,
                     migrated_inner.preprocessing_id,
                     migrated_inner.key_digest_map.clone(),
                     new_signature,
-                    signatures,
+                    Vec::new(),
                     extra_data,
                 );
 

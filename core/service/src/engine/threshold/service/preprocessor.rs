@@ -42,8 +42,7 @@ use crate::{
     cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
     engine::{
         base::{
-            BaseKmsStruct, compute_preprocessing_signatures, ecdsa_result_signature,
-            stored_scheme_signatures_to_proto,
+            BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
         },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
@@ -331,8 +330,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     domain,
                     extra_data,
                 ) {
-                    Ok(signatures) => Ok(BucketMetaStore {
-                        external_signature: ecdsa_result_signature(&signatures),
+                    Ok((external_signature, signatures)) => Ok(BucketMetaStore {
+                        external_signature,
                         signatures,
                         preprocessing_id: *req_id,
                         preprocessing_store: PreprocMaterial::Real(inner),

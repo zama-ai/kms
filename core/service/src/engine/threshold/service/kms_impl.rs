@@ -451,14 +451,13 @@ pub(crate) fn new_insecure_preproc_bucket(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<BucketMetaStore> {
-    let signatures = crate::engine::base::compute_preprocessing_signatures(
+    let (external_signature, signatures) = crate::engine::base::compute_preprocessing_signatures(
         sk,
         schemes,
         &preprocessing_id,
         domain,
         extra_data,
     )?;
-    let external_signature = crate::engine::base::ecdsa_result_signature(&signatures);
     Ok(BucketMetaStore {
         preprocessing_id,
         external_signature,

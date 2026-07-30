@@ -183,16 +183,14 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
-/// Resolve the signing schemes a decryption request asks the response to be
-/// signed under.
+/// Resolve the per-scheme `signatures` a request asks the response to be signed
+/// under, validating and de-duplicating the requested schemes.
 ///
-/// An empty list defaults to `[Ecdsa256k1]`.
+/// An empty list resolves to `[]`: the response still carries the always-present
+/// ECDSA/EIP-712 `external_signature`.
 pub(crate) fn resolve_signing_schemes(
     requested: &[i32],
 ) -> Result<Vec<SigningSchemeType>, Box<dyn std::error::Error + Send + Sync>> {
-    if requested.is_empty() {
-        return Ok(vec![SigningSchemeType::Ecdsa256k1]);
-    }
     let mut resolved = Vec::with_capacity(requested.len());
     for &raw in requested {
         let scheme = SigningSchemeType::try_from(raw)
@@ -1082,14 +1080,12 @@ mod tests {
         verify_user_decrypt_eip712,
     };
 
-    /// Empty signing schemes defaults to ECDSA, known schemes map through
+    /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
     #[test]
     fn test_resolve_signing_schemes() {
-        // Empty ⇒ ECDSA default (backward compatible with old clients).
-        assert_eq!(
-            resolve_signing_schemes(&[]).unwrap(),
-            vec![SigningSchemeType::Ecdsa256k1]
-        );
+        // Empty ⇒ empty: `signatures` is opt-in, the ECDSA/EIP-712 signature is
+        // carried by `external_signature` independently.
+        assert_eq!(resolve_signing_schemes(&[]).unwrap(), vec![]);
 
         // Known schemes map through, preserving order.
         let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;

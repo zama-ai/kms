@@ -54,6 +54,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
+        traits::BaseKms,
         utils::MetricedError,
         validation::{
             DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -683,23 +684,27 @@ impl<
             )
         })?;
 
+        let make_err = |e: anyhow::Error| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
+                tonic::Code::Internal,
+            )
+        };
+        // Always-present internal ECDSA authenticity signature; opt-in per-scheme list.
+        let signature = self
+            .base_kms
+            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
+            .map_err(make_err)?
+            .to_bytes();
         let signatures = self
             .base_kms
             .sign_with_schemes(&signing_schemes, &DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_RESULT,
-                    Some(request_id),
-                    anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
-                    tonic::Code::Internal,
-                )
-            })?;
+            .map_err(make_err)?;
 
         Ok(Response::new(PublicDecryptionResponse {
-            // LEGACY
-            signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
-                .map(<[u8]>::to_vec)
-                .unwrap_or_default(),
+            signature,
             signatures,
             payload: Some(sig_payload),
             external_signature,

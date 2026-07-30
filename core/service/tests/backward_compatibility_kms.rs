@@ -54,10 +54,7 @@ use kms_lib::{
         },
     },
     engine::{
-        base::{
-            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
-            StoredSchemeSignature,
-        },
+        base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
         context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{
             EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
@@ -232,11 +229,8 @@ fn test_key_gen_metadata(
     );
 
     let new_versionized = KeyGenMetadataInner {
-        // The upgrade backfills the ECDSA entry from `external_signature`.
-        signatures: vec![StoredSchemeSignature {
-            scheme: SigningSchemeType::Ecdsa256k1,
-            signature: external_signature.clone(),
-        }],
+        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
+        signatures: vec![],
         key_id,
         preprocessing_id,
         key_digest_map,
@@ -296,11 +290,8 @@ fn test_crs_gen_metadata(
         digest,
         max_num_bits,
         external_signature.clone(),
-        // The upgrade backfills the ECDSA entry from `external_signature`.
-        vec![StoredSchemeSignature {
-            scheme: SigningSchemeType::Ecdsa256k1,
-            signature: external_signature.clone(),
-        }],
+        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
+        vec![],
         vec![],
     );
     match &new_current {
@@ -382,11 +373,8 @@ fn test_key_gen_metadata_with_extra_data(
         compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
 
     let new_versionized = KeyGenMetadataInner {
-        // The upgrade backfills the ECDSA entry from `external_signature`.
-        signatures: vec![StoredSchemeSignature {
-            scheme: SigningSchemeType::Ecdsa256k1,
-            signature: external_signature.clone(),
-        }],
+        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
+        signatures: vec![],
         key_id,
         preprocessing_id,
         key_digest_map,
@@ -438,11 +426,8 @@ fn test_crs_gen_metadata_with_extra_data(
         digest,
         max_num_bits,
         external_signature.clone(),
-        // The upgrade backfills the ECDSA entry from `external_signature`.
-        vec![StoredSchemeSignature {
-            scheme: SigningSchemeType::Ecdsa256k1,
-            signature: external_signature.clone(),
-        }],
+        // `signatures` is opt-in; pre-#3078 data upgrades to empty.
+        vec![],
         extra_data,
     );
     match &new_current {

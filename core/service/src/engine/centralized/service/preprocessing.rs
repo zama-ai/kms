@@ -1,6 +1,6 @@
 use crate::{
     engine::{
-        base::{compute_preprocessing_signatures, ecdsa_result_signature},
+        base::compute_preprocessing_signatures,
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
@@ -81,7 +81,7 @@ pub async fn preprocessing_impl<
         OP_KEYGEN_PREPROC_REQUEST,
     )
     .await?;
-    let signatures = compute_preprocessing_signatures(
+    let sigs = compute_preprocessing_signatures(
         &sk,
         &signing_schemes,
         &req_id,
@@ -90,11 +90,13 @@ pub async fn preprocessing_impl<
     )
     .map_err(|e| e.to_string());
 
-    let preproc_bucket = signatures.map(|signatures| CentralizedPreprocBucket {
-        external_signature: ecdsa_result_signature(&signatures),
-        signatures,
-        dkg_param,
-    });
+    let preproc_bucket = sigs.map(
+        |(external_signature, signatures)| CentralizedPreprocBucket {
+            external_signature,
+            signatures,
+            dkg_param,
+        },
+    );
 
     let _ = update_req_in_meta_store(
         &service.preprocessing_meta_store,

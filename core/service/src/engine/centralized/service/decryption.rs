@@ -4,7 +4,7 @@ use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -191,23 +191,29 @@ pub async fn get_user_decryption_result_impl<
         )
     })?;
 
+    let make_err = |e: anyhow::Error| {
+        MetricedError::new(
+            OP_USER_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Could not sign user decryption payload: {e}"),
+            tonic::Code::Aborted,
+        )
+    };
+    // The internal ECDSA authenticity signature is always produced (legacy field,
+    // still consumed by the client). The per-scheme `signatures` list is opt-in:
+    // it carries exactly the schemes the request asked for.
+    let signature = service
+        .base_kms
+        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+        .map_err(make_err)?
+        .to_bytes();
     let signatures = service
         .base_kms
         .sign_with_schemes(&signing_schemes, &DSEP_USER_DECRYPTION, &sig_payload_vec)
-        .map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow::anyhow!("Could not sign user decryption payload: {e}"),
-                tonic::Code::Aborted,
-            )
-        })?;
+        .map_err(make_err)?;
 
     Ok(Response::new(UserDecryptionResponse {
-        // LEGACY
-        signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
-            .map(<[u8]>::to_vec)
-            .unwrap_or_default(),
+        signature,
         signatures,
         external_signature,
         payload: Some(payload),
@@ -425,6 +431,20 @@ pub async fn get_public_decryption_result_impl<
         )
     })?;
 
+    let make_err = |e: anyhow::Error| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Could not sign payload {kms_sig_payload_vec:?}: {e:?}"),
+            tonic::Code::Aborted,
+        )
+    };
+    // Always-present internal ECDSA authenticity signature; opt-in per-scheme list.
+    let signature = service
+        .base_kms
+        .sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
+        .map_err(make_err)?
+        .to_bytes();
     let signatures = service
         .base_kms
         .sign_with_schemes(
@@ -432,19 +452,9 @@ pub async fn get_public_decryption_result_impl<
             &DSEP_PUBLIC_DECRYPTION,
             &kms_sig_payload_vec,
         )
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow::anyhow!("Could not sign payload {kms_sig_payload_vec:?}: {e:?}"),
-                tonic::Code::Aborted,
-            )
-        })?;
+        .map_err(make_err)?;
     Ok(Response::new(PublicDecryptionResponse {
-        // LEGACY
-        signature: kms_grpc::rpc_types::ecdsa_signature_bytes(&signatures)
-            .map(<[u8]>::to_vec)
-            .unwrap_or_default(),
+        signature,
         signatures,
         payload: Some(kms_sig_payload),
         external_signature,
