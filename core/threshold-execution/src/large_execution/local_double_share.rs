@@ -213,7 +213,11 @@ pub(crate) async fn verify_sharing<
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role();
 
-    //TODO: Could be done in parallel (to minimize round complexity)
+    // The `x` fixing the challenges was drawn by the coinflip *before* this call, so the m
+    // check-value tuples are independent of one another: we compute them all locally, then
+    // broadcast them together in a single parallel round (spec Fig. 88), instead of one
+    // broadcast per `g`.
+    let mut my_batch = Vec::with_capacity(m);
     for g in 0..m {
         let map_challenges =
             Z::derive_challenges_from_coinflip(x, g.try_into()?, l, session.roles());
@@ -254,61 +258,81 @@ pub(crate) async fn verify_sharing<
             Some(&my_role),
         )?;
 
-        let corrupt_before_bc = session.corrupt_roles().clone();
+        my_batch.push((
+            map_share_check_values_t,
+            map_share_check_values_2t,
+            map_share_my_check_values_t,
+            map_share_my_check_values_2t,
+        ));
+    }
 
-        //Broadcast:
-        // - my share of check values on all sharing of degree t and 2t
-        // - the shares of all the parties on sharing of degree t and 2t wher I am sender
-        let bcast_data = broadcast
-            .broadcast_from_all_w_corrupt_set_update(
-                session,
-                BroadcastValue::LocalDoubleShare((
-                    map_share_check_values_t,
-                    map_share_check_values_2t,
-                    map_share_my_check_values_t,
-                    map_share_my_check_values_2t,
-                )),
-            )
-            .await?;
+    let corrupt_before_bc = session.corrupt_roles().clone();
 
-        // If the corrupt roles have not changed, we can continue, otherwise start from beginning
-        if *session.corrupt_roles() != corrupt_before_bc {
-            return Ok(false);
-        }
+    //Broadcast, for every challenge index at once:
+    // - my share of check values on all sharing of degree t and 2t
+    // - the shares of all the parties on sharing of degree t and 2t where I am sender
+    let bcast_data = broadcast
+        .broadcast_from_all_w_corrupt_set_update(
+            session,
+            BroadcastValue::LocalDoubleShare(my_batch),
+        )
+        .await?;
 
-        //Split Broadcast data into degree t and 2t, allowing to mimic behaviour of local single sharing
-        let mut bcast_data_t = HashMap::<Role, MapsSharesChallenges<Z>>::new();
-        let mut bcast_data_2t = HashMap::<Role, MapsSharesChallenges<Z>>::new();
-        let mut bcast_corrupts = HashSet::<Role>::new();
-        for (role, map_data) in bcast_data.into_iter() {
-            if let BroadcastValue::LocalDoubleShare((
-                data_share_t,
-                data_share_2t,
-                data_check_t,
-                data_check_2t,
-            )) = map_data
-            {
-                bcast_data_t.insert(
-                    role,
-                    MapsSharesChallenges {
+    // If the corrupt roles have not changed, we can continue, otherwise start from beginning
+    if *session.corrupt_roles() != corrupt_before_bc {
+        return Ok(false);
+    }
+
+    //Split each sender's broadcast into per-`g`, degree-t and degree-2t views, allowing to mimic
+    //behaviour of local single sharing. Senders whose batch has the wrong type or length are corrupt.
+    let mut bcast_batches_t = HashMap::<Role, Vec<MapsSharesChallenges<Z>>>::new();
+    let mut bcast_batches_2t = HashMap::<Role, Vec<MapsSharesChallenges<Z>>>::new();
+    let mut wrong_type_corrupts = HashSet::<Role>::new();
+    for (role, map_data) in bcast_data.into_iter() {
+        match map_data {
+            BroadcastValue::LocalDoubleShare(batch) if batch.len() == m => {
+                let mut batch_t = Vec::with_capacity(m);
+                let mut batch_2t = Vec::with_capacity(m);
+                for (data_share_t, data_share_2t, data_check_t, data_check_2t) in batch {
+                    batch_t.push(MapsSharesChallenges {
                         checks_for_all: data_share_t,
                         checks_for_mine: data_check_t,
-                    },
-                );
-                bcast_data_2t.insert(
-                    role,
-                    MapsSharesChallenges {
+                    });
+                    batch_2t.push(MapsSharesChallenges {
                         checks_for_all: data_share_2t,
                         checks_for_mine: data_check_2t,
-                    },
-                );
-            } else {
+                    });
+                }
+                bcast_batches_t.insert(role, batch_t);
+                bcast_batches_2t.insert(role, batch_2t);
+            }
+            _ => {
                 //Otherwise, wrong type from sender, mark it corrupt
                 tracing::warn!(
                     "Received wrong type from {role} in broadcast, marking it as corrupt"
                 );
-                bcast_corrupts.insert(role);
+                wrong_type_corrupts.insert(role);
             }
+        }
+    }
+
+    // Process each challenge index locally against the single broadcast.
+    // We do this in sequence because the verification of each challenge index
+    // may add new corrupt parties to the session, which will affect the verification of subsequent challenge indices.
+    for g in 0..m {
+        let bcast_data_t: HashMap<Role, MapsSharesChallenges<Z>> = bcast_batches_t
+            .iter()
+            .map(|(role, batch)| (*role, batch[g].clone()))
+            .collect();
+        let bcast_data_2t: HashMap<Role, MapsSharesChallenges<Z>> = bcast_batches_2t
+            .iter()
+            .map(|(role, batch)| (*role, batch[g].clone()))
+            .collect();
+
+        let mut bcast_corrupts = HashSet::<Role>::new();
+        //Wrong-type senders are corrupt across every challenge index; fold them in on the first pass.
+        if g == 0 {
+            bcast_corrupts.extend(wrong_type_corrupts.iter().cloned());
         }
 
         let (mut result_map_t, mut result_map_2t) = (
@@ -530,12 +554,14 @@ pub(crate) mod tests {
     //      share dispute = 1 round
     //      pads =  1 round
     //      coinflip = vss + open = (1 + 3 + t) + 1
-    //      verify = m reliable_broadcast = m*(3 + t) rounds
-    // with m = div_ceil(DISPUTE_STAT_SEC,Z::LOG_SIZE_EXCEPTIONAL_SET) (=20 for ResiduePolyF4)
+    //      verify = 1 reliable_broadcast = (3 + t) rounds
+    //          (the m check-value tuples are batched into a single broadcast)
+    // 4p/1t: 1 + 1 + (1 + 3 + 1) + 1 + (3 + 1) = 12
+    // 7p/2t: 1 + 1 + (1 + 3 + 2) + 1 + (3 + 2) = 14
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1, Some(88)))]
-    #[case(TestingParameters::init_honest(7, 2, Some(109)))]
+    #[case(TestingParameters::init_honest(4, 1, Some(12)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(14)))]
     async fn test_ldl_z128(#[case] params: TestingParameters) {
         let malicious_ldl = SecureLocalDoubleShare::default();
 

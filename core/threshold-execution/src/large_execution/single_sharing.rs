@@ -178,7 +178,6 @@ fn compute_next_batch<Z: Ring>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
@@ -197,7 +196,6 @@ pub(crate) mod tests {
         },
         structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
-    use num_integer::div_ceil;
     use rstest::rstest;
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
@@ -232,13 +230,13 @@ pub(crate) mod tests {
         //      share dispute = 1 round
         //      pads =  1 round
         //      coinflip = vss + open = (1 + 3 + threshold) + 1
-        //      verify = m reliable_broadcast = m*(3 + t) rounds
+        //      verify = 1 reliable_broadcast = (3 + t) rounds
+        //          (the m check-value maps are batched into a single broadcast)
         // next() calls for the batch
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
         // SingleSharing assumes Sync network
-        let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
-        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + m * (3 + threshold)) * 2;
+        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
         let result = execute_protocol_large::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,

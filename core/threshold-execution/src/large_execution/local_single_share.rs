@@ -194,7 +194,12 @@ pub(crate) async fn verify_sharing<
     let (pads_shares_all, my_shared_pads) = (&pads.all_shares, &pads.shares_own_secret);
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role();
-    //TODO: Could be done in parallel (to minimize round complexity)
+
+    // The `x` fixing the challenges was drawn by the coinflip *before* this call, so the m
+    // check-value maps are independent of one another: we compute them all locally, then
+    // broadcast them together in a single parallel round (spec Fig. 88), instead of one
+    // broadcast per `g`.
+    let mut my_batch = Vec::with_capacity(m);
     for g in 0..m {
         let map_challenges =
             Z::derive_challenges_from_coinflip(x, g.try_into()?, l, session.roles());
@@ -219,44 +224,65 @@ pub(crate) async fn verify_sharing<
             Some(&my_role.clone()),
         )?;
 
-        let corrupt_before_bc = session.corrupt_roles().clone();
+        my_batch.push(MapsSharesChallenges {
+            checks_for_all: map_share_check_values,
+            checks_for_mine: map_share_my_check_values,
+        });
+    }
 
-        //Broadcast both my share of check values on all lsl as well as all the shares of check values for lsl where I am sender
-        //All roles will be mapped to an output, but it may be Bot if they are malicious
-        // Step (d)
-        let bcast_data = broadcast
-            .broadcast_from_all_w_corrupt_set_update(
-                session,
-                BroadcastValue::LocalSingleShare(MapsSharesChallenges {
-                    checks_for_all: map_share_check_values,
-                    checks_for_mine: map_share_my_check_values,
-                }),
-            )
-            .await?;
+    let corrupt_before_bc = session.corrupt_roles().clone();
 
-        // If the corrupt roles have not changed, we can continue, otherwise start from beginning
-        if *session.corrupt_roles() != corrupt_before_bc {
-            return Ok(false);
-        }
+    //Broadcast both my share of check values on all lsl as well as all the shares of check values for lsl where I am sender
+    //All roles will be mapped to an output, but it may be Bot if they are malicious
+    // Step (d)
+    let bcast_data = broadcast
+        .broadcast_from_all_w_corrupt_set_update(
+            session,
+            BroadcastValue::LocalSingleShare(my_batch),
+        )
+        .await?;
 
-        //Map broadcast data back to MapSharesChallenges
-        let mut bcast_output = HashMap::new();
-        let mut bcast_corrupts = HashSet::new();
-        for (role, bcast_value) in bcast_data {
-            if let BroadcastValue::LocalSingleShare(value) = bcast_value {
-                bcast_output.insert(role, value);
-            } else {
-                bcast_corrupts.insert(role);
+    // If the corrupt roles have not changed, we can continue, otherwise start from beginning
+    if *session.corrupt_roles() != corrupt_before_bc {
+        return Ok(false);
+    }
+
+    //Map broadcast data back to a per-sender batch of MapsSharesChallenges.
+    //Senders that did not broadcast a batch of the expected length `m` are marked corrupt.
+    let mut bcast_batches = HashMap::new();
+    let mut wrong_type_corrupts = HashSet::new();
+    for (role, bcast_value) in bcast_data {
+        match bcast_value {
+            BroadcastValue::LocalSingleShare(batch) if batch.len() == m => {
+                bcast_batches.insert(role, batch);
+            }
+            _ => {
+                wrong_type_corrupts.insert(role);
             }
         }
+    }
 
-        let newly_corrupts = verify_sender_challenge(
+    //Process each challenge index locally against the single broadcast.
+    // We do this in sequence because the verification of each challenge index
+    // may add new corrupt parties to the session, which will affect the verification of subsequent challenge indices.
+    for g in 0..m {
+        //Rebuild the per-`g` view expected by the sender/dispute checks
+        let bcast_output: HashMap<Role, MapsSharesChallenges<Z>> = bcast_batches
+            .iter()
+            .map(|(role, batch)| (*role, batch[g].clone()))
+            .collect();
+
+        let mut bcast_corrupts = verify_sender_challenge(
             &bcast_output,
             session,
             session.threshold() as usize,
             &mut None,
         )?;
-        bcast_corrupts.extend(newly_corrupts);
+        //Wrong-type senders are corrupt across every challenge index; fold them in on the first pass.
+        if g == 0 {
+            bcast_corrupts.extend(wrong_type_corrupts.iter().cloned());
+        }
+
         //Set 0 share for newly_corrupt senders and add them to the corrupt set
         let mut should_return = false;
         for role_pi in bcast_corrupts {
@@ -594,12 +620,14 @@ pub(crate) mod tests {
     //      share dispute = 1 round
     //      pads =  1 round // note that we could merge this round into the first one. This is currently discussed in the NIST doc
     //      coinflip = vss + open = (1 + 3 + t) + 1
-    //      verify = m reliable_broadcast = m*(3 + t) rounds
-    // with m = div_ceil(DISPUTE_STAT_SEC,Z::LOG_SIZE_EXCEPTIONAL_SET) (=20 for ResiduePolyF4)
+    //      verify = 1 reliable_broadcast = (3 + t) rounds
+    //          (the m check-value maps are batched into a single broadcast)
+    // 4p/1t: 1 + 1 + (1 + 3 + 1) + 1 + (3 + 1) = 12
+    // 7p/2t: 1 + 1 + (1 + 3 + 2) + 1 + (3 + 2) = 14
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1, Some(88)))]
-    #[case(TestingParameters::init_honest(7, 2, Some(109)))]
+    #[case(TestingParameters::init_honest(4, 1, Some(12)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(14)))]
     async fn test_lsl_z128(#[case] params: TestingParameters) {
         let malicious_lsl = SecureLocalSingleShare::default();
         join(
