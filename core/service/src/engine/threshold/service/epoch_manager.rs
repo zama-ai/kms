@@ -136,7 +136,9 @@ struct VerifiedKeyInfo {
     /// keyID of the key to be reshared.
     pub key_id: kms_grpc::RequestId,
     /// Preprocessing ID that was used to generate the key initially
-    /// required for the EIP struct
+    /// required for the EIP struct.
+    /// Caller-supplied, so it is checked against the preprocessing ID stored for the key
+    /// by [`RealThresholdEpochManager::validate_supplied_preproc_ids`] before it is used.
     pub preproc_id: kms_grpc::RequestId,
     /// Parameters of the key to be reshard
     pub key_parameters: DKGParams,
@@ -255,6 +257,34 @@ fn verify_epoch_info(
         keys_info,
         crs_info,
     })
+}
+
+/// Rejects a supplied preprocessing ID that disagrees with the one stored for the key.
+///
+/// If stored is `None` then a warning is logged and nothing is checked (this is the
+/// case for legacy preprecessing).
+fn check_preproc_id_matches(
+    supplied: &kms_grpc::RequestId,
+    stored: Option<&kms_grpc::RequestId>,
+    key_id: &kms_grpc::RequestId,
+    previous_epoch_id: &EpochId,
+) -> anyhow::Result<()> {
+    match stored {
+        Some(stored) if stored == supplied => Ok(()),
+        Some(stored) => Err(anyhow::anyhow!(
+            "Refusing to reshare key {key_id} from epoch {previous_epoch_id}: the supplied \
+             preprocessing ID {supplied} does not match the preprocessing ID {stored} stored \
+             for that key"
+        )),
+        None => {
+            tracing::warn!(
+                "Cannot validate the supplied preprocessing ID {supplied} for key {key_id} at \
+                 epoch {previous_epoch_id}: the stored key metadata is legacy and records no \
+                 preprocessing ID"
+            );
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1211,6 +1241,87 @@ impl<
         res
     }
 
+    /// Rejects the request unless every `preproc_id` supplied in [`PreviousEpochInfo`] matches the
+    /// preprocessing ID that was signed and stored alongside that key in the epoch we reshare
+    /// from.
+    ///
+    /// `preproc_id` is caller-supplied metadata that ends up inside the EIP-712 struct signed for
+    /// the new epoch.
+    ///
+    /// `my_role` decides what a missing keyset means. A party in the previous context (set 1 or
+    /// both sets) must hold the key material, so failing to read it is an error and the request is
+    /// rejected. A party only in the new context (pure set 2, i.e. a node joining) never held the
+    /// key, so there is nothing to compare against locally and that key is skipped with a warning.
+    async fn validate_supplied_preproc_ids(
+        &self,
+        new_epoch_id_as_request_id: kms_grpc::RequestId,
+        my_role: TwoSetsRole,
+        verified_previous_epoch: &VerifiedPreviousEpochInfo,
+    ) -> Result<(), MetricedError> {
+        let previous_epoch_id = &verified_previous_epoch.epoch_id;
+        for key_info in verified_previous_epoch.keys_info.iter() {
+            // This is the in-memory key cache which should be in sync with what's in storage.
+            let keys = match self
+                .crypto_storage
+                .read_guarded_fhe_keys(&key_info.key_id, previous_epoch_id)
+                .await
+            {
+                Ok(keys) => keys,
+                // `is_set1` covers set 1 and both sets: every party in the previous context holds
+                // the key material, so a failed read means either the request names a key or
+                // epoch we do not have, or our own copy is unusable. Either way we cannot confirm
+                // the preprocessing ID and must not sign. `InvalidArgument` matches
+                // `fetch_existing_private_keysets`, which fails the same way on the very same
+                // read for these roles.
+                Err(e) if my_role.is_set1() => {
+                    return Err(MetricedError::new(
+                        OP_NEW_EPOCH,
+                        Some(new_epoch_id_as_request_id),
+                        anyhow::anyhow!(
+                            "Refusing to reshare key {} from epoch {}: this party is in the \
+                             previous context (role {my_role}) and so must hold the key material, \
+                             but reading it failed, leaving the supplied preprocessing ID {} \
+                             unvalidated: {e}",
+                            key_info.key_id,
+                            previous_epoch_id,
+                            key_info.preproc_id
+                        ),
+                        tonic::Code::InvalidArgument,
+                    ));
+                }
+                // Pure set 2: this party never held the key, so there is nothing local to compare
+                // the supplied ID against.
+                Err(e) => {
+                    tracing::info!(
+                        "Cannot validate the supplied preprocessing ID {} for key {} at epoch \
+                         {}: this party is only in the new context (role {my_role}) and holds no \
+                         key material for it: {e}",
+                        key_info.preproc_id,
+                        key_info.key_id,
+                        previous_epoch_id
+                    );
+                    continue;
+                }
+            };
+
+            check_preproc_id_matches(
+                &key_info.preproc_id,
+                keys.meta_data.preprocessing_id(),
+                &key_info.key_id,
+                previous_epoch_id,
+            )
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(new_epoch_id_as_request_id),
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
+        }
+        Ok(())
+    }
+
     async fn initiate_resharing_and_crs_resign(
         &self,
         new_context_id: &ContextId,
@@ -1233,21 +1344,7 @@ impl<
 
         let verified_previous_epoch = verify_epoch_info(&new_epoch_id.into(), previous_epoch)?;
 
-        // Fetch CRS (also parties from set 1 even if they don't actually need it, but they should fetch it from their storage anyway so no big deal)
         let new_epoch_id_as_request_id = (*new_epoch_id).into();
-        let crs_info = join_all(verified_previous_epoch.crs_info.iter().map(|crs_info| {
-            get_verified_crs_material(
-                &self.crypto_storage,
-                &new_epoch_id_as_request_id,
-                &crs_info.crs_id,
-                &verified_previous_epoch.context_id,
-                &crs_info.crs_digest,
-                &RealReadOnlyS3StorageGetter {},
-            )
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, MetricedError>>()?;
 
         let session_maker_immutable = self.session_maker.make_immutable();
 
@@ -1272,12 +1369,40 @@ impl<
             )
         })?;
 
-        Ok(match two_sets_session.my_role() {
-            TwoSetsRole::Set1(_) => self
+        let my_role = two_sets_session.my_role();
+
+        // Fetch CRS for parties that are in set2 or both
+        let crs_info = if matches!(my_role, TwoSetsRole::OnlySet1(_)) {
+            vec![]
+        } else {
+            join_all(verified_previous_epoch.crs_info.iter().map(|crs_info| {
+                get_verified_crs_material(
+                    &self.crypto_storage,
+                    &new_epoch_id_as_request_id,
+                    &crs_info.crs_id,
+                    &verified_previous_epoch.context_id,
+                    &crs_info.crs_digest,
+                    &RealReadOnlyS3StorageGetter {},
+                )
+            }))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, MetricedError>>()?
+        };
+
+        self.validate_supplied_preproc_ids(
+            new_epoch_id_as_request_id,
+            my_role,
+            &verified_previous_epoch,
+        )
+        .await?;
+
+        Ok(match my_role {
+            TwoSetsRole::OnlySet1(_) => self
                 .reshare_as_set_1(two_sets_session, *new_epoch_id, verified_previous_epoch)
                 .await?
                 .boxed(),
-            TwoSetsRole::Set2(_) => self
+            TwoSetsRole::OnlySet2(_) => self
                 .reshare_as_set_2(
                     two_sets_session,
                     *new_epoch_id,
@@ -1599,6 +1724,7 @@ pub(crate) mod tests {
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
+        dummy_domain,
         engine::{
             base::{BaseKmsStruct, derive_request_id},
             threshold::service::session::PRSSSetupCombined,
@@ -1625,13 +1751,15 @@ pub(crate) mod tests {
     use kms_grpc::{
         RequestId,
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::{KMSType, PrivDataType},
+        rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use threshold_execution::{
         endpoints::reshare_sk::SecureReshareSecretKeys,
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
+        tfhe_internals::test_feature::gen_key_set,
     };
+    use threshold_types::role::Role;
 
     impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
@@ -2213,6 +2341,223 @@ pub(crate) mod tests {
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+    }
+
+    /// Builds key material whose metadata records `preproc_id`. Cheap enough for a unit test
+    /// because it pairs the small `TEST_PARAM` keyset with a dummy private keyset.
+    fn make_threshold_keys_with_preproc_id(
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        rng: &mut AesRng,
+    ) -> ThresholdFheKeys {
+        let (_keyset, compressed_keyset) =
+            gen_key_set(crate::consts::TEST_PARAM, tfhe::Tag::default(), rng).unwrap();
+        ThresholdFheKeys::new(
+            Arc::new(PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)),
+            PublicKeyMaterial::new(compressed_keyset),
+            KeyGenMetadata::new(
+                *key_id,
+                *preproc_id,
+                std::collections::BTreeMap::new(),
+                vec![],
+                vec![],
+            ),
+        )
+    }
+
+    /// Stores `keys` as the key material this party holds for `key_id` in `epoch_id`.
+    async fn store_previous_epoch_keys(
+        crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        keys: &ThresholdFheKeys,
+    ) {
+        let private_storage = crypto_storage.get_private_storage();
+        let mut guard = private_storage.lock().await;
+        store_versioned_at_request_and_epoch_id(
+            &mut (*guard),
+            key_id,
+            epoch_id,
+            keys,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// A party in the previous context, which must therefore hold the key material.
+    fn set1_role() -> TwoSetsRole {
+        TwoSetsRole::OnlySet1(Role::indexed_from_one(1))
+    }
+
+    /// A party only in the new context, which never held the key material.
+    fn set2_role() -> TwoSetsRole {
+        TwoSetsRole::OnlySet2(Role::indexed_from_one(1))
+    }
+
+    fn make_verified_previous_epoch(
+        previous_epoch_id: EpochId,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+    ) -> VerifiedPreviousEpochInfo {
+        VerifiedPreviousEpochInfo {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            epoch_id: previous_epoch_id,
+            keys_info: vec![VerifiedKeyInfo {
+                key_id: *key_id,
+                preproc_id: *preproc_id,
+                key_parameters: crate::consts::TEST_PARAM,
+                key_digests: HashMap::new(),
+            }],
+            crs_info: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_supplied_preproc_ids_against_storage() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let previous_epoch_id = *DEFAULT_EPOCH_ID;
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("validate_preproc_key").unwrap();
+        let stored_preproc_id = derive_request_id("validate_preproc_stored").unwrap();
+        let wrong_preproc_id = derive_request_id("validate_preproc_wrong").unwrap();
+
+        let keys = make_threshold_keys_with_preproc_id(&key_id, &stored_preproc_id, &mut rng);
+        store_previous_epoch_keys(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            &previous_epoch_id,
+            &keys,
+        )
+        .await;
+
+        // Sunshine: the supplied preprocessing ID is the one stored with the key.
+        epoch_manager
+            .validate_supplied_preproc_ids(
+                new_epoch_id.into(),
+                set1_role(),
+                &make_verified_previous_epoch(previous_epoch_id, &key_id, &stored_preproc_id),
+            )
+            .await
+            .unwrap();
+
+        // A different preprocessing ID is rejected as an invalid argument.
+        let err = epoch_manager
+            .validate_supplied_preproc_ids(
+                new_epoch_id.into(),
+                set1_role(),
+                &make_verified_previous_epoch(previous_epoch_id, &key_id, &wrong_preproc_id),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // Legacy metadata has no preprocessing ID to compare against, so validation accepts it.
+        let legacy_key_id = derive_request_id("validate_preproc_legacy_key").unwrap();
+        let mut legacy_keys = keys;
+        legacy_keys.meta_data = KeyGenMetadata::LegacyV0(HashMap::new());
+        store_previous_epoch_keys(
+            &epoch_manager.crypto_storage,
+            &legacy_key_id,
+            &previous_epoch_id,
+            &legacy_keys,
+        )
+        .await;
+        epoch_manager
+            .validate_supplied_preproc_ids(
+                new_epoch_id.into(),
+                set1_role(),
+                &make_verified_previous_epoch(previous_epoch_id, &legacy_key_id, &wrong_preproc_id),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn validate_supplied_preproc_ids_absent_key_material_depends_on_role() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let previous_epoch_id = *DEFAULT_EPOCH_ID;
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("absent_preproc_key").unwrap();
+        let preproc_id = derive_request_id("absent_preproc_preproc").unwrap();
+
+        // Nothing is stored for this key. A party in the previous context should have had it, so
+        // the request names a key or epoch it does not hold and must be refused.
+        let err = epoch_manager
+            .validate_supplied_preproc_ids(
+                new_epoch_id.into(),
+                set1_role(),
+                &make_verified_previous_epoch(previous_epoch_id, &key_id, &preproc_id),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // For a party joining the new context this is the expected state: it never held the key,
+        // so there is nothing to compare against and the request is accepted.
+        epoch_manager
+            .validate_supplied_preproc_ids(
+                new_epoch_id.into(),
+                set2_role(),
+                &make_verified_previous_epoch(previous_epoch_id, &key_id, &preproc_id),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn new_epoch_rejects_mismatched_preproc_id() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let previous_epoch_id = *DEFAULT_EPOCH_ID;
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("new_epoch_preproc_key").unwrap();
+        let stored_preproc_id = derive_request_id("new_epoch_preproc_stored").unwrap();
+        let wrong_preproc_id = derive_request_id("new_epoch_preproc_wrong").unwrap();
+
+        let keys = make_threshold_keys_with_preproc_id(&key_id, &stored_preproc_id, &mut rng);
+        store_previous_epoch_keys(
+            &epoch_manager.crypto_storage,
+            &key_id,
+            &previous_epoch_id,
+            &keys,
+        )
+        .await;
+
+        // The request must be refused up front, before any material is fetched or signed.
+        let err = epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(new_epoch_id.into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                previous_epoch: Some(PreviousEpochInfo {
+                    context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                    epoch_id: Some(previous_epoch_id.into()),
+                    keys_info: vec![KeyInfo {
+                        key_id: Some(key_id.into()),
+                        // Observe the use of wrong preproc_id here
+                        preproc_id: Some(wrong_preproc_id.into()),
+                        key_parameters: FheParameter::Test as i32,
+                        key_digests: vec![],
+                    }],
+                    crs_info: vec![],
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&new_epoch_id))
+                    .unwrap(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        // Session setup also reports InvalidArgument, so pin down that the preprocessing ID is
+        // what got us rejected.
+        let msg = err.internal_err().to_string();
+        assert!(
+            msg.contains(&wrong_preproc_id.to_string())
+                && msg.contains(&stored_preproc_id.to_string()),
+            "expected the preprocessing ID mismatch to be the reason, got: {msg}"
+        );
     }
 
     #[tokio::test]

@@ -1447,8 +1447,8 @@ pub type UserDecryptCallValues = (
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadataInner, KeyGenMetadataInnerV0,
-        KeyGenMetadataInnerV1,
+        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata, KeyGenMetadataInner,
+        KeyGenMetadataInnerV0, KeyGenMetadataInnerV1,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
@@ -2559,6 +2559,26 @@ pub(crate) mod tests {
         assert_eq!(upgraded_v3.external_signature, q126.external_signature);
         // `signatures` is opt-in; pre-#3078 data upgrades to empty.
         assert!(upgraded_v3.signatures.is_empty());
+    }
+
+    #[test]
+    fn keygen_metadata_preprocessing_id() {
+        let mut rng = AesRng::seed_from_u64(890);
+        let key_id = RequestId::new_random(&mut rng);
+        let preprocessing_id = RequestId::new_random(&mut rng);
+
+        let current = KeyGenMetadata::new(
+            key_id,
+            preprocessing_id,
+            BTreeMap::new(),
+            vec![],
+            Vec::new(),
+        );
+        assert_eq!(current.preprocessing_id(), Some(&preprocessing_id));
+
+        // Legacy metadata predates the field, so there is nothing to report.
+        let legacy = KeyGenMetadata::LegacyV0(HashMap::new());
+        assert_eq!(legacy.preprocessing_id(), None);
     }
 
     #[test]

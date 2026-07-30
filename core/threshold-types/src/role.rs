@@ -58,18 +58,18 @@ impl Display for DualRole {
 
 #[derive(Debug, /*Display,*/ Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TwoSetsRole {
-    Set1(Role),
-    Set2(Role),
+    OnlySet1(Role),
+    OnlySet2(Role),
     Both(DualRole),
 }
 
 impl TwoSetsRole {
     pub fn is_set1(&self) -> bool {
-        matches!(self, TwoSetsRole::Set1(_) | TwoSetsRole::Both(_))
+        matches!(self, TwoSetsRole::OnlySet1(_) | TwoSetsRole::Both(_))
     }
 
     pub fn is_set2(&self) -> bool {
-        matches!(self, TwoSetsRole::Set2(_) | TwoSetsRole::Both(_))
+        matches!(self, TwoSetsRole::OnlySet2(_) | TwoSetsRole::Both(_))
     }
 }
 
@@ -125,15 +125,15 @@ impl RoleTrait for Role {
 
 impl Default for TwoSetsRole {
     fn default() -> Self {
-        TwoSetsRole::Set1(Role::default())
+        TwoSetsRole::OnlySet1(Role::default())
     }
 }
 
 impl Display for TwoSetsRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TwoSetsRole::Set1(role) => write!(f, "Set1({})", role),
-            TwoSetsRole::Set2(role) => write!(f, "Set2({})", role),
+            TwoSetsRole::OnlySet1(role) => write!(f, "Set1({})", role),
+            TwoSetsRole::OnlySet2(role) => write!(f, "Set2({})", role),
             TwoSetsRole::Both(dual_role) => write!(f, "{}", dual_role),
         }
     }
@@ -305,13 +305,13 @@ pub mod tests {
         };
 
         let parties = HashSet::from([
-            TwoSetsRole::Set1(Role::indexed_from_one(1)),
-            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(1)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(2)),
             TwoSetsRole::Both(DualRole {
                 role_set_1: Role::indexed_from_one(3),
                 role_set_2: Role::indexed_from_one(1),
             }),
-            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet2(Role::indexed_from_one(2)),
         ]);
         assert!(TwoSetsRole::is_threshold_smaller_than_num_parties(
             threshold, &parties
@@ -324,13 +324,13 @@ pub mod tests {
         };
 
         let parties = HashSet::from([
-            TwoSetsRole::Set1(Role::indexed_from_one(1)),
-            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(1)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(2)),
             TwoSetsRole::Both(DualRole {
                 role_set_1: Role::indexed_from_one(3),
                 role_set_2: Role::indexed_from_one(1),
             }),
-            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet2(Role::indexed_from_one(2)),
         ]);
         assert!(!TwoSetsRole::is_threshold_smaller_than_num_parties(
             threshold, &parties
@@ -342,13 +342,13 @@ pub mod tests {
             threshold_set_2: 2,
         };
         let parties = HashSet::from([
-            TwoSetsRole::Set1(Role::indexed_from_one(1)),
-            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(1)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(2)),
             TwoSetsRole::Both(DualRole {
                 role_set_1: Role::indexed_from_one(3),
                 role_set_2: Role::indexed_from_one(1),
             }),
-            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet2(Role::indexed_from_one(2)),
         ]);
         assert!(!TwoSetsRole::is_threshold_smaller_than_num_parties(
             threshold, &parties

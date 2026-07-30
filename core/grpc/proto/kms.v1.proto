@@ -854,7 +854,10 @@ message KeyInfo {
   // keyID of the key to be reshared.
   RequestId key_id = 1;
   // Preprocessing ID that was used to generate the key initially
-  // required for the EIP struct
+  // required for the EIP struct.
+  // This must be the preprocessing ID the key was actually generated with: each KMS core
+  // compares it against the preprocessing ID it has stored for the key and rejects the
+  // request with InvalidArgument on a mismatch.
   RequestId preproc_id = 2;
   // Parameters of the key to be reshard
   FheParameter key_parameters = 3;
