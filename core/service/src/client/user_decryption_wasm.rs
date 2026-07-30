@@ -234,7 +234,143 @@ impl Client {
             .collect()
     }
 
-    /// Solana (RFC-021) centralized de-signcryption.
+    /// Validates every Solana user-decrypt response against the trusted client state.
+    ///
+    /// This deliberately does not go through [`UserDecTrustedValidationContext`]: that context
+    /// derives the expected link from an [`Eip712Domain`], which a Solana client never has. The
+    /// checks below are the ones the centralized Solana branch already performs, applied to all
+    /// `n` parties instead of a single pivot, plus the degree/party-count agreement needed before
+    /// the shares can be trusted enough to reconstruct.
+    ///
+    /// A single bad response fails the whole call rather than being dropped: silently skipping it
+    /// would let a faulty party shrink the share set below the reconstruction threshold without
+    /// the caller ever learning why.
+    fn validate_solana_user_decrypt_responses(
+        &self,
+        link: &[u8],
+        agg_resp: &[UserDecryptionResponse],
+    ) -> anyhow::Result<Vec<UserDecryptionResponsePayload>> {
+        let stored_server_addrs = self.get_server_addrs();
+        let mut payloads: Vec<UserDecryptionResponsePayload> = Vec::with_capacity(agg_resp.len());
+
+        for (idx, resp) in agg_resp.iter().enumerate() {
+            let payload = some_or_err(
+                resp.payload.clone(),
+                format!("solana user-decrypt response {idx} has no payload"),
+            )?;
+
+            if payload.digest != link {
+                return Err(anyhow_error_and_log(format!(
+                    "solana link mismatch in response {idx} ({} != {})",
+                    hex::encode(link),
+                    hex::encode(&payload.digest),
+                )));
+            }
+
+            let verf_key: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)
+                .map_err(|e| {
+                    anyhow_error_and_log(format!(
+                        "solana user-decrypt response {idx} has an undeserializable verification key: {e}"
+                    ))
+                })?;
+
+            match stored_server_addrs.get(&payload.party_id) {
+                Some(server_addr) if *server_addr == verf_key.address() => {}
+                Some(_) => {
+                    return Err(anyhow_error_and_log(format!(
+                        "solana user-decrypt response {idx} server address is not consistent for party {}",
+                        payload.party_id
+                    )));
+                }
+                None => {
+                    return Err(anyhow_error_and_log(format!(
+                        "solana user-decrypt response {idx} has unknown party ID {}",
+                        payload.party_id
+                    )));
+                }
+            }
+
+            // The threshold KMS always signs the payload internally, so an absent internal
+            // signature is a malformed response rather than a gateway-relayed one.
+            if resp.signature.is_empty() {
+                return Err(anyhow_error_and_log(format!(
+                    "solana user-decrypt response {idx} has an empty signature"
+                )));
+            }
+            let sig = Signature {
+                sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
+            };
+            internal_verify_sig(
+                &DSEP_USER_DECRYPTION,
+                &bc2wrap::serialize(&payload)?,
+                &sig,
+                &verf_key,
+            )
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "solana user-decrypt response {idx} signature invalid: {e}"
+                ))
+            })?;
+
+            // Party IDs index the Shamir shares, so a zero or repeated ID would silently
+            // corrupt the reconstruction.
+            if payload.party_id == 0 {
+                return Err(anyhow_error_and_log(format!(
+                    "solana user-decrypt response {idx} has party ID 0"
+                )));
+            }
+            if payloads
+                .iter()
+                .any(|seen| seen.party_id == payload.party_id)
+            {
+                return Err(anyhow_error_and_log(format!(
+                    "solana user-decrypt responses contain duplicate party ID {}",
+                    payload.party_id
+                )));
+            }
+
+            payloads.push(payload);
+        }
+
+        let degree = some_or_err(
+            payloads.first(),
+            "no solana user-decrypt responses to validate".to_owned(),
+        )?
+        .degree;
+        // The degree drives the reconstruction, so it must be agreed on by everyone: taking it
+        // from a single response would let one party dictate it.
+        if let Some(disagreeing) = payloads.iter().find(|p| p.degree != degree) {
+            return Err(anyhow_error_and_log(format!(
+                "solana user-decrypt responses disagree on degree ({} != {} for party {})",
+                degree, disagreeing.degree, disagreeing.party_id
+            )));
+        }
+        if degree == 0 {
+            return Err(anyhow_error_and_log(
+                "solana user-decrypt responses report degree 0 for a threshold deployment",
+            ));
+        }
+        let degree = degree as usize;
+
+        let expected_parties = 3 * degree + 1;
+        if stored_server_addrs.len() != expected_parties {
+            return Err(anyhow_error_and_log(format!(
+                "solana user-decrypt degree {degree} does not match the configured server count (expected n={expected_parties}, configured {})",
+                stored_server_addrs.len()
+            )));
+        }
+        if agg_resp.len() < degree + 1 {
+            return Err(anyhow_error_and_log(format!(
+                "not enough solana user-decrypt responses to reconstruct: got {}, need at least {}",
+                agg_resp.len(),
+                degree + 1
+            )));
+        }
+
+        Ok(payloads)
+    }
+
+    /// Solana (RFC-021) de-signcryption, for both the centralized and the threshold KMS.
     ///
     /// Identical to [`Self::centralized_user_decryption_resp`] except for the request<->response
     /// binding `link`: on Solana it is the opaque keccak [`compute_link_solana`] digest over
@@ -248,6 +384,10 @@ impl Client {
     /// the external EIP-712 certificate is the on-chain-consumable artifact and is not needed to
     /// recover the plaintext client-side. Every handle must embed the same high-bit Solana chain
     /// ID, and that ID must equal `host_chain_id`, before the link is computed.
+    ///
+    /// On a multi-party deployment each party returns a Shamir share of the plaintext, so the
+    /// responses are validated by [`Self::validate_solana_user_decrypt_responses`] and combined by
+    /// the same [`Self::reconstruct_user_decryption`] the EVM threshold path uses.
     pub fn process_user_decryption_resp_solana(
         &self,
         request: &ParsedUserDecryptionRequest,
@@ -258,6 +398,13 @@ impl Client {
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let link = compute_solana_user_decrypt_link(request, solana_user_pubkey, host_chain_id)?;
+
+        // Gate on the configured server count, not on how many responses arrived: otherwise
+        // withholding responses would push a threshold deployment onto the weaker centralized path.
+        if self.get_server_addrs().len() > 1 {
+            let validated = self.validate_solana_user_decrypt_responses(&link, agg_resp)?;
+            return self.reconstruct_user_decryption(validated, enc_key, dec_key);
+        }
 
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -368,6 +515,21 @@ impl Client {
             "Could not validate request".to_owned(),
         )?
         .into_inner();
+        self.reconstruct_user_decryption(validated_resps, enc_key, dec_key)
+    }
+
+    /// Reconstructs the plaintexts from already-validated response payloads.
+    ///
+    /// Split out of [`Self::threshold_user_decryption_resp`] so that host chains whose
+    /// request<->response link is not the EVM EIP-712 hash (Solana, see
+    /// [`Self::process_user_decryption_resp_solana`]) can share the reconstruction without
+    /// going through the EVM-specific validator.
+    fn reconstruct_user_decryption(
+        &self,
+        validated_resps: Vec<UserDecryptionResponsePayload>,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let degree = some_or_err(
             validated_resps.first(),
             "No valid responses parsed".to_string(),
@@ -1126,6 +1288,235 @@ mod solana_request_link_tests {
                 actual: 31,
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod solana_threshold_validation_tests {
+    use super::DSEP_USER_DECRYPTION;
+    use crate::client::client_wasm::Client;
+    use crate::cryptography::signatures::{
+        PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign,
+    };
+    use aes_prng::AesRng;
+    use kms_grpc::kms::v1::{
+        TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
+    };
+    use rand::SeedableRng;
+    use std::collections::HashMap;
+
+    const LINK: [u8; 4] = [1, 2, 3, 4];
+
+    /// A 4-party (degree 1) fixture: the client's configured servers plus their signing keys.
+    fn fixture() -> (Client, Vec<(PublicSigKey, PrivateSigKey)>) {
+        let mut rng = AesRng::seed_from_u64(42);
+        let keys: Vec<_> = (0..4).map(|_| gen_sig_keys(&mut rng)).collect();
+        let pks: HashMap<u32, PublicSigKey> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (vk, _))| (i as u32 + 1, vk.clone()))
+            .collect();
+        let client = Client::new(
+            pks,
+            alloy_primitives::Address::ZERO,
+            None,
+            threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS,
+            None,
+        );
+        (client, keys)
+    }
+
+    fn payload(party_id: u32, degree: u32, vk: &PublicSigKey) -> UserDecryptionResponsePayload {
+        UserDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(vk).unwrap(),
+            digest: LINK.to_vec(),
+            signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                fhe_type: tfhe::FheTypes::Uint4 as i32,
+                signcrypted_ciphertext: vec![9, 9, 9, 9],
+                external_handle: vec![5, 6, 7, 8],
+                packing_factor: 1,
+            }],
+            party_id,
+            degree,
+        }
+    }
+
+    fn sign(payload: &UserDecryptionResponsePayload, sk: &PrivateSigKey) -> Vec<u8> {
+        internal_sign(
+            &DSEP_USER_DECRYPTION,
+            &bc2wrap::serialize(payload).unwrap(),
+            sk,
+        )
+        .unwrap()
+        .sig
+        .to_vec()
+    }
+
+    fn response(
+        payload: UserDecryptionResponsePayload,
+        sk: &PrivateSigKey,
+    ) -> UserDecryptionResponse {
+        let signature = sign(&payload, sk);
+        UserDecryptionResponse {
+            signature,
+            external_signature: vec![],
+            payload: Some(payload),
+            extra_data: vec![],
+        }
+    }
+
+    /// Four well-formed responses, one per configured party.
+    fn happy_responses(keys: &[(PublicSigKey, PrivateSigKey)]) -> Vec<UserDecryptionResponse> {
+        keys.iter()
+            .enumerate()
+            .map(|(i, (vk, sk))| response(payload(i as u32 + 1, 1, vk), sk))
+            .collect()
+    }
+
+    #[test]
+    fn accepts_all_four_correctly_signed_responses() {
+        let (client, keys) = fixture();
+        let validated = client
+            .validate_solana_user_decrypt_responses(&LINK, &happy_responses(&keys))
+            .unwrap();
+        assert_eq!(validated.len(), 4);
+        assert_eq!(
+            validated.iter().map(|p| p.party_id).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn rejects_a_response_whose_digest_is_not_the_link() {
+        let (client, keys) = fixture();
+        let mut resps = happy_responses(&keys);
+        let mut tampered = payload(3, 1, &keys[2].0);
+        tampered.digest = vec![0xff; 4];
+        resps[2] = response(tampered, &keys[2].1);
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("solana link mismatch in response 2"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_verification_key_outside_the_configured_server_set() {
+        let (client, keys) = fixture();
+        let mut rng = AesRng::seed_from_u64(7);
+        let (foreign_vk, foreign_sk) = gen_sig_keys(&mut rng);
+        let mut resps = happy_responses(&keys);
+        resps[1] = response(payload(2, 1, &foreign_vk), &foreign_sk);
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("response 1 server address is not consistent for party 2"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_empty_signature() {
+        let (client, keys) = fixture();
+        let mut resps = happy_responses(&keys);
+        resps[0].signature = vec![];
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("response 0 has an empty signature"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_tampered_signature() {
+        let (client, keys) = fixture();
+        let mut resps = happy_responses(&keys);
+        // Re-sign party 4's payload with party 1's key: well-formed ECDSA, wrong signer.
+        resps[3].signature = sign(resps[3].payload.as_ref().unwrap(), &keys[0].1);
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("response 3 signature invalid"), "{err}");
+    }
+
+    #[test]
+    fn rejects_responses_disagreeing_on_degree() {
+        let (client, keys) = fixture();
+        let mut resps = happy_responses(&keys);
+        resps[2] = response(payload(3, 2, &keys[2].0), &keys[2].1);
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("disagree on degree (1 != 2 for party 3)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_degree_zero() {
+        let (client, keys) = fixture();
+        let resps: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (vk, sk))| response(payload(i as u32 + 1, 0, vk), sk))
+            .collect();
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("report degree 0"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_degree_that_does_not_match_the_configured_server_count() {
+        let (client, keys) = fixture();
+        let resps: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (vk, sk))| response(payload(i as u32 + 1, 2, vk), sk))
+            .collect();
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("solana user-decrypt degree 2 does not match the configured server count"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_too_few_responses_to_reconstruct() {
+        let (client, keys) = fixture();
+        let resps = vec![response(payload(1, 1, &keys[0].0), &keys[0].1)];
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(
+                "not enough solana user-decrypt responses to reconstruct: got 1, need at least 2"
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_party_ids() {
+        let (client, keys) = fixture();
+        let mut resps = happy_responses(&keys);
+        // Party 1 answers twice; the second copy is correctly signed by party 1 too.
+        resps[1] = response(payload(1, 1, &keys[0].0), &keys[0].1);
+        let err = client
+            .validate_solana_user_decrypt_responses(&LINK, &resps)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("duplicate party ID 1"), "{err}");
     }
 }
 
