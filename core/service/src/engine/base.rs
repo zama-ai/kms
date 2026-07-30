@@ -250,6 +250,7 @@ pub enum StoredSchemeSignatureVersions {
     V0(StoredSchemeSignature),
 }
 
+/// A single KMS signature together with the scheme that produced it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(StoredSchemeSignatureVersions)]
 pub struct StoredSchemeSignature {
@@ -1229,6 +1230,7 @@ impl Named for KeyGenMetadata {
 }
 
 impl KeyGenMetadata {
+    /// Create a new KeyGenMetadata instance with the provided parameters.
     pub fn new(
         key_id: RequestId,
         preprocessing_id: RequestId,
@@ -1252,6 +1254,16 @@ impl KeyGenMetadata {
         })
     }
 
+    /// The preprocessing ID that was signed and stored when the key was generated.
+    ///
+    /// Returns `None` for [`KeyGenMetadata::LegacyV0`].
+    pub fn preprocessing_id(&self) -> Option<&RequestId> {
+        match self {
+            KeyGenMetadata::Current(inner) => Some(&inner.preprocessing_id),
+            KeyGenMetadata::LegacyV0(_inner) => None,
+        }
+    }
+
     #[cfg(test)]
     pub fn external_signature(&self) -> &[u8] {
         match self {
@@ -1263,6 +1275,7 @@ impl KeyGenMetadata {
         }
     }
 
+    /// The per-scheme KMS signatures on this result, in gRPC form.
     pub fn scheme_signatures(&self) -> Vec<SchemeSignature> {
         match self {
             KeyGenMetadata::Current(inner) => stored_scheme_signatures_to_proto(&inner.signatures),
@@ -1270,6 +1283,7 @@ impl KeyGenMetadata {
         }
     }
 
+    /// Returns the set of public data types that are present in this metadata.
     pub fn pub_data_types(&self) -> HashSet<PubDataType> {
         match self {
             KeyGenMetadata::Current(key_gen_metadata_inner) => key_gen_metadata_inner

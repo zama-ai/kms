@@ -427,8 +427,7 @@ message PublicDecryptionResponse {
   // The KMS-internal ECDSA/secp256k1 authenticity signature over
   // the serialization of [PublicDecryptionResponsePayload]. Kept at field 1 (and
   // kept populated) for wire backward-compatibility with clients that predate
-  // the multi-scheme `signatures` list. It is byte-identical to the
-  // `Ecdsa256k1` entry of `signatures`.
+  // the multi-scheme `signatures` list.
   bytes signature = 1;
 
   // The ECDSA/secp256k1 EIP-712 signature on external_decryption_result for the
@@ -502,8 +501,7 @@ message UserDecryptionResponse {
   // The KMS-internal ECDSA/secp256k1 authenticity signature over
   // the serialization of [UserDecryptionResponsePayload]. Kept at field 1 (and
   // kept populated) for wire backward-compatibility with clients that predate
-  // the multi-scheme `signatures` list. It is byte-identical to the
-  // `Ecdsa256k1` entry of `signatures`.
+  // the multi-scheme `signatures` list.
   bytes signature = 1;
 
   // This is the external ECDSA signature created from the Eip712 domain
