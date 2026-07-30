@@ -23,6 +23,7 @@ use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
+use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tracing::info;
 use validator::Validate;
 
@@ -152,7 +153,7 @@ fn build_test_core_config(
             preproc_redis: None,
             num_sessions_preproc: Some(2),
             peers: Some(peers),
-            core_to_core_net: None,
+            core_to_core_net: CoreToCoreNetworkConfig::default(),
             decryption_mode: DecryptionMode::NoiseFloodSmall,
         }),
         internal_config: None,

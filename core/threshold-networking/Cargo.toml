@@ -9,7 +9,7 @@ description = "Provides networking for all threshold network components. GRPC, s
 
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
+clap = { workspace = true, features = ["derive", "env"]}
 rand.workspace = true
 rcgen.workspace = true
 async-trait.workspace = true
