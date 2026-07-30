@@ -557,7 +557,7 @@ pub struct NetworkRoundValue {
 /// "current-round packet". Messages tagged with a strictly future round are
 /// parked here — keyed by their round counter — until the session reaches that
 /// round, at which point they are delivered from the fast path. The buffer is
-/// bounded by [`MAX_FUTURE_ROUNDS`] and [`MAX_BUFFERED_FUTURE_MSGS`] to prevent
+/// bounded by [`MAX_BUFFERED_FUTURE_MSGS`] to prevent
 /// a peer from exhausting memory with distinct future round numbers.
 #[derive(Debug)]
 pub(crate) struct ReceiverState {
