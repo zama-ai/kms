@@ -2585,7 +2585,8 @@ pub(crate) mod tests {
             preprocessing_id,
             BTreeMap::new(),
             vec![],
-            Vec::new(),
+            vec![],
+            vec![],
         );
         assert_eq!(current.preprocessing_id(), Some(&preprocessing_id));
 

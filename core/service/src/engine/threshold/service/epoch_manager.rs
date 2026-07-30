@@ -2359,6 +2359,7 @@ pub(crate) mod tests {
                 std::collections::BTreeMap::new(),
                 vec![],
                 vec![],
+                vec![],
             ),
         )
     }
@@ -2542,6 +2543,7 @@ pub(crate) mod tests {
                     crs_info: vec![],
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&new_epoch_id))
                     .unwrap(),
             }))
