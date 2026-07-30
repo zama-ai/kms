@@ -4634,7 +4634,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "signature",
+ "signature 2.2.0",
  "strum",
  "strum_macros",
  "syn 2.0.118",
