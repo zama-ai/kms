@@ -3,7 +3,7 @@ use crate::{
     large_execution::{
         coinflip::Coinflip,
         local_single_share::{
-            LOCAL_SINGLE_MAX_ITER, LocalSingleShare, send_receive_pads, verify_sharing,
+            LOCAL_SINGLE_MAX_ITER, LocalSingleShare, share_secrets_and_pads, verify_sharing,
         },
         share_dispute::ShareDispute,
     },
@@ -77,10 +77,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets = self.share_dispute.execute(session, secrets).await?;
-
-                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets, shared_pads) =
+                    share_secrets_and_pads(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -181,10 +181,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
 
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets = self.share_dispute.execute(session, secrets).await?;
-
-                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets, shared_pads) =
+                    share_secrets_and_pads(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 

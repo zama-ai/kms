@@ -450,8 +450,7 @@ mod tests {
 
     // Rounds (happy path)
     // init single sharing
-    //         share dispute = 1 round
-    //         pads =  1 round
+    //         share dispute = 1 round (secrets and pads shared together)
     //         coinflip = vss + open = (1 + 3 + threshold) + 1
     //         verify = 1 reliable_broadcast = (3 + t) rounds
     //             (the m check-value maps are batched into a single broadcast)
@@ -459,14 +458,14 @@ mod tests {
     //         same as single sharing above (run back-to-back, not yet merged)
     //  triple batch - have been precomputed, just one open = 1 round
     //  random batch - have been precomputed = 0 rounds
-    // = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1
+    // = 2 * (1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1
     // Note: 3 batches, so above rounds times 3
-    // 5p/1t: 2 * (1 + 1 + 5 + 1 + 4) + 1 = 25
-    // 9p/2t: 2 * (1 + 1 + 6 + 1 + 5) + 1 = 29
+    // 5p/1t: 2 * (1 + 5 + 1 + 4) + 1 = 23
+    // 9p/2t: 2 * (1 + 6 + 1 + 5) + 1 = 27
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(5, 1, Some(3 * 25)))]
-    #[case(TestingParameters::init_honest(9, 2, Some(3 * 29)))]
+    #[case(TestingParameters::init_honest(5, 1, Some(3 * 23)))]
+    #[case(TestingParameters::init_honest(9, 2, Some(3 * 27)))]
     async fn test_large_offline_z128(#[case] params: TestingParameters) {
         let honest_offline = SecureLargePreprocessing::default();
 
@@ -480,8 +479,8 @@ mod tests {
     // Rounds: same as for z128, see above
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(5, 1, Some(3 * 25)))]
-    #[case(TestingParameters::init_honest(9, 2, Some(3 * 29)))]
+    #[case(TestingParameters::init_honest(5, 1, Some(3 * 23)))]
+    #[case(TestingParameters::init_honest(9, 2, Some(3 * 27)))]
     async fn test_large_offline_z64(#[case] params: TestingParameters) {
         let honest_offline = SecureLargePreprocessing::default();
 

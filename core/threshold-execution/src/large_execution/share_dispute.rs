@@ -100,6 +100,60 @@ where
         .collect::<anyhow::Result<_>>()
 }
 
+/// Split a [`ShareDisputeOutput`] whose per-role vectors carry `l` secret shares
+/// followed by the pad shares (as produced by sharing `secrets ‖ pads` in one call)
+/// back into the `(secrets, pads)` outputs. Every vector is split at index `l`.
+pub(crate) fn split_share_dispute_output<Z>(
+    output: ShareDisputeOutput<Z>,
+    l: usize,
+) -> (ShareDisputeOutput<Z>, ShareDisputeOutput<Z>) {
+    fn split_map<Z>(
+        map: HashMap<Role, Vec<Z>>,
+        l: usize,
+    ) -> (HashMap<Role, Vec<Z>>, HashMap<Role, Vec<Z>>) {
+        let mut secrets = HashMap::with_capacity(map.len());
+        let mut pads = HashMap::with_capacity(map.len());
+        for (role, mut values) in map {
+            let pad = values.split_off(l);
+            secrets.insert(role, values);
+            pads.insert(role, pad);
+        }
+        (secrets, pads)
+    }
+
+    let (secrets_all, pads_all) = split_map(output.all_shares, l);
+    let (secrets_own, pads_own) = split_map(output.shares_own_secret, l);
+    (
+        ShareDisputeOutput {
+            all_shares: secrets_all,
+            shares_own_secret: secrets_own,
+        },
+        ShareDisputeOutput {
+            all_shares: pads_all,
+            shares_own_secret: pads_own,
+        },
+    )
+}
+
+/// [`split_share_dispute_output`] for the `(t, 2t)` double-sharing output.
+pub(crate) fn split_share_dispute_output_double<Z>(
+    output: ShareDisputeOutputDouble<Z>,
+    l: usize,
+) -> (ShareDisputeOutputDouble<Z>, ShareDisputeOutputDouble<Z>) {
+    let (secrets_t, pads_t) = split_share_dispute_output(output.output_t, l);
+    let (secrets_2t, pads_2t) = split_share_dispute_output(output.output_2t, l);
+    (
+        ShareDisputeOutputDouble {
+            output_t: secrets_t,
+            output_2t: secrets_2t,
+        },
+        ShareDisputeOutputDouble {
+            output_t: pads_t,
+            output_2t: pads_2t,
+        },
+    )
+}
+
 //Fill in missing values with 0s
 pub(crate) fn fill_incomplete_output<Z: Ring, L: LargeSessionHandles>(
     session: &L,

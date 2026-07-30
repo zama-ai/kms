@@ -4,7 +4,7 @@ use crate::{
         coinflip::Coinflip,
         local_double_share::{
             DoubleShares, LOCAL_DOUBLE_MAX_ITER, LocalDoubleShare, format_output,
-            send_receive_pads_double, verify_sharing,
+            share_secrets_and_pads_double, verify_sharing,
         },
         share_dispute::ShareDispute,
     },
@@ -121,11 +121,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
 
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
-
-                shared_pads =
-                    send_receive_pads_double::<Z, L, S>(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets_double, shared_pads) =
+                    share_secrets_and_pads_double(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -195,11 +194,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
 
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
-
-                shared_pads =
-                    send_receive_pads_double::<Z, L, S>(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets_double, shared_pads) =
+                    share_secrets_and_pads_double(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 

@@ -4,7 +4,10 @@ use super::{
     local_single_share::{
         MapsSharesChallenges, compute_check_values, look_for_disputes, verify_sender_challenge,
     },
-    share_dispute::{SecureShareDispute, ShareDispute, ShareDisputeOutputDouble},
+    share_dispute::{
+        SecureShareDispute, ShareDispute, ShareDisputeOutputDouble,
+        split_share_dispute_output_double,
+    },
 };
 use crate::network_value::BroadcastValue;
 use crate::{
@@ -103,10 +106,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
 
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
-
-                shared_pads_double = send_receive_pads_double(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets_double, shared_pads_double) =
+                    share_secrets_and_pads_double(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -165,10 +168,17 @@ pub(crate) fn format_output<Z>(
     Ok(result)
 }
 
-pub(crate) async fn send_receive_pads_double<Z, L, S>(
+/// Sample the `m` pads and share `secrets ‖ pads` in a single [`ShareDispute::execute_double`]
+/// round, then split the output back into the `(secrets, pads)` [`ShareDisputeOutputDouble`]s.
+///
+/// Merging the two sharings saves one communication round. As in the single-sharing case, the
+/// pads are sampled before ShareDispute samples its polynomials, so the RNG order differs from
+/// sharing secrets and pads separately (KATs move).
+pub(crate) async fn share_secrets_and_pads_double<Z, L, S>(
     session: &mut L,
     share_dispute: &S,
-) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
+    secrets: &[Z],
+) -> anyhow::Result<(ShareDisputeOutputDouble<Z>, ShareDisputeOutputDouble<Z>)>
 where
     Z: RingWithExceptionalSequence + Derive + Invert,
     L: LargeSessionHandles,
@@ -176,7 +186,11 @@ where
 {
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_pads = (0..m).map(|_| Z::sample(session.rng())).collect_vec();
-    share_dispute.execute_double(session, &my_pads).await
+    let secrets_and_pads = [secrets, my_pads.as_slice()].concat();
+    let merged = share_dispute
+        .execute_double(session, &secrets_and_pads)
+        .await?;
+    Ok(split_share_dispute_output_double(merged, secrets.len()))
 }
 
 pub(crate) async fn verify_sharing<
@@ -551,17 +565,16 @@ pub(crate) mod tests {
     }
 
     // Rounds (happy path)
-    //      share dispute = 1 round
-    //      pads =  1 round
+    //      share dispute = 1 round (secrets and pads shared together)
     //      coinflip = vss + open = (1 + 3 + t) + 1
     //      verify = 1 reliable_broadcast = (3 + t) rounds
     //          (the m check-value tuples are batched into a single broadcast)
-    // 4p/1t: 1 + 1 + (1 + 3 + 1) + 1 + (3 + 1) = 12
-    // 7p/2t: 1 + 1 + (1 + 3 + 2) + 1 + (3 + 2) = 14
+    // 4p/1t: 1 + (1 + 3 + 1) + 1 + (3 + 1) = 11
+    // 7p/2t: 1 + (1 + 3 + 2) + 1 + (3 + 2) = 13
     #[tokio::test]
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1, Some(12)))]
-    #[case(TestingParameters::init_honest(7, 2, Some(14)))]
+    #[case(TestingParameters::init_honest(4, 1, Some(11)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(13)))]
     async fn test_ldl_z128(#[case] params: TestingParameters) {
         let malicious_ldl = SecureLocalDoubleShare::default();
 

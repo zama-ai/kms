@@ -227,8 +227,7 @@ pub(crate) mod tests {
         // Rounds (only on the happy path here)
         // RealPreprocessing
         // init single sharing
-        //      share dispute = 1 round
-        //      pads =  1 round
+        //      share dispute = 1 round (secrets and pads shared together)
         //      coinflip = vss + open = (1 + 3 + threshold) + 1
         //      verify = 1 reliable_broadcast = (3 + t) rounds
         //          (the m check-value maps are batched into a single broadcast)
@@ -236,7 +235,7 @@ pub(crate) mod tests {
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
         // SingleSharing assumes Sync network
-        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
+        let rounds = (1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
         let result = execute_protocol_large::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
