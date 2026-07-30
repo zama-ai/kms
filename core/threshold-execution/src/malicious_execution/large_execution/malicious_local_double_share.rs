@@ -160,7 +160,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets_double,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,
@@ -232,7 +232,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets_double,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,

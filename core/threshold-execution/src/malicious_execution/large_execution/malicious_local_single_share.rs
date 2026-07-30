@@ -103,7 +103,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,
@@ -205,7 +205,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,

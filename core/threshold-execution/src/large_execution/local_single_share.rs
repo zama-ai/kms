@@ -26,6 +26,7 @@ use num_integer::div_ceil;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
@@ -148,7 +149,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,
@@ -194,14 +195,19 @@ pub(crate) async fn verify_sharing<
 >(
     session: &mut L,
     secrets: &mut ShareDisputeOutput<Z>,
-    pads: &ShareDisputeOutput<Z>,
+    pads: ShareDisputeOutput<Z>,
     x: &Z,
     l: usize,
     broadcast: &BCast,
 ) -> anyhow::Result<bool> {
     let (secrets_shares_all, my_shared_secrets) =
         (&mut secrets.all_shares, &mut secrets.shares_own_secret);
-    let (pads_shares_all, my_shared_pads) = (&pads.all_shares, &pads.shares_own_secret);
+    // `pads` is read-only and unused after this call, so take it by value and move its maps into
+    // the build task below (no clone).
+    let ShareDisputeOutput {
+        all_shares: pads_shares_all,
+        shares_own_secret: my_shared_pads,
+    } = pads;
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role();
 
@@ -210,15 +216,14 @@ pub(crate) async fn verify_sharing<
     // broadcast them together in a single parallel round (spec Fig. 88), instead of one
     // broadcast per `g`.
     //
-    // Building the batch is a pure CPU burst over `m` independent challenge indices. We clone
-    // the (O(n·l)) share maps once and run the fan-out on the dedicated MPC rayon pool via
-    // `spawn_compute_bound`, so the tokio worker stays free (rather than blocking on an inline
-    // `par_iter`). The burst runs before this call touches the network.
+    // Building the batch is a pure CPU burst over `m` independent challenge indices. We run the
+    // fan-out on the dedicated MPC rayon pool via `spawn_compute_bound`, so the tokio worker
+    // stays free (rather than blocking on an inline `par_iter`). The `pads` maps are moved in;
+    // the `secrets` maps are cloned because they are mutated (corrupt senders zeroed) and
+    // returned after this call. The burst runs before this call touches the network.
     let my_batch: Vec<MapsSharesChallenges<Z>> = {
         let roles = session.roles().clone();
-        let pads_shares_all = pads_shares_all.clone();
         let secrets_shares_all = secrets_shares_all.clone();
-        let my_shared_pads = my_shared_pads.clone();
         let my_shared_secrets = my_shared_secrets.clone();
         let x = *x;
         spawn_compute_bound(move || {
@@ -275,34 +280,36 @@ pub(crate) async fn verify_sharing<
         return Ok(false);
     }
 
-    //Map broadcast data back to a per-sender batch of MapsSharesChallenges.
+    //Reshape the (owned) broadcast into one map per challenge index `g`, moving each sender's
+    //`MapsSharesChallenges` out of its batch (no clone). Each per-`g` map is wrapped in an `Arc`
+    //so it can be shared cheaply between the reconstruction compute task and `look_for_disputes`.
     //Senders that did not broadcast a batch of the expected length `m` are marked corrupt.
-    let mut bcast_batches = HashMap::new();
+    let mut per_g: Vec<HashMap<Role, MapsSharesChallenges<Z>>> =
+        (0..m).map(|_| HashMap::new()).collect();
     let mut wrong_type_corrupts = HashSet::new();
     for (role, bcast_value) in bcast_data {
         match bcast_value {
             BroadcastValue::LocalSingleShare(batch) if batch.len() == m => {
-                bcast_batches.insert(role, batch);
+                for (g, maps) in batch.into_iter().enumerate() {
+                    per_g[g].insert(role, maps);
+                }
             }
             _ => {
                 wrong_type_corrupts.insert(role);
             }
         }
     }
+    let per_g: Vec<Arc<HashMap<Role, MapsSharesChallenges<Z>>>> =
+        per_g.into_iter().map(Arc::new).collect();
 
     //Process each challenge index locally against the single broadcast.
     // We do this in sequence because the verification of each challenge index
     // may add new corrupt parties to the session, which will affect the verification of subsequent challenge indices.
-    for g in 0..m {
-        //Rebuild the per-`g` view expected by the sender/dispute checks
-        let bcast_output: HashMap<Role, MapsSharesChallenges<Z>> = bcast_batches
-            .iter()
-            .map(|(role, batch)| (*role, batch[g].clone()))
-            .collect();
-
+    for (g, bcast_output) in per_g.iter().enumerate() {
         let threshold = session.threshold() as usize;
         let mut bcast_corrupts =
-            verify_sender_challenge(&bcast_output, session, threshold, &mut None).await?;
+            verify_sender_challenge(Arc::clone(bcast_output), session, threshold, &mut None)
+                .await?;
         //Wrong-type senders are corrupt across every challenge index; fold them in on the first pass.
         if g == 0 {
             bcast_corrupts.extend(wrong_type_corrupts.iter().cloned());
@@ -316,7 +323,7 @@ pub(crate) async fn verify_sharing<
         }
 
         //Returns as soon as we have a new dispute
-        if should_return || !look_for_disputes(&bcast_output, session)? {
+        if should_return || !look_for_disputes(bcast_output, session)? {
             tracing::warn!(
                 "RESTARTING LocalSingleShare as we detected a new dispute or corrupt party"
             );
@@ -373,7 +380,7 @@ pub(crate) fn compute_check_values<Z: Ring>(
 //Verify that the sender for each lsl did give a 0 share to parties it is in dispute with
 //and that the overall sharing is a degree t polynomial
 pub(crate) async fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHandles>(
-    bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
+    bcast_data: Arc<HashMap<Role, MapsSharesChallenges<Z>>>,
     session: &mut L,
     threshold: usize,
     result_map: &mut Option<HashMap<Role, Z>>,
@@ -387,14 +394,14 @@ pub(crate) async fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSess
         .filter(|role_pi| **role_pi != my_role)
         .map(|role_pi| (*role_pi, session.disputed_roles().get(role_pi).clone()))
         .collect();
-    let bcast_data = bcast_data.clone();
 
     // The heavy per-sender work is the error-correcting `error_reconstruct` decode; it and the
     // dispute-zero check only need a read-only snapshot, so we run the fan-out on the dedicated
     // MPC rayon pool via `spawn_compute_bound` (freeing the tokio worker) rather than blocking on
-    // an inline `par_iter`. Each sender maps to either `None` (corrupt) or `Some(reconstructed
-    // check value)`; the corrupt set / result_map are then updated sequentially, so the outcome
-    // is identical to processing senders one by one.
+    // an inline `par_iter`. The broadcast is shared in (cheaply) via `Arc` rather than cloned.
+    // Each sender maps to either `None` (corrupt) or `Some(reconstructed check value)`; the
+    // corrupt set / result_map are then updated sequentially, so the outcome is identical to
+    // processing senders one by one.
     let verdicts: Vec<(Role, Option<Z>)> = spawn_compute_bound(move || {
         bcast_data
             .par_iter()
