@@ -101,8 +101,8 @@ The service crate is the main surface area. Key subdirectories under
   `unified_sign`/`unified_verify` entry points. The historic
   `cryptography::signatures` path is now a re-export facade.
 - [client/](core/service/src/client/) and
-  [testing/](core/service/src/testing/) — client-side helpers and
-  test-only wiring.
+  [testing/](core/service/src/testing/) — client-side helpers (including
+  local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
 ### Binaries
@@ -299,10 +299,17 @@ exact commands.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
-- **Container images** — [docker/core/service/Dockerfile](docker/core/service/Dockerfile)
-  is a multi-stage build producing the `core-service` image (published as
-  `ghcr.io/zama-ai/kms/core-service`). Its entrypoint generates signing
-  keys and TLS certs on first boot, then runs `kms-server`.
+- **Container images** — local developer builds still use
+  [docker/core/service/Dockerfile](docker/core/service/Dockerfile) and
+  [docker/core-client/Dockerfile](docker/core-client/Dockerfile). Both package
+  Dockerfiles always consume a shared `kms-binaries` image via
+  `KMS_BINARIES_IMAGE`. Local scripts/compose targets build that image with
+  [docker/kms-binaries/Dockerfile](docker/kms-binaries/Dockerfile) and pass the
+  desired tag explicitly; production CI builds its secure `prod` target and
+  retags it as `:latest` before packaging the `prod` targets of `core-service`
+  and `core-client`. Release compilation uses fat LTO, while other CI builds use
+  thin LTO. The published runtime image for the service remains
+  `ghcr.io/zama-ai/kms/core-service`.
 - **Kubernetes** — a Helm chart is provided at
   [charts/kms-core/](charts/kms-core/) for both centralized and threshold
   deployments, including Nitro Enclaves when configured.
