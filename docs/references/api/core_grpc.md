@@ -1004,3 +1004,33 @@ The signature is a `secp256k1` signature on the `bincode::serialize` of the `pay
 - `external_signature`: a `EIP-712` signature on the _solidity-compatible_  256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct.
 
 </details>
+
+<details>
+    <summary> UserDecryptionSync </summary>
+
+### Input
+
+```proto
+message UserDecryptionRequest {
+  UserDecryptionRequestPayload payload = 1;
+  Eip712DomainMsg domain = 2;
+  RequestId request_id = 3;
+}
+```
+
+### Output
+
+```proto
+message UserDecryptionResponse {
+  bytes signature = 1;
+  UserDecryptionResponsePayload payload = 2;
+}
+```
+
+### Description
+
+`UserDecryptSync` is the __synchronous__ variant of `UserDecrypt`: it starts the user decryption exactly as `UserDecrypt` does and then waits for the result within the same call, returning the same `UserDecryptionResponse` that `GetUserDecryptionResult` would return. This saves the caller the second round trip.
+
+The request is still recorded internally, so the result also remains retrievable through `GetUserDecryptionResult`. If the result is not ready before the server's waiting window expires, the call returns `UNAVAILABLE` while the decryption keeps running in the background; the result can then be fetched with `GetUserDecryptionResult` or by re-sending the same request to `UserDecryptSync`. Re-sending a request whose `request_id` was already used does not start a new decryption; the call attaches to the existing request and returns its result.
+
+</details>

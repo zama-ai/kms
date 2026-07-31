@@ -633,6 +633,8 @@ $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> user-decrypt 
 
 Upon success, the above commands print the decrypted plaintext. To run a fixed-rate load test, provide both `--rate` and `--duration`.
 
+User decryption also supports `--sync`, which uses the synchronous `UserDecryptSync` endpoint: each request returns the decryption result directly in a single call instead of polling `GetUserDecryptionResult`. The request still goes through the meta-store on the server, so the result remains retrievable via `GetUserDecryptionResult` afterwards.
+
 #### Arguments
 Arguments required for public and user decryption from args are:
  - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and decrypt. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
@@ -651,8 +653,9 @@ Public/user-decrypt rate-mode options are:
  - `--rate <REQUESTS_PER_SECOND>`: request launch rate. Must be used together with `--duration`.
  - `--duration <SECONDS>`: load-test duration. Must be used together with `--rate`.
  - `--max-in-flight <NUM>`: optional rate-mode cap for in-flight requests before the client starts shedding requests.
+ - `--sync`: use the synchronous endpoint (request and result in a single call). Currently only supported for `user-decrypt`.
 
- __NOTE__: For public and user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, and `--max-in-flight <NUM>` are supported.
+ __NOTE__: For public and user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, `--max-in-flight <NUM>`, and `--sync` are supported.
 
 ### Custodian context
 
