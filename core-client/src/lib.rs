@@ -337,6 +337,7 @@ trait DecryptRateArgs {
     fn get_rate(&self) -> Option<u64>;
     fn get_duration(&self) -> Option<u64>;
     fn get_max_in_flight(&self) -> Option<usize>;
+    fn get_sync(&self) -> bool;
 }
 
 fn validate_decrypt_rate_args(cf: &impl DecryptRateArgs) -> anyhow::Result<()> {
@@ -632,6 +633,13 @@ impl DecryptRateArgs for DecryptArguments {
             }
         }
     }
+
+    fn get_sync(&self) -> bool {
+        match self {
+            DecryptArguments::FromFile(cipher_file) => cipher_file.rate_options.sync,
+            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.rate_options.sync,
+        }
+    }
 }
 
 impl DecryptArguments {
@@ -649,6 +657,10 @@ impl DecryptArguments {
 
     pub fn get_max_in_flight(&self) -> Option<usize> {
         DecryptRateArgs::get_max_in_flight(self)
+    }
+
+    pub fn get_sync(&self) -> bool {
+        DecryptRateArgs::get_sync(self)
     }
 }
 
@@ -760,6 +772,9 @@ pub struct DecryptRateOptions {
     /// Maximum number of in-flight requests allowed during a rate-mode run.
     #[clap(long)]
     pub max_in_flight: Option<usize>,
+    /// Whether to use the synchronous endpoint. Currently only supported for `user-decrypt`.
+    #[clap(long, default_value_t = false)]
+    pub sync: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -1965,6 +1980,11 @@ pub async fn execute_cmd(
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
             validate_decrypt_rate_args(cipher_args)?;
+            if cipher_args.get_sync() {
+                return Err(
+                    anyhow::anyhow!("--sync is not yet supported for public-decrypt").into(),
+                );
+            }
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2153,6 +2173,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2171,6 +2192,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2976,6 +2998,45 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
+    #[test]
+    fn test_user_decrypt_sync_flag() {
+        // `--sync` is off by default and enabled by the flag
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "user-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ])
+        .unwrap();
+        let CCCommand::UserDecrypt(args) = conf.command else {
+            panic!("expected a user-decrypt command");
+        };
+        assert!(!args.get_sync());
+
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "user-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--sync",
+        ])
+        .unwrap();
+        let CCCommand::UserDecrypt(args) = conf.command else {
+            panic!("expected a user-decrypt command");
+        };
+        assert!(args.get_sync());
+    }
+
     fn test_decrypt_parameters() -> DecryptParameters {
         DecryptParameters {
             to_encrypt: "0x1".to_string(),
@@ -2991,6 +3052,7 @@ mod tests {
                 rate: Some(10),
                 duration: Some(10),
                 max_in_flight: None,
+                sync: false,
             },
         }
     }

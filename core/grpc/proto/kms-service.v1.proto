@@ -242,6 +242,35 @@ service CoreServiceEndpoint {
   // * The `request_id` in `request` can be used to retrieve the result of the user decryption again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
 
+  // Synchronous variant of user decryption.
+  //
+  // That is, it starts the user decryption exactly as `UserDecrypt` does and then waits for the
+  // result within the same call, returning this KMS' `UserDecryptionResponse` directly.
+  // This saves the caller the second round trip through `GetUserDecryptionResult`.
+  //
+  // The request is still recorded in the meta-store, so the result of a user decryption started
+  // through this method can also be retrieved (again) with `GetUserDecryptionResult`.
+  // If the result is not ready before the server's waiting window expires, the call returns
+  // `Unavailable`; the decryption keeps running in the background and the result can be fetched
+  // with `GetUserDecryptionResult`, or by calling this method again with the same request.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Returns
+  // * `Response<UserDecryptionResponse>` - Identical to what `GetUserDecryptionResult` returns.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * Same pre-conditions as `UserDecrypt`, except that `request_id` in `request` does not need
+  //   to be fresh: if it was already used to start a user decryption, no new decryption is
+  //   started; instead this call waits on the existing one and returns its result (idempotent
+  //   retry). Note that in this case the remaining content of `request` is ignored.
+  // ## Post-condition:
+  // * `request_id` in `request` has been consumed; the ciphertexts are decrypted at most once per
+  //   `request_id` and the result can be retrieved again with `GetUserDecryptionResult`.
+  rpc UserDecryptSync(kms.v1.UserDecryptionRequest) returns (kms.v1.UserDecryptionResponse);
+
   // Start CRS generation.
   //
   // That is, it generates a common reference string (CRS) for the KMS.

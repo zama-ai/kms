@@ -1178,6 +1178,14 @@ async fn integration_test_commands(
             false,
             true,
         ))),
+        // Same user decryption through the synchronous endpoint (single round trip)
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            rate_options: DecryptRateOptions {
+                sync: true,
+                ..Default::default()
+            },
+            ..ucp("0x1", FheType::Ebool, 1, false, true)
+        })),
         CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
