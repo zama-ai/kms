@@ -659,6 +659,7 @@ impl KmsV0_15_0 {
             preprocessing_id,
             key_digest_map,
             external_signature,
+            signatures: Vec::new(),
             extra_data: None,
         };
         store_versioned_auxiliary!(
@@ -686,6 +687,7 @@ impl KmsV0_15_0 {
             digest,
             max_num_bits,
             external_signature.clone(),
+            vec![], // Empty signatures to signal legacy
             vec![], // Empty extra data to signal legacy
         );
 
@@ -739,6 +741,7 @@ impl KmsV0_15_0 {
             preprocessing_id,
             key_digest_map,
             external_signature,
+            signatures: Vec::new(), // Legacy (before multiple signing key support)
             extra_data: Some(extra_data),
         };
         store_versioned_test!(
@@ -771,6 +774,7 @@ impl KmsV0_15_0 {
             digest,
             max_num_bits,
             external_signature.clone(),
+            Vec::new(), // Legacy (before multiple signing key support)
             extra_data,
         );
 
@@ -1312,6 +1316,7 @@ impl KmsV0_15_0 {
         let preproc_id = kms_grpc_0_15_0::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
+            &[SigningSchemeType::Ecdsa256k1],
             client_key,
             &key_id,
             &preproc_id,
