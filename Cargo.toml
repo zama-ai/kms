@@ -111,7 +111,8 @@ assert_cmd = "=2.2.2"  # Assert command for testing - LOW RISK: assert-rs team, 
 async-std = { version = "=1.13.2", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 55M+ downloads
 async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
 # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted.
-# Pinned to an upstream rev because crates.io 0.10.0 (latest release) pulls vulnerable serde_with 2.3.3
+# Pinned to an upstream rev because crates.io 0.10.0 pulls vulnerable serde_with 2.3.3.
+# TODO: Revert to a crates.io release once Evervault ships a version that no longer pulls serde_with 2.3.3.
 attestation-doc-validation = { git = "https://github.com/evervault/attestation-doc-validation", rev = "50b084885c7d3ca59c52ce17d6c261eee0e78b27" }
 aws-config = { version = "=1.8.18" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
 aws-lc-rs = { version = "=1.17.0" } # AWS-LC cryptographic library - LOW RISK: Official AWS SDK
