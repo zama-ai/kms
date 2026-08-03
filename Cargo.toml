@@ -112,8 +112,6 @@ async-std = { version = "=1.13.2", features = ["attributes", "tokio1"] }  # Asyn
 async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
 # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted.
 # Pinned to an upstream rev because crates.io 0.10.0 (latest release) pulls vulnerable serde_with 2.3.3
-# (KeyValueMap serialize panic, Dependabot #183); this rev only bumps deps (serde_with 3.8, base64 0.22),
-# no source changes vs 0.10.0. Return to a crates.io pin once Evervault cuts the next release.
 attestation-doc-validation = { git = "https://github.com/evervault/attestation-doc-validation", rev = "50b084885c7d3ca59c52ce17d6c261eee0e78b27" }
 aws-config = { version = "=1.8.18" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
 aws-lc-rs = { version = "=1.17.0" } # AWS-LC cryptographic library - LOW RISK: Official AWS SDK
