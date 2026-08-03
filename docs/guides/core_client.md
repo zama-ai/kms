@@ -655,7 +655,7 @@ Public/user-decrypt rate-mode options are:
  - `--max-in-flight <NUM>`: optional rate-mode cap for in-flight requests before the client starts shedding requests.
  - `--sync`: use the synchronous endpoint (request and result in a single call). Currently only supported for `user-decrypt`.
 
- __NOTE__: For public and user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, `--max-in-flight <NUM>`, and `--sync` are supported.
+ __NOTE__: For public and user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, and `--max-in-flight <NUM>` are supported, plus `--sync` for user decrypt only.
 
 ### Custodian context
 

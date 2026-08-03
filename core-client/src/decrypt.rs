@@ -1006,6 +1006,15 @@ fn decrypt_rate_metrics<T>(
 }
 
 /// Fan out the request to the sync endpoint, which returns the decryption result directly.
+///
+/// Unlike the async path, which submits on `core_endpoints_req` and waits on
+/// `core_endpoints_resp`, a sync call is both the submission and the wait, so it only uses one
+/// channel per core. In rate mode every in-flight call therefore holds a stream on that single
+/// connection for up to the server's waiting window, which is worth keeping in mind when
+/// comparing `--sync` throughput against the two-channel async path.
+///
+/// Re-sending the same request after `Unavailable` is cheap on the server: it recognises the
+/// request ID and waits on the running decryption instead of re-validating and restarting it.
 fn spawn_user_decrypt_sync(
     user_decrypt_req: &UserDecryptionRequest,
     core_endpoints: &CoreEndpointClients,

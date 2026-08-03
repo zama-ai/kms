@@ -1006,7 +1006,7 @@ The signature is a `secp256k1` signature on the `bincode::serialize` of the `pay
 </details>
 
 <details>
-    <summary> UserDecryptionSync </summary>
+    <summary> UserDecryptSync </summary>
 
 ### Input
 
@@ -1031,6 +1031,8 @@ message UserDecryptionResponse {
 
 `UserDecryptSync` is the __synchronous__ variant of `UserDecrypt`: it starts the user decryption exactly as `UserDecrypt` does and then waits for the result within the same call, returning the same `UserDecryptionResponse` that `GetUserDecryptionResult` would return. This saves the caller the second round trip.
 
-The request is still recorded internally, so the result also remains retrievable through `GetUserDecryptionResult`. If the result is not ready before the server's waiting window expires, the call returns `UNAVAILABLE` while the decryption keeps running in the background; the result can then be fetched with `GetUserDecryptionResult` or by re-sending the same request to `UserDecryptSync`. Re-sending a request whose `request_id` was already used does not start a new decryption; the call attaches to the existing request and returns its result.
+The request is still recorded internally, so the result also remains retrievable through `GetUserDecryptionResult`. If the result is not ready before the server's waiting window expires, the call returns `UNAVAILABLE` while the decryption keeps running in the background; the result can then be fetched with `GetUserDecryptionResult` or by re-sending the same request to `UserDecryptSync`.
+
+A `request_id` that is already known is handled exactly as re-sending it to `UserDecrypt` would be, except that this method waits for the outcome instead of rejecting the call. If a decryption for that `request_id` is still running or has already succeeded, no new decryption is started: the call attaches to that attempt and returns its result, ignoring the rest of the request. If the previous attempt failed, a new decryption is started from the content of the new request, and the call returns the outcome of that new attempt.
 
 </details>

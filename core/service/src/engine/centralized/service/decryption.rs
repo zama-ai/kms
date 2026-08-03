@@ -11,7 +11,7 @@ use crate::engine::validation::{
     validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
-    add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+    EntryState, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
     update_req_in_meta_store,
 };
 use crate::vault::storage::{Storage, StorageExt};
@@ -158,21 +158,50 @@ pub async fn user_decrypt_sync_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-    let request_id = request.get_ref().request_id.clone().ok_or_else(|| {
-        MetricedError::new(
-            OP_USER_DECRYPT_SYNC,
-            None,
-            anyhow::anyhow!("Missing request ID in UserDecryptionRequest (sync)"),
-            tonic::Code::InvalidArgument,
-        )
-    })?;
-    match user_decrypt_impl(service, request).await {
-        Ok(_empty) => (),
-        // Idempotent retry: attach to the existing entry and return its result instead of failing
-        Err(e) if e.code() == tonic::Code::AlreadyExists => (),
-        Err(e) => return Err(e),
+    // Time the whole call, wait included: this is the latency the sync endpoint exists to cut.
+    let _timer = METRICS
+        .time_operation(OP_USER_DECRYPT_SYNC)
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
+        .start();
+
+    let request_id = {
+        let proto_req_id = request.get_ref().request_id.as_ref().ok_or_else(|| {
+            MetricedError::new(
+                OP_USER_DECRYPT_SYNC,
+                None,
+                anyhow::anyhow!("Missing request ID in UserDecryptionRequest (sync)"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        parse_grpc_request_id(proto_req_id, RequestIdParsingErr::UserDecRequest).map_err(|e| {
+            MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument)
+        })?
+    };
+
+    let should_start = match service
+        .user_dec_meta_store
+        .read()
+        .await
+        .retrieve(&request_id)
+    {
+        None => true,                           // fresh request ID
+        Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
+        Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
+        Some(EntryState::Pending) => false,     // in flight, attach to it
+        Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
+    };
+    if should_start {
+        match user_decrypt_impl(service, request).await {
+            Ok(_empty) => (),
+            // Another call won the race to start or redo this request: attach to that attempt
+            Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+            Err(e) => return Err(e.retag(OP_USER_DECRYPT_SYNC)),
+        }
     }
-    get_user_decryption_result_impl(service, Request::new(request_id)).await
+
+    get_user_decryption_result_impl(service, Request::new(request_id.into()))
+        .await
+        .map_err(|e| e.retag(OP_USER_DECRYPT_SYNC))
 }
 
 /// Implementation of the get_user_decryption_result endpoint
@@ -1017,8 +1046,8 @@ mod test_user_decryption {
         let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_already_exists").unwrap();
-        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
-        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
+        let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let (enc_key_buf, enc_sk) = make_test_pk(&mut rng);
 
         let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
 
@@ -1033,12 +1062,20 @@ mod test_user_decryption {
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
 
-        // the sync endpoint instead attaches to the existing entry and
-        // returns its result
+        // The sync endpoint instead attaches to the existing entry and returns its result.
+        // Attaching is a success path, so it must not record an error: the `AlreadyExists`
+        // signal is defused rather than dropped.
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
         let response = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
             .await
-            .unwrap();
-        assert!(response.into_inner().payload.is_some());
+            .unwrap()
+            .into_inner();
+        assert_payload_decrypts_to(&response.payload.unwrap(), &enc_sk, msg);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "attaching to an already-known request ID must not report a failure"
+        );
     }
 
     #[tokio::test]
@@ -1077,5 +1114,45 @@ mod test_user_decryption {
             .unwrap()
             .into_inner();
         assert_eq!(Some(&payload), retry.payload.as_ref());
+    }
+
+    /// A `request_id` whose previous attempt failed is redone, exactly as re-sending it to the
+    /// async endpoint would be, and the sync call returns the new attempt's outcome.
+    #[tokio::test]
+    async fn sync_redoes_failed_request() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_sync_redo").unwrap();
+        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_sync_redo").unwrap();
+        let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let (enc_key_buf, enc_sk) = make_test_pk(&mut rng);
+
+        let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
+
+        // Leave the request ID in the state a failed attempt would leave it in.
+        let permit = kms
+            .user_dec_meta_store
+            .write()
+            .await
+            .insert(&request_id)
+            .unwrap();
+        crate::util::meta_store::update_err_req_in_meta_store(
+            &kms.user_dec_meta_store,
+            permit,
+            "forced failure".to_string(),
+            OP_USER_DECRYPT_REQUEST,
+        )
+        .await;
+
+        // The sync call redoes the decryption instead of returning the stored failure, and the
+        // plaintext it produces is the one this request asked for.
+        let payload = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap()
+            .into_inner()
+            .payload
+            .unwrap();
+        assert_payload_decrypts_to(&payload, &enc_sk, msg);
     }
 }

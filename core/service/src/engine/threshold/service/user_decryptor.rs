@@ -72,8 +72,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
-            update_req_in_meta_store,
+            EntryState, MetaStore, add_or_redo_failed_in_meta_store,
+            retrieve_from_meta_store_with_timeout, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -570,21 +570,43 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-        let req_id = request.get_ref().request_id.clone().ok_or_else(|| {
-            MetricedError::new(
-                OP_USER_DECRYPT_SYNC,
-                None,
-                anyhow!("Missing request ID in UserDecryptionRequest"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-        match self.user_decrypt(request).await {
-            Ok(_empty) => (),
-            // Idempotent retry: attach to the existing entry and return its result instead of failing
-            Err(e) if e.code() == tonic::Code::AlreadyExists => (),
-            Err(e) => return Err(e),
+        let _timer = metrics::METRICS
+            .time_operation(OP_USER_DECRYPT_SYNC)
+            .start();
+
+        let req_id = {
+            let proto_req_id = request.get_ref().request_id.as_ref().ok_or_else(|| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_SYNC,
+                    None,
+                    anyhow!("Missing request ID in UserDecryptionRequest"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
+            parse_grpc_request_id(proto_req_id, RequestIdParsingErr::UserDecRequest).map_err(
+                |e| MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument),
+            )?
+        };
+
+        let should_start = match self.user_decrypt_meta_store.read().await.retrieve(&req_id) {
+            None => true,                           // fresh request ID
+            Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
+            Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
+            Some(EntryState::Pending) => false,     // in flight, attach to it
+            Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
+        };
+        if should_start {
+            match self.user_decrypt(request).await {
+                Ok(_empty) => (),
+                // Another call won the race to start or redo this request: attach to that attempt
+                Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+                Err(e) => return Err(e.retag(OP_USER_DECRYPT_SYNC)),
+            }
         }
-        self.get_result(Request::new(req_id)).await
+
+        self.get_result(Request::new(req_id.into()))
+            .await
+            .map_err(|e| e.retag(OP_USER_DECRYPT_SYNC))
     }
 
     async fn get_result(
@@ -1087,7 +1109,12 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert!(response.payload.is_some());
+        let payload = response
+            .payload
+            .clone()
+            .expect("sync response carries a payload");
+        assert_eq!(payload.signcrypted_ciphertexts.len(), 1);
+        assert!(!response.signature.is_empty());
 
         // The request went through the meta-store, so the result stays retrievable through the
         // async result endpoint...
@@ -1098,14 +1125,21 @@ mod tests {
             .into_inner();
         assert_eq!(response.payload, again.payload);
 
-        // ...and re-sending the same sync request attaches to the existing entry and returns the
-        // result instead of failing with `AlreadyExists`.
+        // ...and re-sending the same sync request returns that stored result instead of failing
+        // with `AlreadyExists`. Attaching is a success path, so nothing may be recorded as a
+        // failure along the way.
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
         let retry = user_decryptor
             .user_decrypt_sync(Request::new(request))
             .await
             .unwrap()
             .into_inner();
         assert_eq!(response.payload, retry.payload);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "attaching to an already-known request ID must not report a failure"
+        );
     }
 
     #[tokio::test]
@@ -1122,13 +1156,138 @@ mod tests {
             .await
             .unwrap();
 
-        // ...then a sync request with the same request ID attaches to the
-        // in-flight entry and returns its result.
+        // ...then a sync request with the same request ID attaches to that entry rather than
+        // starting a second decryption, without reporting a failure along the way.
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
         let response = user_decryptor
             .user_decrypt_sync(Request::new(request))
             .await
             .unwrap()
             .into_inner();
-        assert!(response.payload.is_some());
+        assert_eq!(
+            response
+                .payload
+                .clone()
+                .expect("sync response carries a payload")
+                .signcrypted_ciphertexts
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "attaching to an in-flight request must not report a failure"
+        );
+
+        // The entry the sync call waited on is the one the async request created.
+        let stored = user_decryptor
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.payload, stored.payload);
+    }
+
+    /// A `request_id` whose previous attempt failed is redone, exactly as re-sending it to the
+    /// async endpoint would be, and the sync call returns the new attempt's outcome.
+    #[tokio::test]
+    async fn sync_redoes_failed_request() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let (key_id, epoch_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(&mut rng, req_id, key_id, epoch_id, ct_buf);
+
+        // Leave the request ID in the state a failed attempt would leave it in.
+        let permit = user_decryptor
+            .user_decrypt_meta_store
+            .write()
+            .await
+            .insert(&req_id)
+            .unwrap();
+        crate::util::meta_store::update_err_req_in_meta_store(
+            &user_decryptor.user_decrypt_meta_store,
+            permit,
+            "forced failure".to_string(),
+            OP_USER_DECRYPT_REQUEST,
+        )
+        .await;
+        assert!(matches!(
+            user_decryptor
+                .user_decrypt_meta_store
+                .read()
+                .await
+                .retrieve(&req_id),
+            Some(EntryState::Done(Err(_)))
+        ));
+
+        // The sync call redoes the decryption instead of returning the stored failure.
+        let response = user_decryptor
+            .user_decrypt_sync(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            response
+                .payload
+                .expect("redone decryption carries a payload")
+                .signcrypted_ciphertexts
+                .len(),
+            1
+        );
+    }
+
+    /// A failed entry that is still permit-held cannot be redone, so `user_decrypt` answers
+    /// `AlreadyExists`, which the sync endpoint reads as "attach to the existing entry". That
+    /// internal signal must be defused rather than dropped: dropping a `MetricedError` records
+    /// an error and logs a failure for what is only a control-flow decision.
+    #[tokio::test]
+    async fn sync_attach_signal_is_not_recorded_as_error() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let (key_id, epoch_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(&mut rng, req_id, key_id, epoch_id, ct_buf);
+
+        // Fail the entry, then hold a permit on it so that `redo_failed` reports `Locked`.
+        let permit = user_decryptor
+            .user_decrypt_meta_store
+            .write()
+            .await
+            .insert(&req_id)
+            .unwrap();
+        crate::util::meta_store::update_err_req_in_meta_store(
+            &user_decryptor.user_decrypt_meta_store,
+            permit,
+            "forced failure".to_string(),
+            OP_USER_DECRYPT_REQUEST,
+        )
+        .await;
+        let _held_permit = user_decryptor
+            .user_decrypt_meta_store
+            .write()
+            .await
+            .lock_entry(&req_id)
+            .unwrap();
+
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let err = user_decryptor
+            .user_decrypt_sync(Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+        // `err` has not been returned to a caller yet, so nothing should have been recorded so
+        // far: an `AlreadyExists` dropped instead of defused would already show up here.
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "the internal attach signal must not be recorded as a failure"
+        );
+        // Handing the error back to the caller records it exactly once.
+        drop(err);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before + 1
+        );
     }
 }
