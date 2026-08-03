@@ -14,9 +14,9 @@ use backward_compatibility::{
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    SigncryptionPayloadTest, SoftwareVersionTest, StoredSchemeSignatureTest, TestMetadataKMS,
+    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -54,7 +54,10 @@ use kms_lib::{
         },
     },
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles},
+        base::{
+            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
+            StoredSchemeSignature,
+        },
         context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{
             EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
@@ -1267,6 +1270,46 @@ fn test_operator_backup_output(
     }
 }
 
+fn scheme_from_name(name: &str) -> SigningSchemeType {
+    match name {
+        "Ecdsa256k1" => SigningSchemeType::Ecdsa256k1,
+        "Ed25519" => SigningSchemeType::Ed25519,
+        "MlDsa44" => SigningSchemeType::MlDsa44,
+        "MlDsa65" => SigningSchemeType::MlDsa65,
+        "MlDsa87" => SigningSchemeType::MlDsa87,
+        _ => panic!("Invalid signing scheme name: {name}"),
+    }
+}
+
+fn test_stored_scheme_signature(
+    dir: &Path,
+    test: &StoredSchemeSignatureTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: Vec<StoredSchemeSignature> =
+        load_and_unversionize(dir, test, format)?;
+
+    let new_versionized: Vec<StoredSchemeSignature> = test
+        .schemes
+        .iter()
+        .map(|name| StoredSchemeSignature {
+            scheme: scheme_from_name(name),
+            signature: test.signature.to_vec(),
+        })
+        .collect();
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid StoredSchemeSignature:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -1362,6 +1405,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::OperatorBackupOutput(test) => {
                 test_operator_backup_output(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::StoredSchemeSignature(test) => {
+                test_stored_scheme_signature(test_dir.as_ref(), test, format).into()
             }
         }
     }

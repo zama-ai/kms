@@ -2155,4 +2155,29 @@
             seed: 42,
         )),
     ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
+        metadata: StoredSchemeSignature((
+            test_filename: "stored_scheme_signature",
+            schemes: [
+                "Ecdsa256k1",
+                "Ed25519",
+                "MlDsa44",
+                "MlDsa65",
+                "MlDsa87",
+            ],
+            signature: [
+                9,
+                8,
+                7,
+                6,
+                5,
+                4,
+                3,
+                2,
+                1,
+            ],
+        )),
+    ),
 ]

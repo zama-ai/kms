@@ -27,7 +27,9 @@ use kms_0_15_0::cryptography::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
-use kms_0_15_0::engine::base::{CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles};
+use kms_0_15_0::engine::base::{
+    CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles, StoredSchemeSignature,
+};
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
 use kms_0_15_0::engine::threshold::service::session::PRSSSetupCombined;
@@ -97,11 +99,11 @@ use backward_compatibility::{
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
-    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredSchemeSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -551,6 +553,33 @@ const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutp
     backup_id: [1u8; 32],
     seed: 42,
 };
+
+// KMS test — one signature per `SigningSchemeType` variant, so a reordered or
+// removed scheme variant breaks the test.
+const STORED_SCHEME_SIGNATURE_TEST: StoredSchemeSignatureTest = StoredSchemeSignatureTest {
+    test_filename: Cow::Borrowed("stored_scheme_signature"),
+    schemes: Cow::Borrowed(&[
+        Cow::Borrowed("Ecdsa256k1"),
+        Cow::Borrowed("Ed25519"),
+        Cow::Borrowed("MlDsa44"),
+        Cow::Borrowed("MlDsa65"),
+        Cow::Borrowed("MlDsa87"),
+    ]),
+    signature: Cow::Borrowed(&[9, 8, 7, 6, 5, 4, 3, 2, 1]),
+};
+
+/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] onto
+/// `SigningSchemeType` variants. The test side has the same mapping.
+fn scheme_from_name(name: &str) -> SigningSchemeType {
+    match name {
+        "Ecdsa256k1" => SigningSchemeType::Ecdsa256k1,
+        "Ed25519" => SigningSchemeType::Ed25519,
+        "MlDsa44" => SigningSchemeType::MlDsa44,
+        "MlDsa65" => SigningSchemeType::MlDsa65,
+        "MlDsa87" => SigningSchemeType::MlDsa87,
+        _ => panic!("Invalid signing scheme name: {name}"),
+    }
+}
 
 fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
     alloy_sol_types_1_6_0::eip712_domain!(
@@ -1508,6 +1537,28 @@ impl KmsV0_15_0 {
         );
         TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
     }
+
+    /// `StoredSchemeSignature` was introduced in v0.15.0 as the persisted form of a
+    /// KMS signature tagged with the scheme that produced it. The fixture holds the
+    /// `Vec<StoredSchemeSignature>` that key- and CRS-generation metadata store.
+    fn gen_stored_scheme_signature(dir: &PathBuf) -> TestMetadataKMS {
+        let signatures: Vec<StoredSchemeSignature> = STORED_SCHEME_SIGNATURE_TEST
+            .schemes
+            .iter()
+            .map(|name| StoredSchemeSignature {
+                scheme: scheme_from_name(name),
+                signature: STORED_SCHEME_SIGNATURE_TEST.signature.to_vec(),
+            })
+            .collect();
+
+        store_versioned_test!(
+            &signatures,
+            dir,
+            &STORED_SCHEME_SIGNATURE_TEST.test_filename
+        );
+
+        TestMetadataKMS::StoredSchemeSignature(STORED_SCHEME_SIGNATURE_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_15_0;
@@ -1754,6 +1805,7 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_threshold_fhe_keys(&dir),
             KmsV0_15_0::gen_internal_cus_rec_out(&dir),
             KmsV0_15_0::gen_operator_backup_output(&dir),
+            KmsV0_15_0::gen_stored_scheme_signature(&dir),
         ]
     }
 
