@@ -201,7 +201,7 @@ pub async fn get_user_decryption_result_impl<
         })?;
 
     Ok(Response::new(UserDecryptionResponse {
-        signature: sig.sig.to_vec(),
+        signature: sig.to_bytes(),
         external_signature,
         payload: Some(payload),
         extra_data,
@@ -422,7 +422,7 @@ pub async fn get_public_decryption_result_impl<
             )
         })?;
     Ok(Response::new(PublicDecryptionResponse {
-        signature: sig.sig.to_vec(),
+        signature: sig.to_bytes(),
         payload: Some(kms_sig_payload),
         external_signature,
         extra_data,

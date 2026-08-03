@@ -1,3 +1,4 @@
+use crate::cryptography::signing::SigningError;
 use rsa::pkcs1;
 use thiserror::Error;
 
@@ -27,6 +28,8 @@ pub enum CryptographyError {
     SigningError(String),
     #[error("Verification error: {0}")]
     VerificationError(String),
+    #[error(transparent)]
+    Signing(#[from] SigningError),
     #[error("Other: {0}")]
     Other(String),
 }

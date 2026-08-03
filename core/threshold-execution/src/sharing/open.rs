@@ -346,8 +346,8 @@ impl RobustOpen for SecureRobustOpen {
                 ) {
                     // Note that we only receive from the opposite set
                     // but it doesnt hurt to map the Roles this way
-                    (TwoSetsRole::Set1(role), ExternalOpeningInfo::FromSet1(_)) => *role,
-                    (TwoSetsRole::Set2(role), ExternalOpeningInfo::FromSet2(_)) => *role,
+                    (TwoSetsRole::OnlySet1(role), ExternalOpeningInfo::FromSet1(_)) => *role,
+                    (TwoSetsRole::OnlySet2(role), ExternalOpeningInfo::FromSet2(_)) => *role,
                     (TwoSetsRole::Both(role), ExternalOpeningInfo::FromSet1(_)) => role.role_set_1,
                     (TwoSetsRole::Both(role), ExternalOpeningInfo::FromSet2(_)) => role.role_set_2,
                     _ => panic!("Mismatched role and external opening info"),
@@ -897,7 +897,7 @@ pub(crate) mod test {
         let mut external_opening_info = None;
         if session.my_role().is_set1() {
             let my_role = match session.my_role() {
-                TwoSetsRole::Set1(r) => r,
+                TwoSetsRole::OnlySet1(r) => r,
                 TwoSetsRole::Both(r) => r.role_set_1,
                 _ => panic!("Expected role in set 1"),
             };
@@ -911,7 +911,7 @@ pub(crate) mod test {
 
             let mut inner_input_map = HashMap::new();
             for outer_output_role in session.roles().iter() {
-                if let TwoSetsRole::Set2(inner_output_role) = outer_output_role {
+                if let TwoSetsRole::OnlySet2(inner_output_role) = outer_output_role {
                     inner_input_map.insert(*outer_output_role, vec![shares[inner_output_role]]);
                 } else if let TwoSetsRole::Both(inner_output_role_both) = outer_output_role {
                     println!("Inserting share for both role {:?}", inner_output_role_both);
@@ -1010,10 +1010,10 @@ pub(crate) mod test {
         let mut result_set_2 = Vec::new();
         for (role, (_, secrets, openings)) in results_honests.into_iter() {
             match role {
-                TwoSetsRole::Set1(role) => {
+                TwoSetsRole::OnlySet1(role) => {
                     result_set_1.push((role, secrets, openings));
                 }
-                TwoSetsRole::Set2(role) => {
+                TwoSetsRole::OnlySet2(role) => {
                     result_set_2.push((role, secrets, openings));
                 }
                 TwoSetsRole::Both(role_both_sets) => {
@@ -1143,7 +1143,7 @@ pub(crate) mod test {
 
     #[tokio::test]
     async fn test_sync_robust_open_external_drop() {
-        let malicious_roles = HashSet::from([TwoSetsRole::Set1(Role::indexed_from_one(2))]);
+        let malicious_roles = HashSet::from([TwoSetsRole::OnlySet1(Role::indexed_from_one(2))]);
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
             4,
@@ -1162,9 +1162,9 @@ pub(crate) mod test {
     #[tokio::test]
     async fn test_sync_robust_open_external_lie() {
         let malicious_roles = HashSet::from([
-            TwoSetsRole::Set1(Role::indexed_from_one(5)),
-            TwoSetsRole::Set1(Role::indexed_from_one(7)),
-            TwoSetsRole::Set1(Role::indexed_from_one(10)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(5)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(7)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(10)),
         ]);
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             13,
@@ -1185,8 +1185,8 @@ pub(crate) mod test {
     #[tokio::test]
     async fn test_sync_robust_open_external_lie_too_many() {
         let malicious_roles = HashSet::from([
-            TwoSetsRole::Set1(Role::indexed_from_one(3)),
-            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(3)),
+            TwoSetsRole::OnlySet1(Role::indexed_from_one(2)),
         ]);
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
