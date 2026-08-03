@@ -38,9 +38,5 @@ name = "matrix"
 harness = false
 
 [[bench]]
-name = "lagrange"
-harness = false
-
-[[bench]]
 name = "syndrome"
 harness = false
