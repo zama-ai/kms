@@ -26,7 +26,7 @@ use strum::{EnumCount, EnumIter};
 use strum_macros::Display;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// Domain separator for deriving per-scheme signing keys from the persisted
 /// ECDSA [`PrivateSigKey`].
@@ -389,19 +389,24 @@ impl PrivateSigKey {
     /// `SHAKE256(DSEP_SIGKEY_DERIVE ‖ scheme_tag ‖ version ‖ sk_bytes)`, where `scheme_tag`
     /// is the 4-byte little-endian gRPC discriminant of the scheme (see [`scheme_wire_tag`])
     /// and `version` is [`SIGKEY_DERIVATION_VERSION`].
-    fn derived_seed(&self, scheme: SigningSchemeType) -> [u8; DIGEST_BYTES] {
-        let binding = self.raw_signing_key().to_bytes();
-        let sk_bytes = binding.as_slice();
-        let mut msg = Vec::with_capacity(4 + 1 + sk_bytes.len());
+    fn derived_seed(&self, scheme: SigningSchemeType) -> Zeroizing<[u8; DIGEST_BYTES]> {
+        let mut sk_bytes = self.raw_signing_key().to_bytes();
+        // Use Zeroizing to ensure that the `msg` gets wiped at dropping
+        let mut msg = Zeroizing::new(Vec::with_capacity(4 + 1 + sk_bytes.len()));
         msg.extend_from_slice(&scheme_wire_tag(scheme).to_le_bytes());
         msg.push(SIGKEY_DERIVATION_VERSION);
         // Notice this is the only variable length value, hence the concatenation is unambiguous.
-        msg.extend_from_slice(sk_bytes);
+        msg.extend_from_slice(&sk_bytes);
+        sk_bytes.zeroize(); // Wipe the copy of the secret scalar
+        // Use Zeroizing to ensure that the `msg` gets wiped at dropping
+        let digest = Zeroizing::new(hash_element(&DSEP_SIGKEY_DERIVE, msg.as_slice()));
 
-        let digest = hash_element(&DSEP_SIGKEY_DERIVE, &msg);
-        digest
-            .try_into()
-            .expect("SHAKE256 output is exactly DIGEST_BYTES bytes")
+        Zeroizing::new(
+            digest
+                .as_slice()
+                .try_into()
+                .expect("SHAKE256 output is exactly DIGEST_BYTES bytes"),
+        )
     }
 }
 
@@ -680,7 +685,7 @@ mod tests {
         for i in 0..seeds.len() {
             for j in (i + 1)..seeds.len() {
                 assert_ne!(
-                    seeds[i], seeds[j],
+                    *seeds[i], *seeds[j],
                     "{:?} and {:?} share a derived seed",
                     schemes[i], schemes[j]
                 );
