@@ -310,18 +310,6 @@ impl HasSigningScheme for UnifiedPublicSigKey {
     }
 }
 
-/// The stable gRPC wire discriminant for a signing scheme.
-fn scheme_wire_tag(scheme: SigningSchemeType) -> i32 {
-    let grpc = match scheme {
-        SigningSchemeType::Ecdsa256k1 => kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
-        SigningSchemeType::Ed25519 => kms_grpc::kms::v1::SigningSchemeType::Ed25519,
-        SigningSchemeType::MlDsa44 => kms_grpc::kms::v1::SigningSchemeType::Mldsa44,
-        SigningSchemeType::MlDsa65 => kms_grpc::kms::v1::SigningSchemeType::Mldsa65,
-        SigningSchemeType::MlDsa87 => kms_grpc::kms::v1::SigningSchemeType::Mldsa87,
-    };
-    grpc as i32
-}
-
 impl PrivateSigKey {
     /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
     pub(crate) fn unified_sign_with(
@@ -411,7 +399,9 @@ impl PrivateSigKey {
         let mut sk_bytes = self.raw_signing_key().to_bytes();
         // Use Zeroizing to ensure that the `msg` gets wiped at dropping
         let mut msg = Zeroizing::new(Vec::with_capacity(4 + 1 + sk_bytes.len()));
-        msg.extend_from_slice(&scheme_wire_tag(scheme).to_le_bytes());
+        msg.extend_from_slice(
+            &(<kms_grpc::kms::v1::SigningSchemeType>::from(scheme) as i32).to_le_bytes(),
+        );
         msg.push(SIGKEY_DERIVATION_VERSION);
         // Notice this is the only variable length value, hence the concatenation is unambiguous.
         msg.extend_from_slice(&sk_bytes);
