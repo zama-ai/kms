@@ -1627,21 +1627,7 @@ impl<
                 // derived from the newly generated compressed keyset.
                 let compact_public_key = match existing_compact_pk {
                     Some(old_pk) => old_pk,
-                    None => match compressed_keyset.decompress() {
-                        Ok(ks) => ks.into_raw_parts().0,
-                        Err(e) => {
-                            let _ = update_err_req_in_meta_store(
-                                &meta_store,
-                                meta_permit,
-                                format!(
-                                    "Failed to decompress freshly generated compressed keyset: {e}"
-                                ),
-                                op_tag,
-                            )
-                            .await;
-                            return;
-                        }
-                    },
+                    None => compressed_keyset.decompress().into_raw_parts().0,
                 };
 
                 // Compute info for compressed keygen

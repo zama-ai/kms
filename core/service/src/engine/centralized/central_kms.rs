@@ -274,7 +274,7 @@ pub(crate) fn generate_fhe_keys(
         tag,
     )?;
 
-    let (public_key, server_key) = compressed_keyset.decompress()?.into_raw_parts();
+    let (public_key, server_key) = compressed_keyset.decompress().into_raw_parts();
     let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
@@ -1404,14 +1404,9 @@ pub(crate) mod tests {
             _ => panic!("Expected Current variant of KeyGenMetadata"),
         }
 
-        // Verify the compressed keyset can be decompressed
-        let decompressed = compressed_keyset.decompress();
-        assert!(
-            decompressed.is_ok(),
-            "Compressed keyset should be decompressible"
-        );
-
-        let (_pk, server_key) = decompressed.unwrap().into_raw_parts();
+        // Verify the compressed keyset can be decompressed. `decompress` is infallible since
+        // tfhe 1.7.0, so this only asserts it does not panic.
+        let (_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
         let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
         assert!(
             oprf_key.is_some(),
