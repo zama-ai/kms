@@ -63,6 +63,23 @@ The `gate` scenario is the one the workflow result hinges on: it is the highest
 rate that still sits below the network ceiling of the single core-client pod, so
 a failure there points at the code rather than at the cluster's mood that night.
 
+### Samples per scenario
+
+Every scenario is measured three times inside the same pod, and the reported
+achieved rate, p50 and p99 are the **medians** over those samples. The budget
+check and the decision to climb to the next rate both use the median sample, so a
+single unlucky 30-second draw no longer decides the run. Lines that carry medians
+are marked `n=3` in the Slack report; the raw per-sample values are in the
+`samples` block of the rung's JSON artifact.
+
+The first sample encrypts the ciphertext and stores it; the repeats load it from
+disk, which skips the key-set download and the switch-and-squash precompute. A
+repeat therefore costs roughly the 30-second measurement, not a full setup.
+
+Set a different count with `-p samples=N` when submitting the Argo workflow by
+hand (`samples=1` reproduces the old single-shot behaviour). The GitHub Actions
+form does not expose it.
+
 The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
 not raw counts — `maxshed=25` means "no more than 25% of offered requests were
 shed." The rate percentage (`pct`) is the minimum acceptable ratio of achieved
@@ -98,6 +115,12 @@ The Slack report and JSON artifacts use these fields.
 | `shed` | Requests dropped before sending because `max_in_flight` was already reached. |
 | `saturated` | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
 | `achieved_rate` | `completed / collection_elapsed_seconds`. |
+| `samples.count` | Measurements taken for this rate. |
+| `samples.median_sample` | Which sample (1-based) supplied the reported counters. |
+| `samples.achieved_rate` | Per-sample achieved rates, in submission order. |
+| `samples.p50_ms` / `samples.p99_ms` | Per-sample request latency percentiles. |
+| `samples.median_achieved_rate` | Median of `samples.achieved_rate`; the value the budget check uses. |
+| `samples.median_p50_ms` / `samples.median_p99_ms` | Medians of the per-sample percentiles. |
 
 **Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
 overhead):

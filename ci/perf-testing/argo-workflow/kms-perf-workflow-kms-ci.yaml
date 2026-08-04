@@ -39,6 +39,10 @@ spec:
       value: "Test"
     - name: duration
       value: "30"
+    # Measurements per rate rung. The reported rate and latencies are the medians
+    # over these samples; a single sample carries too much run-to-run spread.
+    - name: samples
+      value: "3"
     - name: max-in-flight
       value: "10000"
     - name: data-type
@@ -287,6 +291,8 @@ spec:
                 value: "{{workflow.parameters.job_label}}"
               - name: duration
                 value: "{{workflow.parameters.duration}}"
+              - name: samples
+                value: "{{workflow.parameters.samples}}"
               - name: max-in-flight
                 value: "{{workflow.parameters.max-in-flight}}"
 
@@ -605,7 +611,12 @@ spec:
 
           test_name="${kind}-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
-          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          ciphertext_path="/tmp/${test_name}-ciphertext.bin"
+          rate_args="--batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --ciphertext-output-path ${ciphertext_path} ${rate_args}"
+          # Repeated samples load the ciphertext the first sample stored, which skips the
+          # key-set download and the SnS precompute that `from-args` redoes every run.
+          reuse_command="${command_name} from-file --input-path ${ciphertext_path} ${rate_args}"
           mkdir -p /tmp/artifacts
 
           capture_net_snapshot() {
@@ -690,6 +701,49 @@ spec:
             echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
           }
 
+          # Prints a top-level numeric field of a metrics JSON object, 0 when absent.
+          # The leading quote in the pattern keeps "failed" from matching
+          # "reconstruction_failed" / "verification_failed".
+          json_number() {
+            if [[ "$1" =~ \"$2\":([-+0-9.eE]+) ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "0"
+            fi
+          }
+
+          # Prints a latency_ms percentile of a metrics JSON object, 0 when absent.
+          latency_number() {
+            if [[ "$1" =~ \"latency_ms\":\{[^}]*\"$2\":([-+0-9.eE]+) ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "0"
+            fi
+          }
+
+          # Prints the lower median of its numeric arguments.
+          median_of() {
+            printf '%s\n' "$@" \
+              | awk '{ printf "%.6f\n", $1 + 0 }' \
+              | sort -n \
+              | awk '{ value[NR] = $1 } END { if (NR == 0) { print "0" } else { print value[int((NR + 1) / 2)] } }'
+          }
+
+          # Prints the 0-based index of the sample holding the median achieved rate.
+          median_sample_index() {
+            local index
+            for index in "${!sample_rate[@]}"; do
+              printf '%.6f %s\n' "${sample_rate[$index]}" "$index"
+            done | sort -n | awk -v position="$(( (${#sample_rate[@]} + 1) / 2 ))" 'NR == position { print $2 }'
+          }
+
+          # Prints the numeric arguments as the body of a JSON array.
+          join_numbers() {
+            local joined
+            joined="$(printf ',%s' "$@")"
+            echo "${joined#,}"
+          }
+
           if [ -z "$key_id" ]; then
             parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
             allowed_failure=false
@@ -730,8 +784,17 @@ spec:
             exit 0
           fi
 
+          samples="{{workflow.parameters.samples}}"
+          case "$samples" in
+            ''|*[!0-9]*|0)
+              echo "Invalid samples parameter '$samples'; expected a positive integer"
+              exit 1
+              ;;
+          esac
+
           echo "=========================================="
           echo "Starting test: $test_command"
+          echo "Samples: ${samples} (the median sample decides capacity-ok)"
           echo "=========================================="
 
           client_logs_arg=""
@@ -739,51 +802,89 @@ spec:
             client_logs_arg="--logs"
           fi
           rate_timeout=$(({{workflow.parameters.duration}} + 300))
-          capture_net_snapshot /tmp/net-before.tsv
-          start_time=$(date +%s)
-          if command -v timeout >/dev/null 2>&1; then
-            timeout "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
-          else
-            echo "WARNING: timeout command not found; running without per-rate wall timeout"
-            ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
-          fi
-          test_exit=${PIPESTATUS[0]}
-          end_time=$(date +%s)
-          duration=$((end_time - start_time))
-          capture_net_snapshot /tmp/net-after.tsv
 
-          # Keep the last valid metrics line; normal logs may contain many JSON records.
-          decrypt_metrics=""
-          while IFS= read -r metrics_line; do
-            candidate="${metrics_line#*${metrics_marker} }"
-            # Accept only the raw println! JSON, not an escaped copy inside tracing JSON logs.
-            if [[ "$candidate" == \{\"* ]] && [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
-              decrypt_metrics="$candidate"
+          # Repeat the rung inside this pod: the deploy and the keygen chain are the
+          # expensive part of a run, one more 30s measurement is not. Repeats separate
+          # a real per-request regression from the spread of a single draw.
+          sample_metrics=()
+          sample_valid=()
+          sample_exit=()
+          sample_rate=()
+          sample_p50=()
+          sample_p99=()
+          total_duration=0
+          for ((sample_number = 1; sample_number <= samples; sample_number++)); do
+            sample_command="$test_command"
+            if [ "$sample_number" -gt 1 ] && [ -s "$ciphertext_path" ]; then
+              sample_command="$reuse_command"
             fi
-          done < <(grep "$metrics_marker " /tmp/test_logs.txt || true)
+            echo "------ ${test_name} sample ${sample_number}/${samples} ------"
+            echo "Command: $sample_command"
+            capture_net_snapshot /tmp/net-before.tsv
+            start_time=$(date +%s)
+            if command -v timeout >/dev/null 2>&1; then
+              timeout "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $sample_command 2>&1 | tee /tmp/test_logs.txt
+            else
+              echo "WARNING: timeout command not found; running without per-rate wall timeout"
+              ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $sample_command 2>&1 | tee /tmp/test_logs.txt
+            fi
+            test_exit=${PIPESTATUS[0]}
+            end_time=$(date +%s)
+            duration=$((end_time - start_time))
+            total_duration=$((total_duration + duration))
+            capture_net_snapshot /tmp/net-after.tsv
 
-          if [[ -n "$decrypt_metrics" && "$decrypt_metrics" =~ \"failed\":([0-9]+) ]]; then
-            metrics_valid=true
-            metrics_failed="${BASH_REMATCH[1]}"
-            if [[ "$decrypt_metrics" =~ \"shed\":([0-9]+) ]]; then
-              metrics_shed="${BASH_REMATCH[1]}"
+            # Keep the last valid metrics line; normal logs may contain many JSON records.
+            decrypt_metrics=""
+            while IFS= read -r metrics_line; do
+              candidate="${metrics_line#*${metrics_marker} }"
+              # Accept only the raw println! JSON, not an escaped copy inside tracing JSON logs.
+              if [[ "$candidate" == \{\"* ]] && [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
+                decrypt_metrics="$candidate"
+              fi
+            done < <(grep "$metrics_marker " /tmp/test_logs.txt || true)
+
+            if [[ -n "$decrypt_metrics" && "$decrypt_metrics" =~ \"failed\":[0-9]+ ]]; then
+              metrics_valid=true
             else
-              metrics_shed=0
+              metrics_valid=false
+              decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
+              echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
             fi
-            if [[ "$decrypt_metrics" =~ \"saturated\":(true|false) ]]; then
-              metrics_saturated="${BASH_REMATCH[1]}"
-            else
-              metrics_saturated=true
-            fi
-          else
-            metrics_valid=false
-            metrics_failed=1
-            metrics_shed=0
-            metrics_saturated=true
-            decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
-            echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
-          fi
-          network_metrics="$(network_metrics_suffix "$duration")"
+            # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
+            decrypt_metrics="${decrypt_metrics%\}}$(network_metrics_suffix "$duration")}"
+
+            rate_value="$(json_number "$decrypt_metrics" achieved_rate)"
+            p50_value="$(latency_number "$decrypt_metrics" p50)"
+            p99_value="$(latency_number "$decrypt_metrics" p99)"
+            sample_metrics+=("$decrypt_metrics")
+            sample_valid+=("$metrics_valid")
+            sample_exit+=("$test_exit")
+            sample_rate+=("$rate_value")
+            sample_p50+=("$p50_value")
+            sample_p99+=("$p99_value")
+            echo "sample ${sample_number}/${samples}: exit=${test_exit} valid=${metrics_valid} achieved=${rate_value}/s p50=${p50_value}ms p99=${p99_value}ms (${duration}s)"
+          done
+
+          # An invalid sample reports achieved_rate 0, so it sorts to the bottom and
+          # cannot become the median while most samples are valid.
+          median_index="$(median_sample_index)"
+          decrypt_metrics="${sample_metrics[$median_index]}"
+          metrics_valid="${sample_valid[$median_index]}"
+          test_exit="${sample_exit[$median_index]}"
+          median_rate="$(median_of "${sample_rate[@]}")"
+          median_p50="$(median_of "${sample_p50[@]}")"
+          median_p99="$(median_of "${sample_p99[@]}")"
+          echo "medians over ${samples} samples: achieved=${median_rate}/s p50=${median_p50}ms p99=${median_p99}ms (median is sample $((median_index + 1)))"
+
+          metrics_failed="$(json_number "$decrypt_metrics" failed)"
+          metrics_shed="$(json_number "$decrypt_metrics" shed)"
+          samples_metrics=",\"samples\":{\"count\":${samples},\"median_sample\":$((median_index + 1))"
+          samples_metrics="${samples_metrics},\"achieved_rate\":[$(join_numbers "${sample_rate[@]}")]"
+          samples_metrics="${samples_metrics},\"p50_ms\":[$(join_numbers "${sample_p50[@]}")]"
+          samples_metrics="${samples_metrics},\"p99_ms\":[$(join_numbers "${sample_p99[@]}")]"
+          samples_metrics="${samples_metrics},\"median_achieved_rate\":${median_rate}"
+          samples_metrics="${samples_metrics},\"median_p50_ms\":${median_p50},\"median_p99_ms\":${median_p99}}"
           parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
           maxfail=$(parameter_value "$parameter_set" maxfail)
           maxshed=$(parameter_value "$parameter_set" maxshed)
@@ -792,21 +893,12 @@ spec:
           if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
             allowed_failure=true
           fi
-          if [[ "$decrypt_metrics" =~ \"offered\":([0-9]+) ]]; then
-            metrics_offered="${BASH_REMATCH[1]}"
-          else
-            metrics_offered=0
-          fi
-          if [[ "$decrypt_metrics" =~ \"achieved_rate\":([-0-9.eE]+) ]]; then
-            metrics_achieved_rate="${BASH_REMATCH[1]}"
-          else
-            metrics_achieved_rate=0
-          fi
+          metrics_offered="$(json_number "$decrypt_metrics" offered)"
           within_parameter_set=$(awk \
             -v offered="$metrics_offered" \
             -v failed="$metrics_failed" \
             -v shed="$metrics_shed" \
-            -v achieved="$metrics_achieved_rate" \
+            -v achieved="$median_rate" \
             -v target="{{inputs.parameters.rate}}" \
             -v maxfail="$maxfail" \
             -v maxshed="$maxshed" \
@@ -824,7 +916,7 @@ spec:
               }')
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
           limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
-          decrypt_metrics="${decrypt_metrics%\}}${network_metrics}${limit_metrics}}"
+          decrypt_metrics="${decrypt_metrics%\}}${samples_metrics}${limit_metrics}}"
 
           # Task success means "measurement exists"; capacity-ok gates the next rung.
           if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
@@ -843,7 +935,7 @@ spec:
             "$test_command" \
             "$status" \
             "$test_exit" \
-            "$duration" \
+            "$total_duration" \
             "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             "$metrics_key" \
             "$decrypt_metrics" \
@@ -888,6 +980,7 @@ spec:
         - name: job_url
         - name: job_label
         - name: duration
+        - name: samples
         - name: max-in-flight
       script:
         image: public.ecr.aws/docker/library/alpine:3.23
@@ -924,7 +1017,7 @@ spec:
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
           echo "Preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
           echo "Decrypt FHE params: Default"
-          echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
+          echo "Duration: {{inputs.parameters.duration}}s x {{inputs.parameters.samples}} samples per rung (reported rate and latencies are medians), max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
 
           keygen_total=0
@@ -1060,6 +1153,10 @@ spec:
               network_tx_dropped=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_dropped // 0' "$result")
               network_rx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_errors // 0' "$result")
               network_tx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_errors // 0' "$result")
+              samples_count=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.count // empty' "$result")
+              median_achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_achieved_rate // empty' "$result")
+              median_p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p50_ms // empty' "$result")
+              median_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p99_ms // empty' "$result")
               parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
               within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
               allowed_failure=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].allowed_failure // false' "$result")
@@ -1078,6 +1175,15 @@ spec:
               [ -n "$shed" ] || shed=0
               [ -n "$achieved_rate" ] || achieved_rate=0
               [ -n "$saturated" ] || saturated=false
+              # Report the medians over the rung's samples; the per-request counters
+              # (failed/shed/saturated) stay those of the median sample.
+              samples_note=""
+              if [ -n "$samples_count" ]; then
+                achieved_rate="$median_achieved_rate"
+                p50="$median_p50"
+                p99="$median_p99"
+                samples_note=" n=${samples_count}"
+              fi
               achieved_short="$(fmt_1 "$achieved_rate")"
               p50_short="$(fmt_ms_2 "$p50")"
               p95_short="$(fmt_ms_2 "$p95")"
@@ -1120,6 +1226,7 @@ spec:
                 line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
               fi
 
+              line="${line}${samples_note}"
               if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
                 line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
               fi
@@ -1135,7 +1242,7 @@ spec:
 
               echo "$line"
               append_operation_line "$kind" "$line"
-              append_decrypt_raw_line "$kind" "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s ${timing_label}_avg=$(fmt_ms_2 "$timing_avg") ${timing_label}_p50=$(fmt_ms_2 "$timing_p50") ${timing_label}_p99=$(fmt_ms_2 "$timing_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
+              append_decrypt_raw_line "$kind" "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s ${timing_label}_avg=$(fmt_ms_2 "$timing_avg") ${timing_label}_p50=$(fmt_ms_2 "$timing_p50") ${timing_label}_p99=$(fmt_ms_2 "$timing_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}${samples_note}"
             done
           }
 
@@ -1257,7 +1364,7 @@ spec:
           # (core-img/client-img ARE live: <version>/<client-version> are sed-substituted at submit.)
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
-            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
+            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, samples={{inputs.parameters.samples}} (median), max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
             "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
