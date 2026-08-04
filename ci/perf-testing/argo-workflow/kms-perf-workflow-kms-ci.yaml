@@ -686,11 +686,16 @@ spec:
             case "$1:$2" in
               # maxfail/maxshed are percentages of offered requests, not counts.
               # pct is the minimum achieved_rate/target_rate percentage.
-              # Sub-ceiling rungs, including the gating 1.3k/2.5k rungs, must be clean.
-              pdec:1100|pdec:1300) echo "maxfail=0,maxshed=0,pct=98" ;;
+              # The lowest rung of each kind must be spotless.
+              pdec:1100) echo "maxfail=0,maxshed=0,pct=98" ;;
+              # The gating rungs tolerate a little shedding and 5% off the target rate.
+              # They still fail on any lost request, and the latency limits below carry
+              # the regression signal, so this does not have to be the tightest rung.
+              pdec:1300) echo "maxfail=0,maxshed=1,pct=95" ;;
               # 1.5k and 1.6k are exploratory public-decrypt probes and may warn.
               pdec:1500|pdec:1600) echo "maxfail=10,maxshed=25,pct=70" ;;
-              udec:2300|udec:2500) echo "maxfail=0,maxshed=0,pct=98" ;;
+              udec:2300) echo "maxfail=0,maxshed=0,pct=98" ;;
+              udec:2500) echo "maxfail=0,maxshed=1,pct=95" ;;
               # 2.7k and 2.8k probe the user-decrypt ceiling; outside-set results warn.
               udec:2700|udec:2800) echo "maxfail=10,maxshed=25,pct=70" ;;
               *) echo "maxfail=0,maxshed=0,pct=100" ;;

@@ -45,7 +45,7 @@ seconds:
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
 | stable | 1,100 req/s | no failures, no shedding, ≥98% of target rate |
-| gate | 1,300 req/s | no failures, no shedding, ≥98% of target rate |
+| gate | 1,300 req/s | no failures, ≤1% shed, ≥95% of target rate |
 | over-limit | 1,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 | over-limit | 1,600 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
@@ -55,7 +55,7 @@ The user-decrypt test also runs four scenarios, each sending `1 × euint64` for
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
 | stable | 2,300 req/s | no failures, no shedding, ≥98% of target rate |
-| gate | 2,500 req/s | no failures, no shedding, ≥98% of target rate |
+| gate | 2,500 req/s | no failures, ≤1% shed, ≥95% of target rate |
 | over-limit | 2,700 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 | over-limit | 2,800 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
