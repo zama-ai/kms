@@ -829,6 +829,7 @@ spec:
           sample_exit=()
           sample_rate=()
           sample_p50=()
+          sample_p95=()
           sample_p99=()
           total_duration=0
           for ((sample_number = 1; sample_number <= samples; sample_number++)); do
@@ -874,14 +875,16 @@ spec:
 
             rate_value="$(json_number "$decrypt_metrics" achieved_rate)"
             p50_value="$(latency_number "$decrypt_metrics" p50)"
+            p95_value="$(latency_number "$decrypt_metrics" p95)"
             p99_value="$(latency_number "$decrypt_metrics" p99)"
             sample_metrics+=("$decrypt_metrics")
             sample_valid+=("$metrics_valid")
             sample_exit+=("$test_exit")
             sample_rate+=("$rate_value")
             sample_p50+=("$p50_value")
+            sample_p95+=("$p95_value")
             sample_p99+=("$p99_value")
-            echo "sample ${sample_number}/${samples}: exit=${test_exit} valid=${metrics_valid} achieved=${rate_value}/s p50=${p50_value}ms p99=${p99_value}ms (${duration}s)"
+            echo "sample ${sample_number}/${samples}: exit=${test_exit} valid=${metrics_valid} achieved=${rate_value}/s p50=${p50_value}ms p95=${p95_value}ms p99=${p99_value}ms (${duration}s)"
           done
 
           # An invalid sample reports achieved_rate 0, so it sorts to the bottom and
@@ -892,21 +895,23 @@ spec:
           test_exit="${sample_exit[$median_index]}"
           median_rate="$(median_of "${sample_rate[@]}")"
           median_p50="$(median_of "${sample_p50[@]}")"
+          median_p95="$(median_of "${sample_p95[@]}")"
           median_p99="$(median_of "${sample_p99[@]}")"
-          echo "medians over ${samples} samples: achieved=${median_rate}/s p50=${median_p50}ms p99=${median_p99}ms (median is sample $((median_index + 1)))"
+          echo "medians over ${samples} samples: achieved=${median_rate}/s p50=${median_p50}ms p95=${median_p95}ms p99=${median_p99}ms (median is sample $((median_index + 1)))"
 
           metrics_failed="$(json_number "$decrypt_metrics" failed)"
           metrics_shed="$(json_number "$decrypt_metrics" shed)"
           samples_metrics=",\"samples\":{\"count\":${samples},\"median_sample\":$((median_index + 1))"
           samples_metrics="${samples_metrics},\"achieved_rate\":[$(join_values "${sample_rate[@]}")]"
           samples_metrics="${samples_metrics},\"p50_ms\":[$(join_values "${sample_p50[@]}")]"
+          samples_metrics="${samples_metrics},\"p95_ms\":[$(join_values "${sample_p95[@]}")]"
           samples_metrics="${samples_metrics},\"p99_ms\":[$(join_values "${sample_p99[@]}")]"
           # Per-sample validity and exit codes: without them a rung where one sample
           # crashed the client is indistinguishable from a clean rung in this artifact.
           samples_metrics="${samples_metrics},\"valid\":[$(join_values "${sample_valid[@]}")]"
           samples_metrics="${samples_metrics},\"exit_code\":[$(join_values "${sample_exit[@]}")]"
           samples_metrics="${samples_metrics},\"median_achieved_rate\":${median_rate}"
-          samples_metrics="${samples_metrics},\"median_p50_ms\":${median_p50},\"median_p99_ms\":${median_p99}}"
+          samples_metrics="${samples_metrics},\"median_p50_ms\":${median_p50},\"median_p95_ms\":${median_p95},\"median_p99_ms\":${median_p99}}"
           parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
           maxfail=$(parameter_value "$parameter_set" maxfail)
           maxshed=$(parameter_value "$parameter_set" maxshed)
@@ -1205,6 +1210,7 @@ spec:
               bad_samples=$(jq -r --arg k "$metrics_key" '(.performance_metrics[$k].samples.valid // []) | map(select(. == false)) | length' "$result")
               median_achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_achieved_rate // 0' "$result")
               median_p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p50_ms // 0' "$result")
+              median_p95=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p95_ms // 0' "$result")
               median_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p99_ms // 0' "$result")
               parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
               within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
@@ -1227,12 +1233,14 @@ spec:
               [ -n "$shed" ] || shed=0
               [ -n "$achieved_rate" ] || achieved_rate=0
               [ -n "$saturated" ] || saturated=false
-              # Report the medians over the rung's samples; the per-request counters
-              # (failed/shed/saturated) stay those of the median sample.
+              # Report the medians over the rung's samples, so every percentile on a line
+              # means the same thing. The per-request counters (failed/shed/saturated) stay
+              # those of the median sample.
               samples_note=""
               if [ -n "$samples_count" ]; then
                 achieved_rate="$median_achieved_rate"
                 p50="$median_p50"
+                p95="$median_p95"
                 p99="$median_p99"
                 samples_note=" n=${samples_count}"
               fi

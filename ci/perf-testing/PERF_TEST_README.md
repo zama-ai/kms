@@ -139,11 +139,11 @@ The Slack report and JSON artifacts use these fields.
 | `samples.count` | Measurements taken for this rate. |
 | `samples.median_sample` | Which sample (1-based) supplied the reported counters. |
 | `samples.achieved_rate` | Per-sample achieved rates, in submission order. |
-| `samples.p50_ms` / `samples.p99_ms` | Per-sample request latency percentiles. |
+| `samples.p50_ms` / `samples.p95_ms` / `samples.p99_ms` | Per-sample request latency percentiles. |
 | `samples.valid` | Per-sample flag: did that run produce a metrics record at all. |
 | `samples.exit_code` | Per-sample `kms-core-client` exit code. |
 | `samples.median_achieved_rate` | Median of `samples.achieved_rate`; the value the budget check uses. |
-| `samples.median_p50_ms` / `samples.median_p99_ms` | Medians of the per-sample percentiles. |
+| `samples.median_p50_ms` / `samples.median_p95_ms` / `samples.median_p99_ms` | Medians of the per-sample percentiles; these are the latencies the report shows. |
 
 **Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
 overhead):
