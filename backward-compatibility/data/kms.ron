@@ -2158,7 +2158,7 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
-        metadata: StoredSchemeSignature((
+        metadata: StoredTypedSignature((
             test_filename: "stored_scheme_signature",
             schemes: [
                 "Ecdsa256k1",

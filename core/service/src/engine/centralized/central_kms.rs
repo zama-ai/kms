@@ -15,7 +15,7 @@ use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
-use crate::engine::base::StoredSchemeSignature;
+use crate::engine::base::StoredTypedSignature;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
@@ -433,7 +433,7 @@ pub(crate) struct CentralizedTestingKeys {
 #[derive(Debug, Clone)]
 pub struct CentralizedPreprocBucket {
     pub(crate) external_signature: Vec<u8>,
-    pub(crate) signatures: Vec<StoredSchemeSignature>,
+    pub(crate) signatures: Vec<StoredTypedSignature>,
     pub(crate) dkg_param: DKGParams,
 }
 

@@ -14,7 +14,7 @@ use backward_compatibility::{
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredSchemeSignatureTest, TestMetadataKMS,
+    SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
     UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -56,7 +56,7 @@ use kms_lib::{
     engine::{
         base::{
             CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
-            StoredSchemeSignature,
+            StoredTypedSignature,
         },
         context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -1283,16 +1283,15 @@ fn scheme_from_name(name: &str) -> SigningSchemeType {
 
 fn test_stored_scheme_signature(
     dir: &Path,
-    test: &StoredSchemeSignatureTest,
+    test: &StoredTypedSignatureTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: Vec<StoredSchemeSignature> =
-        load_and_unversionize(dir, test, format)?;
+    let original_versionized: Vec<StoredTypedSignature> = load_and_unversionize(dir, test, format)?;
 
-    let new_versionized: Vec<StoredSchemeSignature> = test
+    let new_versionized: Vec<StoredTypedSignature> = test
         .schemes
         .iter()
-        .map(|name| StoredSchemeSignature {
+        .map(|name| StoredTypedSignature {
             scheme: scheme_from_name(name),
             signature: test.signature.to_vec(),
         })
@@ -1301,7 +1300,7 @@ fn test_stored_scheme_signature(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid StoredSchemeSignature:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+                "Invalid StoredTypedSignature:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1406,7 +1405,7 @@ impl TestedModule for KMS {
             Self::Metadata::OperatorBackupOutput(test) => {
                 test_operator_backup_output(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::StoredSchemeSignature(test) => {
+            Self::Metadata::StoredTypedSignature(test) => {
                 test_stored_scheme_signature(test_dir.as_ref(), test, format).into()
             }
         }

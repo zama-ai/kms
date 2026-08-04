@@ -530,8 +530,8 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> anyhow::Result<Bytes> 
 /// Wrap raw ECDSA signature bytes as a single-element scheme-signature list.
 ///
 /// Convenience for the common single-ECDSA (legacy) case
-pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::SchemeSignature> {
-    vec![crate::kms::v1::SchemeSignature {
+pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::TypedSignature> {
+    vec![crate::kms::v1::TypedSignature {
         scheme: crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
         signature,
     }]
@@ -539,7 +539,7 @@ pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::SchemeSignatu
 
 /// Return the ECDSA/secp256k1 signature bytes from a list of scheme signatures,
 /// if present.
-pub fn ecdsa_signature_bytes(signatures: &[crate::kms::v1::SchemeSignature]) -> Option<&[u8]> {
+pub fn ecdsa_signature_bytes(signatures: &[crate::kms::v1::TypedSignature]) -> Option<&[u8]> {
     signatures
         .iter()
         .find(|s| s.scheme == crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32)

@@ -19,7 +19,7 @@ use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, FheParameter, SchemeSignature, TypedPlaintext, UserDecryptionResponsePayload,
+    CiphertextFormat, FheParameter, TypedPlaintext, TypedSignature, UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::CrsGenMetadataV0;
 use kms_grpc::rpc_types::KMSType;
@@ -244,23 +244,23 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
 /// A single KMS signature together with the scheme that produced it, in the
 /// form persisted inside result metadata.
 ///
-/// This is the stored twin of the gRPC [`SchemeSignature`].
+/// This is the stored twin of the gRPC [`TypedSignature`].
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum StoredSchemeSignatureVersions {
-    V0(StoredSchemeSignature),
+pub enum StoredTypedSignatureVersions {
+    V0(StoredTypedSignature),
 }
 
 /// A single KMS signature together with the scheme that produced it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(StoredSchemeSignatureVersions)]
-pub struct StoredSchemeSignature {
+#[versionize(StoredTypedSignatureVersions)]
+pub struct StoredTypedSignature {
     pub scheme: SigningSchemeType,
     pub signature: Vec<u8>,
 }
 
-impl From<&StoredSchemeSignature> for SchemeSignature {
-    fn from(value: &StoredSchemeSignature) -> Self {
-        SchemeSignature {
+impl From<&StoredTypedSignature> for TypedSignature {
+    fn from(value: &StoredTypedSignature) -> Self {
+        TypedSignature {
             scheme: kms_grpc::kms::v1::SigningSchemeType::from(value.scheme) as i32,
             signature: value.signature.clone(),
         }
@@ -269,9 +269,9 @@ impl From<&StoredSchemeSignature> for SchemeSignature {
 
 /// Convert stored per-scheme signatures into their gRPC representation.
 pub(crate) fn stored_scheme_signatures_to_proto(
-    signatures: &[StoredSchemeSignature],
-) -> Vec<SchemeSignature> {
-    signatures.iter().map(SchemeSignature::from).collect()
+    signatures: &[StoredTypedSignature],
+) -> Vec<TypedSignature> {
+    signatures.iter().map(TypedSignature::from).collect()
 }
 
 /// Serialization approach for the payload to be signed.
@@ -296,7 +296,7 @@ pub(crate) fn compute_result_signatures(
     sk: &PrivateSigKey,
     dsep: &DomainSep,
     jobs: &[SchemeSigningJob],
-) -> anyhow::Result<Vec<StoredSchemeSignature>> {
+) -> anyhow::Result<Vec<StoredTypedSignature>> {
     jobs.iter()
         .map(|job| {
             let signature = match (job.scheme, job.approach) {
@@ -319,7 +319,7 @@ pub(crate) fn compute_result_signatures(
                     anyhow::bail!("EIP-712 approach is only valid for ECDSA, not {scheme:?}")
                 }
             };
-            Ok(StoredSchemeSignature {
+            Ok(StoredTypedSignature {
                 scheme: job.scheme,
                 signature,
             })
@@ -355,7 +355,7 @@ pub(crate) fn sign_eip712_result<D: SolStruct>(
     sol_type: &D,
     domain: &Eip712Domain,
     dsep: &DomainSep,
-) -> anyhow::Result<(Vec<u8>, Vec<StoredSchemeSignature>)> {
+) -> anyhow::Result<(Vec<u8>, Vec<StoredTypedSignature>)> {
     let external_signature = compute_eip712_signature(sk, sol_type, domain)?;
     let jobs = eip712_result_jobs(schemes, sol_type.eip712_signing_hash(domain).as_slice());
     let signatures = compute_result_signatures(sk, dsep, &jobs)?;
@@ -418,7 +418,7 @@ pub(crate) fn compute_preprocessing_signatures(
     prep_id: &RequestId,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<(Vec<u8>, Vec<StoredSchemeSignature>)> {
+) -> anyhow::Result<(Vec<u8>, Vec<StoredTypedSignature>)> {
     let sol_type = PrepKeygenVerification::new(prep_id, extra_data);
     sign_eip712_result(sk, schemes, &sol_type, domain, &DSEP_PUBDATA_KEY)
 }
@@ -834,13 +834,13 @@ pub(crate) fn compute_external_pt_signature(
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under each requested scheme,
-/// returning one [`SchemeSignature`] per scheme.
+/// returning one [`TypedSignature`] per scheme.
 pub(crate) fn compute_scheme_signatures<T>(
     server_sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
     dsep: &DomainSep,
     msg: &T,
-) -> anyhow::Result<Vec<SchemeSignature>>
+) -> anyhow::Result<Vec<TypedSignature>>
 where
     T: AsRef<[u8]> + ?Sized,
 {
@@ -849,7 +849,7 @@ where
         .map(|&scheme| {
             let sk = server_sk.derive_signing_key(scheme)?;
             let sig = unified_sign(dsep, msg.as_ref(), sk)?;
-            Ok(SchemeSignature {
+            Ok(TypedSignature {
                 scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
                 signature: sig.to_bytes(),
             })
@@ -908,7 +908,7 @@ impl BaseKmsStruct {
         schemes: &[SigningSchemeType],
         dsep: &DomainSep,
         msg: &T,
-    ) -> anyhow::Result<Vec<SchemeSignature>>
+    ) -> anyhow::Result<Vec<TypedSignature>>
     where
         T: AsRef<[u8]> + ?Sized,
     {
@@ -1136,7 +1136,7 @@ pub struct KeyGenMetadataInner {
     pub key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
     pub extra_data: Option<Vec<u8>>,
     pub external_signature: Vec<u8>,
-    pub signatures: Vec<StoredSchemeSignature>,
+    pub signatures: Vec<StoredTypedSignature>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Version)]
@@ -1236,7 +1236,7 @@ impl KeyGenMetadata {
         preprocessing_id: RequestId,
         key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
         external_signature: Vec<u8>,
-        signatures: Vec<StoredSchemeSignature>,
+        signatures: Vec<StoredTypedSignature>,
         extra_data: Vec<u8>,
     ) -> Self {
         let parsed_extra_data = if extra_data.is_empty() {
@@ -1276,7 +1276,7 @@ impl KeyGenMetadata {
     }
 
     /// The per-scheme KMS signatures on this result, in gRPC form.
-    pub fn scheme_signatures(&self) -> Vec<SchemeSignature> {
+    pub fn typed_signatures(&self) -> Vec<TypedSignature> {
         match self {
             KeyGenMetadata::Current(inner) => stored_scheme_signatures_to_proto(&inner.signatures),
             KeyGenMetadata::LegacyV0(_) => Vec::new(),
@@ -1311,7 +1311,7 @@ pub struct CrsGenMetadataInner {
     pub(crate) max_num_bits: u32,
     pub(crate) extra_data: Option<Vec<u8>>,
     pub(crate) external_signature: Vec<u8>,
-    pub(crate) signatures: Vec<StoredSchemeSignature>,
+    pub(crate) signatures: Vec<StoredTypedSignature>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Version)]
@@ -1389,7 +1389,7 @@ impl CrsGenMetadata {
         crs_digest: Vec<u8>,
         max_num_bits: u32,
         external_signature: Vec<u8>,
-        signatures: Vec<StoredSchemeSignature>,
+        signatures: Vec<StoredTypedSignature>,
         extra_data: Vec<u8>,
     ) -> Self {
         let parsed_extra_data = if extra_data.is_empty() {
@@ -1415,7 +1415,7 @@ impl CrsGenMetadata {
     }
 
     /// The per-scheme KMS signatures on this result, in gRPC form.
-    pub fn scheme_signatures(&self) -> Vec<SchemeSignature> {
+    pub fn typed_signatures(&self) -> Vec<TypedSignature> {
         match self {
             CrsGenMetadata::Current(inner) => stored_scheme_signatures_to_proto(&inner.signatures),
             CrsGenMetadata::LegacyV0(_) => Vec::new(),

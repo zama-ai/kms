@@ -28,7 +28,7 @@ use kms_0_15_0::cryptography::{
     },
 };
 use kms_0_15_0::engine::base::{
-    CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles, StoredSchemeSignature,
+    CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles, StoredTypedSignature,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
@@ -100,7 +100,7 @@ use backward_compatibility::{
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    StoredSchemeSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
     UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
     KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
@@ -556,7 +556,7 @@ const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutp
 
 // KMS test — one signature per `SigningSchemeType` variant, so a reordered or
 // removed scheme variant breaks the test.
-const STORED_SCHEME_SIGNATURE_TEST: StoredSchemeSignatureTest = StoredSchemeSignatureTest {
+const STORED_SCHEME_SIGNATURE_TEST: StoredTypedSignatureTest = StoredTypedSignatureTest {
     test_filename: Cow::Borrowed("stored_scheme_signature"),
     schemes: Cow::Borrowed(&[
         Cow::Borrowed("Ecdsa256k1"),
@@ -1538,14 +1538,14 @@ impl KmsV0_15_0 {
         TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
     }
 
-    /// `StoredSchemeSignature` was introduced in v0.15.0 as the persisted form of a
+    /// `StoredTypedSignature` was introduced in v0.15.0 as the persisted form of a
     /// KMS signature tagged with the scheme that produced it. The fixture holds the
-    /// `Vec<StoredSchemeSignature>` that key- and CRS-generation metadata store.
+    /// `Vec<StoredTypedSignature>` that key- and CRS-generation metadata store.
     fn gen_stored_scheme_signature(dir: &PathBuf) -> TestMetadataKMS {
-        let signatures: Vec<StoredSchemeSignature> = STORED_SCHEME_SIGNATURE_TEST
+        let signatures: Vec<StoredTypedSignature> = STORED_SCHEME_SIGNATURE_TEST
             .schemes
             .iter()
-            .map(|name| StoredSchemeSignature {
+            .map(|name| StoredTypedSignature {
                 scheme: scheme_from_name(name),
                 signature: STORED_SCHEME_SIGNATURE_TEST.signature.to_vec(),
             })
@@ -1557,7 +1557,7 @@ impl KmsV0_15_0 {
             &STORED_SCHEME_SIGNATURE_TEST.test_filename
         );
 
-        TestMetadataKMS::StoredSchemeSignature(STORED_SCHEME_SIGNATURE_TEST)
+        TestMetadataKMS::StoredTypedSignature(STORED_SCHEME_SIGNATURE_TEST)
     }
 }
 

@@ -954,10 +954,10 @@ impl TestType for InternalCustodianSetupMessageTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct StoredSchemeSignatureTest {
+pub struct StoredTypedSignatureTest {
     pub test_filename: Cow<'static, str>,
     /// Signing-scheme names, in the order the signatures appear in the stored
-    /// `Vec<StoredSchemeSignature>`. The generator and the test both map these
+    /// `Vec<StoredTypedSignature>`. The generator and the test both map these
     /// names onto `SigningSchemeType` variants, so pinning them here is what
     /// makes the test catch a reordered or removed scheme variant.
     pub schemes: Cow<'static, [Cow<'static, str>]>,
@@ -965,13 +965,13 @@ pub struct StoredSchemeSignatureTest {
     pub signature: Cow<'static, [u8]>,
 }
 
-impl TestType for StoredSchemeSignatureTest {
+impl TestType for StoredTypedSignatureTest {
     fn module(&self) -> String {
         KMS_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
-        "StoredSchemeSignature".to_string()
+        "StoredTypedSignature".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -1010,7 +1010,7 @@ pub enum TestMetadataKMS {
     InternalCustodianSetupMessage(InternalCustodianSetupMessageTest),
     InternalCustodianRecoveryOutput(InternalCustodianRecoveryOutputTest),
     OperatorBackupOutput(OperatorBackupOutputTest),
-    StoredSchemeSignature(StoredSchemeSignatureTest),
+    StoredTypedSignature(StoredTypedSignatureTest),
 }
 
 /// KMS-grpc metadata

@@ -164,7 +164,7 @@ message KeyGenPreprocResult {
 
   // Per-scheme KMS signatures.
   // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 3;
+  repeated TypedSignature signatures = 3;
 }
 
 // Request for generating new keys under a certain handle and return a URI where
@@ -265,7 +265,7 @@ message KeyGenResult {
 
   // Per-scheme KMS signatures.
   // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 5;
+  repeated TypedSignature signatures = 5;
 }
 
 // Keeping the fields in lowercase is important because
@@ -339,7 +339,7 @@ message CrsGenResult {
 
   // Per-scheme KMS signatures.
   // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 5;
+  repeated TypedSignature signatures = 5;
 }
 
 // This enum tells the KMS how to deserialize ciphertexts.
@@ -444,7 +444,7 @@ message PublicDecryptionResponse {
 
   // Per-scheme KMS signatures.
   // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 5;
+  repeated TypedSignature signatures = 5;
 }
 
 // Eip712 domain information.
@@ -524,7 +524,7 @@ message UserDecryptionResponse {
 
   // Per-scheme KMS signatures.
   // One per scheme requested in the request's `signing_schemes`.
-  repeated SchemeSignature signatures = 5;
+  repeated TypedSignature signatures = 5;
 }
 
 message UserDecryptionResponsePayload {
@@ -761,7 +761,7 @@ enum SigningSchemeType {
 // Used to carry a chain-native signature for one signing scheme when a response
 // may be signed under several schemes at once (e.g. ECDSA/secp256k1 EIP-712 for
 // and EVM, ed25519 for Solana, ML-DSA for post-quantum).
-message SchemeSignature {
+message TypedSignature {
   // The signature scheme that produced `signature`.
   SigningSchemeType scheme = 1;
 
