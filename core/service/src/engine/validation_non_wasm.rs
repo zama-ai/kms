@@ -993,6 +993,7 @@ pub(crate) struct VerifiedNewMpcEpochRequest {
     pub epoch_id: EpochId,
     pub extra_data: Vec<u8>,
     pub resharing: Option<ResharingParams>,
+    pub signing_schemes: Vec<SigningSchemeType>,
 }
 
 pub(crate) fn validate_new_mpc_epoch_request(
@@ -1032,6 +1033,8 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         epoch_id,
         resharing,
         extra_data: req.extra_data,
+        signing_schemes: resolve_signing_schemes(&req.signing_schemes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
     })
 }
 
@@ -2236,6 +2239,39 @@ mod tests {
             };
             let err = validate_new_mpc_epoch_request(req)
                 .expect_err("request without domain must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn test_new_mpc_epoch_request_signing_schemes() {
+        let epoch_id = derive_request_id("new_mpc_epoch_signing_schemes").unwrap();
+        // Duplicates are removed and the requested order is kept.
+        {
+            let req = NewMpcEpochRequest {
+                signing_schemes: vec![
+                    kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+                    kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+                    kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+                ],
+                epoch_id: Some(epoch_id.into()),
+                ..Default::default()
+            };
+            let verified = validate_new_mpc_epoch_request(req).unwrap();
+            assert_eq!(
+                verified.signing_schemes,
+                vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+            );
+        }
+        // An unknown scheme is rejected before any epoch work starts.
+        {
+            let req = NewMpcEpochRequest {
+                signing_schemes: vec![9999],
+                epoch_id: Some(epoch_id.into()),
+                ..Default::default()
+            };
+            let err = validate_new_mpc_epoch_request(req)
+                .expect_err("unknown signing scheme must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
     }

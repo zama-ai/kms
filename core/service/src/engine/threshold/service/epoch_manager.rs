@@ -570,7 +570,7 @@ impl<
             }
 
             // Parties in Set 1 only do NOT re-sign the metadata — we return the
-            // same metadata as in the epoch we reshare from.
+            // same metadata as in the epoch we reshare from.å
             Ok(EpochOutput::Reshare((keys_metadata, crs_metadata)))
         };
 
@@ -644,6 +644,7 @@ impl<
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: &PrivateSigKey,
+        signing_schemes: &[SigningSchemeType],
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
@@ -669,7 +670,7 @@ impl<
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_uncompressed_keygen(
                         sk,
-                        &[SigningSchemeType::Ecdsa256k1],
+                        signing_schemes,
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
@@ -723,7 +724,7 @@ impl<
 
                     let info = match compute_info_compressed_keygen(
                         sk,
-                        &[SigningSchemeType::Ecdsa256k1],
+                        signing_schemes,
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
@@ -775,9 +776,7 @@ impl<
         {
             let crs_meta_data = compute_info_crs(
                 sk,
-                // Resharing has no per-request scheme choice, so reshared
-                // results are signed under ECDSA only (issue #3078).
-                &[SigningSchemeType::Ecdsa256k1],
+                signing_schemes,
                 &DSEP_PUBDATA_CRS,
                 &crs_info.crs_id,
                 &crs,
@@ -849,6 +848,7 @@ impl<
         new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -940,6 +940,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &sk,
+                &signing_schemes,
                 new_epoch_id,
                 new_extra_data,
                 &verified_previous_epoch,
@@ -963,6 +964,7 @@ impl<
         new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -1073,6 +1075,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &sk,
+                &signing_schemes,
                 new_epoch_id,
                 new_extra_data,
                 &verified_previous_epoch,
@@ -1346,6 +1349,7 @@ impl<
         new_extra_data: &[u8],
         previous_epoch: PreviousEpochInfo,
         eip712_domain: Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
     ) -> Result<BoxFuture<'static, anyhow::Result<EpochOutput>>, MetricedError> {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
@@ -1427,6 +1431,7 @@ impl<
                     new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
+                    signing_schemes,
                     crs_info,
                 )
                 .await?
@@ -1439,6 +1444,7 @@ impl<
                     new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
+                    signing_schemes,
                     crs_info,
                 )
                 .await?
@@ -1470,6 +1476,7 @@ impl<
             epoch_id,
             extra_data,
             resharing: resharing_params,
+            signing_schemes,
         } = validate_new_mpc_epoch_request(inner)?;
 
         // Retain both shared leases until the background task has completed every write. Context
@@ -1507,6 +1514,7 @@ impl<
                     &extra_data,
                     previous_epoch,
                     signing_domain,
+                    signing_schemes,
                 )
                 .await?,
             ),
