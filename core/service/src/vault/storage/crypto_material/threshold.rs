@@ -22,7 +22,7 @@ use crate::{
             Storage, StorageExt,
             crypto_material::{
                 PublicKeySet,
-                base::{StorageError, update_meta_store},
+                base::{BackupPolicy, StorageError, update_meta_store},
             },
             delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
             read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
@@ -189,7 +189,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 op_metric_tag,
             )
             .await;
-        update_meta_store(res, meta_res, &meta_store, permit, op_metric_tag).await
+        update_meta_store(
+            res,
+            meta_res,
+            &meta_store,
+            permit,
+            BackupPolicy::BackupIsBestEffort,
+            op_metric_tag,
+        )
+        .await
     }
 
     /// Purge threshold FHE key material from disk **and** from the in-memory
