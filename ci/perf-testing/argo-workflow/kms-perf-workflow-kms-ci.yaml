@@ -704,8 +704,10 @@ spec:
 
           # Median latency limits in milliseconds for the rungs that gate the job.
           # A rung can meet its offered rate and still be slow per request, which is the
-          # regression the capacity check alone misses. First-pass values leave roughly
-          # 2x headroom over the medians observed so far; tighten them as history builds.
+          # regression the capacity check alone misses. No p50 history exists for 1.3k or
+          # 2.5k themselves; these are roughly 2x the p50 recorded at the neighbouring
+          # sub-ceiling rungs (pdec 1.1k: 7.74-8.28ms, udec 2.4k: 8.90-11.58ms), so treat
+          # them as a starting point and tighten once these rungs have their own history.
           latency_limits_for_rate() {
             case "$1:$2" in
               pdec:1300) echo "p50=15,p99=150" ;;
@@ -809,6 +811,12 @@ spec:
               exit 1
               ;;
           esac
+          # Eight rungs share the workflow's activeDeadlineSeconds, so a large manual
+          # samples value can run the whole run out of time. Warn rather than refuse:
+          # a long deliberate run is a legitimate thing to ask for.
+          if [ "$samples" -gt 10 ]; then
+            echo "WARNING: samples=${samples} means up to $((samples * 8)) measurements across the ladder; check the workflow activeDeadlineSeconds before relying on this run"
+          fi
 
           echo "=========================================="
           echo "Starting test: $test_command"

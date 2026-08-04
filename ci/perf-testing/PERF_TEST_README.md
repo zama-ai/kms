@@ -74,9 +74,10 @@ latencies must also stay inside these limits, or the workflow fails:
 | udec 2,500 req/s | ≤ 20 ms | ≤ 300 ms |
 
 Without this, a build that keeps up with the offered rate while taking far longer
-per request reads as a pass. The limits are first-pass values with roughly twice
-the headroom of the medians observed so far, and they are meant to be tightened
-once the new rungs have a few weeks of history. They live in
+per request reads as a pass. The limits are a starting point: no p50 history
+exists for 1,300 or 2,500 themselves, so they are about twice the p50 recorded at
+the neighbouring sub-ceiling rates, and they should be tightened once these rates
+have a few weeks of their own history. They live in
 `latency_limits_for_rate` in
 `ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`; the Slack line for
 a gated rung shows them as `gate=p50=...,p99=...`. No other scenario is checked
