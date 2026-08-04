@@ -34,6 +34,7 @@ use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
+use strum::EnumCount;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::compute_witness_dim;
@@ -191,7 +192,7 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
 pub(crate) fn resolve_signing_schemes(
     requested: &[i32],
 ) -> Result<Vec<SigningSchemeType>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut resolved = Vec::with_capacity(requested.len());
+    let mut resolved = Vec::with_capacity(SigningSchemeType::COUNT);
     for &raw in requested {
         let scheme = SigningSchemeType::try_from(raw)
             .map_err(|e| anyhow::anyhow!("unsupported signing scheme requested: {e}"))?;
