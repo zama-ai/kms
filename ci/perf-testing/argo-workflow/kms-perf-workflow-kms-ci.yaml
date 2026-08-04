@@ -798,7 +798,7 @@ spec:
               "$allowed_failure" \
               > /tmp/artifacts/${test_name}.json
             echo "false" > /tmp/artifacts/${test_name}.ok
-            echo "Skipping $test_name because a lower $display_name rate did not produce valid metrics"
+            echo "Skipping $test_name because a lower $display_name rate stopped the climb: it missed its budget, produced no valid metrics, or its median p99 crossed the climb limit"
             exit 0
           fi
 
@@ -970,8 +970,26 @@ spec:
             echo "latency gate: median p50=${median_p50}ms (limit ${max_p50}ms), median p99=${median_p99}ms (limit ${max_p99}ms), within=${within_latency_limits}"
           fi
 
+          # Every rung meets its offered rate, so the rate budget alone would let the
+          # ladder climb forever. Stop once the median p99 crosses a second: above that
+          # the higher rungs measure a system that has already come apart. This is not
+          # the gate limit above, which fails the job without stopping the climb.
+          climb_max_p99_ms=1000
+          within_climb_limit=$(awk \
+            -v p99="$median_p99" \
+            -v max_p99="$climb_max_p99_ms" '
+              BEGIN {
+                if (p99 <= 0 || p99 > max_p99) {
+                  print "false"
+                } else {
+                  print "true"
+                }
+              }')
+          echo "climb check: median p99=${median_p99}ms (stop above ${climb_max_p99_ms}ms), continue=${within_climb_limit}"
+
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
           limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
+          limit_metrics="${limit_metrics},\"climb_max_p99_ms\":${climb_max_p99_ms},\"within_climb_limit\":${within_climb_limit}"
           if [ -n "$latency_limits" ]; then
             limit_metrics="${limit_metrics},\"latency_limits\":\"${latency_limits}\",\"within_latency_limits\":${within_latency_limits}"
           fi
@@ -983,10 +1001,13 @@ spec:
           else
             status="failed"
           fi
-          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ]; then
+          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ] && [ "$within_climb_limit" = "true" ]; then
             capacity_ok="true"
           else
             capacity_ok="false"
+          fi
+          if [ "$capacity_ok" != "true" ]; then
+            echo "Not climbing past ${test_name}: status=${status} within_parameter_set=${within_parameter_set} within_climb_limit=${within_climb_limit}"
           fi
 
           printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": %s\n  }\n}\n' \
@@ -1220,6 +1241,9 @@ spec:
               median_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p99_ms // 0' "$result")
               parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
               within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
+              climb_max_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].climb_max_p99_ms // empty' "$result")
+              # `// true` would read a stored false as true, so test for the key instead.
+              within_climb_limit=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("within_climb_limit") then .within_climb_limit else true end' "$result")
               latency_limits=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_limits // empty' "$result")
               # `// true` would read a stored false as true, so test for the key instead.
               within_latency_limits=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("within_latency_limits") then .within_latency_limits else true end' "$result")
@@ -1282,6 +1306,16 @@ spec:
                   inc_decrypt_counter "$kind" failed
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s over latency limits (${latency_limits}) p50=${p50_short} p99=${p99_short}"
+              elif [ "$within_parameter_set" = "true" ] && [ "$within_climb_limit" != "true" ]; then
+                # Inside its budget but slow enough to end the ladder, so not a clean pass.
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               elif [ "$within_parameter_set" = "true" ]; then
                 if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
                   outcome=warned
@@ -1306,6 +1340,10 @@ spec:
               # A rung can report a healthy median while one of its samples died.
               if [ -n "$bad_samples" ] && [ "$bad_samples" != "0" ]; then
                 line="${line} bad_samples=${bad_samples}"
+              fi
+              # Say which rung ended the ladder, so a run of skips has a stated cause.
+              if [ "$within_climb_limit" != "true" ] && [ "$status" != "skipped" ]; then
+                line="${line} stopped_climb=p99>${climb_max_p99}ms"
               fi
               if [ -n "$latency_limits" ]; then
                 line="${line} gate=${latency_limits}"
