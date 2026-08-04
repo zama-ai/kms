@@ -7,7 +7,7 @@ use crate::cryptography::signatures::compute_eip712_signature;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
-use crate::cryptography::signing::{SigningSchemeType, unified_sign};
+use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -311,10 +311,9 @@ pub(crate) fn compute_result_signatures(
                     crate::cryptography::signatures::eip712_sign_hash(sk, &hash)?
                 }
                 (SigningSchemeType::Ecdsa256k1, SigningApproach::Raw)
-                | (_, SigningApproach::Raw) => {
-                    let key = sk.derive_signing_key(job.scheme)?;
-                    unified_sign(dsep, &job.message, key)?.to_bytes()
-                }
+                | (_, SigningApproach::Raw) => sk
+                    .unified_sign_with(job.scheme, dsep, &job.message)?
+                    .to_bytes(),
                 (scheme, SigningApproach::Eip712) => {
                     anyhow::bail!("EIP-712 approach is only valid for ECDSA, not {scheme:?}")
                 }
@@ -847,8 +846,7 @@ where
     schemes
         .iter()
         .map(|&scheme| {
-            let sk = server_sk.derive_signing_key(scheme)?;
-            let sig = unified_sign(dsep, msg.as_ref(), sk)?;
+            let sig = server_sk.unified_sign_with(scheme, dsep, msg.as_ref())?;
             Ok(TypedSignature {
                 scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
                 signature: sig.to_bytes(),
@@ -1541,12 +1539,8 @@ pub(crate) mod tests {
                     *scheme
                 );
 
-                // Verify against the scheme's derived verification key.
-                let vk = sk
-                    .derive_signing_key(*scheme)
-                    .unwrap()
-                    .verifying_key()
-                    .unwrap();
+                // Verify against the scheme's verification key.
+                let vk = sk.unified_verifying_key(*scheme).unwrap();
                 let sig = Signature::new(*scheme, scheme_sig.signature.clone());
                 unified_verify(dsep, msg, &sig, &vk)
                     .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
@@ -1608,11 +1602,7 @@ pub(crate) mod tests {
                 }
                 // Every other scheme signs the EIP-712 hash under its derived key.
                 scheme => {
-                    let vk = sk
-                        .derive_signing_key(scheme)
-                        .unwrap()
-                        .verifying_key()
-                        .unwrap();
+                    let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
                     unified_verify(&DSEP_PUBDATA_CRS, eip712_hash.as_slice(), &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} CRS signature should verify: {e}"));

@@ -273,7 +273,9 @@ impl_generic_versionize!(WrappedSigningKey);
 /// Deriving a non-ECDSA key runs a KDF plus a (for ML-DSA, non-trivial) key
 /// expansion, so each scheme's key is derived once and memoized here.
 struct DerivedKeyCache {
-    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`.
+    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`. The
+    /// [`SigningSchemeType::Ecdsa256k1`] slot always stays empty: that scheme
+    /// signs with the [`PrivateSigKey`] itself, so there is nothing to derive.
     slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
 }
 

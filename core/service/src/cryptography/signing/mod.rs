@@ -323,38 +323,56 @@ fn scheme_wire_tag(scheme: SigningSchemeType) -> i32 {
 }
 
 impl PrivateSigKey {
-    /// The signing key to use for `scheme`.
+    /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
+    pub(crate) fn unified_sign_with(
+        &self,
+        scheme: SigningSchemeType,
+        dsep: &DomainSep,
+        msg: &[u8],
+    ) -> Result<Signature, SigningError> {
+        match scheme {
+            SigningSchemeType::Ecdsa256k1 => {
+                Ok(Signature::new(scheme, Ecdsa256k1::sign(dsep, msg, self)?))
+            }
+            _ => unified_sign(dsep, msg, self.derive_signing_key(scheme)?),
+        }
+    }
+
+    /// The verification key that [`Self::unified_sign_with`] signatures under
+    /// `scheme` verify against.
+    pub(crate) fn unified_verifying_key(
+        &self,
+        scheme: SigningSchemeType,
+    ) -> Result<UnifiedPublicSigKey, SigningError> {
+        match scheme {
+            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPublicSigKey::Ecdsa256k1(self.verf_key())),
+            _ => self.derive_signing_key(scheme)?.verifying_key(),
+        }
+    }
+
+    /// The memoized signing key derived from this key for `scheme`.
     ///
-    /// For [`SigningSchemeType::Ecdsa256k1`] this yields the persisted key's own
-    /// material instead of deriving a new ECDSA key.
-    pub(crate) fn derive_signing_key(
+    /// Errors for [`SigningSchemeType::Ecdsa256k1`]: that scheme signs with the
+    /// persisted key itself, so it has no derived key,
+    fn derive_signing_key(
         &self,
         scheme: SigningSchemeType,
     ) -> Result<&UnifiedPrivateSigKey, SigningError> {
+        if scheme == SigningSchemeType::Ecdsa256k1 {
+            return Err(SigningError::KeyDerivation(
+                "ECDSA signs with the persisted key itself and has no derived key".to_string(),
+            ));
+        }
         let slot = self.derived_key_slot(scheme);
         if let Some(key) = slot.get() {
             return Ok(key);
         }
         // Cache miss: derive once and memoize.
-        let derived = self.derive_signing_key_uncached(scheme)?;
+        let derived = self.derive_independent_signing_key(scheme)?;
         let _ = slot.set(derived);
         Ok(slot
             .get()
             .expect("cache slot was populated by this call or a concurrent one"))
-    }
-
-    /// Derive the signing key for `scheme` without consulting or populating the
-    /// cache.
-    fn derive_signing_key_uncached(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<UnifiedPrivateSigKey, SigningError> {
-        match scheme {
-            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPrivateSigKey::Ecdsa256k1(
-                PrivateSigKey::new(self.raw_signing_key().clone()),
-            )),
-            _ => self.derive_independent_signing_key(scheme),
-        }
     }
 
     /// Deterministically derive a fresh, *independent* signing key for `scheme`
@@ -544,8 +562,8 @@ mod tests {
         }
     }
 
-    /// Every derivable scheme derived from an ECDSA key signs and verifies, and
-    /// a tampered message fails.
+    /// Every scheme signs and verifies through the per-scheme key of an ECDSA
+    /// identity, and a tampered message fails.
     #[test]
     fn derived_keys_sign_and_verify() {
         let mut rng = AesRng::seed_from_u64(101);
@@ -553,12 +571,11 @@ mod tests {
         let msg = b"a message signed under a derived scheme key";
 
         for scheme in SigningSchemeType::iter() {
-            let derived_sk = sk.derive_signing_key(scheme).unwrap();
-            let derived_vk = derived_sk.verifying_key().unwrap();
-            assert_eq!(derived_sk.signing_scheme_type(), scheme);
+            let derived_vk = sk.unified_verifying_key(scheme).unwrap();
             assert_eq!(derived_vk.signing_scheme_type(), scheme);
 
-            let sig = unified_sign(DSEP, msg, derived_sk).unwrap();
+            let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
+            assert_eq!(sig.scheme(), scheme);
             unified_verify(DSEP, msg, &sig, &derived_vk)
                 .unwrap_or_else(|e| panic!("{scheme:?} derived key should verify: {e}"));
             assert!(unified_verify(DSEP, b"tampered", &sig, &derived_vk).is_err());
@@ -574,14 +591,9 @@ mod tests {
         let msg = b"deriving twice must give the same key";
 
         for scheme in SigningSchemeType::iter() {
-            let sk_a = sk.derive_signing_key(scheme).unwrap();
-            let vk_b = sk
-                .derive_signing_key(scheme)
-                .unwrap()
-                .verifying_key()
-                .unwrap();
-            let sig = unified_sign(DSEP, msg, sk_a).unwrap();
-            unified_verify(DSEP, msg, &sig, &vk_b)
+            let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
+            let vk = sk.clone().unified_verifying_key(scheme).unwrap();
+            unified_verify(DSEP, msg, &sig, &vk)
                 .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
         }
     }
@@ -593,7 +605,8 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(909);
         let (_pk, sk) = gen_sig_keys(&mut rng);
 
-        for scheme in SigningSchemeType::iter() {
+        // ECDSA is excluded: it has no derived key to cache.
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
             let first = sk.derive_signing_key(scheme).unwrap();
             let second = sk.derive_signing_key(scheme).unwrap();
             // A second call is served from the cache, not re-derived.
@@ -625,18 +638,16 @@ mod tests {
         }
     }
 
-    /// For ECDSA, `derive_signing_key` returns the persisted identity unchanged
+    /// For ECDSA, the per-scheme key is the persisted identity unchanged
     #[test]
     fn ecdsa_signing_key_is_the_identity() {
         let mut rng = AesRng::seed_from_u64(303);
         let (pk, sk) = gen_sig_keys(&mut rng);
 
-        let derived = sk
-            .derive_signing_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap()
-            .verifying_key()
+        let vk = sk
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
             .unwrap();
-        assert_eq!(ecdsa_address(derived), pk.address());
+        assert_eq!(ecdsa_address(vk), pk.address());
     }
 
     /// `derive_independent_signing_key` produces a fresh ECDSA key that is
