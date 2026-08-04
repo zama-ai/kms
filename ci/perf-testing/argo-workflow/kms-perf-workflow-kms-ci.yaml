@@ -754,8 +754,9 @@ spec:
             done | sort -n | awk -v position="$(( (${#sample_rate[@]} + 1) / 2 ))" 'NR == position { print $2 }'
           }
 
-          # Prints the numeric arguments as the body of a JSON array.
-          join_numbers() {
+          # Prints the arguments as the body of a JSON array. Callers pass bare JSON
+          # values: numbers, or the strings true/false.
+          join_values() {
             local joined
             joined="$(printf ',%s' "$@")"
             echo "${joined#,}"
@@ -897,9 +898,13 @@ spec:
           metrics_failed="$(json_number "$decrypt_metrics" failed)"
           metrics_shed="$(json_number "$decrypt_metrics" shed)"
           samples_metrics=",\"samples\":{\"count\":${samples},\"median_sample\":$((median_index + 1))"
-          samples_metrics="${samples_metrics},\"achieved_rate\":[$(join_numbers "${sample_rate[@]}")]"
-          samples_metrics="${samples_metrics},\"p50_ms\":[$(join_numbers "${sample_p50[@]}")]"
-          samples_metrics="${samples_metrics},\"p99_ms\":[$(join_numbers "${sample_p99[@]}")]"
+          samples_metrics="${samples_metrics},\"achieved_rate\":[$(join_values "${sample_rate[@]}")]"
+          samples_metrics="${samples_metrics},\"p50_ms\":[$(join_values "${sample_p50[@]}")]"
+          samples_metrics="${samples_metrics},\"p99_ms\":[$(join_values "${sample_p99[@]}")]"
+          # Per-sample validity and exit codes: without them a rung where one sample
+          # crashed the client is indistinguishable from a clean rung in this artifact.
+          samples_metrics="${samples_metrics},\"valid\":[$(join_values "${sample_valid[@]}")]"
+          samples_metrics="${samples_metrics},\"exit_code\":[$(join_values "${sample_exit[@]}")]"
           samples_metrics="${samples_metrics},\"median_achieved_rate\":${median_rate}"
           samples_metrics="${samples_metrics},\"median_p50_ms\":${median_p50},\"median_p99_ms\":${median_p99}}"
           parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
@@ -1197,6 +1202,7 @@ spec:
               network_rx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_errors // 0' "$result")
               network_tx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_errors // 0' "$result")
               samples_count=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.count // empty' "$result")
+              bad_samples=$(jq -r --arg k "$metrics_key" '(.performance_metrics[$k].samples.valid // []) | map(select(. == false)) | length' "$result")
               median_achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_achieved_rate // 0' "$result")
               median_p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p50_ms // 0' "$result")
               median_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p99_ms // 0' "$result")
@@ -1283,6 +1289,10 @@ spec:
               fi
 
               line="${line}${samples_note}"
+              # A rung can report a healthy median while one of its samples died.
+              if [ -n "$bad_samples" ] && [ "$bad_samples" != "0" ]; then
+                line="${line} bad_samples=${bad_samples}"
+              fi
               if [ -n "$latency_limits" ]; then
                 line="${line} gate=${latency_limits}"
               fi

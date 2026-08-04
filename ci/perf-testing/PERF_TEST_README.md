@@ -89,7 +89,8 @@ achieved rate, p50 and p99 are the **medians** over those samples. The budget
 check and the decision to climb to the next rate both use the median sample, so a
 single unlucky 30-second draw no longer decides the run. Lines that carry medians
 are marked `n=3` in the Slack report; the raw per-sample values are in the
-`samples` block of the rung's JSON artifact.
+`samples` block of the rung's JSON artifact. A rung whose median looks healthy
+while one of its samples produced no metrics at all is marked `bad_samples=N`.
 
 The first sample encrypts the ciphertext and stores it; the repeats load it from
 disk, which skips the key-set download and the switch-and-squash precompute. A
@@ -139,6 +140,8 @@ The Slack report and JSON artifacts use these fields.
 | `samples.median_sample` | Which sample (1-based) supplied the reported counters. |
 | `samples.achieved_rate` | Per-sample achieved rates, in submission order. |
 | `samples.p50_ms` / `samples.p99_ms` | Per-sample request latency percentiles. |
+| `samples.valid` | Per-sample flag: did that run produce a metrics record at all. |
+| `samples.exit_code` | Per-sample `kms-core-client` exit code. |
 | `samples.median_achieved_rate` | Median of `samples.achieved_rate`; the value the budget check uses. |
 | `samples.median_p50_ms` / `samples.median_p99_ms` | Medians of the per-sample percentiles. |
 
