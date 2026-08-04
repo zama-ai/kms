@@ -327,7 +327,7 @@ impl PrivateSigKey {
     ///
     /// For [`SigningSchemeType::Ecdsa256k1`] this yields the persisted key's own
     /// material instead of deriving a new ECDSA key.
-    pub fn derive_signing_key(
+    pub(crate) fn derive_signing_key(
         &self,
         scheme: SigningSchemeType,
     ) -> Result<&UnifiedPrivateSigKey, SigningError> {
@@ -359,7 +359,7 @@ impl PrivateSigKey {
 
     /// Deterministically derive a fresh, *independent* signing key for `scheme`
     /// from this key's KDF seed.
-    pub fn derive_independent_signing_key(
+    fn derive_independent_signing_key(
         &self,
         scheme: SigningSchemeType,
     ) -> Result<UnifiedPrivateSigKey, SigningError> {
@@ -389,7 +389,7 @@ impl PrivateSigKey {
     /// `SHAKE256(DSEP_SIGKEY_DERIVE ‖ scheme_tag ‖ version ‖ sk_bytes)`, where `scheme_tag`
     /// is the 4-byte little-endian gRPC discriminant of the scheme (see [`scheme_wire_tag`])
     /// and `version` is [`SIGKEY_DERIVATION_VERSION`].
-    pub(crate) fn derived_seed(&self, scheme: SigningSchemeType) -> [u8; DIGEST_BYTES] {
+    fn derived_seed(&self, scheme: SigningSchemeType) -> [u8; DIGEST_BYTES] {
         let binding = self.raw_signing_key().to_bytes();
         let sk_bytes = binding.as_slice();
         let mut msg = Vec::with_capacity(4 + 1 + sk_bytes.len());

@@ -113,6 +113,7 @@ impl Client {
             // Verify the ECDSA entry from the multi-scheme `signatures` list,
             // falling back to the legacy scalar `signature` field for
             // responses from older servers.
+            // To be handled properly in 0.16 TODO(0.16)
             let ecdsa_sig = kms_grpc::rpc_types::ecdsa_signature_bytes(&cur_resp.signatures)
                 .unwrap_or(cur_resp.signature.as_slice());
             let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(ecdsa_sig)?);

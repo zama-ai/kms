@@ -301,8 +301,8 @@ impl Clone for DerivedKeyCache {
     }
 }
 
-// The cache is memoized derivation, not key identity: two keys with the same
-// secret are equal regardless of what either has cached.
+// Ignore the key cache when doing equality comparision.
+// Instead we only care about the underlying `sk` in `PrivateSigKey` when comparing.
 impl PartialEq for DerivedKeyCache {
     fn eq(&self, _other: &Self) -> bool {
         true
