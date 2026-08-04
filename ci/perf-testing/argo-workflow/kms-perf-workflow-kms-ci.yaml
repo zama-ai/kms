@@ -697,6 +697,18 @@ spec:
             esac
           }
 
+          # Median latency limits in milliseconds for the rungs that gate the job.
+          # A rung can meet its offered rate and still be slow per request, which is the
+          # regression the capacity check alone misses. First-pass values leave roughly
+          # 2x headroom over the medians observed so far; tighten them as history builds.
+          latency_limits_for_rate() {
+            case "$1:$2" in
+              pdec:1300) echo "p50=15,p99=150" ;;
+              udec:2500) echo "p50=20,p99=300" ;;
+              *) echo "" ;;
+            esac
+          }
+
           parameter_value() {
             echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
           }
@@ -914,8 +926,34 @@ spec:
                   print "false"
                 }
               }')
+          latency_limits="$(latency_limits_for_rate "$kind" "{{inputs.parameters.rate}}")"
+          within_latency_limits=true
+          if [ -n "$latency_limits" ]; then
+            max_p50=$(parameter_value "$latency_limits" p50)
+            max_p99=$(parameter_value "$latency_limits" p99)
+            # A rung without a valid measurement reports 0 ms, which must not read as fast.
+            within_latency_limits=$(awk \
+              -v p50="$median_p50" \
+              -v p99="$median_p99" \
+              -v max_p50="$max_p50" \
+              -v max_p99="$max_p99" '
+                BEGIN {
+                  if (p50 <= 0 || p99 <= 0) {
+                    print "false"
+                  } else if (p50 <= max_p50 && p99 <= max_p99) {
+                    print "true"
+                  } else {
+                    print "false"
+                  }
+                }')
+            echo "latency gate: median p50=${median_p50}ms (limit ${max_p50}ms), median p99=${median_p99}ms (limit ${max_p99}ms), within=${within_latency_limits}"
+          fi
+
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
           limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
+          if [ -n "$latency_limits" ]; then
+            limit_metrics="${limit_metrics},\"latency_limits\":\"${latency_limits}\",\"within_latency_limits\":${within_latency_limits}"
+          fi
           decrypt_metrics="${decrypt_metrics%\}}${samples_metrics}${limit_metrics}}"
 
           # Task success means "measurement exists"; capacity-ok gates the next rung.
@@ -1154,11 +1192,14 @@ spec:
               network_rx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_errors // 0' "$result")
               network_tx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_errors // 0' "$result")
               samples_count=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.count // empty' "$result")
-              median_achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_achieved_rate // empty' "$result")
-              median_p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p50_ms // empty' "$result")
-              median_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p99_ms // empty' "$result")
+              median_achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_achieved_rate // 0' "$result")
+              median_p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p50_ms // 0' "$result")
+              median_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].samples.median_p99_ms // 0' "$result")
               parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
               within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
+              latency_limits=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_limits // empty' "$result")
+              # `// true` would read a stored false as true, so test for the key instead.
+              within_latency_limits=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("within_latency_limits") then .within_latency_limits else true end' "$result")
               allowed_failure=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].allowed_failure // false' "$result")
               extra_failed=$(jq -r --arg k "$metrics_key" --arg f "$extra_failed_key" '.performance_metrics[$k][$f] // 0' "$result")
               p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p50 // empty' "$result")
@@ -1206,6 +1247,16 @@ spec:
                   inc_decrypt_counter "$kind" failed
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s measurement failed"
+              elif [ "$within_parameter_set" = "true" ] && [ "$within_latency_limits" != "true" ]; then
+                # Met its offered rate but was too slow per request.
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s over latency limits (${latency_limits}) p50=${p50_short} p99=${p99_short}"
               elif [ "$within_parameter_set" = "true" ]; then
                 if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
                   outcome=warned
@@ -1227,6 +1278,9 @@ spec:
               fi
 
               line="${line}${samples_note}"
+              if [ -n "$latency_limits" ]; then
+                line="${line} gate=${latency_limits}"
+              fi
               if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
                 line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
               fi

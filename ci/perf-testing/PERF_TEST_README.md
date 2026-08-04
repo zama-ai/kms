@@ -63,6 +63,25 @@ The `gate` scenario is the one the workflow result hinges on: it is the highest
 rate that still sits below the network ceiling of the single core-client pod, so
 a failure there points at the code rather than at the cluster's mood that night.
 
+### Latency limits on the gate scenarios
+
+Meeting the offered rate is not enough for the two gate scenarios. Their median
+latencies must also stay inside these limits, or the workflow fails:
+
+| Scenario | Median p50 | Median p99 |
+| --- | ---: | ---: |
+| pdec 1,300 req/s | ≤ 15 ms | ≤ 150 ms |
+| udec 2,500 req/s | ≤ 20 ms | ≤ 300 ms |
+
+Without this, a build that keeps up with the offered rate while taking far longer
+per request reads as a pass. The limits are first-pass values with roughly twice
+the headroom of the medians observed so far, and they are meant to be tightened
+once the new rungs have a few weeks of history. They live in
+`latency_limits_for_rate` in
+`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`; the Slack line for
+a gated rung shows them as `gate=p50=...,p99=...`. No other scenario is checked
+against latency.
+
 ### Samples per scenario
 
 Every scenario is measured three times inside the same pod, and the reported
@@ -93,7 +112,8 @@ Each scenario lands on one of these outcomes:
   traffic, **or** it's a `1,500`/`1,600` (pdec) or `2,700`/`2,800` (udec) probe,
   which is expected to run hot and is never allowed to fail the workflow.
 - **❌ fail** — a `1,100`/`1,300` (pdec) or `2,300`/`2,500` (udec) scenario went
-  outside its budget. This fails the whole workflow.
+  outside its budget, or a gate scenario went over its latency limits. This fails
+  the whole workflow.
 - **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
   run in ascending order and stop climbing once one falls over).
 
