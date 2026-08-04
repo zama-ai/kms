@@ -201,7 +201,7 @@ where
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
     signing_schemes: &[SigningSchemeType],
@@ -378,7 +378,7 @@ pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<S
 }
 
 /// compute the CRS in the centralized KMS.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     signing_schemes: &[SigningSchemeType],
