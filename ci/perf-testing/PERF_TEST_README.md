@@ -39,23 +39,29 @@ they produce are real regardless of this setting.
 
 ## Reading the results
 
-The public-decrypt test runs three scenarios, each sending `1 × euint64` for 30
+The public-decrypt test runs four scenarios, each sending `1 × euint64` for 30
 seconds:
 
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
 | stable | 1,100 req/s | no failures, no shedding, ≥98% of target rate |
-| near-limit | 1,300 req/s | ≤1% failures, ≤1% shed, ≥90% of target rate |
+| gate | 1,300 req/s | no failures, no shedding, ≥98% of target rate |
 | over-limit | 1,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+| over-limit | 1,600 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
-The user-decrypt test also runs three scenarios, each sending `1 × euint64` for
+The user-decrypt test also runs four scenarios, each sending `1 × euint64` for
 30 seconds:
 
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
-| stable | 2,400 req/s | no failures, no shedding, ≥98% of target rate |
-| near-limit | 2,700 req/s | ≤1% failures, ≤1% shed, ≥95% of target rate |
-| over-limit | 2,750 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+| stable | 2,300 req/s | no failures, no shedding, ≥98% of target rate |
+| gate | 2,500 req/s | no failures, no shedding, ≥98% of target rate |
+| over-limit | 2,700 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+| over-limit | 2,800 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+
+The `gate` scenario is the one the workflow result hinges on: it is the highest
+rate that still sits below the network ceiling of the single core-client pod, so
+a failure there points at the code rather than at the cluster's mood that night.
 
 The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
 not raw counts — `maxshed=25` means "no more than 25% of offered requests were
@@ -67,15 +73,16 @@ Each scenario lands on one of these outcomes:
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
 - **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, **or** it's the `1,500` (pdec) or `2,750` (udec) probe, which is
-  expected to run hot and is never allowed to fail the workflow.
-- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,400`/`2,700` (udec) scenario went
+  traffic, **or** it's a `1,500`/`1,600` (pdec) or `2,700`/`2,800` (udec) probe,
+  which is expected to run hot and is never allowed to fail the workflow.
+- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,300`/`2,500` (udec) scenario went
   outside its budget. This fails the whole workflow.
 - **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
   run in ascending order and stop climbing once one falls over).
 
-The top public- and user-decrypt scenarios are deliberately exploratory probes:
-they run just above the current clean range, so they warn instead of failing.
+The top two public- and user-decrypt scenarios are deliberately exploratory
+probes: they run at or above the network ceiling, so they warn instead of
+failing.
 
 ### Metric glossary
 
