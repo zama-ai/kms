@@ -339,10 +339,7 @@ impl ThresholdFheKeys {
                 decompression_key: decompression_key.clone(),
             },
             PublicKeyMaterial::Compressed { keyset } => {
-                let (_pk, sk) = keyset
-                    .decompress()
-                    .expect("Call is infallible")
-                    .into_raw_parts();
+                let (_pk, sk) = keyset.decompress().into_raw_parts();
                 let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
                 UncompressedKeys {
                     integer_server_key: Arc::new(isk),

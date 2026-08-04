@@ -154,7 +154,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     {
         let (pub_key_set, priv_key_set) =
             Self::compressed_keygen(session, preprocessing, params, tag).await?;
-        let (public_key, server_key) = pub_key_set.decompress()?.into_raw_parts();
+        let (public_key, server_key) = pub_key_set.decompress().into_raw_parts();
         Ok((
             FhePubKeySet {
                 public_key,
@@ -190,7 +190,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
             existing_private_keyset,
         )
         .await?;
-        let (public_key, server_key) = pub_key_set.decompress()?.into_raw_parts();
+        let (public_key, server_key) = pub_key_set.decompress().into_raw_parts();
         Ok(FhePubKeySet {
             public_key,
             server_key,
@@ -1903,34 +1903,33 @@ pub mod tests {
             assert_ne!(0, dkg_preproc.randoms_len());
 
             let my_role = session.my_role();
-            let (pk, sk) = if compressed_keygen {
-                let (compressed_pk, sk) =
-                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
-                        &mut session,
-                        &mut dkg_preproc,
-                        params,
-                        tag.clone(),
+            let (pk, sk) =
+                if compressed_keygen {
+                    let (compressed_pk, sk) = super::SecureOnlineDistributedKeyGen128::<
+                        EXTENSION_DEGREE,
+                    >::compressed_keygen(
+                        &mut session, &mut dkg_preproc, params, tag.clone()
                     )
                     .await
                     .unwrap();
-                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
-                (
-                    FhePubKeySet {
-                        public_key,
-                        server_key,
-                    },
-                    sk,
-                )
-            } else {
-                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
-                    &mut session,
-                    &mut dkg_preproc,
-                    params,
-                    tag,
-                )
-                .await
-                .unwrap()
-            };
+                    let (public_key, server_key) = compressed_pk.decompress().into_raw_parts();
+                    (
+                        FhePubKeySet {
+                            public_key,
+                            server_key,
+                        },
+                        sk,
+                    )
+                } else {
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                        &mut session,
+                        &mut dkg_preproc,
+                        params,
+                        tag,
+                    )
+                    .await
+                    .unwrap()
+                };
 
             // make sure we used up all the preprocessing materials
             assert_eq!(0, dkg_preproc.bits_len());
@@ -1996,34 +1995,33 @@ pub mod tests {
                 })
                 .unwrap_or_default();
 
-            let (pk, sk) = if run_compressed {
-                let (compressed_pk, sk) =
-                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
-                        &mut session,
-                        &mut dkg_preproc,
-                        params,
-                        tag.clone(),
+            let (pk, sk) =
+                if run_compressed {
+                    let (compressed_pk, sk) = super::SecureOnlineDistributedKeyGen128::<
+                        EXTENSION_DEGREE,
+                    >::compressed_keygen(
+                        &mut session, &mut dkg_preproc, params, tag.clone()
                     )
                     .await
                     .unwrap();
-                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
-                (
-                    FhePubKeySet {
-                        public_key,
-                        server_key,
-                    },
-                    sk,
-                )
-            } else {
-                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
-                    &mut session,
-                    &mut dkg_preproc,
-                    params,
-                    tag,
-                )
-                .await
-                .unwrap()
-            };
+                    let (public_key, server_key) = compressed_pk.decompress().into_raw_parts();
+                    (
+                        FhePubKeySet {
+                            public_key,
+                            server_key,
+                        },
+                        sk,
+                    )
+                } else {
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                        &mut session,
+                        &mut dkg_preproc,
+                        params,
+                        tag,
+                    )
+                    .await
+                    .unwrap()
+                };
 
             (my_role, pk, sk)
         };
@@ -2456,7 +2454,8 @@ pub mod tests {
         let mut mismatches = 0u64;
         for s in 0u128..NUM_SEEDS {
             let seed = Seed(s);
-            let img = wrong_oprf_server_key.generate_oblivious_pseudo_random(
+            let img = crate::tfhe_internals::test_feature::oprf_single_block(
+                &wrong_oprf_server_key,
                 seed,
                 random_bits_count,
                 &target_shortint_server_key,
@@ -2736,7 +2735,7 @@ pub mod tests {
     fn assert_compressed_xof_keyset_decompression_matches_raw_parts(
         compressed_pk: &tfhe::xof_key_set::CompressedXofKeySet,
     ) {
-        let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+        let (public_key, server_key) = compressed_pk.decompress().into_raw_parts();
         let decompressed_keyset = FhePubKeySet {
             public_key,
             server_key,
@@ -2815,7 +2814,7 @@ pub mod tests {
                     .await
                     .unwrap();
                 assert_compressed_xof_keyset_decompression_matches_raw_parts(&compressed_pk);
-                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                let (public_key, server_key) = compressed_pk.decompress().into_raw_parts();
                 FhePubKeySet {
                     public_key,
                     server_key,
