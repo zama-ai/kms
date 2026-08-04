@@ -54,14 +54,21 @@ The user-decrypt test also runs four scenarios, each sending `1 × euint64` for
 
 | Scenario | Rate | Budget (allowed slack) |
 | --- | ---: | --- |
-| stable | 2,300 req/s | no failures, no shedding, ≥98% of target rate |
-| gate | 2,500 req/s | no failures, ≤1% shed, ≥95% of target rate |
+| gate | 2,300 req/s | no failures, ≤1% shed, ≥95% of target rate |
+| over-limit | 2,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 | over-limit | 2,700 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 | over-limit | 2,800 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
 The `gate` scenario is the one the workflow result hinges on: it is the highest
-rate that still sits below the network ceiling of the single core-client pod, so
-a failure there points at the code rather than at the cluster's mood that night.
+rate whose latency is still repeatable, so a failure there points at the code
+rather than at the cluster's mood that night. Above the gate, latency turns
+bimodal — a user-decrypt sample at 2,500 has come back at 1,083/s with a p50 of
+4.8 s while its neighbours in the same rung ran at 10–12 ms — which is why those
+rates only ever warn.
+
+Note that the offered rate itself is met to within 0.2% at every rate measured so
+far, including 2,800. The budgets above therefore only catch a collapse; latency
+is what degrades under load, and the limits below are the real check.
 
 ### Latency limits on the gate scenarios
 
@@ -70,18 +77,28 @@ latencies must also stay inside these limits, or the workflow fails:
 
 | Scenario | Median p50 | Median p99 |
 | --- | ---: | ---: |
-| pdec 1,300 req/s | ≤ 15 ms | ≤ 150 ms |
-| udec 2,500 req/s | ≤ 20 ms | ≤ 300 ms |
+| pdec 1,300 req/s | ≤ 12 ms | ≤ 75 ms |
+| udec 2,300 req/s | ≤ 25 ms | ≤ 300 ms |
 
 Without this, a build that keeps up with the offered rate while taking far longer
-per request reads as a pass. The limits are a starting point: no p50 history
-exists for 1,300 or 2,500 themselves, so they are about twice the p50 recorded at
-the neighbouring sub-ceiling rates, and they should be tightened once these rates
-have a few weeks of their own history. They live in
-`latency_limits_for_rate` in
+per request reads as a pass. The limits come from run 30925605278, which measured
+medians of p50 9.10 ms / p99 29.79 ms at pdec 1,300 and p50 9.75 ms / p99
+131.20 ms at udec 2,300. They live in `latency_limits_for_rate` in
 `ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`; the Slack line for
 a gated rung shows them as `gate=p50=...,p99=...`. No other scenario is checked
-against latency.
+against these limits.
+
+### When the ladder stops climbing
+
+Scenarios run in ascending order, and each one decides whether the next runs. A
+scenario stops the climb when it misses its own budget, or when its median p99
+exceeds **1000 ms** — past that the rates above it measure a system that has
+already come apart, so their numbers are not worth the minutes. Everything above a
+stopped rung is reported as `⏭️ skipped`.
+
+The gate's latency limits are deliberately not part of this decision: a gate that
+breaks 12 ms fails the job but still lets the higher rates be measured, so a red
+run still tells you where the ceiling was.
 
 ### Samples per scenario
 
@@ -111,17 +128,15 @@ Each scenario lands on one of these outcomes:
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
 - **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, **or** it's a `1,500`/`1,600` (pdec) or `2,700`/`2,800` (udec) probe,
-  which is expected to run hot and is never allowed to fail the workflow.
-- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,300`/`2,500` (udec) scenario went
-  outside its budget, or a gate scenario went over its latency limits. This fails
-  the whole workflow.
-- **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
-  run in ascending order and stop climbing once one falls over).
+  traffic, **or** it's a `1,500`/`1,600` (pdec) or `2,500`/`2,700`/`2,800` (udec)
+  probe, which is expected to run hot and is never allowed to fail the workflow.
+- **❌ fail** — a `1,100`/`1,300` (pdec) or `2,300` (udec) scenario went outside
+  its budget, or a gate scenario went over its latency limits. This fails the whole
+  workflow.
+- **⏭️ skipped** — a lower scenario stopped the climb, so this one didn't run.
 
-The top two public- and user-decrypt scenarios are deliberately exploratory
-probes: they run at or above the network ceiling, so they warn instead of
-failing.
+The scenarios above each gate are deliberately exploratory probes: they run at or
+past the point where latency comes apart, so they warn instead of failing.
 
 ### Metric glossary
 

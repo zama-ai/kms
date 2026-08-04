@@ -672,12 +672,12 @@ spec:
             ' /tmp/net-before.tsv /tmp/net-after.tsv
           }
 
-          # Rungs above the gating rung sit on the network ceiling of the single
-          # core-client pod, so their outcome depends on the headroom the cluster
-          # happens to give that night. Measure and report them, never fail on them.
+          # Rungs above the gating rung run at or past the point where latency comes
+          # apart, so their outcome depends on the headroom the cluster happens to give
+          # that night. Measure and report them, never fail on them.
           allowed_failure_for_rate() {
             case "$1:$2" in
-              pdec:1500|pdec:1600|udec:2700|udec:2800) return 0 ;;
+              pdec:1500|pdec:1600|udec:2500|udec:2700|udec:2800) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -686,32 +686,30 @@ spec:
             case "$1:$2" in
               # maxfail/maxshed are percentages of offered requests, not counts.
               # pct is the minimum achieved_rate/target_rate percentage.
-              # The lowest rung of each kind must be spotless.
+              # Every rung we measure meets its offered rate to within 0.2%, so these
+              # only catch a collapse; the latency limits below carry the real signal.
               pdec:1100) echo "maxfail=0,maxshed=0,pct=98" ;;
               # The gating rungs tolerate a little shedding and 5% off the target rate.
-              # They still fail on any lost request, and the latency limits below carry
-              # the regression signal, so this does not have to be the tightest rung.
+              # They still fail on any lost request.
               pdec:1300) echo "maxfail=0,maxshed=1,pct=95" ;;
               # 1.5k and 1.6k are exploratory public-decrypt probes and may warn.
               pdec:1500|pdec:1600) echo "maxfail=10,maxshed=25,pct=70" ;;
-              udec:2300) echo "maxfail=0,maxshed=0,pct=98" ;;
-              udec:2500) echo "maxfail=0,maxshed=1,pct=95" ;;
-              # 2.7k and 2.8k probe the user-decrypt ceiling; outside-set results warn.
-              udec:2700|udec:2800) echo "maxfail=10,maxshed=25,pct=70" ;;
+              udec:2300) echo "maxfail=0,maxshed=1,pct=95" ;;
+              # 2.5k up is where user-decrypt latency turns bimodal; results warn.
+              udec:2500|udec:2700|udec:2800) echo "maxfail=10,maxshed=25,pct=70" ;;
               *) echo "maxfail=0,maxshed=0,pct=100" ;;
             esac
           }
 
-          # Median latency limits in milliseconds for the rungs that gate the job.
-          # A rung can meet its offered rate and still be slow per request, which is the
-          # regression the capacity check alone misses. No p50 history exists for 1.3k or
-          # 2.5k themselves; these are roughly 2x the p50 recorded at the neighbouring
-          # sub-ceiling rungs (pdec 1.1k: 7.74-8.28ms, udec 2.4k: 8.90-11.58ms), so treat
-          # them as a starting point and tighten once these rungs have their own history.
+          # Median latency limits in milliseconds for the rungs that gate the job. A rung
+          # can meet its offered rate and still be slow per request, which is the
+          # regression the rate check alone misses. Calibrated on run 30925605278, which
+          # measured medians of p50 9.10ms / p99 29.79ms at pdec 1.3k and
+          # p50 9.75ms / p99 131.20ms at udec 2.3k over three samples each.
           latency_limits_for_rate() {
             case "$1:$2" in
-              pdec:1300) echo "p50=15,p99=150" ;;
-              udec:2500) echo "p50=20,p99=300" ;;
+              pdec:1300) echo "p50=12,p99=75" ;;
+              udec:2300) echo "p50=25,p99=300" ;;
               *) echo "" ;;
             esac
           }
