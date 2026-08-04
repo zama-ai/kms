@@ -170,7 +170,7 @@ spec:
               - name: previous-ok
                 value: "{{tasks.pdec-rate-1300.outputs.parameters.capacity-ok}}"
 
-          - name: pdec-rate-1600
+          - name: pdec-rate-1700
             dependencies: ["pdec-rate-1500"]
             template: run-decrypt-rate
             arguments:
@@ -178,14 +178,14 @@ spec:
               - name: kind
                 value: "pdec"
               - name: rate
-                value: "1600"
+                value: "1700"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "{{tasks.pdec-rate-1500.outputs.parameters.capacity-ok}}"
 
           - name: udec-rate-2300
-            dependencies: ["udec-key-gen", "pdec-rate-1600"]
+            dependencies: ["udec-key-gen", "pdec-rate-1700"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -223,7 +223,7 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "{{tasks.udec-rate-2500.outputs.parameters.capacity-ok}}"
-          - name: udec-rate-2800
+          - name: udec-rate-2900
             dependencies: ["udec-rate-2700"]
             template: run-decrypt-rate
             arguments:
@@ -231,7 +231,7 @@ spec:
               - name: kind
                 value: "udec"
               - name: rate
-                value: "2800"
+                value: "2900"
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
@@ -247,11 +247,11 @@ spec:
               - "pdec-rate-1100"
               - "pdec-rate-1300"
               - "pdec-rate-1500"
-              - "pdec-rate-1600"
+              - "pdec-rate-1700"
               - "udec-rate-2300"
               - "udec-rate-2500"
               - "udec-rate-2700"
-              - "udec-rate-2800"
+              - "udec-rate-2900"
             template: summary-report
             arguments:
               parameters:
@@ -271,16 +271,16 @@ spec:
                 value: "{{tasks.pdec-rate-1300.outputs.parameters.test-result}}"
               - name: test-result-pdec-1500
                 value: "{{tasks.pdec-rate-1500.outputs.parameters.test-result}}"
-              - name: test-result-pdec-1600
-                value: "{{tasks.pdec-rate-1600.outputs.parameters.test-result}}"
+              - name: test-result-pdec-1700
+                value: "{{tasks.pdec-rate-1700.outputs.parameters.test-result}}"
               - name: test-result-udec-2300
                 value: "{{tasks.udec-rate-2300.outputs.parameters.test-result}}"
               - name: test-result-udec-2500
                 value: "{{tasks.udec-rate-2500.outputs.parameters.test-result}}"
               - name: test-result-udec-2700
                 value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
-              - name: test-result-udec-2800
-                value: "{{tasks.udec-rate-2800.outputs.parameters.test-result}}"
+              - name: test-result-udec-2900
+                value: "{{tasks.udec-rate-2900.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -677,7 +677,7 @@ spec:
           # that night. Measure and report them, never fail on them.
           allowed_failure_for_rate() {
             case "$1:$2" in
-              pdec:1500|pdec:1600|udec:2500|udec:2700|udec:2800) return 0 ;;
+              pdec:1500|pdec:1700|udec:2500|udec:2700|udec:2900) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -686,17 +686,17 @@ spec:
             case "$1:$2" in
               # maxfail/maxshed are percentages of offered requests, not counts.
               # pct is the minimum achieved_rate/target_rate percentage.
-              # Every rung we measure meets its offered rate to within 0.2%, so these
-              # only catch a collapse; the latency limits below carry the real signal.
+              # Every rung measured so far meets its offered rate to within 0.2%, so
+              # these only catch a collapse; the latency limits below carry the signal.
               pdec:1100) echo "maxfail=0,maxshed=0,pct=98" ;;
               # The gating rungs tolerate a little shedding and 5% off the target rate.
               # They still fail on any lost request.
               pdec:1300) echo "maxfail=0,maxshed=1,pct=95" ;;
-              # 1.5k and 1.6k are exploratory public-decrypt probes and may warn.
-              pdec:1500|pdec:1600) echo "maxfail=10,maxshed=25,pct=70" ;;
+              # 1.5k and 1.7k are exploratory public-decrypt probes and may warn.
+              pdec:1500|pdec:1700) echo "maxfail=10,maxshed=25,pct=70" ;;
               udec:2300) echo "maxfail=0,maxshed=1,pct=95" ;;
               # 2.5k up is where user-decrypt latency turns bimodal; results warn.
-              udec:2500|udec:2700|udec:2800) echo "maxfail=10,maxshed=25,pct=70" ;;
+              udec:2500|udec:2700|udec:2900) echo "maxfail=10,maxshed=25,pct=70" ;;
               *) echo "maxfail=0,maxshed=0,pct=100" ;;
             esac
           }
@@ -1050,11 +1050,11 @@ spec:
         - name: test-result-pdec-1100
         - name: test-result-pdec-1300
         - name: test-result-pdec-1500
-        - name: test-result-pdec-1600
+        - name: test-result-pdec-1700
         - name: test-result-udec-2300
         - name: test-result-udec-2500
         - name: test-result-udec-2700
-        - name: test-result-udec-2800
+        - name: test-result-udec-2900
         - name: tls
         - name: run_url
         - name: job_url
@@ -1084,11 +1084,11 @@ spec:
           echo '{{inputs.parameters.test-result-pdec-1100}}' > /mnt/results/pdec-rate-1100.json
           echo '{{inputs.parameters.test-result-pdec-1300}}' > /mnt/results/pdec-rate-1300.json
           echo '{{inputs.parameters.test-result-pdec-1500}}' > /mnt/results/pdec-rate-1500.json
-          echo '{{inputs.parameters.test-result-pdec-1600}}' > /mnt/results/pdec-rate-1600.json
+          echo '{{inputs.parameters.test-result-pdec-1700}}' > /mnt/results/pdec-rate-1700.json
           echo '{{inputs.parameters.test-result-udec-2300}}' > /mnt/results/udec-rate-2300.json
           echo '{{inputs.parameters.test-result-udec-2500}}' > /mnt/results/udec-rate-2500.json
           echo '{{inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
-          echo '{{inputs.parameters.test-result-udec-2800}}' > /mnt/results/udec-rate-2800.json
+          echo '{{inputs.parameters.test-result-udec-2900}}' > /mnt/results/udec-rate-2900.json
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -1428,8 +1428,8 @@ spec:
           done
 
           echo ""
-          summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500 1600
-          summarize_decrypt_rates udec "User decrypt" user_decrypt 2300 2500 2700 2800
+          summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500 1700
+          summarize_decrypt_rates udec "User decrypt" user_decrypt 2300 2500 2700 2900
 
           finite_total=$((keygen_total + crs_total))
           finite_passed=$((keygen_passed + crs_passed))

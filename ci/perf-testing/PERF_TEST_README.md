@@ -47,7 +47,7 @@ seconds:
 | stable | 1,100 req/s | no failures, no shedding, ≥98% of target rate |
 | gate | 1,300 req/s | no failures, ≤1% shed, ≥95% of target rate |
 | over-limit | 1,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
-| over-limit | 1,600 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+| over-limit | 1,700 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
 The user-decrypt test also runs four scenarios, each sending `1 × euint64` for
 30 seconds:
@@ -57,7 +57,7 @@ The user-decrypt test also runs four scenarios, each sending `1 × euint64` for
 | gate | 2,300 req/s | no failures, ≤1% shed, ≥95% of target rate |
 | over-limit | 2,500 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 | over-limit | 2,700 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
-| over-limit | 2,800 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
+| over-limit | 2,900 req/s | ≤10% failures, ≤25% shed, ≥70% of target rate |
 
 The `gate` scenario is the one the workflow result hinges on: it is the highest
 rate whose latency is still repeatable, so a failure there points at the code
@@ -67,7 +67,7 @@ bimodal — a user-decrypt sample at 2,500 has come back at 1,083/s with a p50 o
 rates only ever warn.
 
 Note that the offered rate itself is met to within 0.2% at every rate measured so
-far, including 2,800. The budgets above therefore only catch a collapse; latency
+far, up to 2,800. The budgets above therefore only catch a collapse; latency
 is what degrades under load, and the limits below are the real check.
 
 ### Latency limits on the gate scenarios
@@ -128,7 +128,7 @@ Each scenario lands on one of these outcomes:
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
 - **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, **or** it's a `1,500`/`1,600` (pdec) or `2,500`/`2,700`/`2,800` (udec)
+  traffic, **or** it's a `1,500`/`1,700` (pdec) or `2,500`/`2,700`/`2,900` (udec)
   probe, which is expected to run hot and is never allowed to fail the workflow.
 - **❌ fail** — a `1,100`/`1,300` (pdec) or `2,300` (udec) scenario went outside
   its budget, or a gate scenario went over its latency limits. This fails the whole
