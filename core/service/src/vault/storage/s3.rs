@@ -446,6 +446,10 @@ impl Storage for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
+    // Deliberately not routed through the multipart writer: the caller already
+    // holds the full blob, so streaming cannot lower the peak, and every caller
+    // passes small objects (certs, wrapped backup blobs). The single PUT caps at
+    // S3's 5 GiB; the `to_vec` copy is the price of handing the SDK an owned body.
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
@@ -500,6 +504,7 @@ impl StorageExt for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
+    // Single PUT on purpose; see the note on `store_bytes`.
     async fn store_bytes_at_epoch(
         &mut self,
         bytes: &[u8],
@@ -792,9 +797,16 @@ impl S3PartWriter {
                 .take()
                 .expect("the uploader client factory is taken only when the pipeline is installed");
             let (client, bucket, key) = (make_client(), self.bucket.clone(), self.key.clone());
+            // Carry the request span across the spawn boundary, as the async spawns
+            // in this repo do with `.instrument(Span::current())`, so the uploader's
+            // log lines land inside the request that triggered the store.
+            let span = tracing::Span::current();
             std::thread::Builder::new()
                 .name("s3-multipart-upload".to_string())
-                .spawn(move || run_multipart_uploader(client, bucket, key, part_rx, result_tx))
+                .spawn(move || {
+                    let _guard = span.entered();
+                    run_multipart_uploader(client, bucket, key, part_rx, result_tx)
+                })
                 .map_err(|e| {
                     std::io::Error::other(format!("failed to spawn the S3 uploader thread: {e}"))
                 })?;
@@ -834,7 +846,9 @@ impl std::io::Write for S3PartWriter {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         // Ship only when more bytes arrive after the buffer filled, so a
         // payload of exactly one part stays on the single-PUT fast path.
-        if self.buf.len() == self.part_size {
+        // `write` never grows `buf` past `part_size`, so `>=` is equality
+        // today; it only guards against a future edit breaking that invariant.
+        if self.buf.len() >= self.part_size {
             self.spill()?;
         }
         let n = std::cmp::min(self.part_size - self.buf.len(), data.len());
@@ -910,6 +924,18 @@ fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) -> S3Client {
 /// the `client` it was given, so uploads progress while the caller's runtime
 /// thread is blocked inside the serializer (see [`S3PartWriter`]). Dropping
 /// `part_rx` on error unblocks the serializing side with a send error.
+///
+/// The dedicated thread and runtime are load-bearing, not stylistic. The
+/// serializer blocks on the bounded part channel, so "the uploader is running"
+/// is the invariant that makes the pipeline deadlock-free — it cannot be
+/// conditional on any shared pool having a free slot (`spawn_blocking` queues
+/// when its pool is saturated) or on the caller's runtime being able to poll
+/// (on current-thread runtimes — every unit test — the serializer blocks the
+/// only thread inline, so a task or `Handle::block_on` driven by that runtime
+/// would never progress and the send would deadlock). Cost-wise this sits
+/// outside the tokio/rayon thread budget the way rayon does: one extra OS
+/// thread, a current-thread runtime with no workers of its own, alive only
+/// while a >1-part (keygen-scale) store is in flight.
 fn run_multipart_uploader(
     client: S3Client,
     bucket: String,
@@ -1074,6 +1100,12 @@ pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
 /// `block_in_place` panics on current-thread runtimes (tests), where the work
 /// simply runs inline and blocks the runtime while the uploader thread makes
 /// progress on its own.
+///
+/// Not `thread_handles::spawn_compute_bound`: that requires a `'static + Send`
+/// closure and dispatches to rayon, while this closure borrows the element
+/// being serialized (non-`'static`, must stay on this thread) and blocks at
+/// upload pace on the part channel — I/O-paced waiting the rayon compute pool
+/// is not budgeted for.
 fn run_blocking<R>(f: impl FnOnce() -> R) -> R {
     if tokio::runtime::Handle::current().runtime_flavor()
         == tokio::runtime::RuntimeFlavor::MultiThread
