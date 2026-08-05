@@ -8,7 +8,7 @@ use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-    validate_public_decrypt_req, validate_user_decrypt_req,
+    parse_optional_grpc_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
     EntryState, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
@@ -164,19 +164,11 @@ pub async fn user_decrypt_sync_impl<
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
 
-    let request_id = {
-        let proto_req_id = request.get_ref().request_id.as_ref().ok_or_else(|| {
-            MetricedError::new(
-                OP_USER_DECRYPT_SYNC,
-                None,
-                anyhow::anyhow!("Missing request ID in UserDecryptionRequest (sync)"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-        parse_grpc_request_id(proto_req_id, RequestIdParsingErr::UserDecRequest).map_err(|e| {
-            MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument)
-        })?
-    };
+    let request_id = parse_optional_grpc_request_id(
+        &request.get_ref().request_id,
+        RequestIdParsingErr::UserDecRequest,
+    )
+    .map_err(|e| MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument))?;
 
     let should_start = match service
         .user_dec_meta_store

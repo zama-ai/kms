@@ -67,7 +67,7 @@ use crate::{
         utils::MetricedError,
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-            validate_user_decrypt_req,
+            parse_optional_grpc_request_id, validate_user_decrypt_req,
         },
     },
     util::{
@@ -574,19 +574,13 @@ impl<
             .time_operation(OP_USER_DECRYPT_SYNC)
             .start();
 
-        let req_id = {
-            let proto_req_id = request.get_ref().request_id.as_ref().ok_or_else(|| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_SYNC,
-                    None,
-                    anyhow!("Missing request ID in UserDecryptionRequest"),
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
-            parse_grpc_request_id(proto_req_id, RequestIdParsingErr::UserDecRequest).map_err(
-                |e| MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument),
-            )?
-        };
+        let req_id = parse_optional_grpc_request_id(
+            &request.get_ref().request_id,
+            RequestIdParsingErr::UserDecRequest,
+        )
+        .map_err(|e| {
+            MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument)
+        })?;
 
         let should_start = match self.user_decrypt_meta_store.read().await.retrieve(&req_id) {
             None => true,                           // fresh request ID
