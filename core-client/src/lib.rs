@@ -636,8 +636,8 @@ impl DecryptRateArgs for DecryptArguments {
 
     fn get_sync(&self) -> bool {
         match self {
-            DecryptArguments::FromFile(cipher_file) => cipher_file.rate_options.sync,
-            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.rate_options.sync,
+            DecryptArguments::FromFile(cipher_file) => cipher_file.sync,
+            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.sync,
         }
     }
 }
@@ -741,6 +741,9 @@ pub struct DecryptParameters {
     /// Optionally dump the ciphertext to a file.
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+    /// Whether to use the synchronous endpoint. Currently only supported for `user-decrypt`.
+    #[clap(long, default_value_t = false)]
+    pub sync: bool,
     #[clap(flatten)]
     pub rate_options: DecryptRateOptions,
 }
@@ -772,9 +775,6 @@ pub struct DecryptRateOptions {
     /// Maximum number of in-flight requests allowed during a rate-mode run.
     #[clap(long)]
     pub max_in_flight: Option<usize>,
-    /// Whether to use the synchronous endpoint. Currently only supported for `user-decrypt`.
-    #[clap(long, default_value_t = false)]
-    pub sync: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -785,6 +785,9 @@ pub struct DecryptFile {
     /// Number of copies of the ciphertext to process in a single request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
+    /// Whether to use the synchronous endpoint. Currently only supported for `user-decrypt`.
+    #[clap(long, default_value_t = false)]
+    pub sync: bool,
     #[clap(flatten)]
     pub rate_options: DecryptRateOptions,
 }
@@ -3048,11 +3051,11 @@ mod tests {
             epoch_id: None,
             batch_size: 1,
             ciphertext_output_path: None,
+            sync: false,
             rate_options: DecryptRateOptions {
                 rate: Some(10),
                 duration: Some(10),
                 max_in_flight: None,
-                sync: false,
             },
         }
     }

@@ -648,12 +648,12 @@ Options shared by public and user decryption are:
  - `--context-id <CONTEXT_ID>`: optionally specify the context ID to use for the decryption. Defaults to the default context if not specified.
  - `--epoch-id <EPOCH_ID>`: optionally specify the epoch ID to use for the decryption. Defaults to the default epoch if not specified.
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
+ - `--sync`: use the synchronous endpoint (request and result in a single call). Currently only supported for `user-decrypt`.
 
 Public/user-decrypt rate-mode options are:
  - `--rate <REQUESTS_PER_SECOND>`: request launch rate. Must be used together with `--duration`.
  - `--duration <SECONDS>`: load-test duration. Must be used together with `--rate`.
  - `--max-in-flight <NUM>`: optional rate-mode cap for in-flight requests before the client starts shedding requests.
- - `--sync`: use the synchronous endpoint (request and result in a single call). Currently only supported for `user-decrypt`.
 
  __NOTE__: For public and user decrypt from file, only `-b`/`--batch-size <BATCH_SIZE>`, `--rate <REQUESTS_PER_SECOND>`, `--duration <SECONDS>`, and `--max-in-flight <NUM>` are supported, plus `--sync` for user decrypt only.
 

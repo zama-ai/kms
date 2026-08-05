@@ -1025,6 +1025,7 @@ fn public_decrypt_params(
         epoch_id: None,
         batch_size,
         ciphertext_output_path,
+        sync: false,
         rate_options: DecryptRateOptions::default(),
     }
 }
@@ -1048,6 +1049,7 @@ fn user_decrypt_params(
         epoch_id: None,
         batch_size,
         ciphertext_output_path: None,
+        sync: false,
         rate_options: DecryptRateOptions::default(),
     }
 }
@@ -1056,6 +1058,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
     DecryptFile {
         input_path,
         batch_size,
+        sync: false,
         rate_options: DecryptRateOptions::default(),
     }
 }
@@ -1180,10 +1183,7 @@ async fn integration_test_commands(
         ))),
         // Same user decryption through the synchronous endpoint (single round trip)
         CCCommand::UserDecrypt(DecryptArguments::FromArgs(DecryptParameters {
-            rate_options: DecryptRateOptions {
-                sync: true,
-                ..Default::default()
-            },
+            sync: true,
             ..ucp("0x1", FheType::Ebool, 1, false, true)
         })),
         CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
@@ -1233,6 +1233,7 @@ async fn integration_test_commands(
         CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: ctxt_path.clone(),
             batch_size: 2,
+            sync: false,
             rate_options: DecryptRateOptions::default(),
         })),
         CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
@@ -1307,6 +1308,7 @@ async fn integration_test_commands(
         CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: ctxt_with_sns_path.clone(),
             batch_size: 2,
+            sync: false,
             rate_options: DecryptRateOptions::default(),
         })),
         CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
@@ -1327,6 +1329,7 @@ async fn integration_test_commands(
         CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: compressed_ctxt_with_sns_path.clone(),
             batch_size: 2,
+            sync: false,
             rate_options: DecryptRateOptions::default(),
         })),
         CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
@@ -3121,6 +3124,7 @@ async fn test_threshold_reshare() -> Result<()> {
             epoch_id: Some(new_epoch_id),
             batch_size: 1,
             ciphertext_output_path: None,
+            sync: false,
             rate_options: DecryptRateOptions::default(),
         })),
         200,
