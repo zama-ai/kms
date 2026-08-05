@@ -32,6 +32,7 @@ pub mod crypto_material;
 pub mod file;
 pub mod ram;
 pub mod s3;
+pub(crate) mod s3_multipart;
 
 /// Trait for KMS storage reading.
 ///
