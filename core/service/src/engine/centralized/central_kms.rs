@@ -5,7 +5,6 @@ use crate::conf::CoreConfig;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
-use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
@@ -17,6 +16,7 @@ use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::StoredTypedSignature;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
+use crate::engine::base::{DecryptionSignatures, sign_user_decryption_result};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -533,7 +533,8 @@ pub async fn async_user_decrypt<
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: &[u8],
-) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
+    signing_schemes: &[SigningSchemeType],
+) -> anyhow::Result<(UserDecryptionResponsePayload, DecryptionSignatures)> {
     use observability::{
         metrics,
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
@@ -581,15 +582,16 @@ pub async fn async_user_decrypt<
         degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
     };
 
-    let external_signature = compute_external_user_decrypt_signature(
+    let sigs = sign_user_decryption_result(
         sig_key,
+        signing_schemes,
         &payload,
-        domain,
         client_enc_key_bytes,
         extra_data,
+        domain,
     )?;
 
-    Ok((payload, external_signature))
+    Ok((payload, sigs))
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output

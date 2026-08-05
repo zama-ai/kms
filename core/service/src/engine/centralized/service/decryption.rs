@@ -1,14 +1,14 @@
 use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
-use crate::engine::base::compute_external_pt_signature;
+use crate::engine::base::{PubDecCallValues, UserDecryptCallValues, sign_public_decryption_result};
 use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
-use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
+use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-    validate_public_decrypt_req, validate_user_decrypt_req,
+    RequestIdParsingErr, parse_grpc_request_id, validate_public_decrypt_req,
+    validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
     add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
@@ -132,10 +132,11 @@ pub async fn user_decrypt_impl<
                 server_verf_key,
                 &domain,
                 &extra_data,
+                &signing_schemes,
             )
             .await;
             let res_with_extra_data =
-                res.map(|(payload, sig)| (payload, sig, extra_data, signing_schemes));
+                res.map(|(payload, sigs)| UserDecryptCallValues::new(payload, extra_data, sigs));
             let _ = update_req_in_meta_store(
                 &meta_store,
                 meta_permit,
@@ -179,42 +180,13 @@ pub async fn get_user_decryption_result_impl<
         DURATION_WAITING_ON_RESULT_SECONDS,
     )
     .await?;
-    let (payload, external_signature, extra_data, signing_schemes) = (*arc).clone();
-
-    // sign the response
-    let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
-        MetricedError::new(
-            OP_USER_DECRYPT_RESULT,
-            Some(request_id),
-            anyhow::anyhow!("Could not serialize user decryption payload: {e}"),
-            tonic::Code::Internal,
-        )
-    })?;
-
-    let make_err = |e: anyhow::Error| {
-        MetricedError::new(
-            OP_USER_DECRYPT_RESULT,
-            Some(request_id),
-            anyhow::anyhow!("Could not sign user decryption payload: {e}"),
-            tonic::Code::Aborted,
-        )
-    };
-    // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
-    // signature over the serialized payload, superseded by `signatures`.
-    let signature = service
-        .base_kms
-        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
-        .map_err(make_err)?
-        .to_bytes();
-    let signatures = service
-        .base_kms
-        .sign_decryption_result_with_schemes(
-            &signing_schemes,
-            &external_signature,
-            &DSEP_USER_DECRYPTION,
-            &sig_payload_vec,
-        )
-        .map_err(make_err)?;
+    let UserDecryptCallValues {
+        payload,
+        signature,
+        external_signature,
+        extra_data,
+        signatures,
+    } = (*arc).clone();
 
     Ok(Response::new(UserDecryptionResponse {
         signature,
@@ -295,6 +267,14 @@ pub async fn public_decrypt_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
+            tonic::Code::Internal,
+        )
+    })?;
     // Insert a fresh entry; if the id previously failed, it is retried instead
     // of rejected, while a successful or in-flight id still returns AlreadyExists.
     let meta_permit = add_or_redo_failed_in_meta_store(
@@ -333,16 +313,21 @@ pub async fn public_decrypt_impl<
 
         let res = match decryptions {
             Ok(Ok(pts)) => {
-                // sign the plaintexts and handles for external verification (in fhevm)
-                match compute_external_pt_signature(
+                let payload = PublicDecryptionResponsePayload {
+                    plaintexts: pts,
+                    verification_key: server_verf_key,
+                    request_id: Some(request_id.into()),
+                };
+                match sign_public_decryption_result(
                     &sig_key,
+                    &signing_schemes,
+                    &payload,
                     &ext_handles_bytes,
-                    &pts,
                     &extra_data,
                     &eip712_domain,
                 ) {
-                    Ok(sig) => Ok((request_id, pts, sig, extra_data, signing_schemes)),
-                    Err(e) => Err(format!("Failed to compute external signature: {e:?}")),
+                    Ok(sigs) => Ok(PubDecCallValues::new(request_id, payload, extra_data, sigs)),
+                    Err(e) => Err(format!("Failed to sign decryption result: {e:?}")),
                 }
             }
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
@@ -391,8 +376,14 @@ pub async fn get_public_decryption_result_impl<
         DURATION_WAITING_ON_RESULT_SECONDS,
     )
     .await?;
-    let (retrieved_req_id, plaintexts, external_signature, extra_data, signing_schemes) =
-        (*dec_res).clone();
+    let PubDecCallValues {
+        request_id: retrieved_req_id,
+        payload,
+        signature,
+        external_signature,
+        extra_data,
+        signatures,
+    } = (*dec_res).clone();
 
     if retrieved_req_id != request_id {
         return Err(MetricedError::new(
@@ -406,63 +397,14 @@ pub async fn get_public_decryption_result_impl<
     tracing::debug!(
         "Returning plaintext(s) for request ID {}: {:?}. External signature: {:x?}",
         request_id,
-        plaintexts,
+        payload.plaintexts,
         external_signature
     );
 
-    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-        MetricedError::new(
-            OP_PUBLIC_DECRYPT_RESULT,
-            Some(request_id),
-            anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
-            tonic::Code::Internal,
-        )
-    })?;
-
-    // the payload to be signed for verification inside the KMS
-    let kms_sig_payload = PublicDecryptionResponsePayload {
-        plaintexts,
-        verification_key: server_verf_key,
-        request_id: Some(retrieved_req_id.into()),
-    };
-
-    let kms_sig_payload_vec = bc2wrap::serialize(&kms_sig_payload).map_err(|e| {
-        MetricedError::new(
-            OP_PUBLIC_DECRYPT_RESULT,
-            Some(request_id),
-            anyhow::anyhow!("Could not convert payload to bytes {kms_sig_payload:?}: {e:?}"),
-            tonic::Code::Internal,
-        )
-    })?;
-
-    let make_err = |e: anyhow::Error| {
-        MetricedError::new(
-            OP_PUBLIC_DECRYPT_RESULT,
-            Some(request_id),
-            anyhow::anyhow!("Could not sign payload {kms_sig_payload_vec:?}: {e:?}"),
-            tonic::Code::Aborted,
-        )
-    };
-    // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
-    // signature over the serialized payload, superseded by `signatures`.
-    let signature = service
-        .base_kms
-        .sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
-        .map_err(make_err)?
-        .to_bytes();
-    let signatures = service
-        .base_kms
-        .sign_decryption_result_with_schemes(
-            &signing_schemes,
-            &external_signature,
-            &DSEP_PUBLIC_DECRYPTION,
-            &kms_sig_payload_vec,
-        )
-        .map_err(make_err)?;
     Ok(Response::new(PublicDecryptionResponse {
         signature,
         signatures,
-        payload: Some(kms_sig_payload),
+        payload: Some(payload),
         external_signature,
         extra_data,
     }))

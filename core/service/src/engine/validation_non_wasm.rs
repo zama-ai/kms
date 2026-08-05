@@ -1042,6 +1042,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 mod tests {
     use super::resolve_signing_schemes;
     use aes_prng::AesRng;
+    use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
         RequestId,
         kms::v1::{
@@ -1057,12 +1058,14 @@ mod tests {
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{PublicSigKey, gen_sig_keys, internal_sign},
+            signatures::{
+                PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys, internal_sign,
+            },
             signing::SigningSchemeType,
         },
         dummy_domain,
         engine::{
-            base::{compute_external_pt_signature, derive_request_id},
+            base::{compute_public_decryption_message, derive_request_id},
             validation::{
                 RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
             },
@@ -1082,6 +1085,23 @@ mod tests {
         validate_public_decrypt_responses_against_request, verify_max_num_bits,
         verify_user_decrypt_eip712,
     };
+
+    /// Take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
+    fn compute_external_pt_signature(
+        server_sk: &PrivateSigKey,
+        ext_handles_bytes: &[Vec<u8>],
+        pts: &[TypedPlaintext],
+        extra_data: &[u8],
+        eip712_domain: &Eip712Domain,
+    ) -> anyhow::Result<Vec<u8>> {
+        tracing::info!(
+            "Computing external PT signature for {} plaintexts and {} external handles",
+            pts.len(),
+            ext_handles_bytes.len()
+        );
+        let message = compute_public_decryption_message(ext_handles_bytes, pts, extra_data)?;
+        compute_eip712_signature(server_sk, &message, eip712_domain)
+    }
 
     /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
     #[test]

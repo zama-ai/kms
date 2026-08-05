@@ -47,19 +47,15 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            BaseKmsStruct, PubDecCallValues, compute_external_pt_signature,
-            deserialize_to_low_level,
+            BaseKmsStruct, PubDecCallValues, deserialize_to_low_level,
+            sign_public_decryption_result,
         },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
-        validation::{
-            DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-            validate_public_decrypt_req,
-        },
+        validation::{RequestIdParsingErr, parse_grpc_request_id, validate_public_decrypt_req},
     },
     util::{
         meta_store::{
@@ -335,6 +331,14 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow!("Failed to serialize server verification key: {e:?}"),
+                tonic::Code::Internal,
+            )
+        })?;
 
         let fhe_keys_rlock = self
             .crypto_storage
@@ -581,25 +585,34 @@ impl<
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
-            // Compute expensive signature OUTSIDE the lock
-            let external_sig = {
+            // Assemble the full response payload here so it is signed once,
+            // from one snapshot, rather than re-signed on every result fetch.
+            let payload = PublicDecryptionResponsePayload {
+                plaintexts: pts,
+                verification_key: server_verf_key,
+                request_id: Some(req_id.into()),
+            };
+
+            // Compute expensive signatures OUTSIDE the lock
+            let signed = {
                 let extra_data = extra_data.clone();
-                let pts = pts.clone();
+                let payload = payload.clone();
                 spawn_compute_bound(move || {
-                    compute_external_pt_signature(
+                    sign_public_decryption_result(
                         &sigkey,
+                        &signing_schemes,
+                        &payload,
                         &ext_handles_bytes,
-                        &pts,
                         &extra_data,
                         &eip712_domain,
                     )
                 })
                 .await
             };
-            let res = match external_sig {
-                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data, signing_schemes)),
+            let res = match signed {
+                Ok(Ok(sigs)) => Ok(PubDecCallValues::new(req_id, payload, extra_data, sigs)),
                 Err(e) | Ok(Err(e)) => Err(format!(
-                    "Failed to compute external signature for decryption request {req_id}: {e:?}"
+                    "Failed to sign decryption result for request {req_id}: {e:?}"
                 )),
             };
 
@@ -647,8 +660,14 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (retrieved_req_id, plaintexts, external_signature, extra_data, signing_schemes) =
-            (*arc).clone();
+        let PubDecCallValues {
+            request_id: retrieved_req_id,
+            payload,
+            signature,
+            external_signature,
+            extra_data,
+            signatures,
+        } = (*arc).clone();
 
         if request_id != retrieved_req_id {
             return Err(MetricedError::new(
@@ -661,58 +680,10 @@ impl<
             ));
         }
 
-        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Failed to serialize server verification key: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-        let sig_payload = PublicDecryptionResponsePayload {
-            plaintexts,
-            verification_key: server_verf_key,
-            request_id: Some(retrieved_req_id.into()),
-        };
-
-        let sig_payload_vec = bc2wrap::serialize(&sig_payload).map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {sig_payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let make_err = |e: anyhow::Error| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        };
-        // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
-        // signature over the serialized payload, superseded by `signatures`.
-        let signature = self
-            .base_kms
-            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
-            .map_err(make_err)?
-            .to_bytes();
-        let signatures = self
-            .base_kms
-            .sign_decryption_result_with_schemes(
-                &signing_schemes,
-                &external_signature,
-                &DSEP_PUBLIC_DECRYPTION,
-                &sig_payload_vec,
-            )
-            .map_err(make_err)?;
-
         Ok(Response::new(PublicDecryptionResponse {
             signature,
             signatures,
-            payload: Some(sig_payload),
+            payload: Some(payload),
             external_signature,
             extra_data,
         }))

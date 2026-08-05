@@ -508,6 +508,7 @@ mod tests {
     use std::collections::HashMap;
 
     use aes_prng::AesRng;
+    use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::kms::v1::{
         TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
@@ -518,11 +519,11 @@ mod tests {
             CiphertextHandle, ParsedUserDecryptionRequest, compute_link,
         },
         cryptography::{
-            compute_external_user_decrypt_signature,
+            compute_user_decrypt_message,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey, gen_sig_keys,
-                internal_sign,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey,
+                compute_eip712_signature, gen_sig_keys, internal_sign,
             },
         },
         dummy_domain,
@@ -543,6 +544,20 @@ mod tests {
         select_most_common_user_dec, validate_user_decrypt_meta_data_and_signature,
         validate_user_decrypt_responses, validate_user_decrypt_responses_against_request,
     };
+
+    /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
+    /// TODO(0.16)
+    fn compute_external_user_decrypt_signature(
+        server_sk: &PrivateSigKey,
+        payload: &UserDecryptionResponsePayload,
+        eip712_domain: &Eip712Domain,
+        user_pk_buf: &[u8],
+        extra_data: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        let message = compute_user_decrypt_message(payload, user_pk_buf, extra_data)?;
+        tracing::debug!("Computing signature for UserDecryptResponseVerification");
+        compute_eip712_signature(server_sk, &message, eip712_domain)
+    }
 
     #[test]
     fn test_check_ext_user_decryption_signature() {

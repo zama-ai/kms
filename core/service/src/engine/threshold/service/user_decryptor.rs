@@ -51,19 +51,21 @@ use crate::{
     anyhow_error_and_log,
     consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::{
-        compute_external_user_decrypt_signature,
         encryption::UnifiedPublicEncKey,
         error::CryptographyError,
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
+        signing::SigningSchemeType,
     },
     engine::{
-        base::{BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level},
+        base::{
+            BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level,
+            sign_user_decryption_result,
+        },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -184,8 +186,9 @@ impl<
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<UserDecryptCallValues> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -378,14 +381,15 @@ impl<
             degree: threshold as u32,
         };
 
-        let external_signature = compute_external_user_decrypt_signature(
+        let sigs = sign_user_decryption_result(
             &signcryption_key.signing_key,
+            &signing_schemes,
             &payload,
-            domain,
             &client_enc_key_bytes_orig,
             &extra_data,
+            domain,
         )?;
-        Ok((payload, external_signature, extra_data))
+        Ok(UserDecryptCallValues::new(payload, extra_data, sigs))
     }
 
     #[cfg(test)]
@@ -552,10 +556,10 @@ impl<
                 dec_mode,
                 &domain,
                 extra_data,
+                signing_schemes,
                 metric_tags,
             )
-            .await
-            .map(|(payload, ext_sig, extra_data)| (payload, ext_sig, extra_data, signing_schemes));
+            .await;
             update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
                 .await;
         };
@@ -591,41 +595,14 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (payload, external_signature, extra_data, signing_schemes) = (*arc).clone();
+        let UserDecryptCallValues {
+            payload,
+            signature,
+            external_signature,
+            extra_data,
+            signatures,
+        } = (*arc).clone();
 
-        let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let make_err = |e: anyhow::Error| {
-            MetricedError::new(
-                OP_USER_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not sign payload {payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        };
-        // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
-        // signature over the serialized payload, superseded by `signatures`.
-        let signature = self
-            .base_kms
-            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
-            .map_err(make_err)?
-            .to_bytes();
-        let signatures = self
-            .base_kms
-            .sign_decryption_result_with_schemes(
-                &signing_schemes,
-                &external_signature,
-                &DSEP_USER_DECRYPTION,
-                &sig_payload_vec,
-            )
-            .map_err(make_err)?;
         Ok(Response::new(UserDecryptionResponse {
             signature,
             signatures,
