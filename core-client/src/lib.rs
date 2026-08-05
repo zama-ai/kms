@@ -741,7 +741,7 @@ pub struct DecryptParameters {
     /// Optionally dump the ciphertext to a file.
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
-    /// Whether to use the synchronous endpoint. Currently only supported for `user-decrypt`.
+    /// Whether to use the synchronous endpoint (request and result in a single call).
     #[clap(long, default_value_t = false)]
     pub sync: bool,
     #[clap(flatten)]
@@ -785,7 +785,7 @@ pub struct DecryptFile {
     /// Number of copies of the ciphertext to process in a single request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
-    /// Whether to use the synchronous endpoint. Currently only supported for `user-decrypt`.
+    /// Whether to use the synchronous endpoint (request and result in a single call).
     #[clap(long, default_value_t = false)]
     pub sync: bool,
     #[clap(flatten)]
@@ -1983,11 +1983,6 @@ pub async fn execute_cmd(
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
             validate_decrypt_rate_args(cipher_args)?;
-            if cipher_args.get_sync() {
-                return Err(
-                    anyhow::anyhow!("--sync is not yet supported for public-decrypt").into(),
-                );
-            }
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2070,6 +2065,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2089,6 +2085,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -3036,6 +3033,45 @@ mod tests {
         .unwrap();
         let CCCommand::UserDecrypt(args) = conf.command else {
             panic!("expected a user-decrypt command");
+        };
+        assert!(args.get_sync());
+    }
+
+    #[test]
+    fn test_public_decrypt_sync_flag() {
+        // `--sync` is off by default and enabled by the flag
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "public-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ])
+        .unwrap();
+        let CCCommand::PublicDecrypt(args) = conf.command else {
+            panic!("expected a public-decrypt command");
+        };
+        assert!(!args.get_sync());
+
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "public-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--sync",
+        ])
+        .unwrap();
+        let CCCommand::PublicDecrypt(args) = conf.command else {
+            panic!("expected a public-decrypt command");
         };
         assert!(args.get_sync());
     }

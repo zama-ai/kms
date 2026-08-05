@@ -359,21 +359,54 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
     Ok((resp_response_vec, collect_duration))
 }
 
-#[expect(clippy::too_many_arguments)]
-async fn send_and_collect_public_decrypt(
-    rate: u64,
-    req_id: RequestId,
-    dec_req: PublicDecryptionRequest,
-    core_endpoints_req: CoreEndpointClients,
-    core_endpoints_resp: CoreEndpointClients,
-    num_parties: usize,
+/// Fan out the request to the sync endpoint, which returns the decryption result directly.
+fn spawn_public_decrypt_sync(
+    dec_req: &PublicDecryptionRequest,
+    core_endpoints: &CoreEndpointClients,
     max_iter: usize,
-    num_expected_responses: usize,
-) -> anyhow::Result<CollectedPublicDecrypt> {
-    let request_start = Instant::now();
+) -> JoinSet<anyhow::Result<PublicDecryptionResponse>> {
+    let mut resp_tasks = JoinSet::new();
+    for ce in core_endpoints.iter() {
+        let req_cloned = dec_req.clone();
+        let mut cur_client = ce.clone();
+        resp_tasks.spawn(async move {
+            let mut response = cur_client
+                .public_decrypt_sync(tonic::Request::new(req_cloned.clone()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for sync public decryption after {max_iter} retries."
+                    );
+                }
+                ctr += 1;
+                // Re-sending the same request attaches to the in-flight
+                // decryption instead of starting a new one.
+                response = cur_client
+                    .public_decrypt_sync(tonic::Request::new(req_cloned.clone()))
+                    .await;
+            }
+            let resp =
+                response.map_err(|e| anyhow::anyhow!("sync public decryption failed: {e}"))?;
+            Ok(resp.into_inner())
+        });
+    }
+    resp_tasks
+}
 
+/// Fan out the request to the async endpoint and check that enough cores accepted it.
+async fn send_public_decrypt_requests(
+    dec_req: &PublicDecryptionRequest,
+    core_endpoints: &CoreEndpointClients,
+    num_parties: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints_req.iter() {
+    for ce in core_endpoints.iter() {
         let req_cloned = dec_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -383,10 +416,10 @@ async fn send_and_collect_public_decrypt(
         });
     }
 
-    let mut req_response_vec = Vec::with_capacity(core_endpoints_req.len());
+    let mut succeeded = 0_usize;
     while let Some(inner) = req_tasks.join_next().await {
         match inner {
-            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Ok(_resp)) => succeeded += 1,
             Ok(Err(e)) => {
                 tracing::debug!("Public decrypt request to a core failed: {e}");
             }
@@ -395,17 +428,22 @@ async fn send_and_collect_public_decrypt(
             }
         }
     }
-    if req_response_vec.len() < num_expected_responses {
+    if succeeded < num_expected_responses {
         anyhow::bail!(
-            "Only {}/{} public decrypt requests succeeded, need at least {}",
-            req_response_vec.len(),
-            num_parties,
-            num_expected_responses
+            "Only {succeeded}/{num_parties} public decrypt requests succeeded, need at least {num_expected_responses}"
         );
     }
+    Ok(())
+}
 
+/// Poll the async endpoint until every core has a decryption result available.
+fn spawn_get_public_decrypt_result(
+    req_id: RequestId,
+    core_endpoints: &CoreEndpointClients,
+    max_iter: usize,
+) -> JoinSet<anyhow::Result<PublicDecryptionResponse>> {
     let mut resp_tasks = JoinSet::new();
-    for ce in core_endpoints_resp.iter() {
+    for ce in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         resp_tasks.spawn(async move {
             let mut response = cur_client
@@ -431,9 +469,40 @@ async fn send_and_collect_public_decrypt(
             Ok(resp.into_inner())
         });
     }
+    resp_tasks
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn send_and_collect_public_decrypt(
+    rate: u64,
+    req_id: RequestId,
+    dec_req: PublicDecryptionRequest,
+    core_endpoints_req: CoreEndpointClients,
+    core_endpoints_resp: CoreEndpointClients,
+    num_parties: usize,
+    max_iter: usize,
+    num_expected_responses: usize,
+    use_sync_endpoint: bool,
+) -> anyhow::Result<CollectedPublicDecrypt> {
+    let request_start = Instant::now();
+
+    let (label, resp_tasks) = if use_sync_endpoint {
+        let tasks = spawn_public_decrypt_sync(&dec_req, &core_endpoints_req, max_iter);
+        ("sync public decrypt", tasks)
+    } else {
+        send_public_decrypt_requests(
+            &dec_req,
+            &core_endpoints_req,
+            num_parties,
+            num_expected_responses,
+        )
+        .await?;
+        let tasks = spawn_get_public_decrypt_result(req_id, &core_endpoints_resp, max_iter);
+        ("public decrypt", tasks)
+    };
 
     let (resp_response_vec, collect_duration) = collect_decrypt_responses(
-        "public decrypt",
+        label,
         rate,
         request_start,
         resp_tasks,
@@ -511,6 +580,7 @@ pub(crate) async fn do_public_decrypt_once<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     domain: Eip712Domain,
+    use_sync_endpoint: bool,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let core_endpoints_req = endpoint_clients(core_endpoints_req);
@@ -536,6 +606,7 @@ pub(crate) async fn do_public_decrypt_once<R: Rng + CryptoRng>(
         num_parties,
         max_iter,
         num_expected_responses,
+        use_sync_endpoint,
     )
     .await?;
     let collect_duration = collected.collect_duration;
@@ -582,6 +653,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     domain: Eip712Domain,
+    use_sync_endpoint: bool,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
@@ -629,6 +701,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 num_parties,
                 max_iter,
                 num_expected_responses,
+                use_sync_endpoint,
             )
         },
     )
