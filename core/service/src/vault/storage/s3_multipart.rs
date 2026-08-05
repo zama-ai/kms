@@ -21,10 +21,10 @@ use tokio::sync::oneshot;
 /// Serialized bytes buffered per multipart part. 16 MiB keeps peak memory at
 /// O(part size) while a maximal 2 GiB (`SAFE_SER_SIZE_LIMIT`) object still
 /// yields only 128 parts, far below the S3 limit of 10,000.
-pub(crate) const S3_MULTIPART_PART_SIZE: usize = 16 * 1024 * 1024;
+pub(super) const S3_MULTIPART_PART_SIZE: usize = 16 * 1024 * 1024;
 
 /// S3's minimum size for every multipart part except the last.
-pub(crate) const S3_MULTIPART_MIN_PART_SIZE: usize = 5 * 1024 * 1024;
+pub(super) const S3_MULTIPART_MIN_PART_SIZE: usize = 5 * 1024 * 1024;
 
 const _: () = assert!(S3_MULTIPART_PART_SIZE >= S3_MULTIPART_MIN_PART_SIZE);
 
@@ -66,7 +66,7 @@ enum PartWriterOutcome {
 /// does not use. Tests hand in a closure returning a mock client directly, which
 /// must not go through `build_multipart_upload_client`: deriving a client from a
 /// config strips the mock transport.
-pub(crate) type UploaderClientFactory = Box<dyn FnOnce() -> S3Client + Send>;
+pub(super) type UploaderClientFactory = Box<dyn FnOnce() -> S3Client + Send>;
 
 /// `std::io::Write` sink that buffers serialized bytes into `part_size` chunks
 /// and, once the payload outgrows the first chunk, streams them to S3 as a
@@ -82,7 +82,7 @@ pub(crate) type UploaderClientFactory = Box<dyn FnOnce() -> S3Client + Send>;
 /// rather than the writer deriving one itself, so the uploader never inherits
 /// anything from the caller's client implicitly — and so a payload that never
 /// spills never builds a client at all.
-pub(crate) struct S3PartWriter {
+pub(super) struct S3PartWriter {
     make_client: Option<UploaderClientFactory>,
     bucket: String,
     key: String,
@@ -93,7 +93,7 @@ pub(crate) struct S3PartWriter {
 }
 
 impl S3PartWriter {
-    pub(crate) fn new(
+    pub(super) fn new(
         make_client: UploaderClientFactory,
         bucket: &str,
         key: &str,
@@ -127,9 +127,14 @@ impl S3PartWriter {
                 .take()
                 .expect("the uploader client factory is taken only when the pipeline is installed");
             let (client, bucket, key) = (make_client(), self.bucket.clone(), self.key.clone());
-            // Carry the request span across the spawn boundary, as the async spawns
-            // in this repo do with `.instrument(Span::current())`, so the uploader's
-            // log lines land inside the request that triggered the store.
+            // Carry the request span across the spawn boundary so the uploader's log
+            // lines land inside the request that triggered the store. Same intent as
+            // the `.instrument(Span::current())` on this repo's async spawns, but not
+            // the same mechanics: this holds the span entered for the whole thread,
+            // not just during poll windows, which is what we want since the thread
+            // does nothing but serve this one request. Parenting relies on a global
+            // default subscriber (what every init site here installs) — a
+            // scoped-subscriber test would not see it.
             let span = tracing::Span::current();
             std::thread::Builder::new()
                 .name("s3-multipart-upload".to_string())
@@ -176,8 +181,16 @@ impl std::io::Write for S3PartWriter {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         // Ship only when more bytes arrive after the buffer filled, so a
         // payload of exactly one part stays on the single-PUT fast path.
-        // `write` never grows `buf` past `part_size`, so `>=` is equality
-        // today; it only guards against a future edit breaking that invariant.
+        // The `min` below is the only growth site, so `buf.len() <= part_size`
+        // holds by induction and `>=` is equality today. The assert keeps a
+        // broken invariant loud in tests; `>=` keeps it survivable in release,
+        // where `==` would instead skip the spill and let the buffer grow
+        // without bound — silently defeating the memory bound this type exists
+        // to enforce.
+        debug_assert!(
+            self.buf.len() <= self.part_size,
+            "write must never grow buf past part_size"
+        );
         if self.buf.len() >= self.part_size {
             self.spill()?;
         }
@@ -207,7 +220,7 @@ impl std::io::Write for S3PartWriter {
 /// own transport for fetching credentials. Everything else the upload depends on
 /// is either pinned below or, for the identity load timeout, kept in step with
 /// the rest of the service through a shared constant.
-pub(crate) fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) -> S3Client {
+pub(super) fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) -> S3Client {
     let mut config = base_config.to_builder();
     // Sharing the caller's HTTP client could hand out pooled connections that
     // are driven by the caller's runtime, which can sit blocked in the
@@ -262,7 +275,8 @@ pub(crate) fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) ->
 ///
 /// - `tokio::spawn` cannot work at all here: the spawned task needs a runtime
 ///   worker to poll it, and the serializer is occupying one (`block_in_place`)
-///   or the only one (current-thread runtimes, i.e. every unit test).
+///   or the only one (on a current-thread runtime, which is what the default
+///   `#[tokio::test]` flavor gives most of the tests here).
 /// - `tokio::task::spawn_blocking` *would* run — its pool is separate from the
 ///   runtime workers — but it queues once that pool is saturated, and a queued
 ///   uploader deadlocks the serializer that is blocked waiting for it. Making
@@ -410,7 +424,7 @@ async fn abort_multipart_upload_best_effort(
 ///
 /// `make_uploader` is called at most once and never on the single-PUT path; see
 /// [`UploaderClientFactory`].
-pub(crate) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
+pub(super) async fn s3_put_versioned<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
     make_uploader: UploaderClientFactory,
     bucket: &str,
@@ -457,7 +471,7 @@ fn run_blocking<R>(f: impl FnOnce() -> R) -> R {
 /// payloads that never spilled, otherwise complete or abort the multipart
 /// upload depending on `ser_result` and the uploader outcome. Returns the
 /// total number of bytes written to `writer`.
-pub(crate) async fn s3_finish_put(
+pub(super) async fn s3_finish_put(
     s3_client: &S3Client,
     bucket: &str,
     key: &str,
@@ -534,11 +548,11 @@ pub(crate) async fn s3_finish_put(
     Ok(total_written)
 }
 
-/// Unit tests for [`S3PartWriter`]'s buffering. Unlike the [`tests`] suite these need no S3
-/// client at all: they assert on the writer's local state only, so they also run without the
-/// `testing` feature that gates the mock. The single-PUT paths never spill, and the one
-/// spilling test points the (spawned, retry-disabled) uploader at a refused local port and
-/// never awaits it.
+/// Unit tests for [`S3PartWriter`]'s buffering. Unlike the storage-level suite in
+/// `s3.rs`, these need no S3 client at all: they assert on the writer's local state
+/// only, so they also run without the `testing` feature that gates the mock. The
+/// single-PUT paths never spill, and the one spilling test points the (spawned,
+/// retry-disabled) uploader at a refused local port and never awaits it.
 #[cfg(test)]
 mod part_writer_tests {
     use super::*;
