@@ -162,8 +162,8 @@ message KeyGenPreprocResult {
   // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
 
-  // Per-scheme KMS signatures.
-  // One per scheme requested in the request's `signing_schemes`.
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
   repeated TypedSignature signatures = 3;
 }
 
@@ -264,8 +264,8 @@ message KeyGenResult {
   // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 4;
 
-  // Per-scheme KMS signatures.
-  // One per scheme requested in the request's `signing_schemes`.
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
   repeated TypedSignature signatures = 5;
 }
 
@@ -339,8 +339,8 @@ message CrsGenResult {
   // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 4;
 
-  // Per-scheme KMS signatures.
-  // One per scheme requested in the request's `signing_schemes`.
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
   repeated TypedSignature signatures = 5;
 }
 
@@ -445,8 +445,8 @@ message PublicDecryptionResponse {
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 4;
 
-  // Per-scheme KMS signatures.
-  // One per scheme requested in the request's `signing_schemes`.
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
   repeated TypedSignature signatures = 5;
 }
 
@@ -526,8 +526,8 @@ message UserDecryptionResponse {
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 4;
 
-  // Per-scheme KMS signatures.
-  // One per scheme requested in the request's `signing_schemes`.
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
   repeated TypedSignature signatures = 5;
 }
 

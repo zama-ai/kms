@@ -376,7 +376,6 @@ pub async fn get_public_decryption_result_impl<
         signatures,
     } = (*dec_res).clone();
 
-
     if payload.request_id != Some(request_id.into()) {
         return Err(MetricedError::new(
             OP_PUBLIC_DECRYPT_RESULT,
