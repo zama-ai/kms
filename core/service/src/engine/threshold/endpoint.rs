@@ -172,6 +172,15 @@ impl_endpoint! {
        }
 
         #[tracing::instrument(skip(self, request))]
+        async fn public_decrypt_sync(
+            &self,
+            request: Request<PublicDecryptionRequest>,
+        ) -> Result<Response<PublicDecryptionResponse>, Status> {
+            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_SYNC);
+            self.decryptor.public_decrypt_sync(request).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
             self.crs_generator.crs_gen(request).await.map_err(|e| e.into())
