@@ -255,17 +255,24 @@ pub(crate) fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) ->
 /// thread is blocked inside the serializer (see [`S3PartWriter`]). Dropping
 /// `part_rx` on error unblocks the serializing side with a send error.
 ///
-/// The dedicated thread and runtime are load-bearing, not stylistic. The
-/// serializer blocks on the bounded part channel, so "the uploader is running"
-/// is the invariant that makes the pipeline deadlock-free — it cannot be
-/// conditional on any shared pool having a free slot (`spawn_blocking` queues
-/// when its pool is saturated) or on the caller's runtime being able to poll
-/// (on current-thread runtimes — every unit test — the serializer blocks the
-/// only thread inline, so a task or `Handle::block_on` driven by that runtime
-/// would never progress and the send would deadlock). Cost-wise this sits
-/// outside the tokio/rayon thread budget the way rayon does: one extra OS
-/// thread, a current-thread runtime with no workers of its own, alive only
-/// while a >1-part (keygen-scale) store is in flight.
+/// The dedicated thread is load-bearing, not stylistic. The serializer blocks
+/// synchronously on the bounded part channel, so "the uploader is already
+/// running" is the invariant that keeps the pipeline deadlock-free, and a
+/// `std::thread` is the only spawn that starts unconditionally:
+///
+/// - `tokio::spawn` cannot work at all here: the spawned task needs a runtime
+///   worker to poll it, and the serializer is occupying one (`block_in_place`)
+///   or the only one (current-thread runtimes, i.e. every unit test).
+/// - `tokio::task::spawn_blocking` *would* run — its pool is separate from the
+///   runtime workers — but it queues once that pool is saturated, and a queued
+///   uploader deadlocks the serializer that is blocked waiting for it. Making
+///   deadlock-freedom depend on a process-wide pool having a spare thread is
+///   the tradeoff being declined; it also buys nothing, since the uploader
+///   drives its own runtime rather than the caller's either way.
+///
+/// Cost-wise this sits outside the tokio/rayon thread budget the way rayon
+/// does: one extra OS thread and a current-thread runtime with no workers of
+/// its own, alive only while a >1-part (keygen-scale) store is in flight.
 fn run_multipart_uploader(
     client: S3Client,
     bucket: String,

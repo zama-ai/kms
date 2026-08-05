@@ -417,10 +417,14 @@ impl Storage for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
-    // Deliberately not routed through the multipart writer: the caller already
-    // holds the full blob, so streaming cannot lower the peak, and every caller
-    // passes small objects (certs, wrapped backup blobs). The single PUT caps at
-    // S3's 5 GiB; the `to_vec` copy is the price of handing the SDK an owned body.
+    // Not routed through the multipart writer, because the caller hands in an
+    // already-serialized blob: there is nothing left to stream, so the peak is set
+    // by the caller's buffer either way. Note this is NOT a small-object path — the
+    // startup epoch migrations copy `FheKeyInfo` / `FhePrivateKey` through
+    // `load_bytes` + `store_bytes*` (see `engine::migration`), i.e. GiB-scale FHE key
+    // material. The `to_vec` below therefore duplicates that blob for the SDK body;
+    // removing it needs the trait to take an owned `Vec<u8>`, which is a separate
+    // change. The single PUT itself is fine up to S3's 5 GiB object limit.
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
@@ -475,7 +479,8 @@ impl StorageExt for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
-    // Single PUT on purpose; see the note on `store_bytes`.
+    // Single PUT for the same reason as `store_bytes`; see the note there, including
+    // the GiB-scale migration callers.
     async fn store_bytes_at_epoch(
         &mut self,
         bytes: &[u8],
