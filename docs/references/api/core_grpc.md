@@ -920,17 +920,15 @@ The endpoint performs real-time connectivity checks to peers and returns current
 
 ```proto
 message UserDecryptionRequest {
-  UserDecryptionRequestPayload payload = 1;
-  Eip712DomainMsg domain = 2;
-  RequestId request_id = 3;
-}
-
-
-message UserDecryptionRequestPayload {
-  string client_address = 1;
-  bytes enc_key = 2;
+  RequestId request_id = 1;
+  repeated TypedCiphertext typed_ciphertexts = 2;
   RequestId key_id = 3;
-  repeated TypedCiphertext typed_ciphertexts = 4;
+  string client_address = 4;
+  bytes enc_key = 5;
+  Eip712DomainMsg domain = 6;
+  bytes extra_data = 7;
+  RequestId context_id = 8;
+  RequestId epoch_id = 9;
 }
 ```
 
@@ -948,16 +946,15 @@ The process ensures that no-one (even the MPC parties) learn the decrypted value
 
 It expects:
 
-- `payload`: the `UserDecryptionRequestPayload` described below.
-- `domain`: EIP712 domain information which will be used when signing the decrypted plaintext.
 - `request_id`: A unique uint256 RequestId for the decryption request.
-
-The `UserDecryptionRequestPayload` contains all the information necessary to perform the user decryption:
-
+- `typed_ciphertexts`: The ciphertexts to decrypt and their meta information.
+- `key_id`: The `RequestId` of the TFHE key the ciphertext is encrypted under.
 - `client_address`: An EIP-55 encoded address (including the `0x` prefix) of the end-user who is supposed to learn the user decryption response.
 - `enc_key`: The `bincode::serialize` of `PublicEncKey`, which is a wrapper around a `crypto_box::PublicKey` to be used for encrypting the result.
-- `key_id`: The `RequestId` of the TFHE key the ciphertext is encrypted under.
-- `typed_ciphertext`: The ciphertexts to decrypt and their meta information.
+- `domain`: EIP712 domain information which will be used when signing the decrypted plaintext.
+- `extra_data`: Extra data used in the EIP712 signature - `external_signature`.
+- `context_id`: The MPC context ID used to identify the context to use for this request. If unset, the server's default context is used.
+- `epoch_id`: The MPC epoch ID identifying which epoch's key material and session to use for this request.
 
 The response will be EIP712-signed using the KMS core's private key and the provided `domain` as `Eip712Domain`. The `EIP712` signature is referred to as the `external_signature`.
 </details>
@@ -976,7 +973,9 @@ message RequestId { string request_id = 1; }
 ```proto
 message UserDecryptionResponse {
   bytes signature = 1;
-  UserDecryptionResponsePayload payload = 2;
+  bytes external_signature = 2;
+  UserDecryptionResponsePayload payload = 3;
+  bytes extra_data = 4;
 }
 
 message UserDecryptionResponsePayload {
@@ -985,7 +984,6 @@ message UserDecryptionResponsePayload {
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
   uint32 party_id = 4;
   uint32 degree = 5;
-  bytes external_signature = 6;
 }
 ```
 
@@ -995,13 +993,17 @@ This RPC allows to retrieve the user decrypted plaintext if the `request_id` is 
 
 The signature is a `secp256k1` signature on the `bincode::serialize` of the `payload` using the core's private key.
 
+- `signature`: the `secp256k1` signature described above.
+- `external_signature`: a `EIP-712` signature on the _solidity-compatible_  256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct.
+- `extra_data`: Extra data used in the EIP712 signature - `external_signature`.
+
 #### The `payload` is composed of
 
 - `verification_key`: the `bincode::serialize` `ECDSA/secp256k1` verification key of the core.
 - `digest`: The concatenation of two digests `(eip712_signing_hash(pk, domain) || ciphertext digest)`
+- `signcrypted_ciphertexts`: The resulting signcrypted ciphertexts, each of which must be decrypted and then reconstructed with the other shares to produce the final plaintext.
 - `party_id`: The MPC ID of the KMS core party doing the user decryption. Necessary for doing the share reconstruction.
 - `degree`: The degree of the sharing scheme used. Necessary for doing the share reconstruction.
-- `external_signature`: a `EIP-712` signature on the _solidity-compatible_  256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct.
 
 </details>
 
@@ -1012,9 +1014,15 @@ The signature is a `secp256k1` signature on the `bincode::serialize` of the `pay
 
 ```proto
 message UserDecryptionRequest {
-  UserDecryptionRequestPayload payload = 1;
-  Eip712DomainMsg domain = 2;
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+  repeated TypedCiphertext typed_ciphertexts = 2;
+  RequestId key_id = 3;
+  string client_address = 4;
+  bytes enc_key = 5;
+  Eip712DomainMsg domain = 6;
+  bytes extra_data = 7;
+  RequestId context_id = 8;
+  RequestId epoch_id = 9;
 }
 ```
 
@@ -1023,11 +1031,15 @@ message UserDecryptionRequest {
 ```proto
 message UserDecryptionResponse {
   bytes signature = 1;
-  UserDecryptionResponsePayload payload = 2;
+  bytes external_signature = 2;
+  UserDecryptionResponsePayload payload = 3;
+  bytes extra_data = 4;
 }
 ```
 
 ### Description
+
+This is the same request and response as `UserDecrypt`/`GetUserDecryptionResult` above, see the `UserDecryption` and `UserDecryptionResponse` sections for a description of each field.
 
 `UserDecryptSync` is the __synchronous__ variant of `UserDecrypt`: it starts the user decryption exactly as `UserDecrypt` does and then waits for the result within the same call, returning the same `UserDecryptionResponse` that `GetUserDecryptionResult` would return. This saves the caller the second round trip.
 
