@@ -149,18 +149,21 @@ fn validate_user_decrypt_meta_data_and_signature(
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
         };
 
+    // The response must echo the request's extra data whichever signature we go
+    // on to verify below. The EIP-712 signature covers `extraData`, but the raw
+    // ECDSA one does not, so this check has to happen outside the branch.
+    if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
+        return Err(anyhow_error_and_log(
+            ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+        ));
+    }
+
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
         // check signature
         if eip712_params.response_external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-            ));
-        }
-
-        if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
-            return Err(anyhow_error_and_log(
-                ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
             ));
         }
 
@@ -361,12 +364,10 @@ fn validate_user_decrypt_responses(
             response_extra_data: &cur_resp.extra_data,
             trusted_eip712_domain: trusted_ctx.eip712_domain,
         };
-        // Source the internal ECDSA signature from the multi-scheme `signatures`
-        // list, falling back to the legacy scalar `signature` field for
-        // responses from older servers. An empty result makes the verifier below
-        // fall back to the external EIP-712 signature.
-        let ecdsa_sig = kms_grpc::rpc_types::ecdsa_signature_bytes(&cur_resp.signatures)
-            .unwrap_or(cur_resp.signature.as_slice());
+        // The deprecated scalar `signature` field carries the raw internal ECDSA
+        // signature over the serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+        let ecdsa_sig = cur_resp.signature.as_slice();
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             trusted_ctx,
             &pivot_payload,

@@ -622,11 +622,10 @@ fn validate_public_decrypt_responses(
                 response_extra_data: &cur_resp.extra_data,
                 trusted_eip712_domain: domain,
             });
-        // Verify the ECDSA entry from the multi-scheme `signatures` list,
-        // falling back to the legacy scalar `signature` field for responses from
-        // older servers that don't populate `signatures`.
-        let ecdsa_sig = kms_grpc::rpc_types::ecdsa_signature_bytes(&cur_resp.signatures)
-            .unwrap_or(cur_resp.signature.as_slice());
+        // The deprecated scalar `signature` field carries the raw internal ECDSA
+        // signature over the serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+        let ecdsa_sig = cur_resp.signature.as_slice();
         if ecdsa_sig.is_empty() {
             tracing::warn!("Response carries no ECDSA signature to verify!");
             continue;
@@ -1726,8 +1725,11 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: vec![],
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
+                // The deprecated scalar field carries the raw signature; the
+                // ECDSA entry of `signatures` is the EIP-712 one, as produced
+                // by the server.
+                signature: signature_buf,
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data_0.clone(),
@@ -1753,8 +1755,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: vec![],
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
+                signature: signature_buf,
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data_1.clone(),
@@ -1820,8 +1822,8 @@ mod tests {
                 let signature_buf = signature.to_bytes();
 
                 PublicDecryptionResponse {
-                    signature: vec![],
-                    signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
+                    signature: signature_buf,
+                    signatures: vec![],
                     payload: Some(payload),
                     external_signature: vec![],
                     extra_data: vec![],
@@ -1941,8 +1943,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: vec![],
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
+                signature: signature_buf,
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data.clone(),
@@ -1972,8 +1974,8 @@ mod tests {
             .unwrap();
 
             PublicDecryptionResponse {
-                signature: vec![],
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(signature_buf),
+                signature: signature_buf,
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 payload: Some(payload),
                 external_signature,
                 extra_data: extra_data.clone(),

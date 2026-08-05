@@ -159,7 +159,7 @@ impl<
     /// flooding or bit-decomposition.
     ///
     /// This function does not perform user decryption in a background thread.
-    /// The return type should be [UserDecryptCallValues] except the final item in the tuple
+    /// The return type should be [UserDecryptCallValues] except the `extra_data` item
     ///
     /// Note that the argument `client_enc_key_bytes` must be the original
     /// bytes that was provided by the user, it should not go through any re-serialization.
@@ -610,7 +610,8 @@ impl<
                 tonic::Code::Internal,
             )
         };
-        // Always-present internal ECDSA authenticity signature; opt-in per-scheme list.
+        // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
+        // signature over the serialized payload, superseded by `signatures`.
         let signature = self
             .base_kms
             .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
@@ -618,7 +619,12 @@ impl<
             .to_bytes();
         let signatures = self
             .base_kms
-            .sign_with_schemes(&signing_schemes, &DSEP_USER_DECRYPTION, &sig_payload_vec)
+            .sign_decryption_result_with_schemes(
+                &signing_schemes,
+                &external_signature,
+                &DSEP_USER_DECRYPTION,
+                &sig_payload_vec,
+            )
             .map_err(make_err)?;
         Ok(Response::new(UserDecryptionResponse {
             signature,

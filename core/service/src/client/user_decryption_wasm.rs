@@ -169,16 +169,14 @@ impl Client {
         };
 
         // Prefer the raw ECDSA verification over the external (EIP712) one.
-        // The internal signatures are carried per-scheme; pick the ECDSA entry,
-        // falling back to the legacy scalar `signature` field for responses from
-        // older servers.
-        let ecdsa_signature = kms_grpc::rpc_types::ecdsa_signature_bytes(&resp.signatures).or(
-            if resp.signature.is_empty() {
-                None
-            } else {
-                Some(resp.signature.as_slice())
-            },
-        );
+        // The deprecated scalar `signature` field carries the raw internal ECDSA
+        // signature over the serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+        let ecdsa_signature = if resp.signature.is_empty() {
+            None
+        } else {
+            Some(resp.signature.as_slice())
+        };
         if let Some(ecdsa_signature) = ecdsa_signature {
             let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(ecdsa_signature)?);
             internal_verify_sig(

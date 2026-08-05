@@ -199,9 +199,8 @@ pub async fn get_user_decryption_result_impl<
             tonic::Code::Aborted,
         )
     };
-    // The internal ECDSA authenticity signature is always produced (legacy field,
-    // still consumed by the client). The per-scheme `signatures` list is opt-in:
-    // it carries exactly the schemes the request asked for.
+    // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
+    // signature over the serialized payload, superseded by `signatures`.
     let signature = service
         .base_kms
         .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
@@ -209,7 +208,12 @@ pub async fn get_user_decryption_result_impl<
         .to_bytes();
     let signatures = service
         .base_kms
-        .sign_with_schemes(&signing_schemes, &DSEP_USER_DECRYPTION, &sig_payload_vec)
+        .sign_decryption_result_with_schemes(
+            &signing_schemes,
+            &external_signature,
+            &DSEP_USER_DECRYPTION,
+            &sig_payload_vec,
+        )
         .map_err(make_err)?;
 
     Ok(Response::new(UserDecryptionResponse {
@@ -439,7 +443,8 @@ pub async fn get_public_decryption_result_impl<
             tonic::Code::Aborted,
         )
     };
-    // Always-present internal ECDSA authenticity signature; opt-in per-scheme list.
+    // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
+    // signature over the serialized payload, superseded by `signatures`.
     let signature = service
         .base_kms
         .sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
@@ -447,8 +452,9 @@ pub async fn get_public_decryption_result_impl<
         .to_bytes();
     let signatures = service
         .base_kms
-        .sign_with_schemes(
+        .sign_decryption_result_with_schemes(
             &signing_schemes,
+            &external_signature,
             &DSEP_PUBLIC_DECRYPTION,
             &kms_sig_payload_vec,
         )

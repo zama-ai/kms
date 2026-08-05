@@ -692,7 +692,8 @@ impl<
                 tonic::Code::Internal,
             )
         };
-        // Always-present internal ECDSA authenticity signature; opt-in per-scheme list.
+        // Deprecated, to be removed in 0.16 TODO(0.16): the raw internal ECDSA
+        // signature over the serialized payload, superseded by `signatures`.
         let signature = self
             .base_kms
             .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
@@ -700,7 +701,12 @@ impl<
             .to_bytes();
         let signatures = self
             .base_kms
-            .sign_with_schemes(&signing_schemes, &DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
+            .sign_decryption_result_with_schemes(
+                &signing_schemes,
+                &external_signature,
+                &DSEP_PUBLIC_DECRYPTION,
+                &sig_payload_vec,
+            )
             .map_err(make_err)?;
 
         Ok(Response::new(PublicDecryptionResponse {

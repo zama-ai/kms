@@ -282,9 +282,15 @@ pub(crate) enum SigningApproach {
     Eip712,
     /// Raw primitive signature over `dsep ‖ message` with the scheme's key.
     Raw,
+    /// `message` is already the finished signature for this scheme and is
+    /// copied through verbatim. Used where the signature was produced earlier
+    /// in the request's lifetime and the inputs needed to recompute it are no
+    /// longer in scope — see [`decryption_result_jobs`].
+    Precomputed,
 }
 
-pub(crate) struct SchemeSigningJob {
+/// One scheme's contribution to a result's `signatures` list.
+struct SchemeSigningJob {
     pub scheme: SigningSchemeType,
     pub approach: SigningApproach,
     pub message: Vec<u8>,
@@ -300,6 +306,7 @@ pub(crate) fn compute_result_signatures(
     jobs.iter()
         .map(|job| {
             let signature = match (job.scheme, job.approach) {
+                (_, SigningApproach::Precomputed) => job.message.clone(),
                 (SigningSchemeType::Ecdsa256k1, SigningApproach::Eip712) => {
                     let hash =
                         alloy_primitives::B256::try_from(job.message.as_slice()).map_err(|_| {
@@ -322,6 +329,44 @@ pub(crate) fn compute_result_signatures(
                 scheme: job.scheme,
                 signature,
             })
+        })
+        .collect()
+}
+
+/// Build the signing jobs for a decryption response's `signatures` list.
+///
+/// ECDSA reuses `external_signature` — the EIP-712 signature the fhevm
+/// contracts verify — so that once the deprecated `signature`/`external_signature`
+/// fields go away, `signatures` still carries it. It is passed through rather
+/// than recomputed because the EIP-712 domain and handles are consumed at
+/// request time and are no longer in scope where the response is assembled.
+///
+/// Every other scheme signs `payload`, the raw serialized response payload:
+/// EIP-712 is an EVM/secp256k1 construction, and a post-quantum scheme has no
+/// reason to be bound to it. Each job carries its own message, so a
+/// scheme-specific serialization can be introduced here without touching
+/// callers or [`compute_result_signatures`].
+pub(crate) fn decryption_result_jobs(
+    schemes: &[SigningSchemeType],
+    external_signature: &[u8],
+    payload: &[u8],
+) -> Vec<SchemeSigningJob> {
+    schemes
+        .iter()
+        .map(|&scheme| {
+            if scheme == SigningSchemeType::Ecdsa256k1 {
+                SchemeSigningJob {
+                    scheme,
+                    approach: SigningApproach::Precomputed,
+                    message: external_signature.to_vec(),
+                }
+            } else {
+                SchemeSigningJob {
+                    scheme,
+                    approach: SigningApproach::Raw,
+                    message: payload.to_vec(),
+                }
+            }
         })
         .collect()
 }
@@ -422,7 +467,7 @@ pub(crate) fn compute_preprocessing_signatures(
     sign_eip712_result(sk, schemes, &sol_type, domain, &DSEP_PUBDATA_KEY)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_uncompressed_keygen(
     sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
@@ -464,7 +509,7 @@ pub(crate) fn compute_keygen_digests(
 }
 
 /// Sign an uncompressed keygen using precomputed digests.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_standard_keygen_from_digests(
     sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
@@ -498,7 +543,7 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_decompression_keygen(
     sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
@@ -557,7 +602,7 @@ pub(crate) fn compute_info_compressed_keygen(
 }
 
 /// Sign a compressed keygen using precomputed digests.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_compressed_keygen_from_digests(
     sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
@@ -832,27 +877,16 @@ pub(crate) fn compute_external_pt_signature(
     compute_eip712_signature(server_sk, &message, eip712_domain)
 }
 
-/// Sign `msg` (domain-separated by `dsep`) under each requested scheme,
-/// returning one [`TypedSignature`] per scheme.
-pub(crate) fn compute_scheme_signatures<T>(
+/// Produce the wire-form `signatures` list for a decryption response from
+/// per-scheme `(scheme, approach, message)` jobs — see [`decryption_result_jobs`]
+/// for the job set the endpoints use.
+pub(crate) fn compute_decryption_scheme_signatures(
     server_sk: &PrivateSigKey,
-    schemes: &[SigningSchemeType],
     dsep: &DomainSep,
-    msg: &T,
-) -> anyhow::Result<Vec<TypedSignature>>
-where
-    T: AsRef<[u8]> + ?Sized,
-{
-    schemes
-        .iter()
-        .map(|&scheme| {
-            let sig = server_sk.unified_sign_with(scheme, dsep, msg.as_ref())?;
-            Ok(TypedSignature {
-                scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
-                signature: sig.to_bytes(),
-            })
-        })
-        .collect()
+    jobs: &[SchemeSigningJob],
+) -> anyhow::Result<Vec<TypedSignature>> {
+    let stored = compute_result_signatures(server_sk, dsep, jobs)?;
+    Ok(stored_scheme_signatures_to_proto(&stored))
 }
 
 pub struct BaseKmsStruct {
@@ -899,18 +933,20 @@ impl BaseKmsStruct {
         Arc::clone(&self.verf_key)
     }
 
-    /// Sign `msg` under every requested [`SigningSchemeType`], deriving the
-    /// per-scheme signing key from the KMS' private signing key.
-    pub fn sign_with_schemes<T>(
+    /// Build the per-scheme `signatures` list for a decryption response; see
+    /// [`decryption_result_jobs`] for what each scheme signs.
+    pub fn sign_decryption_result_with_schemes<T>(
         &self,
         schemes: &[SigningSchemeType],
+        external_signature: &[u8],
         dsep: &DomainSep,
-        msg: &T,
+        payload: &T,
     ) -> anyhow::Result<Vec<TypedSignature>>
     where
         T: AsRef<[u8]> + ?Sized,
     {
-        compute_scheme_signatures(self.sig_key()?.as_ref(), schemes, dsep, msg)
+        let jobs = decryption_result_jobs(schemes, external_signature, payload.as_ref());
+        compute_decryption_scheme_signatures(self.sig_key()?.as_ref(), dsep, &jobs)
     }
 
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
@@ -1436,8 +1472,7 @@ impl Named for CrsGenMetadata {
 
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
-// an external signature on the batch, any extra data, and the signing schemes the
-// response should be signed under.
+// an external signature on the batch, any extra data, and the per-scheme signatures.
 pub type PubDecCallValues = (
     RequestId,
     Vec<TypedPlaintext>,
@@ -1448,7 +1483,7 @@ pub type PubDecCallValues = (
 
 // Values that need to be stored temporarily as part of an async user decryption call.
 // Represents UserDecryptionResponsePayload, external_signature, extra_data, and the
-// signing schemes the response should be signed under.
+// per-scheme signatures.
 pub type UserDecryptCallValues = (
     UserDecryptionResponsePayload,
     Vec<u8>,
@@ -1503,17 +1538,26 @@ pub(crate) mod tests {
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
 
-    /// Round-trip test for multi-scheme response signing:
-    /// `compute_scheme_signatures` produces, for every requested scheme, a
-    /// signature that verifies under that scheme's derived key.
-    /// The test also validates that the ECDSA entry is byte-identical to the legacy
-    /// single signature.
+    /// Round-trip test for the per-scheme `signatures` list on a decryption
+    /// response: the ECDSA entry is the EIP-712 `external_signature` verbatim,
+    /// while every other scheme signs the raw payload domain-separated by `dsep`.
+    ///
+    /// The split is deliberate — EIP-712 is an EVM/secp256k1 construction, so
+    /// post-quantum schemes are not bound to it.
     #[test]
-    fn scheme_signatures_round_trip() {
+    fn decryption_scheme_signatures_round_trip() {
         let mut rng = AesRng::seed_from_u64(0xABCD);
         let (_pk, sk) = gen_sig_keys(&mut rng);
         let dsep = b"SCHSGTST";
         let msg = b"a decryption response payload signed under several schemes";
+
+        // A realistic `external_signature`: the EIP-712 signature the fhevm
+        // contracts verify.
+        let domain = dummy_domain();
+        let handles = vec![vec![0xAAu8; 32]];
+        let pts = vec![TypedPlaintext::from_u32(42)];
+        let sol_type = compute_public_decryption_message(&handles, &pts, b"extra").unwrap();
+        let external_signature = compute_eip712_signature(&sk, &sol_type, &domain).unwrap();
 
         // Several choices of schemes, including a classic + post-quantum hybrid.
         let choices: Vec<Vec<SigningSchemeType>> = vec![
@@ -1529,7 +1573,8 @@ pub(crate) mod tests {
         ];
 
         for schemes in choices {
-            let sigs = super::compute_scheme_signatures(&sk, &schemes, dsep, msg).unwrap();
+            let jobs = super::decryption_result_jobs(&schemes, &external_signature, msg);
+            let sigs = super::compute_decryption_scheme_signatures(&sk, dsep, &jobs).unwrap();
             assert_eq!(sigs.len(), schemes.len());
 
             for (scheme, scheme_sig) in schemes.iter().zip(&sigs) {
@@ -1539,22 +1584,80 @@ pub(crate) mod tests {
                     *scheme
                 );
 
-                // Verify against the scheme's verification key.
-                let vk = sk.unified_verifying_key(*scheme).unwrap();
-                let sig = Signature::new(*scheme, scheme_sig.signature.clone());
-                unified_verify(dsep, msg, &sig, &vk)
-                    .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
+                if *scheme == SigningSchemeType::Ecdsa256k1 {
+                    // The ECDSA entry is the on-chain-verifiable EIP-712
+                    // signature, not a raw signature over the payload.
+                    assert_eq!(scheme_sig.signature, external_signature);
+                    let recovered = recover_address_from_ext_signature(
+                        &sol_type,
+                        &domain,
+                        &scheme_sig.signature,
+                    )
+                    .unwrap();
+                    assert_eq!(recovered, sk.verf_key().address());
+                    // ...and it is NOT the raw signature over the payload.
+                    let raw = internal_sign(dsep, msg, &sk).unwrap();
+                    assert_ne!(scheme_sig.signature, raw.as_bytes());
+                } else {
+                    // Every other scheme signs the raw payload.
+                    let vk = sk.unified_verifying_key(*scheme).unwrap();
+                    let sig = Signature::new(*scheme, scheme_sig.signature.clone());
+                    unified_verify(dsep, msg, &sig, &vk)
+                        .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
 
-                // A tampered message must fail.
-                assert!(unified_verify(dsep, b"tampered", &sig, &vk).is_err());
+                    // A tampered message must fail.
+                    assert!(unified_verify(dsep, b"tampered", &sig, &vk).is_err());
+                }
             }
+        }
+    }
 
-            // The ECDSA entry, when present, is byte-identical to the legacy
-            // single signature, so single-ECDSA consumers are unaffected.
-            if let Some(ecdsa_bytes) = kms_grpc::rpc_types::ecdsa_signature_bytes(&sigs) {
-                let legacy = internal_sign(dsep, msg, &sk).unwrap();
-                assert_eq!(ecdsa_bytes, legacy.as_bytes());
-            }
+    /// Each job carries its own message, so schemes can be given distinct
+    /// serializations of the same result. This is what lets a future
+    /// scheme-specific encoding be introduced in [`super::decryption_result_jobs`]
+    /// without changing [`super::compute_decryption_scheme_signatures`].
+    #[test]
+    fn decryption_scheme_signatures_honour_per_scheme_messages() {
+        use super::{SchemeSigningJob, SigningApproach};
+
+        let mut rng = AesRng::seed_from_u64(0x9E11);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let dsep = b"PERSCHEM";
+
+        let ed_msg = b"serialization chosen for ed25519".to_vec();
+        let mldsa_msg = b"a different serialization chosen for ml-dsa".to_vec();
+
+        let jobs = vec![
+            SchemeSigningJob {
+                scheme: SigningSchemeType::Ed25519,
+                approach: SigningApproach::Raw,
+                message: ed_msg.clone(),
+            },
+            SchemeSigningJob {
+                scheme: SigningSchemeType::MlDsa65,
+                approach: SigningApproach::Raw,
+                message: mldsa_msg.clone(),
+            },
+        ];
+
+        let sigs = super::compute_decryption_scheme_signatures(&sk, dsep, &jobs).unwrap();
+        assert_eq!(sigs.len(), 2);
+
+        for (job, scheme_sig) in jobs.iter().zip(&sigs) {
+            let vk = sk.unified_verifying_key(job.scheme).unwrap();
+            let sig = Signature::new(job.scheme, scheme_sig.signature.clone());
+
+            // Each signature verifies against *its own* message...
+            unified_verify(dsep, &job.message, &sig, &vk)
+                .unwrap_or_else(|e| panic!("{:?} should verify its own message: {e}", job.scheme));
+
+            // ...and not against the other job's message.
+            let other = if job.message == ed_msg {
+                &mldsa_msg
+            } else {
+                &ed_msg
+            };
+            assert!(unified_verify(dsep, other, &sig, &vk).is_err());
         }
     }
 
