@@ -605,12 +605,12 @@ async fn poll_new_epoch_result(
         let party_idx = *party_idx;
         resp_tasks.spawn(async move {
             // Sleep initially to give the server time to complete resharing, then
-            // poll every 500ms for up to `max_iter` tries.
+            // poll.
             let response = retrying_poll(
                 client,
                 reshare_request_id.into(),
                 "resharing result",
-                PollConfig::default(),
+                PollConfig::long_poll_config(),
                 |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
             )
             .await;
