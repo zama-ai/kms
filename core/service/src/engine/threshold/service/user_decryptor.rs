@@ -161,7 +161,6 @@ impl<
     /// flooding or bit-decomposition.
     ///
     /// This function does not perform user decryption in a background thread.
-    /// The return type should be [UserDecryptCallValues] except the `extra_data` item
     ///
     /// Note that the argument `client_enc_key_bytes` must be the original
     /// bytes that was provided by the user, it should not go through any re-serialization.
@@ -381,15 +380,14 @@ impl<
             degree: threshold as u32,
         };
 
-        let sigs = sign_user_decryption_result(
+        sign_user_decryption_result(
             &signcryption_key.signing_key,
             &signing_schemes,
-            &payload,
+            payload,
             &client_enc_key_bytes_orig,
-            &extra_data,
+            extra_data,
             domain,
-        )?;
-        Ok(UserDecryptCallValues::new(payload, extra_data, sigs))
+        )
     }
 
     #[cfg(test)]

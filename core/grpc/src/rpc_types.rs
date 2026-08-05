@@ -537,15 +537,6 @@ pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::TypedSignatur
     }]
 }
 
-/// Return the ECDSA/secp256k1 signature bytes from a list of scheme signatures,
-/// if present.
-pub fn ecdsa_signature_bytes(signatures: &[crate::kms::v1::TypedSignature]) -> Option<&[u8]> {
-    signatures
-        .iter()
-        .find(|s| s.scheme == crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32)
-        .map(|s| s.signature.as_slice())
-}
-
 #[cfg(feature = "non-wasm")]
 impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key

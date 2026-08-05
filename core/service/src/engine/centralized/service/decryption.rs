@@ -131,19 +131,13 @@ pub async fn user_decrypt_impl<
                 &client_address,
                 server_verf_key,
                 &domain,
-                &extra_data,
+                extra_data,
                 &signing_schemes,
             )
             .await;
-            let res_with_extra_data =
-                res.map(|(payload, sigs)| UserDecryptCallValues::new(payload, extra_data, sigs));
-            let _ = update_req_in_meta_store(
-                &meta_store,
-                meta_permit,
-                res_with_extra_data,
-                OP_USER_DECRYPT_REQUEST,
-            )
-            .await;
+            let _ =
+                update_req_in_meta_store(&meta_store, meta_permit, res, OP_USER_DECRYPT_REQUEST)
+                    .await;
         }
         .instrument(tracing::Span::current()),
     );
@@ -318,17 +312,15 @@ pub async fn public_decrypt_impl<
                     verification_key: server_verf_key,
                     request_id: Some(request_id.into()),
                 };
-                match sign_public_decryption_result(
+                sign_public_decryption_result(
                     &sig_key,
                     &signing_schemes,
-                    &payload,
+                    payload,
                     &ext_handles_bytes,
-                    &extra_data,
+                    extra_data,
                     &eip712_domain,
-                ) {
-                    Ok(sigs) => Ok(PubDecCallValues::new(request_id, payload, extra_data, sigs)),
-                    Err(e) => Err(format!("Failed to sign decryption result: {e:?}")),
-                }
+                )
+                .map_err(|e| format!("Failed to sign decryption result: {e:?}"))
             }
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
@@ -377,7 +369,6 @@ pub async fn get_public_decryption_result_impl<
     )
     .await?;
     let PubDecCallValues {
-        request_id: retrieved_req_id,
         payload,
         signature,
         external_signature,
@@ -385,11 +376,15 @@ pub async fn get_public_decryption_result_impl<
         signatures,
     } = (*dec_res).clone();
 
-    if retrieved_req_id != request_id {
+
+    if payload.request_id != Some(request_id.into()) {
         return Err(MetricedError::new(
             OP_PUBLIC_DECRYPT_RESULT,
             Some(request_id),
-            anyhow::anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
+            anyhow::anyhow!(
+                "Request ID mismatch: expected {request_id}, got {:?}",
+                payload.request_id
+            ),
             tonic::Code::Internal,
         ));
     }

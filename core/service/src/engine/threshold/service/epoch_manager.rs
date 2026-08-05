@@ -570,7 +570,7 @@ impl<
             }
 
             // Parties in Set 1 only do NOT re-sign the metadata — we return the
-            // same metadata as in the epoch we reshare from.å
+            // same metadata as in the epoch we reshare from.
             Ok(EpochOutput::Reshare((keys_metadata, crs_metadata)))
         };
 

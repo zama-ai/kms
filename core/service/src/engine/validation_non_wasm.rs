@@ -625,8 +625,7 @@ fn validate_public_decrypt_responses(
         // The deprecated scalar `signature` field carries the raw internal ECDSA
         // signature over the serialized payload.
         // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        let ecdsa_sig = cur_resp.signature.as_slice();
-        if ecdsa_sig.is_empty() {
+        if cur_resp.signature.is_empty() {
             tracing::warn!("Response carries no ECDSA signature to verify!");
             continue;
         }
@@ -634,7 +633,7 @@ fn validate_public_decrypt_responses(
             trusted_ctx.ext_handles_bytes,
             &pivot_payload,
             cur_payload,
-            ecdsa_sig,
+            &cur_resp.signature,
             eip712_params.as_ref(),
         )? {
             tracing::warn!("Some server did not provide the proper response!");
@@ -1058,14 +1057,12 @@ mod tests {
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{
-                PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys, internal_sign,
-            },
+            signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign},
             signing::SigningSchemeType,
         },
         dummy_domain,
         engine::{
-            base::{compute_public_decryption_message, derive_request_id},
+            base::{PubDecCallValues, derive_request_id, sign_public_decryption_result},
             validation::{
                 RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
             },
@@ -1086,21 +1083,49 @@ mod tests {
         verify_user_decrypt_eip712,
     };
 
-    /// Take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
-    fn compute_external_pt_signature(
+    /// Sign a public decryption result the way the server does, under ECDSA only.
+    fn sign_ecdsa_public_decrypt_result(
         server_sk: &PrivateSigKey,
+        payload: PublicDecryptionResponsePayload,
         ext_handles_bytes: &[Vec<u8>],
-        pts: &[TypedPlaintext],
-        extra_data: &[u8],
+        extra_data: Vec<u8>,
         eip712_domain: &Eip712Domain,
-    ) -> anyhow::Result<Vec<u8>> {
-        tracing::info!(
-            "Computing external PT signature for {} plaintexts and {} external handles",
-            pts.len(),
-            ext_handles_bytes.len()
+    ) -> PubDecCallValues {
+        sign_public_decryption_result(
+            server_sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            payload,
+            ext_handles_bytes,
+            extra_data,
+            eip712_domain,
+        )
+        .unwrap()
+    }
+
+    /// Build a public decryption response exactly as the server produces one: the
+    /// deprecated scalar `signature` over the serialized payload, the EIP-712
+    /// `external_signature`, and the per-scheme `signatures` list.
+    fn signed_public_decrypt_response(
+        server_sk: &PrivateSigKey,
+        payload: PublicDecryptionResponsePayload,
+        ext_handles_bytes: &[Vec<u8>],
+        extra_data: Vec<u8>,
+        eip712_domain: &Eip712Domain,
+    ) -> PublicDecryptionResponse {
+        let signed = sign_ecdsa_public_decrypt_result(
+            server_sk,
+            payload,
+            ext_handles_bytes,
+            extra_data,
+            eip712_domain,
         );
-        let message = compute_public_decryption_message(ext_handles_bytes, pts, extra_data)?;
-        compute_eip712_signature(server_sk, &message, eip712_domain)
+        PublicDecryptionResponse {
+            signature: signed.signature,
+            signatures: signed.signatures,
+            payload: Some(signed.payload),
+            external_signature: signed.external_signature,
+            extra_data: signed.extra_data,
+        }
     }
 
     /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
@@ -1725,63 +1750,28 @@ mod tests {
         };
 
         // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
-        let resp0 = {
-            let payload = PublicDecryptionResponsePayload {
+        let resp0 = signed_public_decrypt_response(
+            &sk0,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
-            let signature_buf = signature.to_bytes();
-
-            let external_signature = compute_external_pt_signature(
-                &sk0,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data_0,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                // The deprecated scalar field carries the raw signature; the
-                // ECDSA entry of `signatures` is the EIP-712 one, as produced
-                // by the server.
-                signature: signature_buf,
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data_0.clone(),
-            }
-        };
-        let resp1 = {
-            let payload = PublicDecryptionResponsePayload {
+            },
+            &ext_handles_bytes,
+            extra_data_0.clone(),
+            &alloy_domain,
+        );
+        let resp1 = signed_public_decrypt_response(
+            &sk1,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-            let signature_buf = signature.to_bytes();
-
-            let external_signature = compute_external_pt_signature(
-                &sk1,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data_1,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data_1.clone(),
-            }
-        };
+            },
+            &ext_handles_bytes,
+            extra_data_1.clone(),
+            &alloy_domain,
+        );
 
         // in this test we just want to test that we can catch a duplicate validation key
         // the other validation such as signatures are performed in `validate_public_decrypt_meta_data`
@@ -1939,68 +1929,32 @@ mod tests {
             epoch_id: None,
         };
 
-        let resp0 = {
-            let plaintexts = vec![TypedPlaintext {
-                bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint8 as i32,
-            }];
-            let payload = PublicDecryptionResponsePayload {
+        let plaintexts = vec![TypedPlaintext {
+            bytes: vec![1],
+            fhe_type: tfhe::FheTypes::Uint8 as i32,
+        }];
+        let resp0 = signed_public_decrypt_response(
+            &sk0,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
-            let signature_buf = signature.to_bytes();
-
-            let external_signature = compute_external_pt_signature(
-                &sk0,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data.clone(),
-            }
-        };
-        let resp1 = {
-            let plaintexts = vec![TypedPlaintext {
-                bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint8 as i32,
-            }];
-            let payload = PublicDecryptionResponsePayload {
+            },
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        );
+        let resp1 = signed_public_decrypt_response(
+            &sk1,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                plaintexts: plaintexts.clone(),
+                plaintexts,
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-            let signature_buf = signature.to_bytes();
-
-            let external_signature = compute_external_pt_signature(
-                &sk1,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data.clone(),
-            }
-        };
+            },
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        );
 
         let trusted_ctx = PublicDecTrustedValidationContext {
             server_pks: &pks,
@@ -2171,19 +2125,16 @@ mod tests {
         let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
         let extra_data = vec![1, 2, 3, 4];
 
-        let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
-
-        let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-        let signature_buf = signature.to_bytes(); // NOTE: signatures are not serialized with bincode
-
-        let external_signature = compute_external_pt_signature(
+        let signed = sign_ecdsa_public_decrypt_result(
             &sk0,
+            pivot.clone(),
             &ext_handles_bytes,
-            &pivot.plaintexts,
-            &extra_data,
+            extra_data.clone(),
             &alloy_domain,
-        )
-        .unwrap();
+        );
+        // NOTE: signatures are not serialized with bincode
+        let signature_buf = signed.signature;
+        let external_signature = signed.external_signature;
 
         let mut bad_external_signature = external_signature.clone();
         bad_external_signature[0] ^= 1;

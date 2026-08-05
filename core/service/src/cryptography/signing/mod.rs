@@ -393,8 +393,8 @@ impl PrivateSigKey {
     ///
     /// The seed is
     /// `SHAKE256(DSEP_SIGKEY_DERIVE ‖ scheme_tag ‖ version ‖ sk_bytes)`, where `scheme_tag`
-    /// is the 4-byte little-endian gRPC discriminant of the scheme (see [`scheme_wire_tag`])
-    /// and `version` is [`SIGKEY_DERIVATION_VERSION`].
+    /// is the 4-byte little-endian gRPC discriminant of the scheme and `version` is
+    /// [`SIGKEY_DERIVATION_VERSION`].
     fn derived_seed(&self, scheme: SigningSchemeType) -> Zeroizing<[u8; DIGEST_BYTES]> {
         let mut sk_bytes = self.raw_signing_key().to_bytes();
         // Use Zeroizing to ensure that the `msg` gets wiped at dropping

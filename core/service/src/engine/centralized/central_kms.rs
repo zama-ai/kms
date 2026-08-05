@@ -15,8 +15,8 @@ use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::StoredTypedSignature;
+use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
-use crate::engine::base::{DecryptionSignatures, sign_user_decryption_result};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -532,9 +532,9 @@ pub async fn async_user_decrypt<
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
-    extra_data: &[u8],
+    extra_data: Vec<u8>,
     signing_schemes: &[SigningSchemeType],
-) -> anyhow::Result<(UserDecryptionResponsePayload, DecryptionSignatures)> {
+) -> anyhow::Result<UserDecryptCallValues> {
     use observability::{
         metrics,
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
@@ -582,16 +582,14 @@ pub async fn async_user_decrypt<
         degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
     };
 
-    let sigs = sign_user_decryption_result(
+    sign_user_decryption_result(
         sig_key,
         signing_schemes,
-        &payload,
+        payload,
         client_enc_key_bytes,
         extra_data,
         domain,
-    )?;
-
-    Ok((payload, sigs))
+    )
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output

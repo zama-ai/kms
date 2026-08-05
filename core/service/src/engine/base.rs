@@ -851,49 +851,27 @@ pub fn deserialize_to_low_level(
     Ok(radix_ct)
 }
 
-fn compute_decryption_scheme_signatures(
-    server_sk: &PrivateSigKey,
-    dsep: &DomainSep,
-    jobs: &[SchemeSigningJob],
-) -> anyhow::Result<Vec<TypedSignature>> {
-    let stored = compute_result_signatures(server_sk, dsep, jobs)?;
-    Ok(stored_scheme_signatures_to_proto(&stored))
-}
-
-/// Every signature on a decryption response, produced from one snapshot of the
-/// result.
-pub struct DecryptionSignatures {
-    /// The raw internal ECDSA signature over the serialized payload.
-    /// Deprecated, to be removed in 0.16 TODO(0.16)
-    pub signature: Vec<u8>,
-    /// The ECDSA/EIP-712 signature for the external (on-chain) recipient.
-    /// Deprecated, to be removed in 0.16 TODO(0.16): superseded by the ECDSA
-    /// entry of `signatures`, which holds the same bytes.
-    pub external_signature: Vec<u8>,
-    /// One signature per scheme the request asked for.
-    pub signatures: Vec<TypedSignature>,
-}
-
 /// Sign a public decryption result under every requested scheme.
 pub(crate) fn sign_public_decryption_result(
     server_sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
-    payload: &PublicDecryptionResponsePayload,
+    payload: PublicDecryptionResponsePayload,
     ext_handles_bytes: &[Vec<u8>],
-    extra_data: &[u8],
+    extra_data: Vec<u8>,
     eip712_domain: &Eip712Domain,
-) -> anyhow::Result<DecryptionSignatures> {
+) -> anyhow::Result<PubDecCallValues> {
     tracing::info!(
         "Signing public decryption result for {} plaintexts and {} external handles",
         payload.plaintexts.len(),
         ext_handles_bytes.len()
     );
     let sol_type =
-        compute_public_decryption_message(ext_handles_bytes, &payload.plaintexts, extra_data)?;
+        compute_public_decryption_message(ext_handles_bytes, &payload.plaintexts, &extra_data)?;
     sign_decryption_result(
         server_sk,
         schemes,
-        &bc2wrap::serialize(payload)?,
+        payload,
+        extra_data,
         &sol_type,
         eip712_domain,
         &crate::engine::validation::DSEP_PUBLIC_DECRYPTION,
@@ -904,18 +882,19 @@ pub(crate) fn sign_public_decryption_result(
 pub(crate) fn sign_user_decryption_result(
     server_sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
-    payload: &UserDecryptionResponsePayload,
+    payload: UserDecryptionResponsePayload,
     user_pk_buf: &[u8],
-    extra_data: &[u8],
+    extra_data: Vec<u8>,
     eip712_domain: &Eip712Domain,
-) -> anyhow::Result<DecryptionSignatures> {
+) -> anyhow::Result<UserDecryptCallValues> {
     tracing::debug!("Signing UserDecryptResponseVerification");
     let sol_type =
-        crate::cryptography::compute_user_decrypt_message(payload, user_pk_buf, extra_data)?;
+        crate::cryptography::compute_user_decrypt_message(&payload, user_pk_buf, &extra_data)?;
     sign_decryption_result(
         server_sk,
         schemes,
-        &bc2wrap::serialize(payload)?,
+        payload,
+        extra_data,
         &sol_type,
         eip712_domain,
         &crate::engine::validation::DSEP_USER_DECRYPTION,
@@ -926,24 +905,28 @@ pub(crate) fn sign_user_decryption_result(
 /// [`sign_user_decryption_result`]: the EIP-712 signing hash is computed once
 /// and drives both `external_signature` and the ECDSA entry of `signatures`, so
 /// the two are byte-identical by construction.
-fn sign_decryption_result<D: SolStruct>(
+fn sign_decryption_result<P: Serialize, D: SolStruct>(
     server_sk: &PrivateSigKey,
     schemes: &[SigningSchemeType],
-    payload_bytes: &[u8],
+    payload: P,
+    extra_data: Vec<u8>,
     sol_type: &D,
     eip712_domain: &Eip712Domain,
     dsep: &DomainSep,
-) -> anyhow::Result<DecryptionSignatures> {
+) -> anyhow::Result<DecryptionCallValues<P>> {
+    let payload_bytes = bc2wrap::serialize(&payload)?;
     let eip712_hash = sol_type.eip712_signing_hash(eip712_domain);
     let external_signature =
         crate::cryptography::signatures::eip712_sign_hash(server_sk, &eip712_hash)?;
-    let signature = internal_sign(dsep, payload_bytes, server_sk)?.to_bytes();
-    let jobs = decryption_result_jobs(schemes, eip712_hash.as_slice(), payload_bytes);
-    let signatures = compute_decryption_scheme_signatures(server_sk, dsep, &jobs)?;
-    Ok(DecryptionSignatures {
+    let signature = internal_sign(dsep, &payload_bytes, server_sk)?.to_bytes();
+    let jobs = decryption_result_jobs(schemes, eip712_hash.as_slice(), &payload_bytes);
+    let stored = compute_result_signatures(server_sk, dsep, &jobs)?;
+    Ok(DecryptionCallValues {
+        payload,
         signature,
         external_signature,
-        signatures,
+        extra_data,
+        signatures: stored_scheme_signatures_to_proto(&stored),
     })
 }
 
@@ -1351,14 +1334,6 @@ impl KeyGenMetadata {
         }
     }
 
-    /// The per-scheme KMS signatures on this result, in gRPC form.
-    pub fn typed_signatures(&self) -> Vec<TypedSignature> {
-        match self {
-            KeyGenMetadata::Current(inner) => stored_scheme_signatures_to_proto(&inner.signatures),
-            KeyGenMetadata::LegacyV0(_) => Vec::new(),
-        }
-    }
-
     /// Returns the set of public data types that are present in this metadata.
     pub fn pub_data_types(&self) -> HashSet<PubDataType> {
         match self {
@@ -1490,14 +1465,6 @@ impl CrsGenMetadata {
         }
     }
 
-    /// The per-scheme KMS signatures on this result, in gRPC form.
-    pub fn typed_signatures(&self) -> Vec<TypedSignature> {
-        match self {
-            CrsGenMetadata::Current(inner) => stored_scheme_signatures_to_proto(&inner.signatures),
-            CrsGenMetadata::LegacyV0(_) => Vec::new(),
-        }
-    }
-
     #[cfg(test)]
     pub fn external_signature(&self) -> &[u8] {
         match self {
@@ -1512,66 +1479,31 @@ impl Named for CrsGenMetadata {
     const NAME: &'static str = "CrsGenMetadata";
 }
 
-/// The finished public decryption response, stored while the async decryption
-/// call is in flight. Everything here — payload included — is produced and
-/// signed by the decryption job, so the result endpoint is a pure read.
+/// A finished decryption response, stored while the async decryption call is in
+/// flight. Everything here — payload included — is produced and signed by the
+/// decryption job, so the result endpoint is a pure read.
 #[derive(Clone)]
-pub struct PubDecCallValues {
-    pub request_id: RequestId,
-    pub payload: PublicDecryptionResponsePayload,
+pub struct DecryptionCallValues<P> {
+    /// The response payload, exactly as it was signed.
+    pub payload: P,
+    /// The raw internal ECDSA signature over the serialized payload.
     /// Deprecated, to be removed in 0.16 TODO(0.16)
     pub signature: Vec<u8>,
-    /// Deprecated, to be removed in 0.16 TODO(0.16)
+    /// The ECDSA/EIP-712 signature for the external (on-chain) recipient.
+    /// Deprecated, to be removed in 0.16 TODO(0.16): superseded by the ECDSA
+    /// entry of `signatures`, which holds the same bytes.
     pub external_signature: Vec<u8>,
+    /// The extra data the request carried, echoed back in the response.
     pub extra_data: Vec<u8>,
+    /// One signature per scheme the request asked for.
     pub signatures: Vec<TypedSignature>,
 }
 
-impl PubDecCallValues {
-    pub(crate) fn new(
-        request_id: RequestId,
-        payload: PublicDecryptionResponsePayload,
-        extra_data: Vec<u8>,
-        sigs: DecryptionSignatures,
-    ) -> Self {
-        Self {
-            request_id,
-            payload,
-            signature: sigs.signature,
-            external_signature: sigs.external_signature,
-            extra_data,
-            signatures: sigs.signatures,
-        }
-    }
-}
+/// The finished public decryption response; see [`DecryptionCallValues`].
+pub type PubDecCallValues = DecryptionCallValues<PublicDecryptionResponsePayload>;
 
-/// The finished user decryption response; see [`PubDecCallValues`].
-#[derive(Clone)]
-pub struct UserDecryptCallValues {
-    pub payload: UserDecryptionResponsePayload,
-    /// Deprecated, to be removed in 0.16 TODO(0.16)
-    pub signature: Vec<u8>,
-    /// Deprecated, to be removed in 0.16 TODO(0.16)
-    pub external_signature: Vec<u8>,
-    pub extra_data: Vec<u8>,
-    pub signatures: Vec<TypedSignature>,
-}
-
-impl UserDecryptCallValues {
-    pub(crate) fn new(
-        payload: UserDecryptionResponsePayload,
-        extra_data: Vec<u8>,
-        sigs: DecryptionSignatures,
-    ) -> Self {
-        Self {
-            payload,
-            signature: sigs.signature,
-            external_signature: sigs.external_signature,
-            extra_data,
-            signatures: sigs.signatures,
-        }
-    }
-}
+/// The finished user decryption response; see [`DecryptionCallValues`].
+pub type UserDecryptCallValues = DecryptionCallValues<UserDecryptionResponsePayload>;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1665,10 +1597,18 @@ pub(crate) mod tests {
 
         for schemes in choices {
             let sigs = super::sign_public_decryption_result(
-                &sk, &schemes, &payload, &handles, extra_data, &domain,
+                &sk,
+                &schemes,
+                payload.clone(),
+                &handles,
+                extra_data.to_vec(),
+                &domain,
             )
             .unwrap();
             assert_eq!(sigs.signatures.len(), schemes.len());
+            // The payload is carried through untouched, so what was signed is what is returned.
+            assert_eq!(sigs.payload, payload);
+            assert_eq!(sigs.extra_data, extra_data);
 
             // The deprecated scalar field is the raw signature over the payload.
             let legacy = internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, &sk).unwrap();
@@ -1711,7 +1651,7 @@ pub(crate) mod tests {
     /// Each job carries its own message, so schemes can be given distinct
     /// serializations of the same result. This is what lets a future
     /// scheme-specific encoding be introduced in [`super::decryption_result_jobs`]
-    /// without changing [`super::compute_decryption_scheme_signatures`].
+    /// without changing [`super::compute_result_signatures`].
     #[test]
     fn decryption_scheme_signatures_honour_per_scheme_messages() {
         use super::{SchemeSigningJob, SigningApproach};
@@ -1736,7 +1676,7 @@ pub(crate) mod tests {
             },
         ];
 
-        let sigs = super::compute_decryption_scheme_signatures(&sk, dsep, &jobs).unwrap();
+        let sigs = super::compute_result_signatures(&sk, dsep, &jobs).unwrap();
         assert_eq!(sigs.len(), 2);
 
         for (job, scheme_sig) in jobs.iter().zip(&sigs) {

@@ -367,12 +367,11 @@ fn validate_user_decrypt_responses(
         // The deprecated scalar `signature` field carries the raw internal ECDSA
         // signature over the serialized payload.
         // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        let ecdsa_sig = cur_resp.signature.as_slice();
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             trusted_ctx,
             &pivot_payload,
             cur_payload,
-            ecdsa_sig,
+            &cur_resp.signature,
             &eip712_params,
         ) {
             tracing::warn!(
@@ -519,14 +518,14 @@ mod tests {
             CiphertextHandle, ParsedUserDecryptionRequest, compute_link,
         },
         cryptography::{
-            compute_user_decrypt_message,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey,
-                compute_eip712_signature, gen_sig_keys, internal_sign,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey, gen_sig_keys,
+                internal_sign,
             },
         },
         dummy_domain,
+        engine::base::sign_user_decryption_result,
         engine::validation_wasm::{
             ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
             ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
@@ -554,9 +553,15 @@ mod tests {
         user_pk_buf: &[u8],
         extra_data: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let message = compute_user_decrypt_message(payload, user_pk_buf, extra_data)?;
-        tracing::debug!("Computing signature for UserDecryptResponseVerification");
-        compute_eip712_signature(server_sk, &message, eip712_domain)
+        Ok(sign_user_decryption_result(
+            server_sk,
+            &[],
+            payload.clone(),
+            user_pk_buf,
+            extra_data.to_vec(),
+            eip712_domain,
+        )?
+        .external_signature)
     }
 
     #[test]

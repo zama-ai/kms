@@ -594,23 +594,19 @@ impl<
             };
 
             // Compute expensive signatures OUTSIDE the lock
-            let signed = {
-                let extra_data = extra_data.clone();
-                let payload = payload.clone();
-                spawn_compute_bound(move || {
-                    sign_public_decryption_result(
-                        &sigkey,
-                        &signing_schemes,
-                        &payload,
-                        &ext_handles_bytes,
-                        &extra_data,
-                        &eip712_domain,
-                    )
-                })
-                .await
-            };
+            let signed = spawn_compute_bound(move || {
+                sign_public_decryption_result(
+                    &sigkey,
+                    &signing_schemes,
+                    payload,
+                    &ext_handles_bytes,
+                    extra_data,
+                    &eip712_domain,
+                )
+            })
+            .await;
             let res = match signed {
-                Ok(Ok(sigs)) => Ok(PubDecCallValues::new(req_id, payload, extra_data, sigs)),
+                Ok(Ok(values)) => Ok(values),
                 Err(e) | Ok(Err(e)) => Err(format!(
                     "Failed to sign decryption result for request {req_id}: {e:?}"
                 )),
@@ -661,7 +657,6 @@ impl<
         )
         .await?;
         let PubDecCallValues {
-            request_id: retrieved_req_id,
             payload,
             signature,
             external_signature,
@@ -669,12 +664,13 @@ impl<
             signatures,
         } = (*arc).clone();
 
-        if request_id != retrieved_req_id {
+        if payload.request_id != Some(request_id.into()) {
             return Err(MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,
                 Some(request_id),
                 anyhow::anyhow!(
-                    "Request ID mismatch: expected {request_id}, got {retrieved_req_id}"
+                    "Request ID mismatch: expected {request_id}, got {:?}",
+                    payload.request_id
                 ),
                 tonic::Code::Internal,
             ));

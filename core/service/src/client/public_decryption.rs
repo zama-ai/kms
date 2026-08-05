@@ -113,8 +113,8 @@ impl Client {
             // The deprecated scalar `signature` field carries the raw internal
             // ECDSA signature over the serialized payload.
             // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-            let ecdsa_sig = cur_resp.signature.as_slice();
-            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(ecdsa_sig)?);
+            let sig =
+                Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
 
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
