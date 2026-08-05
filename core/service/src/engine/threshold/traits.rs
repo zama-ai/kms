@@ -12,6 +12,10 @@ pub trait UserDecryptor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError>;
+    async fn user_decrypt_sync(
+        &self,
+        request: Request<UserDecryptionRequest>,
+    ) -> Result<Response<UserDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
