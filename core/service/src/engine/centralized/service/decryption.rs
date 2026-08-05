@@ -49,7 +49,7 @@ pub async fn user_decrypt_impl<
         typed_ciphertexts,
         link,
         client_enc_key_bytes,
-        client_address,
+        receiver,
         request_id,
         key_id,
         context_id,
@@ -127,7 +127,7 @@ pub async fn user_decrypt_impl<
                 &typed_ciphertexts,
                 &link,
                 &client_enc_key_bytes,
-                &client_address,
+                &receiver,
                 server_verf_key,
                 &domain,
                 &extra_data,
@@ -796,6 +796,7 @@ mod test_user_decryption {
             context_id: None,
             epoch_id: None,
             solana_pubkey: None,
+            solana_verifying_program_id: None,
         };
 
         let _ = user_decrypt_impl(&kms, tonic::Request::new(request))
@@ -850,6 +851,7 @@ mod test_user_decryption {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
 
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
@@ -874,6 +876,7 @@ mod test_user_decryption {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -894,6 +897,7 @@ mod test_user_decryption {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -914,6 +918,7 @@ mod test_user_decryption {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -947,6 +952,7 @@ mod test_user_decryption {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
 
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
@@ -992,6 +998,7 @@ mod test_user_decryption {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             let err = user_decrypt_impl(&kms, tonic::Request::new(request))
                 .await
@@ -1022,6 +1029,7 @@ mod test_user_decryption {
             context_id: None,
             epoch_id: None,
             solana_pubkey: None,
+            solana_verifying_program_id: None,
         };
 
         // first request should succeed

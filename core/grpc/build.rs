@@ -60,6 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "UserDecryptionRequest.solana_pubkey",
             "#[wasm_bindgen(skip)]",
         )
+        .field_attribute(
+            "UserDecryptionRequest.solana_verifying_program_id",
+            "#[wasm_bindgen(skip)]",
+        )
         .type_attribute(
             "UserDecryptionResponse",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",

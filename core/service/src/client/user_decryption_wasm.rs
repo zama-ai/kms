@@ -26,8 +26,10 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::fhe_types_to_num_blocks;
-use kms_grpc::rpc_types::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
+use kms_grpc::rpc_types::{SigncryptionReceiver, fhe_types_to_num_blocks};
+use kms_grpc::solana_binding::{
+    SOLANA_IDENTITY_LEN, SolanaUserDecryptBinding, SolanaUserDecryptBindingError,
+};
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::FheTypes;
@@ -41,19 +43,31 @@ use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 
+/// Recomputes the request's link from the client's own trusted state.
+///
+/// The client holds a chain id of its own — the one its permit was signed for — so unlike a KMS
+/// party it can check the value the handles embed against a declared one, and does.
 fn compute_solana_user_decrypt_link(
     request: &ParsedUserDecryptionRequest,
-    solana_user_pubkey: &[u8; 32],
+    solana_user_pubkey: &[u8; SOLANA_IDENTITY_LEN],
     declared_chain_id: u64,
+    verifying_program_id: &[u8; SOLANA_IDENTITY_LEN],
+    kms_context_id: &[u8; SOLANA_IDENTITY_LEN],
+    kms_epoch_id: &[u8; SOLANA_IDENTITY_LEN],
 ) -> Result<Vec<u8>, SolanaUserDecryptBindingError> {
-    let binding = SolanaUserDecryptBinding::try_from_handle_bytes(
+    let binding = SolanaUserDecryptBinding::new(
+        verifying_program_id,
+        solana_user_pubkey,
+        kms_context_id,
+        kms_epoch_id,
         request
             .ciphertext_handles
             .iter()
             .map(|handle| handle.0.as_slice()),
+        &request.enc_key,
     )?;
     binding.validate_declared_chain_id(declared_chain_id)?;
-    Ok(binding.compute_link(&request.enc_key, solana_user_pubkey))
+    Ok(binding.compute_link())
 }
 
 impl Client {
@@ -234,30 +248,46 @@ impl Client {
             .collect()
     }
 
-    /// Solana (RFC-021) centralized de-signcryption.
+    /// Solana centralized de-signcryption.
     ///
-    /// Identical to [`Self::centralized_user_decryption_resp`] except for the request<->response
-    /// binding `link`: on Solana it is the opaque keccak [`compute_link_solana`] digest over
-    /// `(host_chain_id, solana_user_pubkey, handles, enc_key)`, not the EVM `UserDecryptionLinker`
-    /// EIP-712 hash. The KMS signcrypts against this same link and the derived signcryption
-    /// `receiver_id = keccak256(solana_user_pubkey)[12..]` (see the Solana branch in
-    /// `validation_non_wasm`), so the client reproduces both here. The link is opaque AAD to the
-    /// signcryption layer, so the unsigncryption is mechanically the EVM path with a different link.
+    /// Identical to [`Self::centralized_user_decryption_resp`] except for two values, both of
+    /// which the client recomputes from its own state rather than trusting the response for:
+    /// the request<->response binding `link`, which on Solana is
+    /// [`SolanaUserDecryptBinding::compute_link`] over the deployment pair, the recipient, the KMS
+    /// context and epoch, the handles and the transport key, instead of the EVM
+    /// `UserDecryptionLinker` EIP-712 hash; and the signcryption `receiver_id`, which is the
+    /// 32-byte wallet key itself, never a hash of it. The link is opaque AAD to the signcryption
+    /// layer, so the unsigncryption is mechanically the EVM path with a different link.
     ///
     /// Server authenticity is checked via the internal ECDSA signature over the response payload;
     /// the external EIP-712 certificate is the on-chain-consumable artifact and is not needed to
     /// recover the plaintext client-side. Every handle must embed the same high-bit Solana chain
     /// ID, and that ID must equal `host_chain_id`, before the link is computed.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every argument is a value the link commits to; collapsing them into a struct is \
+                  the response-verification work, not this seam"
+    )]
     pub fn process_user_decryption_resp_solana(
         &self,
         request: &ParsedUserDecryptionRequest,
-        solana_user_pubkey: &[u8; 32],
+        solana_user_pubkey: &[u8; SOLANA_IDENTITY_LEN],
         host_chain_id: u64,
+        verifying_program_id: &[u8; SOLANA_IDENTITY_LEN],
+        kms_context_id: &[u8; SOLANA_IDENTITY_LEN],
+        kms_epoch_id: &[u8; SOLANA_IDENTITY_LEN],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let link = compute_solana_user_decrypt_link(request, solana_user_pubkey, host_chain_id)?;
+        let link = compute_solana_user_decrypt_link(
+            request,
+            solana_user_pubkey,
+            host_chain_id,
+            verifying_program_id,
+            kms_context_id,
+            kms_epoch_id,
+        )?;
 
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -307,8 +337,12 @@ impl Client {
             })?;
         }
 
-        // receiver_id mirrors the server's `solana_user_decrypt_client_id`: keccak256(pubkey)[12..].
-        let receiver_id = alloy_primitives::keccak256(solana_user_pubkey)[12..].to_vec();
+        // Through the same mapping the server used, not a second copy of it: the recipient is the
+        // wallet key itself. Two keys colliding under a hash-and-truncate would be one recipient to
+        // signcryption, and the result would open under the wrong key.
+        let receiver_id = SigncryptionReceiver::Solana(*solana_user_pubkey)
+            .as_bytes()
+            .to_vec();
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
@@ -1072,11 +1106,30 @@ mod solana_request_link_tests {
     };
 
     const SOLANA_CHAIN_ID: u64 = (1 << 63) | 12_345;
+    const PROGRAM_ID: [u8; 32] = [0x22; 32];
+    const CONTEXT_ID: [u8; 32] = [0x44; 32];
+    const EPOCH_ID: [u8; 32] = [0x55; 32];
 
     fn handle(chain_id: u64) -> Vec<u8> {
         let mut handle = vec![0xabu8; 32];
         handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
         handle
+    }
+
+    /// The client-side link for `request`, under the fixed deployment and key-selection fields.
+    fn link(
+        request: &ParsedUserDecryptionRequest,
+        pubkey: &[u8; 32],
+        declared_chain_id: u64,
+    ) -> Result<Vec<u8>, SolanaUserDecryptBindingError> {
+        compute_solana_user_decrypt_link(
+            request,
+            pubkey,
+            declared_chain_id,
+            &PROGRAM_ID,
+            &CONTEXT_ID,
+            &EPOCH_ID,
+        )
     }
 
     fn request(handles: Vec<Vec<u8>>) -> ParsedUserDecryptionRequest {
@@ -1094,14 +1147,9 @@ mod solana_request_link_tests {
     fn validates_the_declared_chain_id_before_processing_a_response() {
         let request = request(vec![handle(SOLANA_CHAIN_ID)]);
         let pubkey = [0x11; 32];
+        assert_eq!(link(&request, &pubkey, SOLANA_CHAIN_ID).unwrap().len(), 32);
         assert_eq!(
-            compute_solana_user_decrypt_link(&request, &pubkey, SOLANA_CHAIN_ID)
-                .unwrap()
-                .len(),
-            32
-        );
-        assert_eq!(
-            compute_solana_user_decrypt_link(&request, &pubkey, SOLANA_CHAIN_ID + 1),
+            link(&request, &pubkey, SOLANA_CHAIN_ID + 1),
             Err(SolanaUserDecryptBindingError::DeclaredChainIdMismatch {
                 declared: SOLANA_CHAIN_ID + 1,
                 embedded: SOLANA_CHAIN_ID,
@@ -1113,14 +1161,14 @@ mod solana_request_link_tests {
     fn rejects_invalid_handle_chain_ids_and_widths() {
         let pubkey = [0x11; 32];
         assert_eq!(
-            compute_solana_user_decrypt_link(&request(vec![handle(12_345)]), &pubkey, 12_345),
+            link(&request(vec![handle(12_345)]), &pubkey, 12_345),
             Err(SolanaUserDecryptBindingError::InvalidHandleChainId {
                 index: 0,
                 chain_id: 12_345,
             })
         );
         assert_eq!(
-            compute_solana_user_decrypt_link(&request(vec![vec![0; 31]]), &pubkey, SOLANA_CHAIN_ID),
+            link(&request(vec![vec![0; 31]]), &pubkey, SOLANA_CHAIN_ID),
             Err(SolanaUserDecryptBindingError::InvalidHandleLength {
                 index: 0,
                 actual: 31,

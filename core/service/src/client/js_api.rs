@@ -431,16 +431,39 @@ pub fn process_user_decryption_resp_from_js(
     }
 }
 
+/// A 32-byte Solana identity from a JS byte array. The argument is named in the error because four
+/// same-width values arrive here and a bare width complaint would not say which one was wrong.
+fn solana_identity(
+    bytes: &[u8],
+    name: &str,
+) -> Result<[u8; kms_grpc::solana_binding::SOLANA_IDENTITY_LEN], JsError> {
+    bytes.try_into().map_err(|_| {
+        JsError::new(&format!(
+            "{name} must be {} bytes",
+            kms_grpc::solana_binding::SOLANA_IDENTITY_LEN
+        ))
+    })
+}
+
 /// Solana variant of [process_user_decryption_resp_from_js]. Self-contained: Solana has no
-/// on-chain KMSVerifier, so the KMS verification key(s) are taken from the response payload(s) and
-/// the client address is derived from the Solana user pubkey (`keccak256(pubkey)[12..]`). The
-/// signed link is the keccak `compute_link_solana` digest (32-byte pubkey + host chain id), not the
-/// EVM EIP-712 `UserDecryptionLinker`; de-signcryption is otherwise identical to the EVM path.
+/// on-chain KMSVerifier, so the KMS verification key(s) are taken from the response payload(s), and
+/// the client carries no wallet address — the recipient is the 32-byte ed25519 key itself. The
+/// signed link is the Solana user-decryption binding over the deployment pair
+/// (`verifying_program_id`, host chain id), the recipient, the KMS context and epoch, the handles
+/// and the transport key, not the EVM EIP-712 `UserDecryptionLinker`; de-signcryption is otherwise
+/// identical to the EVM path.
 #[wasm_bindgen]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every argument is a value the link commits to; a JS-facing struct would hide that"
+)]
 pub fn process_user_decryption_resp_solana_from_js(
     request: JsValue,
     solana_user_pubkey: Vec<u8>,
     host_chain_id: u64,
+    verifying_program_id: Vec<u8>,
+    kms_context_id: Vec<u8>,
+    kms_epoch_id: Vec<u8>,
     agg_resp: JsValue,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
@@ -449,13 +472,12 @@ pub fn process_user_decryption_resp_solana_from_js(
     let agg_resp = js_to_resp(agg_resp)
         .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
     let request = ParsedUserDecryptionRequest::try_from(request)?;
-    let solana_user_pubkey: [u8; 32] = solana_user_pubkey
-        .as_slice()
-        .try_into()
-        .map_err(|_| JsError::new("solana_user_pubkey must be 32 bytes"))?;
+    let solana_user_pubkey = solana_identity(&solana_user_pubkey, "solana_user_pubkey")?;
+    let verifying_program_id = solana_identity(&verifying_program_id, "verifying_program_id")?;
+    let kms_context_id = solana_identity(&kms_context_id, "kms_context_id")?;
+    let kms_epoch_id = solana_identity(&kms_epoch_id, "kms_epoch_id")?;
 
-    // Build the client from the KMS verification key(s) carried in the response payload(s);
-    // the client address is the Solana receiver id keccak256(pubkey)[12..].
+    // Build the client from the KMS verification key(s) carried in the response payload(s).
     let mut server_pks = HashMap::new();
     for (i, resp) in agg_resp.iter().enumerate() {
         let payload = resp
@@ -466,22 +488,16 @@ pub fn process_user_decryption_resp_solana_from_js(
             .map_err(|e| JsError::new(&format!("verification key parse failed: {e}")))?;
         server_pks.insert((i + 1) as u32, vk);
     }
-    let client_address = alloy_primitives::Address::from_slice(
-        &alloy_primitives::keccak256(solana_user_pubkey)[12..],
-    );
-    let client = Client {
-        server_identities: ServerIdentities::Pks(server_pks),
-        client_address,
-        client_sk: None,
-        params: BC_PARAMS_SNS,
-        decryption_mode: DecryptionMode::default(),
-    };
+    let client = Client::new_solana(server_pks, BC_PARAMS_SNS, None);
 
     // Internally plaintexts are little-endian; JS expects big-endian (mirror the EVM wrapper).
     match client.process_user_decryption_resp_solana(
         &request,
         &solana_user_pubkey,
         host_chain_id,
+        &verifying_program_id,
+        &kms_context_id,
+        &kms_epoch_id,
         &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
         &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
         &agg_resp,
