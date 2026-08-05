@@ -145,6 +145,15 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
+        async fn user_decrypt_sync(
+            &self,
+            request: Request<UserDecryptionRequest>,
+        ) -> Result<Response<UserDecryptionResponse>, Status> {
+            METRICS.increment_request_counter(OP_USER_DECRYPT_SYNC);
+            self.user_decryptor.user_decrypt_sync(request).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
         async fn public_decrypt(
             &self,
             request: Request<PublicDecryptionRequest>,

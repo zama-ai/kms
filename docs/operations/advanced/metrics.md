@@ -52,8 +52,9 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `decompression_keygen` - Decompression key generation
 
 *Decryption Operations*:
-- `user_decrypt_request` - User decryption requests
-- `user_decrypt_result` - User decryption result retrievals
+- `user_decrypt_request` - Asynchronous user decryption requests
+- `user_decrypt_result` - User decryption result retrievals through `GetUserDecryptionResult`
+- `user_decrypt_sync` - Synchronous user decryption requests
 - `user_decrypt_inner` - Individual user decryption operations *(duration only)*
 - `public_decrypt_request` - Public decryption requests
 - `public_decrypt_result` - Public decryption result retrievals
