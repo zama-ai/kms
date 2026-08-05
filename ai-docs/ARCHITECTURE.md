@@ -167,7 +167,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context.
+  of truth for which epochs belong to a context. In-memory lifecycle leases
+  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
+  its target context and epoch through all PRSS, resharing and persistence work,
+  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  taking snapshots or deleting data. A conflicting destruction is refused with
+  `FailedPrecondition`, including while PRSS is still running and the new epoch
+  has not yet been registered in the session maker; callers retry once creation
+  has settled.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -223,6 +230,16 @@ Custodian workflows are driven through the
 / `CustodianBackupRecovery` RPCs defined in
 [kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto).
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
+
+`NewCustodianContext` points the keychain at the new context and re-encrypts the whole
+vault under it *before* persisting the recovery material, so it is rolled back if any later
+step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
+vault entries written under the failed id are purged
+(`rollback_failed_custodian_setup` in
+[context_manager.rs](core/service/src/engine/context_manager.rs) and
+`Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
+whose recovery material was never written, making them unrecoverable. Setups are serialized
+against each other for the same reason.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at

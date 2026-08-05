@@ -119,8 +119,24 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
         custodian_context_id: RequestId,
         backup_enc_key: UnifiedPublicEncKey,
     ) {
-        self.backup_enc_key = Some(backup_enc_key);
-        self.custodian_context_id = Some(custodian_context_id);
+        self.restore_backup_enc_key(Some((custodian_context_id, backup_enc_key)));
+    }
+
+    /// Restore the backup encryption key and custodian context id to a previously
+    /// captured `(context_id, backup_enc_key)` snapshot. Passing `None` resets the
+    /// keychain to the uninitialized state (no backup key set).
+    ///
+    /// This is used to roll back a custodian-context setup that fails before its
+    /// recovery material is persisted, so the keychain is never left pointing at a
+    /// context whose recovery material does not exist — which would otherwise make
+    /// any later backup encrypted under that key unrecoverable.
+    pub fn restore_backup_enc_key(&mut self, state: Option<(RequestId, UnifiedPublicEncKey)>) {
+        let (custodian_context_id, backup_enc_key) = match state {
+            Some((id, key)) => (Some(id), Some(key)),
+            None => (None, None),
+        };
+        self.custodian_context_id = custodian_context_id;
+        self.backup_enc_key = backup_enc_key;
     }
 
     /// After recovery of the private decryption key has been carried out with the help of the custodians
@@ -302,6 +318,34 @@ mod tests {
         keychain.set_backup_enc_key(req_id, enc_key.clone());
         assert_eq!(keychain.get_backup_enc_key().unwrap(), enc_key);
         assert_eq!(keychain.get_current_backup_id().unwrap(), req_id);
+    }
+
+    #[tokio::test]
+    async fn test_restore_backup_enc_key_restores_and_resets() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let mut keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
+            .await
+            .unwrap();
+        let req_id = RequestId::zeros();
+
+        // Restoring to a captured snapshot initializes the keychain.
+        keychain.restore_backup_enc_key(Some((req_id, enc_key.clone())));
+        assert_eq!(keychain.get_backup_enc_key().unwrap(), enc_key);
+        assert_eq!(keychain.get_current_backup_id().unwrap(), req_id);
+
+        // Restoring `None` resets the keychain to the uninitialized state, so a failed
+        // custodian setup never leaves it pointing at a context with no recovery material.
+        keychain.restore_backup_enc_key(None);
+        assert!(
+            keychain.get_backup_enc_key().is_err(),
+            "backup enc key must be cleared on reset"
+        );
+        assert!(
+            keychain.get_current_backup_id().is_err(),
+            "current backup id must be cleared on reset"
+        );
     }
 
     #[tokio::test]
