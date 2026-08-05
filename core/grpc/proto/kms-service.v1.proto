@@ -263,14 +263,14 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:
   // * Same pre-conditions as `UserDecrypt`, except that `request_id` in `request` does not need
-  //   to be fresh. A `request_id` that is already known is handled exactly as re-sending it to
-  //   `UserDecrypt`, with the difference that this method then waits for the outcome instead of
-  //   rejecting the call:
+  //   to be fresh: unlike `UserDecrypt`, this method never rejects a known `request_id` with
+  //   `AlreadyExists`. Instead:
   //   * if a decryption for it is still running, or has already succeeded, no new decryption is
   //     started: this call attaches to that attempt and returns its result. The remaining
   //     content of `request` is ignored in this case.
   //   * if the previous attempt for it failed, a new decryption is started from the content of
-  //     this `request`, and this call returns the outcome of that new attempt.
+  //     this `request` (the same redo-on-failure rule as `UserDecrypt`), and this call returns
+  //     the outcome of that new attempt.
   // ## Post-condition:
   // * The result can be retrieved again with `GetUserDecryptionResult`.
   rpc UserDecryptSync(kms.v1.UserDecryptionRequest) returns (kms.v1.UserDecryptionResponse);

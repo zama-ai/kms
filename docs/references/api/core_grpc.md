@@ -1045,6 +1045,6 @@ This is the same request and response as `UserDecrypt`/`GetUserDecryptionResult`
 
 The request is still recorded internally, so the result also remains retrievable through `GetUserDecryptionResult`. If the result is not ready before the server's waiting window expires, the call returns `UNAVAILABLE` while the decryption keeps running in the background; the result can then be fetched with `GetUserDecryptionResult` or by re-sending the same request to `UserDecryptSync`.
 
-A `request_id` that is already known is handled exactly as re-sending it to `UserDecrypt` would be, except that this method waits for the outcome instead of rejecting the call. If a decryption for that `request_id` is still running or has already succeeded, no new decryption is started: the call attaches to that attempt and returns its result, ignoring the rest of the request. If the previous attempt failed, a new decryption is started from the content of the new request, and the call returns the outcome of that new attempt.
+Unlike `UserDecrypt`, this method never rejects a `request_id` that is already known with `ALREADY_EXISTS`. If a decryption for that `request_id` is still running or has already succeeded, no new decryption is started: the call attaches to that attempt and returns its result, ignoring the rest of the request. If the previous attempt failed, a new decryption is started from the content of the new request (the same redo-on-failure rule as `UserDecrypt`), and the call returns the outcome of that new attempt.
 
 </details>
