@@ -56,8 +56,9 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `user_decrypt_result` - User decryption result retrievals through `GetUserDecryptionResult`
 - `user_decrypt_sync` - Synchronous user decryption requests
 - `user_decrypt_inner` - Individual user decryption operations *(duration only)*
-- `public_decrypt_request` - Public decryption requests
-- `public_decrypt_result` - Public decryption result retrievals
+- `public_decrypt_request` - Asynchronous public decryption requests
+- `public_decrypt_result` - Public decryption result retrievals through `GetPublicDecryptionResult`
+- `public_decrypt_sync` - Synchronous public decryption requests
 - `public_decrypt_inner` - Individual public decryption operations *(duration only)*
 
 *CRS Operations*:

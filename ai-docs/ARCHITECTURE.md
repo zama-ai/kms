@@ -147,10 +147,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
-  (user-initiated, EIP-712 authenticated). `UserDecryptSync` starts a user
-  decryption and waits for its result in the same call, so the caller does not
-  need `GetUserDecryptionResult`; a known `request_id` attaches to the running or
-  succeeded attempt, and redoes a failed one, just like `UserDecrypt`.
+  (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
+  start a decryption and wait for its result in the same call, so the caller does
+  not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
+  the running or succeeded attempt, and redoes a failed one, just like the async
+  variants.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched

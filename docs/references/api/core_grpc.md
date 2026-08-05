@@ -664,10 +664,13 @@ If the call is successful, the `CrsGenResult` will contain the `request_id` used
 
 ```proto
 message PublicDecryptionRequest {
-  repeated TypedCiphertext ciphertexts = 1;
-  RequestId key_id = 2;
-  Eip712DomainMsg domain = 3;
-  RequestId request_id = 4;
+  RequestId request_id = 1;
+  repeated TypedCiphertext ciphertexts = 2;
+  RequestId key_id = 3;
+  Eip712DomainMsg domain = 4;
+  bytes extra_data = 5;
+  RequestId context_id = 6;
+  RequestId epoch_id = 7;
 }
 
 
@@ -689,14 +692,17 @@ message Empty {}
 ### Description
 
 This RPC initiates the __asynchronous__ public decryption of the provided `ciphertexts`.
-The status or result can be retrieved with a call to the `GetDecryptResult` endpoint.
+The status or result can be retrieved with a call to the `GetPublicDecryptionResult` endpoint.
 
 It expects:
 
+- `request_id`: A unique uint256 RequestId for the decryption request.
 - `ciphertexts`: an array of the `TypedCiphertext`s (described below) to decrypt.
 - `key_id`: the `RequestId` that corresponds to the TFHE key the ciphertexts are encrypted under.
-- `request_id`: A unique uint256 RequestId for the decryption request.
 - `domain`: EIP712 domain information which will be used when signing the decrypted plaintext.
+- `extra_data`: Extra data used in the EIP712 signature - `external_signature`.
+- `context_id`: The MPC context ID used to identify the context to use for this request. If unset, the server's default context is used.
+- `epoch_id`: The MPC epoch ID identifying which epoch's key material and session to use for this request.
 
 Each ciphertext to be decrypted comes accompanied by some metadata in the `TypedCiphertext` structure:
 
@@ -722,14 +728,15 @@ message RequestId { string request_id = 1; }
 ```proto
 message PublicDecryptionResponse {
   bytes signature = 1;
-  PublicDecryptionResponsePayload payload = 2;
+  bytes external_signature = 2;
+  PublicDecryptionResponsePayload payload = 3;
+  bytes extra_data = 4;
 }
 
 message PublicDecryptionResponsePayload {
   bytes verification_key = 1;
-  bytes digest = 2;
-  repeated TypedPlaintext plaintexts = 3;
-  optional bytes external_signature = 4;
+  repeated TypedPlaintext plaintexts = 2;
+  RequestId request_id = 3;
 }
 
 ```
@@ -740,12 +747,55 @@ This RPC allows to retrieve the plaintexts if the `request_id` is that of a fini
 
 The `signature` is a `secp256k1` signature on the `bincode::serialize` of the `payload` using the core's private key.
 
+- `signature`: the `secp256k1` signature described above.
+- `external_signature`: The `EIP-712` signature on the encoding of the uint256 handles of the ciphertexts, concatenated with big endian encoding of the `TypedPlaintext`s using the KMS core's private key.
+- `extra_data`: Extra data used in the EIP712 signature - `external_signature`.
+
 #### The `payload` is composed of
 
 - `verification_key`: the `bincode::serialize` `ECDSA/secp256k1` verification key of the core.
-- `digest`: The 256 bits `SHAKE-256` digest of the corresponding `bincode::serialize` `PublicDecrypt` request.
 - `plaintexts`: An array of plaintexts and their meta information that are the requested decryptions.
-- `external_signature`: The `EIP-712` signature on the encoding of the uint256 handles of the ciphertexts, concatenated with big endian encoding of the `TypedPlaintext`s using the KMS core's private key.
+- `request_id`: The `RequestId` of the request this response corresponds to.
+
+</details>
+
+<details>
+    <summary> PublicDecryptSync </summary>
+
+### Input
+
+```proto
+message PublicDecryptionRequest {
+  RequestId request_id = 1;
+  repeated TypedCiphertext ciphertexts = 2;
+  RequestId key_id = 3;
+  Eip712DomainMsg domain = 4;
+  bytes extra_data = 5;
+  RequestId context_id = 6;
+  RequestId epoch_id = 7;
+}
+```
+
+### Output
+
+```proto
+message PublicDecryptionResponse {
+  bytes signature = 1;
+  bytes external_signature = 2;
+  PublicDecryptionResponsePayload payload = 3;
+  bytes extra_data = 4;
+}
+```
+
+### Description
+
+This is the same request and response as `PublicDecrypt`/`GetPublicDecryptionResult` above, see the `PublicDecryption` and `PublicDecryptionResponse` sections for a description of each field.
+
+`PublicDecryptSync` is the __synchronous__ variant of `PublicDecrypt`: it starts the public decryption exactly as `PublicDecrypt` does and then waits for the result within the same call, returning the same `PublicDecryptionResponse` that `GetPublicDecryptionResult` would return. This saves the caller the second round trip.
+
+The request is still recorded internally, so the result also remains retrievable through `GetPublicDecryptionResult`. If the result is not ready before the server's waiting window expires, the call returns `UNAVAILABLE` while the decryption keeps running in the background; the result can then be fetched with `GetPublicDecryptionResult` or by re-sending the same request to `PublicDecryptSync`.
+
+Unlike `PublicDecrypt`, this method never rejects a `request_id` that is already known with `ALREADY_EXISTS`. If a decryption for that `request_id` is still running or has already succeeded, no new decryption is started: the call attaches to that attempt and returns its result, ignoring the rest of the request. If the previous attempt failed, a new decryption is started from the content of the new request (the same redo-on-failure rule as `PublicDecrypt`), and the call returns the outcome of that new attempt.
 
 </details>
 
