@@ -510,6 +510,7 @@ impl<
         &self,
         mut two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
+        new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -531,8 +532,9 @@ impl<
             let mut keys_metadata = Vec::new();
             let (mut session_z128, mut session_z64) = Self::create_set1_sessions(
                 immutable_session_maker,
-                verified_previous_epoch.epoch_id,
-                verified_previous_epoch.context_id,
+                // To ensure that we can make new epochs from the same old session we have to use the new epoch and context id to derive the session, even for the old nodes.
+                new_epoch_id,
+                new_context_id,
             )
             .await?;
 
@@ -1001,8 +1003,9 @@ impl<
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
                 immutable_session_maker.clone(),
-                verified_previous_epoch.epoch_id,
-                verified_previous_epoch.context_id,
+                // To ensure that we can make new epochs from the same old session we have to use the new epoch and context id to derive the session, even for the old nodes.
+                new_epoch_id,
+                new_context_id,
             )
             .await?;
 
@@ -1411,7 +1414,12 @@ impl<
 
         Ok(match my_role {
             TwoSetsRole::OnlySet1(_) => self
-                .reshare_as_set_1(two_sets_session, *new_epoch_id, verified_previous_epoch)
+                .reshare_as_set_1(
+                    two_sets_session,
+                    *new_epoch_id,
+                    *new_context_id,
+                    verified_previous_epoch,
+                )
                 .await?
                 .boxed(),
             TwoSetsRole::OnlySet2(_) => self
