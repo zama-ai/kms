@@ -1,7 +1,7 @@
 //! Live RFC-021 Solana V2 user-decryption client (the user-side SDK piece), as an `#[ignore]`d
 //! integration test driven against a running fhevm-cli stack with the Solana user-decrypt path
 //! deployed (gateway V2 `userDecryptionRequest`, relayer `/v3/user-decrypt` ed25519 seam,
-//! kms-connector Solana V2 arm, kms-core `compute_link_solana`).
+//! kms-connector Solana V2 arm, the kms-core Solana user-decryption binding).
 //!
 //! Flow:
 //!   1. ML-KEM ephemeral keygen (Rust — this is also where the response is de-signcrypted).
@@ -229,6 +229,18 @@ async fn solana_user_decrypt_live() {
     )
     .unwrap();
     let context_id: [u8; 32] = context_u256.to_be_bytes();
+
+    // The other two values the response binding commits to. The program id is the host deployment
+    // the connector sent as `solana_verifying_program_id`; the epoch id is the one the KMS answered
+    // under, defaulting to the KMS default epoch for a request that omits it.
+    let program_id: [u8; 32] = alloy_primitives::hex::decode(
+        env_or("SOLANA_UD_PROGRAM_ID", &hex0x(&[0u8; 32])).trim_start_matches("0x"),
+    )
+    .expect("SOLANA_UD_PROGRAM_ID must be hex")
+    .try_into()
+    .expect("SOLANA_UD_PROGRAM_ID must be 32 bytes");
+    let epoch_id: [u8; 32] = *kms_lib::consts::DEFAULT_EPOCH_ID.as_bytes();
+
     let nonce: [u8; 32] = rand::random();
 
     let now = std::time::SystemTime::now()
@@ -409,17 +421,17 @@ async fn solana_user_decrypt_live() {
         });
     }
 
-    // 6. Build a client bound to the KMS verification key and de-signcrypt.
-    let derived = Address::from_slice(&alloy_primitives::keccak256(pubkey)[12..]);
+    // 6. Build a client bound to the KMS verification key and de-signcrypt. The Solana client has
+    //    no wallet address: the recipient is the ed25519 key itself, passed per call.
     let mut server_pks = HashMap::new();
     server_pks.insert(
         1u32,
         kms_pk.expect("KMS verification key in response payload"),
     );
-    let client = Client::new(server_pks, derived, None, DEFAULT_PARAM, None);
+    let client = Client::new_solana(server_pks, DEFAULT_PARAM, None);
     let request = ParsedUserDecryptionRequest::new(
         None,
-        derived,
+        Address::ZERO,
         pk_bytes.clone(),
         vec![CiphertextHandle::new(handle32.to_vec())],
         Address::ZERO,
@@ -431,6 +443,9 @@ async fn solana_user_decrypt_live() {
             &request,
             &pubkey,
             contracts_chain_id,
+            &program_id,
+            &context_id,
+            &epoch_id,
             &unified_pk,
             &unified_sk,
             &agg_resp,

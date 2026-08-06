@@ -84,6 +84,31 @@ impl Client {
         }
     }
 
+    /// Constructor for the Solana user-decryption path.
+    ///
+    /// Additive: it exists because a Solana client has no EVM wallet address to supply, and the
+    /// recipient it de-signcrypts under is its 32-byte ed25519 key, passed per call. The
+    /// `client_address` field is therefore zero and unused on this path — never a derivative of the
+    /// wallet key, which is what a truncating derivation would make it.
+    ///
+    /// * `server_pks` - the KMS core public keys, taken from the response payloads on Solana, which
+    ///   has no on-chain KMSVerifier to read them from.
+    /// * `params` - the FHE parameters.
+    /// * `decryption_mode` - as in [`Self::new`].
+    pub fn new_solana(
+        server_pks: HashMap<u32, PublicSigKey>,
+        params: DKGParams,
+        decryption_mode: Option<DecryptionMode>,
+    ) -> Self {
+        Self::new(
+            server_pks,
+            alloy_primitives::Address::ZERO,
+            None,
+            params,
+            decryption_mode,
+        )
+    }
+
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {
         match &self.server_identities {
             ServerIdentities::Pks(inner) => Ok(inner),

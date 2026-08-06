@@ -27,7 +27,7 @@ use kms_grpc::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
         TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
-    rpc_types::optional_protobuf_to_alloy_domain,
+    rpc_types::{SigncryptionReceiver, optional_protobuf_to_alloy_domain},
 };
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
@@ -183,7 +183,7 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
 }
 
 /// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
-/// encryption key, client verification key, key_id and request_id if valid.
+/// encryption key, the recipient the result is signcrypted to, key_id and request_id if valid.
 ///
 /// Observe that the validation is limited to checking the structure of the request and parsing data into the correct types,
 /// and does not check the existence of any of the referenced IDs (like request_id or key_id) or the consistency between them.
@@ -195,7 +195,7 @@ pub(crate) fn validate_user_decrypt_req(
         Vec<TypedCiphertext>,
         Vec<u8>,
         Vec<u8>,
-        alloy_primitives::Address,
+        SigncryptionReceiver,
         RequestId,
         KeyId,
         ContextId,
@@ -223,7 +223,7 @@ fn unpack_user_decrypt_req(
         Vec<TypedCiphertext>,
         Vec<u8>,
         Vec<u8>,
-        alloy_primitives::Address,
+        SigncryptionReceiver,
         RequestId,
         KeyId,
         ContextId,
@@ -253,14 +253,14 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    if let Some((link, client_verf_key, response_domain)) =
-        super::validation_solana::validate_user_decrypt_req(req)?
+    if let Some((link, receiver, response_domain)) =
+        super::validation_solana::validate_solana_request(req)?
     {
         return Ok((
             req.typed_ciphertexts.clone(),
             link,
             req.enc_key.clone(),
-            client_verf_key,
+            receiver,
             request_id,
             key_id,
             context_id,
@@ -299,7 +299,7 @@ fn unpack_user_decrypt_req(
         req.typed_ciphertexts.clone(),
         link,
         req.enc_key.clone(),
-        client_verf_key,
+        SigncryptionReceiver::Evm(client_verf_key),
         request_id,
         key_id,
         context_id,
@@ -1022,7 +1022,8 @@ mod tests {
             PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
             TypedPlaintext, UserDecryptionRequest,
         },
-        rpc_types::{ID_LENGTH, SolanaUserDecryptBindingError, alloy_to_protobuf_domain},
+        rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
+        solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError},
     };
 
     use rand::SeedableRng;
@@ -1206,6 +1207,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1228,6 +1230,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1253,6 +1256,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1275,6 +1279,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1297,6 +1302,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -1324,6 +1330,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1346,6 +1353,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
@@ -1372,6 +1380,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&evm_req)
@@ -1402,6 +1411,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 solana_pubkey: Some(vec![0x11; 32]),
+                solana_verifying_program_id: Some(vec![0x22; 32]),
             };
             assert!(unpack_user_decrypt_req(&solana_req).is_ok());
 
@@ -1430,8 +1440,12 @@ mod tests {
                 );
             }
 
+            // A purely legacy request: no typed Solana field at all. A program id without the
+            // pubkey is its own rejection (a contradictory request, tested with the adapter), so
+            // it is cleared here to keep this case about the legacy string alone.
             let mut legacy_string = solana_req.clone();
             legacy_string.solana_pubkey = None;
+            legacy_string.solana_verifying_program_id = None;
             legacy_string.client_address =
                 format!("solana:{}", alloy_primitives::hex::encode([0x11; 32]));
             assert!(
@@ -1483,6 +1497,78 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn the_solana_link_binds_the_context_and_epoch_the_kms_selected() {
+        // The Solana adapter parses `context_id`/`epoch_id` — including their defaults — a second
+        // time, separately from the parse a few lines above its call site. Today the two agree;
+        // this pins that the link is computed over the values the returned tuple actually carries,
+        // the ones the KMS selects keys by, so one copy of the defaulting logic cannot drift from
+        // the other silently.
+        let mut rng = AesRng::from_random_seed();
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
+        let mut enc_pk_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &enc_pk,
+            &mut enc_pk_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+
+        let mut handle = [0xabu8; 32];
+        handle[22..30].copy_from_slice(&((1u64 << 63) | 12_345).to_be_bytes());
+
+        // Context and epoch deliberately omitted: the defaulting is exactly the duplicated logic
+        // under test.
+        let req = UserDecryptionRequest {
+            request_id: Some(derive_request_id("request_id").unwrap().into()),
+            typed_ciphertexts: vec![TypedCiphertext {
+                ciphertext: vec![],
+                fhe_type: 0,
+                external_handle: handle.to_vec(),
+                ciphertext_format: 0,
+            }],
+            key_id: Some(derive_request_id("key_id").unwrap().into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            client_address: String::new(),
+            enc_key: enc_pk_buf,
+            extra_data: vec![],
+            context_id: None,
+            epoch_id: None,
+            solana_pubkey: Some(vec![0x11; 32]),
+            solana_verifying_program_id: Some(vec![0x22; 32]),
+        };
+
+        let (
+            cts,
+            link,
+            enc_key,
+            _receiver,
+            _req_id,
+            _key_id,
+            context_id,
+            epoch_id,
+            _domain,
+            _extra,
+        ) = unpack_user_decrypt_req(&req).unwrap();
+
+        let binding = SolanaUserDecryptBinding::new(
+            &[0x22; 32],
+            &[0x11; 32],
+            context_id.as_bytes(),
+            epoch_id.as_bytes(),
+            cts.iter().map(|ct| ct.external_handle.as_slice()),
+            &enc_key,
+        )
+        .unwrap();
+
+        assert_eq!(
+            link,
+            binding.compute_link(),
+            "the link must bind the context and epoch the tuple carries, not a second parse",
+        );
     }
 
     #[test]
@@ -1547,6 +1633,7 @@ mod tests {
             context_id: None,
             epoch_id: None,
             solana_pubkey: None,
+            solana_verifying_program_id: None,
         };
 
         {

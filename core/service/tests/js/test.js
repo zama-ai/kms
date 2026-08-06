@@ -161,20 +161,23 @@ test('solana chain ID crosses the WASM boundary as an exact bigint', (_t) => {
         ciphertext_handles: [Buffer.from(handle).toString('hex')],
     };
     const pubkey = new Uint8Array(32).fill(0x11);
+    const programId = new Uint8Array(32).fill(0x22);
+    const contextId = new Uint8Array(32).fill(0x33);
+    const epochId = new Uint8Array(32).fill(0x44);
 
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            request, pubkey, solanaChainId, [], enc_pk, enc_sk),
+            request, pubkey, solanaChainId, programId, contextId, epochId, [], enc_pk, enc_sk),
         /Response does not exist/,
     );
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            request, pubkey, solanaChainId + 1n, [], enc_pk, enc_sk),
+            request, pubkey, solanaChainId + 1n, programId, contextId, epochId, [], enc_pk, enc_sk),
         /does not match handle chain ID/,
     );
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            request, pubkey, Number(solanaChainId), [], enc_pk, enc_sk),
+            request, pubkey, Number(solanaChainId), programId, contextId, epochId, [], enc_pk, enc_sk),
         TypeError,
     );
 });

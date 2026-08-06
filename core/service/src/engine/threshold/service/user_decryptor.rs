@@ -455,7 +455,7 @@ impl<
             typed_ciphertexts,
             link,
             client_enc_key_bytes_orig, // the original bytes for the encryption key
-            client_address,
+            receiver,
             req_id,
             key_id,
             context_id,
@@ -505,7 +505,7 @@ impl<
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
             sk,
             client_enc_key,
-            client_address.to_vec(),
+            receiver.as_bytes().to_vec(),
         ));
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
@@ -813,6 +813,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -837,6 +838,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -866,6 +868,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -895,6 +898,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -940,6 +944,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -979,6 +984,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
             solana_pubkey: None,
+            solana_verifying_program_id: None,
         });
         assert_eq!(
             user_decryptor
@@ -1020,6 +1026,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -1051,6 +1058,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: Some(bad_epoch_id.into()),
                 solana_pubkey: None,
+                solana_verifying_program_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -1097,6 +1105,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
             solana_pubkey: None,
+            solana_verifying_program_id: None,
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1141,6 +1150,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
             solana_pubkey: None,
+            solana_verifying_program_id: None,
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         crate::testing::utils::poll_result_until_ready(|| {
