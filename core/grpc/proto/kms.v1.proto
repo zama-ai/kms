@@ -749,15 +749,17 @@ enum PkeSchemeType {
   MLKEM1024 = 1;
 }
 
+// A signing *suite*: the signature algorithm together, which will implicitely also define the serialization approach
+// of the message to sign. 
 enum SigningSchemeType {
   // WARNING: only append to this type!
   // Furthermore, keep these values and their numbering in lock-step with the
   // `SigningSchemeType` enum in `core/service/src/cryptography/signing/mod.rs`.
-  ECDSA256K1 = 0;
-  ED25519 = 1;
-  MLDSA44 = 2;
-  MLDSA65 = 3;
-  MLDSA87 = 4;
+  ECDSA256K1 = 0;   // using eip712
+  ED25519 = 1;      // raw serialization
+  MLDSA44 = 2;      // raw serialization
+  MLDSA65 = 3;      // raw serialization
+  MLDSA87 = 4;      // raw serialization
 }
 
 // A single signature together with the scheme that produced it.

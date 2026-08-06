@@ -395,7 +395,13 @@ fn compute_result_signatures(
                         })?;
                     crate::cryptography::signatures::eip712_sign_hash(sk, &hash)?
                 }
-                scheme => sk.unified_sign_with(scheme, dsep, &job.message)?.to_bytes(),
+                // Raw primitive signature over `dsep ‖ message`.
+                scheme @ (SigningSchemeType::Ed25519
+                | SigningSchemeType::MlDsa44
+                | SigningSchemeType::MlDsa65
+                | SigningSchemeType::MlDsa87) => {
+                    sk.unified_sign_with(scheme, dsep, &job.message)?.to_bytes()
+                }
             };
             Ok(StoredTypedSignature {
                 scheme: job.scheme,
