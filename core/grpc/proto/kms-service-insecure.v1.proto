@@ -48,6 +48,8 @@ service CoreServiceEndpoint {
 
   rpc GetPublicDecryptionResult(kms.v1.RequestId) returns (kms.v1.PublicDecryptionResponse);
 
+  rpc PublicDecryptSync(kms.v1.PublicDecryptionRequest) returns (kms.v1.PublicDecryptionResponse);
+
   rpc UserDecrypt(kms.v1.UserDecryptionRequest) returns (kms.v1.Empty);
 
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
