@@ -2033,6 +2033,62 @@ pub(crate) mod tests {
         .into_inner();
     }
 
+    #[tokio::test]
+    async fn multiple_reshares_from_same_epoch() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let prev_epoch_id = EpochId::new_random(&mut rng);
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        let epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id.into()),
+                context_id: Some(context_id.into()),
+                previous_epoch: Some(PreviousEpochInfo {
+                    context_id: Some(context_id.into()),
+                    epoch_id: Some(prev_epoch_id.into()),
+                    keys_info: vec![],
+                    crs_info: vec![],
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)).unwrap(),
+            }))
+            .await
+            .unwrap();
+        // We have an OK response so we are happy
+        let _result = crate::testing::utils::poll_result_until_ready(|| {
+            epoch_manager.get_epoch_result(tonic::Request::new(epoch_id.into()))
+        })
+        .await
+        .unwrap()
+        .into_inner();
+        // Now try to do this again with the same previous epoch
+        let epoch_id_2 = EpochId::new_random(&mut rng);
+        epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id_2.into()),
+                context_id: Some(context_id.into()), // We consider the same context as before
+                previous_epoch: Some(PreviousEpochInfo {
+                    // We consider the same previous epoch as before
+                    context_id: Some(context_id.into()),
+                    epoch_id: Some(prev_epoch_id.into()),
+                    keys_info: vec![],
+                    crs_info: vec![],
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id_2)).unwrap(),
+            }))
+            .await
+            .unwrap();
+        // We have an OK response so we are happy
+        let _result = crate::testing::utils::poll_result_until_ready(|| {
+            epoch_manager.get_epoch_result(tonic::Request::new(epoch_id_2.into()))
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    }
+
     //TODO(#2882): Make a test for answer unavailable.
 
     #[tokio::test]
@@ -2422,6 +2478,7 @@ pub(crate) mod tests {
         previous_epoch_id: EpochId,
         key_id: &RequestId,
         preproc_id: &RequestId,
+        key_parameters: DKGParams,
     ) -> VerifiedPreviousEpochInfo {
         VerifiedPreviousEpochInfo {
             context_id: *DEFAULT_MPC_CONTEXT,
@@ -2429,7 +2486,7 @@ pub(crate) mod tests {
             keys_info: vec![VerifiedKeyInfo {
                 key_id: *key_id,
                 preproc_id: *preproc_id,
-                key_parameters: crate::consts::TEST_PARAM,
+                key_parameters,
                 key_digests: HashMap::new(),
             }],
             crs_info: vec![],
@@ -2460,7 +2517,12 @@ pub(crate) mod tests {
             .validate_supplied_preproc_ids(
                 new_epoch_id.into(),
                 set1_role(),
-                &make_verified_previous_epoch(previous_epoch_id, &key_id, &stored_preproc_id),
+                &make_verified_previous_epoch(
+                    previous_epoch_id,
+                    &key_id,
+                    &stored_preproc_id,
+                    crate::consts::TEST_PARAM,
+                ),
             )
             .await
             .unwrap();
@@ -2470,7 +2532,12 @@ pub(crate) mod tests {
             .validate_supplied_preproc_ids(
                 new_epoch_id.into(),
                 set1_role(),
-                &make_verified_previous_epoch(previous_epoch_id, &key_id, &wrong_preproc_id),
+                &make_verified_previous_epoch(
+                    previous_epoch_id,
+                    &key_id,
+                    &wrong_preproc_id,
+                    crate::consts::TEST_PARAM,
+                ),
             )
             .await
             .unwrap_err();
@@ -2491,7 +2558,12 @@ pub(crate) mod tests {
             .validate_supplied_preproc_ids(
                 new_epoch_id.into(),
                 set1_role(),
-                &make_verified_previous_epoch(previous_epoch_id, &legacy_key_id, &wrong_preproc_id),
+                &make_verified_previous_epoch(
+                    previous_epoch_id,
+                    &legacy_key_id,
+                    &wrong_preproc_id,
+                    crate::consts::TEST_PARAM,
+                ),
             )
             .await
             .unwrap();
@@ -2512,7 +2584,12 @@ pub(crate) mod tests {
             .validate_supplied_preproc_ids(
                 new_epoch_id.into(),
                 set1_role(),
-                &make_verified_previous_epoch(previous_epoch_id, &key_id, &preproc_id),
+                &make_verified_previous_epoch(
+                    previous_epoch_id,
+                    &key_id,
+                    &preproc_id,
+                    crate::consts::TEST_PARAM,
+                ),
             )
             .await
             .unwrap_err();
@@ -2524,7 +2601,12 @@ pub(crate) mod tests {
             .validate_supplied_preproc_ids(
                 new_epoch_id.into(),
                 set2_role(),
-                &make_verified_previous_epoch(previous_epoch_id, &key_id, &preproc_id),
+                &make_verified_previous_epoch(
+                    previous_epoch_id,
+                    &key_id,
+                    &preproc_id,
+                    crate::consts::TEST_PARAM,
+                ),
             )
             .await
             .unwrap();
