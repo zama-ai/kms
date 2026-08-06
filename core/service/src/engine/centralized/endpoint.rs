@@ -25,7 +25,7 @@ use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl}
 use crate::engine::centralized::service::{get_key_gen_result_impl, key_gen_impl};
 use crate::engine::centralized::service::{
     get_public_decryption_result_impl, get_user_decryption_result_impl, public_decrypt_impl,
-    user_decrypt_impl,
+    public_decrypt_sync_impl, user_decrypt_impl, user_decrypt_sync_impl,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::utils::MetricedError;
@@ -189,6 +189,17 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
+    async fn user_decrypt_sync(
+        &self,
+        request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
+        METRICS.increment_request_counter(OP_USER_DECRYPT_SYNC);
+        user_decrypt_sync_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
     async fn public_decrypt(
         &self,
         request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
@@ -206,6 +217,17 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
         METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
         get_public_decryption_result_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn public_decrypt_sync(
+        &self,
+        request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
+        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_SYNC);
+        public_decrypt_sync_impl(self, request)
             .await
             .map_err(|e| e.into())
     }

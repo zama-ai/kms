@@ -196,6 +196,39 @@ service CoreServiceEndpoint {
   // * The `request_id` in `request` can be used to retrieve the result of the public decryption again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetPublicDecryptionResult(kms.v1.RequestId) returns (kms.v1.PublicDecryptionResponse);
 
+  // Synchronous variant of public decryption.
+  //
+  // That is, it starts the public decryption exactly as `PublicDecrypt` does and then waits for
+  // the result within the same call, returning this KMS' `PublicDecryptionResponse` directly.
+  // This saves the caller the second round trip through `GetPublicDecryptionResult`.
+  //
+  // The request is still recorded in the meta-store, so the result of a public decryption started
+  // through this method can also be retrieved (again) with `GetPublicDecryptionResult`.
+  // If the result is not ready before the server's waiting window expires, the call returns
+  // `Unavailable`; the decryption keeps running in the background and the result can be fetched
+  // with `GetPublicDecryptionResult`, or by calling this method again with the same request.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Returns
+  // * `Response<PublicDecryptionResponse>` - Identical to what `GetPublicDecryptionResult` returns.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * Same pre-conditions as `PublicDecrypt`, except that `request_id` in `request` does not need
+  //   to be fresh: unlike `PublicDecrypt`, this method never rejects a known `request_id` with
+  //   `AlreadyExists`. Instead:
+  //   * if a decryption for it is still running, or has already succeeded, no new decryption is
+  //     started: this call attaches to that attempt and returns its result. The remaining
+  //     content of `request` is ignored in this case.
+  //   * if the previous attempt for it failed, a new decryption is started from the content of
+  //     this `request` (the same redo-on-failure rule as `PublicDecrypt`), and this call returns
+  //     the outcome of that new attempt.
+  // ## Post-condition:
+  // * The result can be retrieved again with `GetPublicDecryptionResult`.
+  rpc PublicDecryptSync(kms.v1.PublicDecryptionRequest) returns (kms.v1.PublicDecryptionResponse);
+
   // Start the user decryption protocol.
   //
   // That is, it decrypts a ciphertext and encrypts the result under a user's public key.
@@ -241,6 +274,39 @@ service CoreServiceEndpoint {
   // ## Post-condition:
   // * The `request_id` in `request` can be used to retrieve the result of the user decryption again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
+
+  // Synchronous variant of user decryption.
+  //
+  // That is, it starts the user decryption exactly as `UserDecrypt` does and then waits for the
+  // result within the same call, returning this KMS' `UserDecryptionResponse` directly.
+  // This saves the caller the second round trip through `GetUserDecryptionResult`.
+  //
+  // The request is still recorded in the meta-store, so the result of a user decryption started
+  // through this method can also be retrieved (again) with `GetUserDecryptionResult`.
+  // If the result is not ready before the server's waiting window expires, the call returns
+  // `Unavailable`; the decryption keeps running in the background and the result can be fetched
+  // with `GetUserDecryptionResult`, or by calling this method again with the same request.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Returns
+  // * `Response<UserDecryptionResponse>` - Identical to what `GetUserDecryptionResult` returns.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * Same pre-conditions as `UserDecrypt`, except that `request_id` in `request` does not need
+  //   to be fresh: unlike `UserDecrypt`, this method never rejects a known `request_id` with
+  //   `AlreadyExists`. Instead:
+  //   * if a decryption for it is still running, or has already succeeded, no new decryption is
+  //     started: this call attaches to that attempt and returns its result. The remaining
+  //     content of `request` is ignored in this case.
+  //   * if the previous attempt for it failed, a new decryption is started from the content of
+  //     this `request` (the same redo-on-failure rule as `UserDecrypt`), and this call returns
+  //     the outcome of that new attempt.
+  // ## Post-condition:
+  // * The result can be retrieved again with `GetUserDecryptionResult`.
+  rpc UserDecryptSync(kms.v1.UserDecryptionRequest) returns (kms.v1.UserDecryptionResponse);
 
   // Start CRS generation.
   //
@@ -318,9 +384,9 @@ service CoreServiceEndpoint {
   // context is active and which is not. It does however ensure that at least 1 context will remain after the destruction call.
   //
   // The call returns the set of epoch IDs that belong to the context in `epoch_ids` which has also been destroyed as part of the call.
-  // If something goes wrong, an error is returned, and the call should be retried as some epochs might have been removed from disk. 
-  // Once a call is successful, *all* epoch ids that were associated to a context is returned. 
-  // However, after a successful call, any further calls will produce a NotFound error. 
+  // If something goes wrong, an error is returned, and the call should be retried as some epochs might have been removed from disk.
+  // Once a call is successful, *all* epoch ids that were associated to a context is returned.
+  // However, after a successful call, any further calls will produce a NotFound error.
   //
   // # Parameters
   // * `context_id` - Context ID of the MPC context to destroy.
@@ -333,7 +399,7 @@ service CoreServiceEndpoint {
   // ## Pre-condition:
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
   // ## Post-condition:
-  // * The `context_id` in `request` and any `epoch_id` in the list returned in the response can no longer be used. 
+  // * The `context_id` in `request` and any `epoch_id` in the list returned in the response can no longer be used.
   //   All MPC context data and epoch data associated with these ids, that may have existed, has been purged from both memory and disk.
   //   Concretely each epoch in `epoch_ids` that existed has had its private key shares and PRSS data purged from both memory and disk.
   //   Epochs NOT listed in the `epoch_ids` response are left untouched, even if they belong to the destroyed context.

@@ -245,6 +245,7 @@ impl K8sTestContext {
                 DecryptFile {
                     input_path: enc.cipher_path.clone(),
                     batch_size: 1,
+                    sync: false,
                     rate_options: DecryptRateOptions::default(),
                 },
             )))

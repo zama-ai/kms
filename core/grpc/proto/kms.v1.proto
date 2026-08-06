@@ -97,12 +97,12 @@ message KeyGenPreprocRequest {
   Eip712DomainMsg domain = 4;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 5;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The epoch ID for the key generation preprocessing, i.e., the shares
+  // produced under this preprocessing will be stored and registered under
+  // this epoch.
   RequestId epoch_id = 6;
 
   // Extra data used in the EIP712 signature - external_signature
@@ -203,9 +203,7 @@ message KeyGenRequest {
   KeySetAddedInfo keyset_added_info = 6;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 7;
 
   // The epoch ID for the key generation, i.e., the shares produced
@@ -297,9 +295,7 @@ message CrsGenRequest {
   Eip712DomainMsg domain = 4;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 5;
 
   // MPC Epoch ID because we tie all key material to epochs
@@ -393,12 +389,11 @@ message PublicDecryptionRequest {
   bytes extra_data = 5;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 6;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The MPC epoch ID identifying which epoch's key material and session to
+  // use for this request.
   RequestId epoch_id = 7;
 
   // The signature schemes to include in the response `signatures` field.
@@ -487,12 +482,11 @@ message UserDecryptionRequest {
   bytes extra_data = 7;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 8;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The MPC epoch ID identifying which epoch's key material and session to
+  // use for this request.
   RequestId epoch_id = 9;
 
   // The signature schemes to include in the response `signatures` field.
@@ -899,9 +893,7 @@ message NewMpcEpochRequest {
   // The KMS context of the parties that will receive
   // the shares of the private key at the end of the reshare execution
   RequestId context_id = 1;
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
-  // This is the epochId we reshare the shares from.
-  // Note: currently unused but reserved for future use.
+  // The ID of the new epoch being created by this request.
   RequestId epoch_id = 2;
   // Information about the previous epoch, used to perform resharing.
   // If not set, no keys will exist for the new epoch. (e.g. during init)
