@@ -979,6 +979,85 @@ impl TestType for StoredTypedSignatureTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrepKeygenSignedPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    /// Seed for the RNG that produces the deterministic `prep_id`. The generator
+    /// and the test both replay it so the reconstructed payload matches byte for
+    /// byte.
+    pub state: u64,
+    pub extra_data: Cow<'static, [u8]>,
+}
+
+impl TestType for PrepKeygenSignedPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PrepKeygenSignedPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KeygenSignedPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    /// Seed for the RNG that produces the deterministic `prep_id` and `key_id`
+    /// (drawn in that order). The generator and the test both replay it.
+    pub state: u64,
+    /// Digest stored under `PubDataType::ServerKey` in `key_digests`.
+    pub server_key_digest: Cow<'static, [u8]>,
+    /// Digest stored under `PubDataType::PublicKey` in `key_digests`.
+    pub public_key_digest: Cow<'static, [u8]>,
+    pub extra_data: Cow<'static, [u8]>,
+}
+
+impl TestType for KeygenSignedPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "KeygenSignedPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CrsSignedPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    /// Seed for the RNG that produces the deterministic `crs_id`. The generator
+    /// and the test both replay it.
+    pub state: u64,
+    pub max_num_bits: u32,
+    pub crs_digest: Cow<'static, [u8]>,
+    pub extra_data: Cow<'static, [u8]>,
+}
+
+impl TestType for CrsSignedPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CrsSignedPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -1011,6 +1090,9 @@ pub enum TestMetadataKMS {
     InternalCustodianRecoveryOutput(InternalCustodianRecoveryOutputTest),
     OperatorBackupOutput(OperatorBackupOutputTest),
     StoredTypedSignature(StoredTypedSignatureTest),
+    PrepKeygenSignedPayload(PrepKeygenSignedPayloadTest),
+    KeygenSignedPayload(KeygenSignedPayloadTest),
+    CrsSignedPayload(CrsSignedPayloadTest),
 }
 
 /// KMS-grpc metadata

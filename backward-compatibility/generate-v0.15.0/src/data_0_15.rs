@@ -28,7 +28,8 @@ use kms_0_15_0::cryptography::{
     },
 };
 use kms_0_15_0::engine::base::{
-    CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles, StoredTypedSignature,
+    CrsGenMetadata, CrsSignedPayload, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
+    PrepKeygenSignedPayload, StoredTypedSignature,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
@@ -96,7 +97,8 @@ use backward_compatibility::{
     CrsGenMetadataWithExtraDataTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
+    CrsSignedPayloadTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
@@ -566,6 +568,31 @@ const STORED_SCHEME_SIGNATURE_TEST: StoredTypedSignatureTest = StoredTypedSignat
         Cow::Borrowed("MlDsa87"),
     ]),
     signature: Cow::Borrowed(&[9, 8, 7, 6, 5, 4, 3, 2, 1]),
+};
+
+// KMS test — the payload non-ECDSA schemes sign for a preprocessing result.
+const PREP_KEYGEN_SIGNED_PAYLOAD_TEST: PrepKeygenSignedPayloadTest = PrepKeygenSignedPayloadTest {
+    test_filename: Cow::Borrowed("prep_keygen_signed_payload"),
+    state: 700,
+    extra_data: Cow::Borrowed(&[0x01, 0x02, 0x03, 0x04]),
+};
+
+// KMS test — the payload non-ECDSA schemes sign for a keygen result.
+const KEYGEN_SIGNED_PAYLOAD_TEST: KeygenSignedPayloadTest = KeygenSignedPayloadTest {
+    test_filename: Cow::Borrowed("keygen_signed_payload"),
+    state: 701,
+    server_key_digest: Cow::Borrowed(&[0xAA; 32]),
+    public_key_digest: Cow::Borrowed(&[0xBB; 32]),
+    extra_data: Cow::Borrowed(&[0x05, 0x06, 0x07, 0x08]),
+};
+
+// KMS test — the payload non-ECDSA schemes sign for a CRS result.
+const CRS_SIGNED_PAYLOAD_TEST: CrsSignedPayloadTest = CrsSignedPayloadTest {
+    test_filename: Cow::Borrowed("crs_signed_payload"),
+    state: 702,
+    max_num_bits: 2048,
+    crs_digest: Cow::Borrowed(&[0xCC; 32]),
+    extra_data: Cow::Borrowed(&[0x09, 0x0A, 0x0B, 0x0C]),
 };
 
 /// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] onto
@@ -1559,6 +1586,74 @@ impl KmsV0_15_0 {
 
         TestMetadataKMS::StoredTypedSignature(STORED_SCHEME_SIGNATURE_TEST)
     }
+
+    /// `PrepKeygenSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a preprocessing result.
+    fn gen_prep_keygen_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(PREP_KEYGEN_SIGNED_PAYLOAD_TEST.state);
+        let prep_id: RequestId = RequestId::new_random(&mut rng);
+
+        let payload = PrepKeygenSignedPayload {
+            prep_id,
+            extra_data: PREP_KEYGEN_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(
+            &payload,
+            dir,
+            &PREP_KEYGEN_SIGNED_PAYLOAD_TEST.test_filename
+        );
+
+        TestMetadataKMS::PrepKeygenSignedPayload(PREP_KEYGEN_SIGNED_PAYLOAD_TEST)
+    }
+
+    /// `KeygenSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a keygen result.
+    fn gen_keygen_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(KEYGEN_SIGNED_PAYLOAD_TEST.state);
+        // `prep_id` then `key_id`, in that order — the test replays the same seed.
+        let prep_id: RequestId = RequestId::new_random(&mut rng);
+        let key_id: RequestId = RequestId::new_random(&mut rng);
+
+        let mut key_digests: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
+        key_digests.insert(
+            PubDataType::ServerKey,
+            KEYGEN_SIGNED_PAYLOAD_TEST.server_key_digest.to_vec(),
+        );
+        key_digests.insert(
+            PubDataType::PublicKey,
+            KEYGEN_SIGNED_PAYLOAD_TEST.public_key_digest.to_vec(),
+        );
+
+        let payload = KeygenSignedPayload {
+            prep_id,
+            key_id,
+            key_digests,
+            extra_data: KEYGEN_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(&payload, dir, &KEYGEN_SIGNED_PAYLOAD_TEST.test_filename);
+
+        TestMetadataKMS::KeygenSignedPayload(KEYGEN_SIGNED_PAYLOAD_TEST)
+    }
+
+    /// `CrsSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a CRS generation result.
+    fn gen_crs_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(CRS_SIGNED_PAYLOAD_TEST.state);
+        let crs_id: RequestId = RequestId::new_random(&mut rng);
+
+        let payload = CrsSignedPayload {
+            crs_id,
+            max_num_bits: CRS_SIGNED_PAYLOAD_TEST.max_num_bits,
+            crs_digest: CRS_SIGNED_PAYLOAD_TEST.crs_digest.to_vec(),
+            extra_data: CRS_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(&payload, dir, &CRS_SIGNED_PAYLOAD_TEST.test_filename);
+
+        TestMetadataKMS::CrsSignedPayload(CRS_SIGNED_PAYLOAD_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_15_0;
@@ -1806,6 +1901,9 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_internal_cus_rec_out(&dir),
             KmsV0_15_0::gen_operator_backup_output(&dir),
             KmsV0_15_0::gen_stored_scheme_signature(&dir),
+            KmsV0_15_0::gen_prep_keygen_signed_payload(&dir),
+            KmsV0_15_0::gen_keygen_signed_payload(&dir),
+            KmsV0_15_0::gen_crs_signed_payload(&dir),
         ]
     }
 

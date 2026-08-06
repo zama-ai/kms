@@ -9,10 +9,11 @@ use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
-    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
+    OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
@@ -55,8 +56,8 @@ use kms_lib::{
     },
     engine::{
         base::{
-            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
-            StoredTypedSignature,
+            CrsGenMetadata, CrsSignedPayload, KeyGenMetadata, KeyGenMetadataInner,
+            KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload, StoredTypedSignature,
         },
         context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -1309,6 +1310,95 @@ fn test_stored_scheme_signature(
     }
 }
 
+fn test_prep_keygen_signed_payload(
+    dir: &Path,
+    test: &PrepKeygenSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PrepKeygenSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let prep_id: RequestId = RequestId::new_random(&mut rng);
+    let new_versionized = PrepKeygenSignedPayload {
+        prep_id,
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid PrepKeygenSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_keygen_signed_payload(
+    dir: &Path,
+    test: &KeygenSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: KeygenSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    // `prep_id` then `key_id`, in that order — mirrors the generator.
+    let prep_id: RequestId = RequestId::new_random(&mut rng);
+    let key_id: RequestId = RequestId::new_random(&mut rng);
+
+    let mut key_digests: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
+    key_digests.insert(PubDataType::ServerKey, test.server_key_digest.to_vec());
+    key_digests.insert(PubDataType::PublicKey, test.public_key_digest.to_vec());
+
+    let new_versionized = KeygenSignedPayload {
+        prep_id,
+        key_id,
+        key_digests,
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid KeygenSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_crs_signed_payload(
+    dir: &Path,
+    test: &CrsSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: CrsSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let crs_id: RequestId = RequestId::new_random(&mut rng);
+    let new_versionized = CrsSignedPayload {
+        crs_id,
+        max_num_bits: test.max_num_bits,
+        crs_digest: test.crs_digest.to_vec(),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid CrsSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -1407,6 +1497,15 @@ impl TestedModule for KMS {
             }
             Self::Metadata::StoredTypedSignature(test) => {
                 test_stored_scheme_signature(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PrepKeygenSignedPayload(test) => {
+                test_prep_keygen_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::KeygenSignedPayload(test) => {
+                test_keygen_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CrsSignedPayload(test) => {
+                test_crs_signed_payload(test_dir.as_ref(), test, format).into()
             }
         }
     }
