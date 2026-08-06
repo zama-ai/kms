@@ -113,6 +113,14 @@ impl Client {
             // The deprecated scalar `signature` field carries the raw internal
             // ECDSA signature over the serialized payload.
             // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+            if cur_resp.signature.is_empty() {
+                // [validate_public_decrypt_responses_against_request] above has already
+                // ensured that at least `min_agree_count` validly signed responses agree
+                // with the pivot selected below, so a response that carries no signature
+                // can simply be skipped here.
+                tracing::warn!("Response carries no ECDSA signature to verify!");
+                continue;
+            }
             let sig =
                 Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
 

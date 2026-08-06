@@ -25,6 +25,7 @@ use observability::metrics_names::{
     OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
+use thread_handles::spawn_compute_bound;
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -312,15 +313,21 @@ pub async fn public_decrypt_impl<
                     verification_key: server_verf_key,
                     request_id: Some(request_id.into()),
                 };
-                sign_public_decryption_result(
-                    &sig_key,
-                    &signing_schemes,
-                    payload,
-                    &ext_handles_bytes,
-                    extra_data,
-                    &eip712_domain,
-                )
-                .map_err(|e| format!("Failed to sign decryption result: {e:?}"))
+                let signed = spawn_compute_bound(move || {
+                    sign_public_decryption_result(
+                        &sig_key,
+                        &signing_schemes,
+                        payload,
+                        &ext_handles_bytes,
+                        extra_data,
+                        &eip712_domain,
+                    )
+                })
+                .await;
+                match signed {
+                    Ok(Ok(values)) => Ok(values),
+                    Err(e) | Ok(Err(e)) => Err(format!("Failed to sign decryption result: {e:?}")),
+                }
             }
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),

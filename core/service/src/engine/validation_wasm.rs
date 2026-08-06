@@ -67,7 +67,7 @@ const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
 const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
-const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
+pub(crate) const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
     "Extra data mismatch in user decryption";
 const ERR_VALIDATE_USER_DECRYPTION_NO_RESP: &str = "No response to verify in user decryption";
 const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
@@ -537,6 +537,7 @@ mod tests {
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
+        ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
         ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
         UserDecTrustedValidationContext, check_ext_user_decryption_signature,
@@ -950,6 +951,29 @@ mod tests {
         }
 
         // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
+        {
+            let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
+            let signature_buf = internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
+                .unwrap()
+                .to_bytes();
+            let params = Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &[42], // the request's extra data is [1, 2, 3, 4]
+                trusted_eip712_domain: &dummy_domain,
+            };
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &pivot_resp,
+                    &signature_buf,
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA)
+            );
+        }
 
         // happy path for empty ECDSA, so we check external signature
         {

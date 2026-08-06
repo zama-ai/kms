@@ -1596,8 +1596,7 @@ impl Named for CrsGenMetadata {
 }
 
 /// A finished decryption response, stored while the async decryption call is in
-/// flight. Everything here — payload included — is produced and signed by the
-/// decryption job, so the result endpoint is a pure read.
+/// flight.
 #[derive(Clone)]
 pub struct DecryptionCallValues<P> {
     /// The response payload, exactly as it was signed.
