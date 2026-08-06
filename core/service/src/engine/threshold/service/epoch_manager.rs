@@ -1003,7 +1003,7 @@ impl<
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
                 immutable_session_maker.clone(),
-                // To ensure that we can make new epochs from the same old session we have to use the new epoch and context id to derive the session, even for the old nodes.
+// Use the new epoch/context IDs when deriving lift session IDs so we can create multiple new epochs from the same previous epoch.
                 new_epoch_id,
                 new_context_id,
             )
