@@ -110,6 +110,19 @@ pub enum SigningSchemeType {
     MlDsa87, // NIST level 5
 }
 
+impl SigningSchemeType {
+    /// The expected length of the digest for this scheme.
+    pub fn expected_digest_len(&self) -> usize {
+        match self {
+            SigningSchemeType::Ecdsa256k1 => 20, // The Ethereum address, which is 20 bytes for ECDSA/secp256k1.
+            SigningSchemeType::Ed25519 => 32, // The full public key, which should be 32 bytes for ed25519.
+            SigningSchemeType::MlDsa44 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+            SigningSchemeType::MlDsa65 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+            SigningSchemeType::MlDsa87 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+        }
+    }
+}
+
 impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
     fn from(value: kms_grpc::kms::v1::SigningSchemeType) -> Self {
         match value {
@@ -810,23 +823,14 @@ mod tests {
         for sk in &keys {
             let vk = sk.verifying_key().unwrap();
             let digest = vk.digest();
-            match vk {
-                UnifiedPublicSigKey::Ecdsa256k1(_) => {
-                    assert_eq!(digest.len(), 20, "ECDSA should have a 20 byte digest");
-                }
-                UnifiedPublicSigKey::Ed25519(_) => {
-                    assert_eq!(digest.len(), 32, "EDDSA should have a 32 byte digest")
-                }
-                UnifiedPublicSigKey::MlDsa44(_) => {
-                    assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
-                }
-                UnifiedPublicSigKey::MlDsa65(_) => {
-                    assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
-                }
-                UnifiedPublicSigKey::MlDsa87(_) => {
-                    assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
-                }
-            }
+            let expected_len = vk.signing_scheme_type().expected_digest_len();
+            assert_eq!(
+                digest.len(),
+                expected_len,
+                "{} should have a {} byte digest",
+                vk.signing_scheme_type(),
+                expected_len
+            );
         }
     }
 }

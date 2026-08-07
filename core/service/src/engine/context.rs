@@ -310,6 +310,17 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
         if let Some(digest) = scheme_digests.get(&SigningSchemeType::Ecdsa256k1) {
             parse_signer_address(digest, &value.mpc_identity, "ECDSA-256k1 scheme digest")?;
         }
+        // Validate the lengths are as expected
+        for (scheme, digest) in &scheme_digests {
+            let expected_len = scheme.expected_digest_len();
+            if digest.len() != expected_len {
+                return Err(anyhow::anyhow!(
+                    "Scheme digest for {scheme:?} has length {}, expected {expected_len} for node {}",
+                    digest.len(),
+                    value.mpc_identity
+                ));
+            }
+        }
 
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,

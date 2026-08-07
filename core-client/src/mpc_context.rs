@@ -12,7 +12,7 @@ use kms_lib::{
     engine::context::{NodeInfo, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
