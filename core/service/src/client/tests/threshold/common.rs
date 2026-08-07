@@ -41,6 +41,7 @@ pub(crate) async fn run_insecure_preproc(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*preproc_id).into()),
             params: params as i32,
             domain: Some(domain_msg.clone()),
@@ -118,6 +119,7 @@ pub async fn threshold_insecure_key_gen(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let keygen_req = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*request_id).into()),
             params: Some(params as i32),
             preproc_id: Some(preproc_id.into()),
@@ -204,6 +206,7 @@ pub async fn threshold_secure_key_gen(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*preproc_id).into()),
             params: params as i32,
             domain: Some(domain_msg.clone()),
@@ -242,6 +245,7 @@ pub async fn threshold_secure_key_gen(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let keygen_req = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*keygen_id).into()),
             params: Some(params as i32),
             preproc_id: Some((*preproc_id).into()),

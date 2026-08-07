@@ -8,7 +8,8 @@ use crate::cryptography::{
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
 };
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, UserDecTrustedValidationContext, check_ext_user_decryption_signature,
+    DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+    UserDecTrustedValidationContext, check_ext_user_decryption_signature,
     validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
@@ -168,7 +169,19 @@ impl Client {
             return Err(anyhow_error_and_log("missing server address at ID 1"));
         };
 
-        // prefer the normal ECDSA verification over the EIP712 one
+        // The response must echo the request's extra data whichever signature we go
+        // on to verify below. The EIP-712 signature covers `extraData`, but the raw
+        // ECDSA one does not, so this check has to happen outside the branch.
+        if resp.extra_data != request.extra_data() {
+            return Err(anyhow_error_and_log(
+                ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+            ));
+        }
+
+        // Prefer the normal ECDSA verification over the EIP712 one.
+        // The deprecated scalar `signature` field carries the raw internal ECDSA
+        // signature over the serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
         if resp.signature.is_empty() {
             // we only consider the external signature in wasm
             let eip712_signature = &resp.external_signature;

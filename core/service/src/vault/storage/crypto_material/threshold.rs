@@ -389,11 +389,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     extra_data.clone(),
                 );
                 let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
+                // The canonical ECDSA signature lives in `external_signature` and the opt-in `signatures`
+                // set stays empty.
                 let new_metadata = KeyGenMetadata::new(
                     *old_key_id,
                     migrated_inner.preprocessing_id,
                     migrated_inner.key_digest_map.clone(),
                     new_signature,
+                    Vec::new(),
                     extra_data,
                 );
 

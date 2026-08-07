@@ -66,12 +66,12 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 
 use crate::{
-    cryptography::signatures::PrivateSigKey,
+    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
     engine::{
         base::{
             CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata,
             compute_info_compressed_keygen, compute_info_crs, compute_info_uncompressed_keygen,
-            retrieve_parameters,
+            retrieve_parameters, stored_scheme_signatures_to_proto,
         },
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
@@ -656,6 +656,7 @@ impl<
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: &PrivateSigKey,
+        signing_schemes: &[SigningSchemeType],
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
@@ -681,6 +682,7 @@ impl<
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_uncompressed_keygen(
                         sk,
+                        signing_schemes,
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
@@ -734,6 +736,7 @@ impl<
 
                     let info = match compute_info_compressed_keygen(
                         sk,
+                        signing_schemes,
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
@@ -785,6 +788,7 @@ impl<
         {
             let crs_meta_data = compute_info_crs(
                 sk,
+                signing_schemes,
                 &DSEP_PUBDATA_CRS,
                 &crs_info.crs_id,
                 &crs,
@@ -856,6 +860,7 @@ impl<
         new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -947,6 +952,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &sk,
+                &signing_schemes,
                 new_epoch_id,
                 new_extra_data,
                 &verified_previous_epoch,
@@ -970,6 +976,7 @@ impl<
         new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -1081,6 +1088,7 @@ impl<
             Self::store_reshared_keys(
                 &crypto_storage,
                 &sk,
+                &signing_schemes,
                 new_epoch_id,
                 new_extra_data,
                 &verified_previous_epoch,
@@ -1354,6 +1362,7 @@ impl<
         new_extra_data: &[u8],
         previous_epoch: PreviousEpochInfo,
         eip712_domain: Eip712Domain,
+        signing_schemes: Vec<SigningSchemeType>,
     ) -> Result<BoxFuture<'static, anyhow::Result<EpochOutput>>, MetricedError> {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
@@ -1435,6 +1444,7 @@ impl<
                     new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
+                    signing_schemes,
                     crs_info,
                 )
                 .await?
@@ -1447,6 +1457,7 @@ impl<
                     new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
+                    signing_schemes,
                     crs_info,
                 )
                 .await?
@@ -1478,6 +1489,7 @@ impl<
             epoch_id,
             extra_data,
             resharing: resharing_params,
+            signing_schemes,
         } = validate_new_mpc_epoch_request(inner)?;
 
         // Retain both shared leases until the background task has completed every write. Context
@@ -1515,6 +1527,7 @@ impl<
                     &extra_data,
                     previous_epoch,
                     signing_domain,
+                    signing_schemes,
                 )
                 .await?,
             ),
@@ -1698,6 +1711,7 @@ impl<
                                 preprocessing_id: Some(res.preprocessing_id.into()),
                                 key_digests,
                                 external_signature: res.external_signature.clone(),
+                                signatures: stored_scheme_signatures_to_proto(&res.signatures),
                             });
                         }
                         KeyGenMetadata::LegacyV0(_res) => {
@@ -1727,6 +1741,7 @@ impl<
                                 crs_digest: crs.crs_digest.clone(),
                                 max_num_bits: crs.max_num_bits,
                                 external_signature: crs.external_signature.clone(),
+                                signatures: stored_scheme_signatures_to_proto(&crs.signatures),
                             });
                         }
                         CrsGenMetadata::LegacyV0(_crs) => {
@@ -2021,6 +2036,7 @@ pub(crate) mod tests {
         let epoch_id = EpochId::new_random(&mut rng);
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 previous_epoch: None,
@@ -2135,6 +2151,7 @@ pub(crate) mod tests {
         assert_eq!(
             epoch_manager
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                     epoch_id: Some(epoch_id.into()),
                     context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                     previous_epoch: None,
@@ -2162,6 +2179,9 @@ pub(crate) mod tests {
             assert_eq!(
                 epoch_manager
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                        signing_schemes: vec![
+                            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32
+                        ],
                         epoch_id: Some(bad_epoch_id.clone()),
                         context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                         previous_epoch: None,
@@ -2179,6 +2199,9 @@ pub(crate) mod tests {
             assert_eq!(
                 epoch_manager
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                        signing_schemes: vec![
+                            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32
+                        ],
                         epoch_id: None,
                         context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                         previous_epoch: None,
@@ -2202,6 +2225,7 @@ pub(crate) mod tests {
         let context_id = ContextId::new_random(&mut rng); // should not exist
         let err = epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some(context_id.into()),
                 previous_epoch: None,
@@ -2222,6 +2246,7 @@ pub(crate) mod tests {
         let epoch_id = EpochId::new_random(&mut rng);
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 previous_epoch: None,
@@ -2236,6 +2261,7 @@ pub(crate) mod tests {
         assert_eq!(
             epoch_manager
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                     epoch_id: Some(epoch_id.into()),
                     context_id: None,
                     previous_epoch: None,
@@ -2474,6 +2500,7 @@ pub(crate) mod tests {
                 std::collections::BTreeMap::new(),
                 vec![],
                 vec![],
+                vec![],
             ),
         )
     }
@@ -2683,6 +2710,7 @@ pub(crate) mod tests {
                     crs_info: vec![],
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&new_epoch_id))
                     .unwrap(),
             }))

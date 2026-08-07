@@ -356,7 +356,7 @@ async fn run_new_epoch(
     let num_keys = resharing
         .as_ref()
         .map_or(0, |r| r.previous_epoch.keys_info.len());
-    let reshare_request = internal_client
+    let mut reshare_request = internal_client
         .new_epoch_request(
             &new_context_id,
             &new_epoch_id,
@@ -364,6 +364,13 @@ async fn run_new_epoch(
             resharing.as_ref().map(|r| &r.signing_domain),
         )
         .unwrap();
+    // Ask for a hybrid classic + post-quantum set, so the reshared key and CRS
+    // metadata is signed under more than the default ECDSA scheme.
+    let requested_schemes = vec![
+        kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+        kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+    ];
+    reshare_request.signing_schemes = requested_schemes.clone();
     let extra_data = reshare_request.extra_data.clone();
 
     // Execute reshare
@@ -384,6 +391,29 @@ async fn run_new_epoch(
 
         assert_eq!(responses.len(), amount_parties);
 
+        // All parties are in both the old and the new context here, so each of
+        // them re-signs the reshared material under exactly the schemes asked for.
+        for (party_idx, _, response) in responses.iter() {
+            let Ok(response) = response else {
+                continue;
+            };
+            let inner = response.get_ref();
+            for reshare_response in &inner.reshare_responses {
+                assert_signature_schemes(
+                    &reshare_response.signatures,
+                    &requested_schemes,
+                    &format!("key reshare response of party {party_idx}"),
+                );
+            }
+            for crs_response in &inner.crs_responses {
+                assert_signature_schemes(
+                    &crs_response.signatures,
+                    &requested_schemes,
+                    &format!("CRS re-sign response of party {party_idx}"),
+                );
+            }
+        }
+
         // Transform the reshare response to its equivalent keygen response
         // and also extract the CRS responses
         let (responses_as_dkg, crs_responses_per_party): (Vec<_>, Vec<_>) = responses
@@ -399,6 +429,7 @@ async fn run_new_epoch(
                             preprocessing_id: response.preprocessing_id.clone(),
                             key_digests: response.key_digests.clone(),
                             external_signature: response.external_signature.clone(),
+                            signatures: response.signatures.clone(),
                         })
                         .collect::<Vec<_>>();
                     let crs_results = inner.crs_responses;
@@ -536,6 +567,27 @@ async fn run_new_epoch(
     }
 }
 
+/// Assert that `signatures` holds exactly one non-empty signature per requested
+/// scheme, in the order the schemes were requested.
+fn assert_signature_schemes(
+    signatures: &[kms_grpc::kms::v1::TypedSignature],
+    expected_schemes: &[i32],
+    context: &str,
+) {
+    let schemes: Vec<i32> = signatures.iter().map(|sig| sig.scheme).collect();
+    assert_eq!(
+        schemes, expected_schemes,
+        "unexpected signing schemes in {context}"
+    );
+    for signature in signatures {
+        assert!(
+            !signature.signature.is_empty(),
+            "empty {:?} signature in {context}",
+            signature.scheme
+        );
+    }
+}
+
 async fn poll_new_epoch_result(
     new_epoch_id: &RequestId,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -553,12 +605,12 @@ async fn poll_new_epoch_result(
         let party_idx = *party_idx;
         resp_tasks.spawn(async move {
             // Sleep initially to give the server time to complete resharing, then
-            // poll every 500ms for up to `max_iter` tries.
+            // poll.
             let response = retrying_poll(
                 client,
                 reshare_request_id.into(),
                 "resharing result",
-                PollConfig::default(),
+                PollConfig::long_poll_config(),
                 |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
             )
             .await;

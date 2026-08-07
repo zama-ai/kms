@@ -192,7 +192,7 @@ serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindge
 serde_json = "=1.0.150"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
 sha2 = "=0.11.0"  # SHA-2 hash functions - LOW RISK: RustCrypto org, 100M+ downloads
 sha3 = "=0.12.0"  # SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downloads
-shake = "=0.1.0"  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads
+shake = { version = "=0.1.0", features = ["zeroize"] }  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads. `zeroize` wipes the sponge state of both the hasher and the XOF reader on drop; secrets are hashed (see `threshold-hashing`).
 signature = "=2.2.0"  # Digital signature traits - LOW RISK: RustCrypto org, 50M+ downloads
 statrs = "=0.18.0"  # Statistical functions - LOW RISK: starts-dev team
 strum = "=0.27.2"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads

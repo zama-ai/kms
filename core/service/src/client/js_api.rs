@@ -65,9 +65,10 @@
 //! wasm-pack build --target nodejs . --no-default-features
 //! ```
 //!
-//! 4. Run the JS test
+//! 4. Run the JS test (pass a glob or the file path; recent Node versions no
+//!    longer recursively search a bare directory positional)
 //! ```
-//! node --test tests/js
+//! node --test 'tests/js/**/*.js'
 //! ```
 use crate::client::client_wasm::{Client, ServerIdentities};
 use crate::client::user_decryption_wasm::{ParsedUserDecryptionRequest, UserDecryptionResponseHex};
@@ -301,7 +302,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
     let mut out = vec![];
     for hex_resp in hex_resps {
         out.push(UserDecryptionResponse {
-            signature: vec![], // there is no ECDSA signature in the wasm use case
+            signature: vec![],
+            signatures: vec![], // there is no ECDSA signature in the wasm use case
             external_signature: hex::decode(&hex_resp.signature)?,
             payload: match hex_resp.payload {
                 Some(inner) => {

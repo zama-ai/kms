@@ -47,18 +47,17 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            BaseKmsStruct, PubDecCallValues, compute_external_pt_signature,
-            deserialize_to_low_level,
+            BaseKmsStruct, PubDecCallValues, deserialize_to_low_level,
+            sign_public_decryption_result,
         },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
-            DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
-            parse_optional_grpc_request_id, validate_public_decrypt_req,
+            RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
+            validate_public_decrypt_req,
         },
     },
     util::{
@@ -287,8 +286,16 @@ impl<
         tracing::info!("{}", format_public_request(&inner));
 
         // Check and extract the parameters from the request in a separate thread
-        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
-            validate_public_decrypt_req(&inner)?;
+        let (
+            ciphertexts,
+            req_id,
+            key_id,
+            context_id,
+            epoch_id,
+            eip712_domain,
+            extra_data,
+            signing_schemes,
+        ) = validate_public_decrypt_req(&inner)?;
         let my_role = validate_context_and_epoch(
             OP_PUBLIC_DECRYPT_REQUEST,
             &self.session_maker,
@@ -326,6 +333,14 @@ impl<
                 Some(req_id),
                 e,
                 tonic::Code::FailedPrecondition,
+            )
+        })?;
+        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow!("Failed to serialize server verification key: {e:?}"),
+                tonic::Code::Internal,
             )
         })?;
 
@@ -574,25 +589,30 @@ impl<
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
-            // Compute expensive signature OUTSIDE the lock
-            let external_sig = {
-                let extra_data = extra_data.clone();
-                let pts = pts.clone();
-                spawn_compute_bound(move || {
-                    compute_external_pt_signature(
-                        &sigkey,
-                        &ext_handles_bytes,
-                        &pts,
-                        &extra_data,
-                        &eip712_domain,
-                    )
-                })
-                .await
+            // Assemble the full response payload here so it is signed once,
+            // from one snapshot, rather than re-signed on every result fetch.
+            let payload = PublicDecryptionResponsePayload {
+                plaintexts: pts,
+                verification_key: server_verf_key,
+                request_id: Some(req_id.into()),
             };
-            let res = match external_sig {
-                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data)),
+
+            // Compute expensive signatures OUTSIDE the lock
+            let signed = spawn_compute_bound(move || {
+                sign_public_decryption_result(
+                    &sigkey,
+                    &signing_schemes,
+                    payload,
+                    &ext_handles_bytes,
+                    extra_data,
+                    &eip712_domain,
+                )
+            })
+            .await;
+            let res = match signed {
+                Ok(Ok(values)) => Ok(values),
                 Err(e) | Ok(Err(e)) => Err(format!(
-                    "Failed to compute external signature for decryption request {req_id}: {e:?}"
+                    "Failed to sign decryption result for request {req_id}: {e:?}"
                 )),
             };
 
@@ -675,57 +695,30 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
+        let PubDecCallValues {
+            payload,
+            signature,
+            external_signature,
+            extra_data,
+            signatures,
+        } = (*arc).clone();
 
-        if request_id != retrieved_req_id {
+        if payload.request_id != Some(request_id.into()) {
             return Err(MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,
                 Some(request_id),
                 anyhow::anyhow!(
-                    "Request ID mismatch: expected {request_id}, got {retrieved_req_id}"
+                    "Request ID mismatch: expected {request_id}, got {:?}",
+                    payload.request_id
                 ),
                 tonic::Code::Internal,
             ));
         }
 
-        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Failed to serialize server verification key: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-        let sig_payload = PublicDecryptionResponsePayload {
-            plaintexts,
-            verification_key: server_verf_key,
-            request_id: Some(retrieved_req_id.into()),
-        };
-
-        let sig_payload_vec = bc2wrap::serialize(&sig_payload).map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {sig_payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let sig = self
-            .base_kms
-            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_RESULT,
-                    Some(request_id),
-                    anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-
         Ok(Response::new(PublicDecryptionResponse {
-            signature: sig.to_bytes(),
-            payload: Some(sig_payload),
+            signature,
+            signatures,
+            payload: Some(payload),
             external_signature,
             extra_data,
         }))
@@ -753,7 +746,7 @@ mod tests {
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
     use aes_prng::AesRng;
-    use kms_grpc::RequestId;
+    use kms_grpc::{RequestId, kms::v1::SigningSchemeType};
     use kms_grpc::{
         kms::v1::TypedCiphertext,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -860,6 +853,7 @@ mod tests {
         ct_buf: Vec<u8>,
     ) -> PublicDecryptionRequest {
         PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf,
@@ -1181,7 +1175,9 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(13);
         let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
-        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+        let mut request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+        // no signing scheme means ecdsa256k1 is used by default
+        request.signing_schemes.clear();
         public_decryptor
             .public_decrypt(Request::new(request))
             .await

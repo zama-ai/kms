@@ -1536,6 +1536,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(preproc_id.into()),
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
@@ -1577,6 +1578,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     for client in env.all_clients_except(crashed_party) {
         let mut cur_client = client.clone();
         let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(keygen_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(preproc_id.into()),
@@ -1644,6 +1646,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     for client in env.all_clients_except(crashed_party) {
         let mut cur_client = client.clone();
         let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(preproc_id.into()),
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
@@ -1682,6 +1685,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     for client in env.all_clients_except(crashed_party) {
         let mut cur_client = client.clone();
         let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(keygen_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(preproc_id.into()),
@@ -2184,6 +2188,7 @@ async fn remove_oprf_from_existing_keyset(
         };
         let metadata = compute_info_uncompressed_keygen(
             &signing_key,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &DSEP_PUBDATA_KEY,
             preproc_id,
             key_id,
@@ -2310,6 +2315,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(preproc_id_3.into()),
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
@@ -2351,6 +2357,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id_3.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(preproc_id_3.into()),

@@ -1,6 +1,9 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
+use super::{
+    HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType,
+    UnifiedPrivateSigKey,
+};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -12,13 +15,17 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, de::Visitor};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use strum::EnumCount;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
+
+/// The number of seed bytes consumed to build an ecdsa signing key.
+pub const SEED_LEN: usize = 32;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum PublicSigKeyVersions {
@@ -169,6 +176,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
 }
 
 // Drop manually implemented due to conflict with Versionize macro
+// TODO(#3078) Rename in the last subissue
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
@@ -181,6 +189,12 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
+    /// Memoized per-scheme signing keys derived from `sk`.
+    /// Skipped from (de)serialization and versioning, so the persisted format is unchanged and old
+    /// data deserializes with an empty (cold) cache.
+    #[serde(skip)]
+    #[versionize(skip)]
+    cache: DerivedKeyCache,
 }
 
 impl Named for PrivateSigKey {
@@ -191,7 +205,15 @@ impl PrivateSigKey {
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
+            cache: DerivedKeyCache::default(),
         }
+    }
+
+    pub(super) fn derived_key_slot(
+        &self,
+        scheme: SigningSchemeType,
+    ) -> &OnceLock<UnifiedPrivateSigKey> {
+        self.cache.slot(scheme)
     }
 
     /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
@@ -221,6 +243,13 @@ impl PrivateSigKey {
     pub(crate) fn raw_signing_key(&self) -> &k256::ecdsa::SigningKey {
         &self.sk.0
     }
+
+    pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Result<PrivateSigKey, SigningError> {
+        let key = k256::ecdsa::SigningKey::from_slice(seed).map_err(|e| {
+            SigningError::KeyDerivation(format!("Could not derive ecdsa key from seed: {e}"))
+        })?;
+        Ok(PrivateSigKey::new(key))
+    }
 }
 
 impl HasSigningScheme for PrivateSigKey {
@@ -239,23 +268,84 @@ impl ZeroizeOnDrop for PrivateSigKey {}
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
+/// Per-scheme cache of signing keys derived from a [`PrivateSigKey`].
+///
+/// Deriving a non-ECDSA key runs a KDF plus a (for ML-DSA, non-trivial) key
+/// expansion, so each scheme's key is derived once and memoized here.
+struct DerivedKeyCache {
+    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`. The
+    /// [`SigningSchemeType::Ecdsa256k1`] slot always stays empty: that scheme
+    /// signs with the [`PrivateSigKey`] itself, so there is nothing to derive.
+    slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
+}
+
+impl DerivedKeyCache {
+    fn slot(&self, scheme: SigningSchemeType) -> &OnceLock<UnifiedPrivateSigKey> {
+        &self.slots[scheme as usize]
+    }
+}
+
+impl Default for DerivedKeyCache {
+    fn default() -> Self {
+        Self {
+            slots: Arc::new(std::array::from_fn(|_| OnceLock::new())),
+        }
+    }
+}
+
+// Warm clone: sharing the `Arc` is deliberate, so clones of a signing key share
+// one warmed cache rather than each re-deriving.
+impl Clone for DerivedKeyCache {
+    fn clone(&self) -> Self {
+        Self {
+            slots: Arc::clone(&self.slots),
+        }
+    }
+}
+
+// Ignore the key cache when doing equality comparision.
+// Instead we only care about the underlying `sk` in `PrivateSigKey` when comparing.
+impl PartialEq for DerivedKeyCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl Eq for DerivedKeyCache {}
+
+// Never render cached secret-key material.
+impl std::fmt::Debug for DerivedKeyCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DerivedKeyCache(..)")
+    }
+}
+
+impl Zeroize for DerivedKeyCache {
+    fn zeroize(&mut self) {
+        // Drop this handle to the shared cache. If it is the last one, the slots
+        // drop and each cached key wipes itself in place
+        // (`UnifiedPrivateSigKey: ZeroizeOnDrop`); if other clones still share
+        // the cache, the derived keys are wiped once the final clone drops. The
+        // root secret in `PrivateSigKey::sk` is wiped in place regardless.
+        *self = Self::default();
+    }
+}
+
 impl Zeroize for WrappedSigningKey {
     fn zeroize(&mut self) {
         // Swap in a known-valid dummy and let the original drop —
         // `SigningKey<Secp256k1>: ZeroizeOnDrop` wipes its scalar.
         // `[1u8; 32]` is `0x0101…01` ≪ secp256k1 order `n`, so the
-        // constructor is in practice infallible; `if let Ok` keeps the
-        // Drop path panic-free at the type level — future edits to the
-        // constant or to the underlying type can't introduce a panic
-        // surface inside `Drop` (this method is called from the
-        // `#[derive(ZeroizeOnDrop)]`-generated `Drop` impl).
+        // constructor is in practice infallible; `if let Ok` keeps this
+        // wiping routine panic-free at the type level, so future edits to
+        // the constant or to the underlying type cannot introduce a panic
+        // surface into a path callers expect to always succeed.
         if let Ok(dummy) = SigningKey::from_slice(&[1u8; 32]) {
             let _wiped = std::mem::replace(&mut self.0, dummy);
         }
         // If construction ever failed (unreachable today), `self.0` would
         // be untouched here — and Rust's drop glue still wipes the
-        // original via `SigningKey<Secp256k1>: ZeroizeOnDrop` when the
-        // generated `Drop` returns. No security loss.
+        // original via `SigningKey<Secp256k1>: ZeroizeOnDrop` once the
+        // value is dropped. No security loss.
     }
 }
 
@@ -392,11 +482,19 @@ pub fn compute_eip712_signature<D: SolStruct>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = data.eip712_signing_hash(eip712_domain);
+    eip712_sign_hash(sk, &data.eip712_signing_hash(eip712_domain))
+}
+
+/// Produce an EIP-712 recoverable ECDSA signature over a precomputed 32-byte
+/// signing hash (the value returned by [`SolStruct::eip712_signing_hash`]).
+pub fn eip712_sign_hash(
+    sk: &PrivateSigKey,
+    message_hash: &alloy_primitives::B256,
+) -> anyhow::Result<Vec<u8>> {
     let signer = PrivateKeySigner::from_signing_key(sk.raw_signing_key().clone());
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
+    let signature = signer.sign_hash_sync(message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
         "Public data EIP-712 hash {} with signature {} from signer {}",

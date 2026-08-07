@@ -51,19 +51,21 @@ use crate::{
     anyhow_error_and_log,
     consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::{
-        compute_external_user_decrypt_signature,
         encryption::UnifiedPublicEncKey,
         error::CryptographyError,
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
+        signing::SigningSchemeType,
     },
     engine::{
-        base::{BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level},
+        base::{
+            BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level,
+            sign_user_decryption_result,
+        },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -159,7 +161,6 @@ impl<
     /// flooding or bit-decomposition.
     ///
     /// This function does not perform user decryption in a background thread.
-    /// The return type should be [UserDecryptCallValues] except the final item in the tuple
     ///
     /// Note that the argument `client_enc_key_bytes` must be the original
     /// bytes that was provided by the user, it should not go through any re-serialization.
@@ -184,8 +185,9 @@ impl<
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<UserDecryptCallValues> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -378,14 +380,14 @@ impl<
             degree: threshold as u32,
         };
 
-        let external_signature = compute_external_user_decrypt_signature(
+        sign_user_decryption_result(
             &signcryption_key.signing_key,
-            &payload,
-            domain,
+            &signing_schemes,
+            payload,
             &client_enc_key_bytes_orig,
-            &extra_data,
-        )?;
-        Ok((payload, external_signature, extra_data))
+            extra_data,
+            domain,
+        )
     }
 
     #[cfg(test)]
@@ -462,6 +464,7 @@ impl<
             epoch_id,
             domain,
             extra_data,
+            signing_schemes,
         ) = validate_user_decrypt_req(inner.as_ref())?;
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
@@ -551,6 +554,7 @@ impl<
                 dec_mode,
                 &domain,
                 extra_data,
+                signing_schemes,
                 metric_tags,
             )
             .await;
@@ -626,30 +630,17 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (payload, external_signature, extra_data) = (*arc).clone();
+        let UserDecryptCallValues {
+            payload,
+            signature,
+            external_signature,
+            extra_data,
+            signatures,
+        } = (*arc).clone();
 
-        let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let sig = self
-            .base_kms
-            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_RESULT,
-                    Some(request_id),
-                    anyhow!("Could not sign payload {payload:?}: {e:?}"),
-                    tonic::Code::Internal,
-                )
-            })?;
         Ok(Response::new(UserDecryptionResponse {
-            signature: sig.to_bytes(),
+            signature,
+            signatures,
             external_signature,
             payload: Some(payload),
             extra_data,
@@ -676,7 +667,7 @@ fn format_user_request(request: &UserDecryptionRequest) -> String {
 mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
-        kms::v1::CiphertextFormat,
+        kms::v1::{CiphertextFormat, SigningSchemeType},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
@@ -757,6 +748,7 @@ mod tests {
     ) -> UserDecryptionRequest {
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf,
