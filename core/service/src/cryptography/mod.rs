@@ -12,28 +12,9 @@ pub mod encryption;
 #[allow(deprecated)]
 pub mod signcryption;
 
-#[cfg(any(feature = "non-wasm", test))]
-use crate::cryptography::signatures::PrivateSigKey;
-#[cfg(any(feature = "non-wasm", test))]
-use crate::cryptography::signatures::compute_eip712_signature;
-#[cfg(any(feature = "non-wasm", test))]
-use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::{
     kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
 };
-
-#[cfg(any(feature = "non-wasm", test))]
-pub(crate) fn compute_external_user_decrypt_signature(
-    server_sk: &PrivateSigKey,
-    payload: &UserDecryptionResponsePayload,
-    eip712_domain: &Eip712Domain,
-    user_pk_buf: &[u8],
-    extra_data: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    let message = compute_user_decrypt_message(payload, user_pk_buf, extra_data)?;
-    tracing::debug!("Computing signature for UserDecryptResponseVerification");
-    compute_eip712_signature(server_sk, &message, eip712_domain)
-}
 
 pub(crate) fn compute_user_decrypt_message(
     payload: &UserDecryptionResponsePayload,

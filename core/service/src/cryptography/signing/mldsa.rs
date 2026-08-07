@@ -11,12 +11,6 @@ use ml_dsa::{
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
 
-/// Build an ML-DSA signing key deterministically from a 32-byte seed.
-pub fn keygen_from_seed<P: MlDsaParams>(seed: &[u8; SEED_LEN]) -> MlDsaSigningKey<P> {
-    let seed = B32::try_from(&seed[..]).expect("seed is exactly SEED_LEN bytes");
-    MlDsaSigningKey::<P>::from_seed(&seed)
-}
-
 /// Marker type for the ML-DSA signature scheme with parameter set `P`.
 pub struct MlDsa<P>(PhantomData<P>);
 
@@ -54,6 +48,13 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
     }
 }
 
+impl<P: MlDsaParams> MlDsa<P> {
+    /// Deterministically derive the signing key from a 32-byte seed.
+    pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> MlDsaSigningKey<P> {
+        MlDsaSigningKey::<P>::from_seed(&B32::from(*seed))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,7 +74,7 @@ mod tests {
     /// a tampered signature, and a malformed (too short) signature.
     fn exercise<P: MlDsaParams>(seed_u64: u64) {
         let mut rng = AesRng::seed_from_u64(seed_u64);
-        let sk = keygen_from_seed::<P>(&seed(&mut rng));
+        let sk = MlDsa::<P>::keygen_from_seed(&seed(&mut rng));
         let vk = MlDsa::<P>::verifying_key(&sk).unwrap();
 
         let sig = MlDsa::<P>::sign(DSEP, b"hello", &sk).unwrap();

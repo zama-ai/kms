@@ -804,6 +804,7 @@ mod tests {
     impl TestStoredMaterial {
         fn current_metadata(&self) -> KeyGenMetadata {
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map: self.key_digest_map.clone(),
@@ -836,6 +837,7 @@ mod tests {
                 })
                 .collect();
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map,
@@ -1050,6 +1052,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1074,6 +1077,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1443,6 +1447,7 @@ mod tests {
 
         let (crs, metadata) = gen_centralized_crs(
             &sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
             &domain,

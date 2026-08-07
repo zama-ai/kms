@@ -421,6 +421,7 @@ impl std::fmt::Debug for ThresholdFheKeys {
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
+    pub(crate) signatures: Vec<crate::engine::base::StoredTypedSignature>,
     pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
 }
@@ -444,13 +445,15 @@ pub enum PreprocMaterial {
 #[cfg(feature = "insecure")]
 pub(crate) fn new_insecure_preproc_bucket(
     sk: &crate::cryptography::signatures::PrivateSigKey,
+    schemes: &[crate::cryptography::signing::SigningSchemeType],
     preprocessing_id: RequestId,
     dkg_param: DKGParams,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<BucketMetaStore> {
-    let external_signature = crate::engine::base::compute_external_signature_preprocessing(
+    let (external_signature, signatures) = crate::engine::base::compute_preprocessing_signatures(
         sk,
+        schemes,
         &preprocessing_id,
         domain,
         extra_data,
@@ -458,6 +461,7 @@ pub(crate) fn new_insecure_preproc_bucket(
     Ok(BucketMetaStore {
         preprocessing_id,
         external_signature,
+        signatures,
         preprocessing_store: PreprocMaterial::Insecure,
         dkg_param,
     })
@@ -1085,6 +1089,7 @@ mod tests {
                     BTreeMap::new(),
                     vec![],
                     vec![],
+                    vec![],
                 ),
                 key_cache: OnceLock::new(),
             };
@@ -1131,6 +1136,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                vec![],
                 vec![],
                 vec![],
             ),
@@ -1205,6 +1211,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                vec![],
                 vec![],
                 vec![],
             ),

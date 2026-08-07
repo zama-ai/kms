@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // TODO: the init epoch ID is currently fixed to DEFAULT_EPOCH_ID
             // change this once we want to trigger another init for a different context/epoch
             let request = NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 previous_epoch: None,

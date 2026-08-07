@@ -121,6 +121,7 @@ mod tests {
         let req_id = derive_request_id("test_init_sunshine").unwrap();
 
         let preproc_req = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(req_id.into()),
             previous_epoch: None,
@@ -140,6 +141,7 @@ mod tests {
 
         // First initialization should succeed
         let preproc_req1 = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
@@ -152,6 +154,7 @@ mod tests {
 
         // Second initialization should fail with AlreadyExists
         let preproc_req2 = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
@@ -169,6 +172,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             context_id: Some(RequestId {
                 request_id: "not a valid context".to_string(),
