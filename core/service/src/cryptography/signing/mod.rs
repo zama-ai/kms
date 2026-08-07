@@ -90,6 +90,8 @@ pub enum SigningSchemeTypeVersions {
     Copy,
     PartialEq,
     Eq,
+    Ord,
+    PartialOrd,
     Hash,
     Serialize,
     Deserialize,
@@ -163,6 +165,9 @@ pub trait SigningScheme {
 
     /// Derive the verification key from the signing key if possible, otherwise return an error.
     fn verifying_key(sk: &Self::SigningKey) -> Result<Self::VerificationKey, SigningError>;
+
+    /// Compute a digest of the verification key. Specific depending on the scheme.
+    fn digest(vk: &Self::VerificationKey) -> Vec<u8>;
 }
 
 /// A digital signature together with the scheme that produced it.
@@ -329,6 +334,18 @@ pub enum UnifiedPublicSigKey {
     MlDsa44(Box<MlDsaVerifyingKey<MlDsa44>>),
     MlDsa65(Box<MlDsaVerifyingKey<MlDsa65>>),
     MlDsa87(Box<MlDsaVerifyingKey<MlDsa87>>),
+}
+
+impl UnifiedPublicSigKey {
+    fn digest(&self) -> Vec<u8> {
+        match self {
+            UnifiedPublicSigKey::Ecdsa256k1(vk) => Ecdsa256k1::digest(vk),
+            UnifiedPublicSigKey::Ed25519(vk) => Ed25519::digest(vk),
+            UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::<MlDsa44>::digest(vk),
+            UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::<MlDsa65>::digest(vk),
+            UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::<MlDsa87>::digest(vk),
+        }
+    }
 }
 
 impl HasSigningScheme for UnifiedPublicSigKey {
@@ -783,5 +800,33 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::try_from(past_last).is_err(),
             "kms_grpc has a scheme with discriminant {past_last} that SigningSchemeType lacks"
         );
+    }
+
+    #[test]
+    fn unified_verf_digest() {
+        let mut rng = AesRng::seed_from_u64(505);
+        let keys = all_private_keys(&mut rng);
+
+        for sk in &keys {
+            let vk = sk.verifying_key().unwrap();
+            let digest = vk.digest();
+            match vk {
+                UnifiedPublicSigKey::Ecdsa256k1(public_sig_key) => {
+                    assert_eq!(digest.len(), 20, "ECDSA should have a 20 byte digest");
+                }
+                UnifiedPublicSigKey::Ed25519(verifying_key) => {
+                    assert_eq!(digest.len(), 32, "EDDSA should have a 32 byte digest")
+                }
+                UnifiedPublicSigKey::MlDsa44(verifying_key) => {
+                    assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
+                }
+                UnifiedPublicSigKey::MlDsa65(verifying_key) => {
+                    assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
+                }
+                UnifiedPublicSigKey::MlDsa87(verifying_key) => {
+                    assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
+                }
+            }
+        }
     }
 }

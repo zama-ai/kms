@@ -1,7 +1,9 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
+use std::collections::BTreeMap;
+
 use alloy_primitives::Address;
-use kms_grpc::identifiers::ContextId;
+use kms_grpc::{identifiers::ContextId, kms::v1::SchemeDigest};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
@@ -9,7 +11,7 @@ use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::role::Role;
 
 use crate::{
-    cryptography::signatures::PublicSigKey,
+    cryptography::{signatures::PublicSigKey, signing::SigningSchemeType},
     engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
     impl_generic_versionize,
     vault::storage::{StorageReader, crypto_material::get_core_signing_key},
@@ -118,7 +120,8 @@ impl_generic_versionize!(SignerAddress);
 #[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
 pub enum NodeInfoVersions {
     V0(NodeInfoV0),
-    V1(NodeInfo),
+    V1(NodeInfoV1),
+    V2(NodeInfo),
 }
 
 /// Legacy [`NodeInfo`] layout, kept for backward compatibility.
@@ -137,11 +140,11 @@ pub struct NodeInfoV0 {
     pub extra_verification_keys: Vec<PublicSigKey>,
 }
 
-impl Upgrade<NodeInfo> for NodeInfoV0 {
+impl Upgrade<NodeInfoV1> for NodeInfoV0 {
     type Error = std::convert::Infallible;
 
-    fn upgrade(self) -> Result<NodeInfo, Self::Error> {
-        Ok(NodeInfo {
+    fn upgrade(self) -> Result<NodeInfoV1, Self::Error> {
+        Ok(NodeInfoV1 {
             mpc_identity: self.mpc_identity,
             party_id: self.party_id,
             signer_address: self.verification_key.map(|k| SignerAddress(k.address())),
@@ -154,6 +157,52 @@ impl Upgrade<NodeInfo> for NodeInfoV0 {
                 .into_iter()
                 .map(|k| SignerAddress(k.address()))
                 .collect(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Version, Serialize, Deserialize)]
+pub struct NodeInfoV1 {
+    pub mpc_identity: String,
+    pub party_id: u32,
+
+    /// Ethereum address of the node operator's signing key, used to identify the node.
+    ///
+    /// This is optional for legacy reasons because typically MPC parties
+    /// do not know the signing keys of other parties when it first starts.
+    pub signer_address: Option<SignerAddress>,
+
+    /// Must be a valid URL.
+    pub external_url: String,
+
+    /// The TLS certificate is a String here
+    /// because we cannot versionize the X509Certificate type.
+    ///
+    /// Also it's optional because we need to support non-TLS connections for testing purposes.
+    pub ca_cert: Option<Vec<u8>>,
+
+    pub public_storage_url: String,
+    pub public_storage_prefix: Option<String>,
+
+    /// Ethereum addresses of additional signing keys permitted to make transactions on behalf of
+    /// this node.
+    pub extra_signer_addresses: Vec<SignerAddress>,
+}
+
+impl Upgrade<NodeInfo> for NodeInfoV1 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<NodeInfo, Self::Error> {
+        Ok(NodeInfo {
+            mpc_identity: self.mpc_identity,
+            party_id: self.party_id,
+            signer_address: self.signer_address,
+            external_url: self.external_url,
+            ca_cert: self.ca_cert,
+            public_storage_url: self.public_storage_url,
+            public_storage_prefix: self.public_storage_prefix,
+            extra_signer_addresses: self.extra_signer_addresses,
+            scheme_digests: BTreeMap::new(), // Todo should we include ecdsa
         })
     }
 }
@@ -185,6 +234,8 @@ pub struct NodeInfo {
     /// Ethereum addresses of additional signing keys permitted to make transactions on behalf of
     /// this node.
     pub extra_signer_addresses: Vec<SignerAddress>,
+
+    pub scheme_digests: BTreeMap<SigningSchemeType, Vec<u8>>,
 }
 
 /// Parses a 20-byte Ethereum address carried in a gRPC `MpcNode` address field.
@@ -242,6 +293,16 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
             public_storage_url: value.public_storage_url,
             public_storage_prefix: value.public_storage_prefix,
             extra_signer_addresses,
+            scheme_digests: value
+                .scheme_digests
+                .iter()
+                .map(|cur_s| {
+                    Ok((
+                        SigningSchemeType::try_from(cur_s.scheme)?,
+                        cur_s.digest.clone(),
+                    ))
+                })
+                .collect::<anyhow::Result<_>>()?,
         })
     }
 }
@@ -261,6 +322,14 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
                 .extra_signer_addresses
                 .into_iter()
                 .map(|addr| addr.0.to_vec())
+                .collect(),
+            scheme_digests: value
+                .scheme_digests
+                .iter()
+                .map(|(scheme, digest)| SchemeDigest {
+                    scheme: *scheme as i32,
+                    digest: digest.clone(),
+                })
                 .collect(),
         })
     }
@@ -578,6 +647,7 @@ mod tests {
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: BTreeMap::new(),
                 },
                 NodeInfo {
                     mpc_identity: "Node2".to_string(),
@@ -588,6 +658,7 @@ mod tests {
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: BTreeMap::new(),
                 },
             ],
             context_id: ContextId::from_bytes([4u8; 32]),

@@ -7,6 +7,7 @@ use crate::cryptography::encryption::{
     Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -41,7 +42,7 @@ use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
@@ -534,6 +535,10 @@ pub async fn create_default_centralized_context_in_storage<
             public_storage_url: "".to_string(),
             public_storage_prefix: None, // None will default to "PUB"
             extra_signer_addresses: vec![],
+            scheme_digests: BTreeMap::from([(
+                SigningSchemeType::Ecdsa256k1,
+                verification_key.verf_key_id(),
+            )]),
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
         software_version: SoftwareVersion::current()?,
@@ -618,6 +623,10 @@ pub async fn ensure_default_threshold_context_in_storage<
                         public_storage_url: "".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: BTreeMap::from([(
+                            SigningSchemeType::Ecdsa256k1,
+                            verf_key.verf_key_id(),
+                        )]),
                     })
                 }
                 Err(e) => Err(e),

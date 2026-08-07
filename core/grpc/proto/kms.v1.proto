@@ -613,6 +613,11 @@ message MpcNode {
   // transactions on behalf of this node.
   // Each entry is stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
   repeated bytes extra_signer_addresses = 8;
+
+  // A list of scheme-digest pairs of the possible signature verification keys.
+  // Each entry is stored as a byte array and its serialization and length depends on the underlying scheme.
+  // For example for ECDSA256K1 it is a 20-byte Ethereum address.
+  repeated SchemeDigest scheme_digests = 9;
 }
 
 // The context of the MPC, containing the list of MPC nodes and other metadata.
@@ -767,6 +772,22 @@ message TypedSignature {
 
   // The raw, scheme-specific signature bytes.
   bytes signature = 2;
+}
+
+// A list of scheme-digest pairs of the possible signature verification keys.
+// Each entry is stored as a byte array and its serialization and length depends on the underlying scheme.
+// For example for ECDSA256K1 it is a 20-byte Ethereum address.
+message SchemeDigest {
+  // The signature scheme whose public key we use to derive the digest.
+  SigningSchemeType scheme = 1;
+
+  // The raw, scheme-specific public key digeset bytes.
+  // For ECDSA256K1     20 byte Ethereum address
+  // For ED25519        the whole 32 byte public key
+  // For MLDSA44        a 32 byte Shake256 domain separated digest
+  // For MLDSA65        a 32 byte Shake256 domain separated digest
+  // For MLDSA87        a 32 byte Shake256 domain separated digest
+  bytes digest = 2;
 }
 
 // The request constructed by a KMS to initiate custodian based backup recovery
