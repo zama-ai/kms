@@ -156,6 +156,19 @@ pub(crate) struct SessionMaker {
     rng: Arc<Mutex<AesRng>>,
 }
 
+/// The role assignment shared by all dummy contexts used in tests: four parties on localhost.
+#[cfg(test)]
+fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
+    RoleAssignment {
+        inner: HashMap::from_iter((1..=4).map(|i| {
+            (
+                Role::indexed_from_one(i),
+                Identity::new("localhost".to_string(), 8080 + i as u16, None),
+            )
+        })),
+    }
+}
+
 impl SessionMaker {
     pub(crate) async fn new_initialized<
         PubS: Storage + Sync + Send + 'static,
@@ -315,6 +328,20 @@ impl SessionMaker {
         }
     }
 
+    /// Registers an extra dummy four party context (same identities and threshold as
+    /// [`Self::four_party_dummy_session`]) so tests can target a context other than
+    /// [`crate::consts::DEFAULT_MPC_CONTEXT`], e.g. as the destination context of a reshare.
+    #[cfg(test)]
+    pub(crate) async fn add_four_party_dummy_context(&self, context_id: ContextId) {
+        self.add_context(
+            context_id,
+            Some(Role::indexed_from_one(1)),
+            four_party_dummy_role_assignment(),
+            1,
+        )
+        .await;
+    }
+
     #[cfg(test)]
     pub(crate) fn four_party_dummy_session(
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
@@ -322,14 +349,7 @@ impl SessionMaker {
         epoch_id: &EpochId,
         rng: AesRng,
     ) -> Self {
-        let role_assignment = RoleAssignment {
-            inner: HashMap::from_iter((1..=4).map(|i| {
-                (
-                    Role::indexed_from_one(i),
-                    Identity::new("localhost".to_string(), 8080 + i as u16, None),
-                )
-            })),
-        };
+        let role_assignment = four_party_dummy_role_assignment();
         let networking_manager =
             Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
 
