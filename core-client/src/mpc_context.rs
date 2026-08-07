@@ -12,6 +12,8 @@ use kms_lib::{
     engine::context::{NodeInfo, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
