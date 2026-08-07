@@ -2102,6 +2102,7 @@ pub(crate) mod tests {
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)).unwrap(),
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             }))
             .await
             .unwrap();
@@ -2117,9 +2118,8 @@ pub(crate) mod tests {
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id_2.into()),
-                context_id: Some(context_id.into()), // We consider the same context as before
+                context_id: Some(context_id.into()),
                 previous_epoch: Some(PreviousEpochInfo {
-                    // We consider the same previous epoch as before
                     context_id: Some(prev_context_id.into()),
                     epoch_id: Some(prev_epoch_id.into()),
                     keys_info: vec![],
@@ -2127,6 +2127,7 @@ pub(crate) mod tests {
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id_2)).unwrap(),
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             }))
             .await
             .unwrap();
