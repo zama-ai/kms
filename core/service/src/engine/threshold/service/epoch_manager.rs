@@ -483,23 +483,34 @@ impl<
     /// Creates the sessions needed by parties in set 1 for lifting keys to Z128 resharing
     async fn create_set1_sessions(
         session_maker_immutable: ImmutableSessionMaker,
-        epoch_id: EpochId,
-        context_id: ContextId,
+        new_epoch_id: EpochId,
+        old_epoch_id: EpochId,
+        old_context_id: ContextId,
     ) -> anyhow::Result<(
         SmallSession<ResiduePolyF4Z128>,
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            async { epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple new epochs from the same previous epoch
+            // as the session ID would be the same and the session maker would return an error.
+            async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
-                    session_maker_immutable.make_small_sync_session_z128(id, context_id, epoch_id)
+                    session_maker_immutable.make_small_sync_session_z128(
+                        id,
+                        old_context_id,
+                        old_epoch_id,
+                    )
                 })
                 .await?;
 
         let session_z64 =
-            async { epoch_id.derive_session_id_with_counter(LIFT_Z64_SESSION_COUNTER) }
+            async { new_epoch_id.derive_session_id_with_counter(LIFT_Z64_SESSION_COUNTER) }
                 .and_then(|id| {
-                    session_maker_immutable.make_small_sync_session_z64(id, context_id, epoch_id)
+                    session_maker_immutable.make_small_sync_session_z64(
+                        id,
+                        old_context_id,
+                        old_epoch_id,
+                    )
                 })
                 .await?;
 
@@ -510,7 +521,6 @@ impl<
         &self,
         mut two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
-        new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
@@ -532,9 +542,9 @@ impl<
             let mut keys_metadata = Vec::new();
             let (mut session_z128, mut session_z64) = Self::create_set1_sessions(
                 immutable_session_maker,
-// Use the new epoch/context IDs when deriving lift session IDs so we can create multiple new epochs from the same previous epoch.
                 new_epoch_id,
-                new_context_id,
+                verified_previous_epoch.epoch_id,
+                verified_previous_epoch.context_id,
             )
             .await?;
 
@@ -1003,9 +1013,9 @@ impl<
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
                 immutable_session_maker.clone(),
-// Use the new epoch/context IDs when deriving lift session IDs so we can create multiple new epochs from the same previous epoch.
                 new_epoch_id,
-                new_context_id,
+                verified_previous_epoch.epoch_id,
+                verified_previous_epoch.context_id,
             )
             .await?;
 
@@ -1414,12 +1424,7 @@ impl<
 
         Ok(match my_role {
             TwoSetsRole::OnlySet1(_) => self
-                .reshare_as_set_1(
-                    two_sets_session,
-                    *new_epoch_id,
-                    *new_context_id,
-                    verified_previous_epoch,
-                )
+                .reshare_as_set_1(two_sets_session, *new_epoch_id, verified_previous_epoch)
                 .await?
                 .boxed(),
             TwoSetsRole::OnlySet2(_) => self
@@ -2038,14 +2043,43 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
         let prev_epoch_id = EpochId::new_random(&mut rng);
-        let context_id = *DEFAULT_MPC_CONTEXT;
+        let prev_context_id = *DEFAULT_MPC_CONTEXT;
+        let context_id = ContextId::new_random(&mut rng);
+        // The reshare targets a context different from the previous one, so it must be known
+        // to the session maker (only `DEFAULT_MPC_CONTEXT` is registered by default).
+        epoch_manager
+            .session_maker
+            .add_four_party_dummy_context(context_id)
+            .await;
+        // The epoch we reshare *from* must exist as well.
+        epoch_manager
+            .session_maker
+            .add_epoch(
+                prev_epoch_id,
+                EpochData {
+                    prss: PRSSSetupCombined {
+                        prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
+                            vec![],
+                            vec![],
+                        ),
+                        prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(
+                            vec![],
+                            vec![],
+                        ),
+                        num_parties: 4,
+                        threshold: 1,
+                    },
+                    context_id: prev_context_id,
+                },
+            )
+            .await;
         let epoch_id = EpochId::new_random(&mut rng);
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some(context_id.into()),
                 previous_epoch: Some(PreviousEpochInfo {
-                    context_id: Some(context_id.into()),
+                    context_id: Some(prev_context_id.into()),
                     epoch_id: Some(prev_epoch_id.into()),
                     keys_info: vec![],
                     crs_info: vec![],
@@ -2070,7 +2104,7 @@ pub(crate) mod tests {
                 context_id: Some(context_id.into()), // We consider the same context as before
                 previous_epoch: Some(PreviousEpochInfo {
                     // We consider the same previous epoch as before
-                    context_id: Some(context_id.into()),
+                    context_id: Some(prev_context_id.into()),
                     epoch_id: Some(prev_epoch_id.into()),
                     keys_info: vec![],
                     crs_info: vec![],
