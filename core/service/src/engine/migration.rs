@@ -827,6 +827,7 @@ mod tests {
         store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
+    use std::collections::BTreeMap;
     use std::str::FromStr;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
@@ -1169,12 +1170,12 @@ mod tests {
             mpc_nodes.push(NodeInfo {
                 mpc_identity: format!("testnode{}", i),
                 party_id: (i + 1) as u32,
-                signer_address: None,
                 external_url: "https://doesnotexist.zama.ai".to_string(),
                 ca_cert: None,
                 public_storage_url: "".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: BTreeMap::new(),
             });
         }
         let context_info = ContextInfo {

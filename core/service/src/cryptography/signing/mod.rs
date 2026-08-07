@@ -90,6 +90,8 @@ pub enum SigningSchemeTypeVersions {
     Copy,
     PartialEq,
     Eq,
+    Ord,
+    PartialOrd,
     Hash,
     Serialize,
     Deserialize,
@@ -106,6 +108,19 @@ pub enum SigningSchemeType {
     MlDsa44, // NIST level 2
     MlDsa65, // NIST level 3
     MlDsa87, // NIST level 5
+}
+
+impl SigningSchemeType {
+    /// The expected length of the digest for this scheme.
+    pub fn expected_digest_len(&self) -> usize {
+        match self {
+            SigningSchemeType::Ecdsa256k1 => 20, // The Ethereum address, which is 20 bytes for ECDSA/secp256k1.
+            SigningSchemeType::Ed25519 => 32, // The full public key, which should be 32 bytes for ed25519.
+            SigningSchemeType::MlDsa44 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+            SigningSchemeType::MlDsa65 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+            SigningSchemeType::MlDsa87 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+        }
+    }
 }
 
 impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
@@ -163,6 +178,9 @@ pub trait SigningScheme {
 
     /// Derive the verification key from the signing key if possible, otherwise return an error.
     fn verifying_key(sk: &Self::SigningKey) -> Result<Self::VerificationKey, SigningError>;
+
+    /// Compute a digest of the verification key. Specific depending on the scheme.
+    fn digest(vk: &Self::VerificationKey) -> Vec<u8>;
 }
 
 /// A digital signature together with the scheme that produced it.
@@ -329,6 +347,18 @@ pub enum UnifiedPublicSigKey {
     MlDsa44(Box<MlDsaVerifyingKey<MlDsa44>>),
     MlDsa65(Box<MlDsaVerifyingKey<MlDsa65>>),
     MlDsa87(Box<MlDsaVerifyingKey<MlDsa87>>),
+}
+
+impl UnifiedPublicSigKey {
+    fn digest(&self) -> Vec<u8> {
+        match self {
+            UnifiedPublicSigKey::Ecdsa256k1(vk) => Ecdsa256k1::digest(vk),
+            UnifiedPublicSigKey::Ed25519(vk) => Ed25519::digest(vk),
+            UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::<MlDsa44>::digest(vk),
+            UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::<MlDsa65>::digest(vk),
+            UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::<MlDsa87>::digest(vk),
+        }
+    }
 }
 
 impl HasSigningScheme for UnifiedPublicSigKey {
@@ -783,5 +813,24 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::try_from(past_last).is_err(),
             "kms_grpc has a scheme with discriminant {past_last} that SigningSchemeType lacks"
         );
+    }
+
+    #[test]
+    fn unified_verf_digest() {
+        let mut rng = AesRng::seed_from_u64(505);
+        let keys = all_private_keys(&mut rng);
+
+        for sk in &keys {
+            let vk = sk.verifying_key().unwrap();
+            let digest = vk.digest();
+            let expected_len = vk.signing_scheme_type().expected_digest_len();
+            assert_eq!(
+                digest.len(),
+                expected_len,
+                "{} should have a {} byte digest",
+                vk.signing_scheme_type(),
+                expected_len
+            );
+        }
     }
 }

@@ -2,14 +2,15 @@
 
 use super::{SigningError, SigningScheme};
 use core::marker::PhantomData;
-use hashing::DomainSep;
+use hashing::{DomainSep, hash_element_w_size};
 use ml_dsa::{
-    B32, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
+    B32, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
     SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
 };
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
+pub const DSEP_MLDSA: DomainSep = *b"MLDSA___";
 
 /// Marker type for the ML-DSA signature scheme with parameter set `P`.
 pub struct MlDsa<P>(PhantomData<P>);
@@ -45,6 +46,11 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
 
     fn verifying_key(sk: &MlDsaSigningKey<P>) -> Result<MlDsaVerifyingKey<P>, SigningError> {
         Ok(sk.verifying_key())
+    }
+
+    fn digest(vk: &Self::VerificationKey) -> Vec<u8> {
+        let bytes = vk.to_bytes();
+        hash_element_w_size(&DSEP_MLDSA, &bytes, 32)
     }
 }
 
