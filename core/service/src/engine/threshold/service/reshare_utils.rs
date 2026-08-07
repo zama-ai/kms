@@ -600,7 +600,7 @@ pub(crate) async fn get_verified_crs_material<
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
@@ -731,7 +731,6 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
@@ -739,12 +738,12 @@ mod tests {
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: BTreeMap::new(),
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -753,6 +752,7 @@ mod tests {
                                 .to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: BTreeMap::new(),
                     }]
                 } else {
                     vec![]
@@ -1059,7 +1059,6 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
@@ -1067,12 +1066,12 @@ mod tests {
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: BTreeMap::new(),
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -1081,6 +1080,7 @@ mod tests {
                                 .to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: BTreeMap::new(),
                     }]
                 } else {
                     vec![]

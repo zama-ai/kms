@@ -762,12 +762,12 @@ fn test_context_info(
     let node_info = NodeInfo {
         mpc_identity: "Staoshi Nakamoto".to_string(),
         party_id: 42,
-        signer_address: None,
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
         public_storage_prefix: Some("PUB".to_string()),
         extra_signer_addresses: vec![],
+        scheme_digests: BTreeMap::new(),
     };
     let software_version = SoftwareVersion {
         major: 2,
@@ -813,12 +813,12 @@ fn test_node_info(
     let new_versionized = NodeInfo {
         mpc_identity: test.mpc_identity.to_string(),
         party_id: test.party_id,
-        signer_address: Some(SignerAddress(verf_key.address())),
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
         public_storage_prefix: Some(test.public_storage_prefix.to_string()),
         extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
+        scheme_digests: BTreeMap::from([(SigningSchemeType::Ecdsa256k1, verf_key.verf_key_id())]),
     };
 
     if original_versionized != new_versionized {

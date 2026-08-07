@@ -4,7 +4,8 @@ use super::{SigningError, SigningScheme};
 use core::marker::PhantomData;
 use hashing::{DomainSep, hash_element_w_size};
 use ml_dsa::{
-    B32, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer, SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
+    B32, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
+    SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
 };
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.

@@ -193,16 +193,22 @@ impl Upgrade<NodeInfo> for NodeInfoV1 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<NodeInfo, Self::Error> {
+        // The digest of an ECDSA-256k1 verification key is its Ethereum address, so the
+        // dedicated `signer_address` field is carried over as the ECDSA-256k1 entry of
+        // `scheme_digests`, which supersedes it.
+        let scheme_digests = self
+            .signer_address
+            .map(|addr| BTreeMap::from([(SigningSchemeType::Ecdsa256k1, addr.0.to_vec())]))
+            .unwrap_or_default();
         Ok(NodeInfo {
             mpc_identity: self.mpc_identity,
             party_id: self.party_id,
-            signer_address: self.signer_address,
             external_url: self.external_url,
             ca_cert: self.ca_cert,
             public_storage_url: self.public_storage_url,
             public_storage_prefix: self.public_storage_prefix,
             extra_signer_addresses: self.extra_signer_addresses,
-            scheme_digests: BTreeMap::new(), // Todo should we include ecdsa
+            scheme_digests,
         })
     }
 }
@@ -212,12 +218,6 @@ impl Upgrade<NodeInfo> for NodeInfoV1 {
 pub struct NodeInfo {
     pub mpc_identity: String,
     pub party_id: u32,
-
-    /// Ethereum address of the node operator's signing key, used to identify the node.
-    ///
-    /// This is optional for legacy reasons because typically MPC parties
-    /// do not know the signing keys of other parties when it first starts.
-    pub signer_address: Option<SignerAddress>,
 
     /// Must be a valid URL.
     pub external_url: String,
@@ -235,6 +235,9 @@ pub struct NodeInfo {
     /// this node.
     pub extra_signer_addresses: Vec<SignerAddress>,
 
+    /// Digest of the node operator's verification key for each signature scheme it supports,
+    /// used to identify the node. The digest encoding is scheme specific; for
+    /// [`SigningSchemeType::Ecdsa256k1`] it is the 20-byte Ethereum address of the key.
     pub scheme_digests: BTreeMap<SigningSchemeType, Vec<u8>>,
 }
 
@@ -276,33 +279,47 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
                 "extra signer address",
             )?);
         }
-        let signer_address = match &value.signer_address {
-            None => None,
-            Some(addr_bytes) => Some(parse_signer_address(
-                addr_bytes,
-                &value.mpc_identity,
-                "signer address",
-            )?),
-        };
+        let mut scheme_digests: BTreeMap<SigningSchemeType, Vec<u8>> = value
+            .scheme_digests
+            .iter()
+            .map(|cur_s| {
+                Ok((
+                    SigningSchemeType::try_from(cur_s.scheme)?,
+                    cur_s.digest.clone(),
+                ))
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        // The dedicated `signer_address` field predates `scheme_digests` and carries the same
+        // Ethereum address that is now the ECDSA-256k1 digest, so export it into `scheme_digests`.
+        if let Some(addr_bytes) = &value.signer_address {
+            match scheme_digests.get(&SigningSchemeType::Ecdsa256k1) {
+                None => {
+                    scheme_digests.insert(SigningSchemeType::Ecdsa256k1, addr_bytes.clone());
+                }
+                Some(digest) if digest != addr_bytes => {
+                    return Err(anyhow::anyhow!(
+                        "Signer address and ECDSA-256k1 scheme digest disagree for node {}",
+                        value.mpc_identity
+                    ));
+                }
+                Some(_) => (),
+            }
+        }
+        // An ECDSA-256k1 digest is an Ethereum address, so validate it as one.
+        if let Some(digest) = scheme_digests.get(&SigningSchemeType::Ecdsa256k1) {
+            parse_signer_address(digest, &value.mpc_identity, "ECDSA-256k1 scheme digest")?;
+        }
+
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            signer_address,
             external_url: value.external_url,
             ca_cert,
             public_storage_url: value.public_storage_url,
             public_storage_prefix: value.public_storage_prefix,
             extra_signer_addresses,
-            scheme_digests: value
-                .scheme_digests
-                .iter()
-                .map(|cur_s| {
-                    Ok((
-                        SigningSchemeType::try_from(cur_s.scheme)?,
-                        cur_s.digest.clone(),
-                    ))
-                })
-                .collect::<anyhow::Result<_>>()?,
+            scheme_digests,
         })
     }
 }
@@ -313,7 +330,12 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
         Ok(kms_grpc::kms::v1::MpcNode {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            signer_address: value.signer_address.map(|addr| addr.0.to_vec()),
+            // Kept populated for peers that still read the legacy field; it mirrors the
+            // ECDSA-256k1 entry of `scheme_digests`.
+            signer_address: value
+                .scheme_digests
+                .get(&SigningSchemeType::Ecdsa256k1)
+                .cloned(),
             external_url: value.external_url,
             ca_cert: value.ca_cert,
             public_storage_url: value.public_storage_url,
@@ -364,12 +386,12 @@ impl ContextInfo {
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
-        let core_address = SignerAddress(signing_key.verf_key().address());
+        // The ECDSA-256k1 digest of a verification key is its Ethereum address.
+        let core_address = signing_key.verf_key().verf_key_id();
 
-        let my_node = self
-            .mpc_nodes
-            .iter()
-            .find(|node| node.signer_address == Some(core_address));
+        let my_node = self.mpc_nodes.iter().find(|node| {
+            node.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) == Some(&core_address)
+        });
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
             self.mpc_nodes.iter().map(|node| node.party_id).collect();
@@ -641,24 +663,28 @@ mod tests {
                 NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
-                    scheme_digests: BTreeMap::new(),
+                    scheme_digests: BTreeMap::from([(
+                        SigningSchemeType::Ecdsa256k1,
+                        verification_key.verf_key_id(),
+                    )]),
                 },
                 NodeInfo {
                     mpc_identity: "Node2".to_string(),
                     party_id: 1, // Duplicate party_id
-                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
-                    scheme_digests: BTreeMap::new(),
+                    scheme_digests: BTreeMap::from([(
+                        SigningSchemeType::Ecdsa256k1,
+                        verification_key.verf_key_id(),
+                    )]),
                 },
             ],
             context_id: ContextId::from_bytes([4u8; 32]),

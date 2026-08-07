@@ -590,7 +590,11 @@ message MpcNode {
   //
   // This is optional to be compatible with configuration files that's used in
   // older KMS versions, which are not aware of the signing keys of the other parties.
-  // But any new context must set this field.
+  //
+  // Superseded by the ECDSA256K1 entry of `scheme_digests`, which holds the same address.
+  // A node that sets both must set them to the same value; new contexts should use
+  // `scheme_digests` instead.
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   optional bytes signer_address = 3;
 
   // The external port and host of the KMS node,

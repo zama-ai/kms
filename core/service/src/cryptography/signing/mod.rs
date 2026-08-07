@@ -811,19 +811,19 @@ mod tests {
             let vk = sk.verifying_key().unwrap();
             let digest = vk.digest();
             match vk {
-                UnifiedPublicSigKey::Ecdsa256k1(public_sig_key) => {
+                UnifiedPublicSigKey::Ecdsa256k1(_) => {
                     assert_eq!(digest.len(), 20, "ECDSA should have a 20 byte digest");
                 }
-                UnifiedPublicSigKey::Ed25519(verifying_key) => {
+                UnifiedPublicSigKey::Ed25519(_) => {
                     assert_eq!(digest.len(), 32, "EDDSA should have a 32 byte digest")
                 }
-                UnifiedPublicSigKey::MlDsa44(verifying_key) => {
+                UnifiedPublicSigKey::MlDsa44(_) => {
                     assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
                 }
-                UnifiedPublicSigKey::MlDsa65(verifying_key) => {
+                UnifiedPublicSigKey::MlDsa65(_) => {
                     assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
                 }
-                UnifiedPublicSigKey::MlDsa87(verifying_key) => {
+                UnifiedPublicSigKey::MlDsa87(_) => {
                     assert_eq!(digest.len(), 32, "MlDSA should have a 32 byte digest")
                 }
             }

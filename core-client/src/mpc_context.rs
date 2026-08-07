@@ -8,10 +8,11 @@ use kms_grpc::{
 #[cfg(feature = "testing")]
 use kms_lib::{
     conf::{CoreConfig, init_conf},
-    engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
+    cryptography::signatures::SigningSchemeType,
+    engine::context::{NodeInfo, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -182,12 +183,15 @@ pub async fn create_test_context_info_from_core_config(
         mpc_nodes.push(NodeInfo {
             mpc_identity: mpc_identity.to_string(),
             party_id: role.one_based() as u32,
-            signer_address: Some(SignerAddress(verification_key.address())),
             external_url: format!("https://{}:{}", identity.hostname(), identity.port()),
             ca_cert: Some(ca_cert.pem().as_bytes().to_vec()),
             public_storage_url: s3_endpoint,
             public_storage_prefix: prefix,
             extra_signer_addresses: vec![],
+            scheme_digests: BTreeMap::from([(
+                SigningSchemeType::Ecdsa256k1,
+                verification_key.verf_key_id(),
+            )]),
         });
 
         thresholds.push(threshold_config.threshold);
