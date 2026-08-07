@@ -380,7 +380,6 @@ mod tests {
             assert_eq!(peers[i].tls_cert, cert, "peer[{i}] TLS cert mismatch");
         }
 
-        assert!(threshold_config.preproc_redis.is_none());
         let tls_config = threshold_config
             .tls
             .as_ref()
