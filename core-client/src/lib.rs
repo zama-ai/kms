@@ -2733,7 +2733,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 destination_prefix,
                 &kms_addrs,
-                num_parties,
                 fhe_params,
                 new_epoch_params.clone(),
             )
