@@ -280,13 +280,46 @@ impl Zeroize for UnifiedPrivateSigKey {
     }
 }
 
-// Marker only, not derived: the boxed ML-DSA keys implement neither
-// `Zeroize` nor `ZeroizeOnDrop` (the `zeroize` crate covers `Box<[T]>`, not
-// `Box<T>`), so the derive macro cannot prove the bound. The invariant holds
-// regardless: every variant's key material wipes itself when dropped — ECDSA
-// via its `WrappedSigningKey: ZeroizeOnDrop` field, ed25519 and ML-DSA via
-// their own zeroizing `Drop` — so dropping the enum zeroizes the secret.
+// Marker only, not derived: `Box<MlDsaSigningKey<_>>` implements neither
+// `Zeroize` nor `ZeroizeOnDrop` — the `zeroize` crate covers `Box<[T]>`, not
+// `Box<T>` — even though the *inner* `MlDsaSigningKey<_>` implements both, so
+// the derive macro cannot prove the bound. The invariant holds regardless:
+// every variant's key material wipes itself when dropped — ECDSA via its
+// `WrappedSigningKey: ZeroizeOnDrop` field, ed25519 and ML-DSA via their own
+// zeroizing `Drop`, reached through the box's drop glue, which runs
+// `drop_in_place` on the heap contents before deallocating. So dropping the
+// enum zeroizes the secret.
 impl ZeroizeOnDrop for UnifiedPrivateSigKey {}
+// Deliberately no `Drop for UnifiedPrivateSigKey` calling `zeroize()`: the
+// `Zeroize` impl above wipes *by* triggering the leaf types' `Drop`, which is
+// exactly what a plain drop already does, so routing through it adds no
+// guarantee — it only pays for a throwaway key (a full ML-DSA keygen) that is
+// then itself dropped and wiped. It would also forbid moving out of the
+// variants.
+
+// The marker above is an assertion the compiler cannot check for us, and it
+// rests on the *optional* `zeroize` features of `ml-dsa` and `ed25519-dalek`:
+// both crates gate their entire zeroizing `Drop` behind `#[cfg(feature =
+// "zeroize")]`. Were a dependency bump, a `default-features` change, or
+// feature unification ever to drop either feature, the wiping would silently
+// vanish and this marker would become a lie — with no compile error and no
+// failing test. These bounds turn that into a build failure.
+//
+// Assert on the leaf key types rather than on `UnifiedPrivateSigKey` itself:
+// its own `ZeroizeOnDrop` is the hand-written impl above, so asserting it
+// would merely restate the claim under test.
+const _: () = {
+    const fn assert_zeroize_on_drop<T: ZeroizeOnDrop>() {}
+
+    // Wipes via `WrappedSigningKey`'s derived, compiler-checked `Drop`.
+    assert_zeroize_on_drop::<PrivateSigKey>();
+    // Requires `ed25519-dalek/zeroize`.
+    assert_zeroize_on_drop::<Ed25519SigningKey>();
+    // Require `ml-dsa/zeroize`.
+    assert_zeroize_on_drop::<MlDsaSigningKey<MlDsa44>>();
+    assert_zeroize_on_drop::<MlDsaSigningKey<MlDsa65>>();
+    assert_zeroize_on_drop::<MlDsaSigningKey<MlDsa87>>();
+};
 
 /// A verification key tagged with the scheme it belongs to.
 #[allow(clippy::large_enum_variant)]
