@@ -294,14 +294,17 @@ mod tests {
         let core_to_core_net_conf = party_conf.net_conf;
         assert!(core_to_core_net_conf.is_some());
         let core_to_core_net_conf = core_to_core_net_conf.unwrap();
-        assert_eq!(core_to_core_net_conf.message_limit, 70);
-        assert_eq!(core_to_core_net_conf.multiplier, 1.1);
-        assert_eq!(core_to_core_net_conf.max_interval, 5);
+        assert_eq!(core_to_core_net_conf.message_limit, Some(70));
+        assert_eq!(core_to_core_net_conf.multiplier, Some(1.1));
+        assert_eq!(core_to_core_net_conf.max_interval, Some(5));
         assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(300));
-        assert_eq!(core_to_core_net_conf.network_timeout, 10);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk, 300);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 1200);
-        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 2147483648);
+        assert_eq!(core_to_core_net_conf.network_timeout, Some(10));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, Some(300));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, Some(1200));
+        assert_eq!(
+            core_to_core_net_conf.max_en_decode_message_size,
+            Some(2147483648)
+        );
     }
 
     #[test]
@@ -375,14 +378,14 @@ mod tests {
         let core_to_core_net_conf = party_conf.net_conf;
         assert!(core_to_core_net_conf.is_some());
         let core_to_core_net_conf = core_to_core_net_conf.unwrap();
-        assert_eq!(core_to_core_net_conf.message_limit, 60);
-        assert_eq!(core_to_core_net_conf.multiplier, 2.2);
-        assert_eq!(core_to_core_net_conf.max_interval, 4);
+        assert_eq!(core_to_core_net_conf.message_limit, Some(60));
+        assert_eq!(core_to_core_net_conf.multiplier, Some(2.2));
+        assert_eq!(core_to_core_net_conf.max_interval, Some(4));
         assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(200));
-        assert_eq!(core_to_core_net_conf.network_timeout, 20);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk, 200);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 2300);
-        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 3258);
+        assert_eq!(core_to_core_net_conf.network_timeout, Some(20));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, Some(200));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, Some(2300));
+        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, Some(3258));
 
         let bundle = party_conf.certpaths.unwrap();
         assert_eq!(bundle.cert, "/path/to/cert");
